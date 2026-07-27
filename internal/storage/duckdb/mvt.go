@@ -20,13 +20,25 @@ func (a *Adapter) Tile(tableId string, zoom, x, y int) ([]byte, error) {
 		return nil, err
 	}
 
+	// ST_AsMVTGeom is a known source of corrupt (non-NULL, but invalid)
+	// clipped geometry for certain source/tile combinations — an upstream
+	// DuckDB spatial defect (github.com/duckdb/duckdb-spatial#792), not
+	// something wrong with the source data (it passes ST_IsValid before
+	// clipping). TRY() plus filtering NULL catches only some cases, since
+	// the corruption doesn't always surface as NULL, but it's a cheap,
+	// safe filter that can only drop otherwise-broken features, never a
+	// valid one.
 	query := fmt.Sprintf(`
         SELECT ST_AsMVT(
-            {geom: ST_AsMVTGeom(%s, ST_Extent(ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)))), pkey: __pkey},
+            {geom: mvt_geom, pkey: pkey},
             'layer'
         ) AS mvt
-        FROM %s
-        WHERE ST_Intersects(%s, ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)))
+        FROM (
+            SELECT TRY(ST_AsMVTGeom(%s, ST_Extent(ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER))), 4096, 256, true)) AS mvt_geom, __pkey AS pkey
+            FROM %s
+            WHERE ST_Intersects(%s, ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)))
+        )
+        WHERE mvt_geom IS NOT NULL
     `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
 
 	var mvt []byte
