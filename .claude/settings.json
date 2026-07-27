@@ -2,7 +2,18 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(duckdb -c \"INSTALL spatial; LOAD spatial; SELECT * FROM st_read_meta\\('test.gpkg'\\) LIMIT 1;\")"
+      "Bash(duckdb -c \"INSTALL spatial; LOAD spatial; SELECT * FROM st_read_meta\\('test.gpkg'\\) LIMIT 1;\")",
+      "Bash(python3 -c \"import fiona; print\\(fiona.__version__\\)\")",
+      "Bash(python3 -c \"from osgeo import ogr; print\\('gdal ok'\\)\")",
+      "WebSearch",
+      "Bash(pip3 list *)",
+      "Bash(python3 -c \"import sqlite3; print\\(sqlite3.sqlite_version\\)\")",
+      "Bash(apt-cache policy *)",
+      "Bash(python3 /tmp/make_gpkg.py /tmp/multi.gpkg)",
+      "Bash(python3 -c ' *)",
+      "Bash(git -C /home/amauryvalorge.guest/gogeoserver status --short)",
+      "WebFetch(domain:github.com)",
+      "Bash(grep -n \"tiles/{z}/{x}/{y}\\\\` \\\\|Géo \\(MVT\\)\\\\|Géo \\(Requêtes\\)\" /home/amauryvalorge.guest/gogeoserver/docs/spec.md)"
     ],
     "deny": [
       "Bash(rm -rf *)",

@@ -6,6 +6,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -185,6 +187,20 @@ func Test_Router_FilterByBbox(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
+func Test_Router_GetGeometryTypes(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GeometryTypes", "id-1").Return([]string{"POLYGON", "MULTIPOLYGON"}, nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/tables/id-1/geometry-types", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string][]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []string{"POLYGON", "MULTIPOLYGON"}, body["types"])
+}
+
 func Test_Router_GetSchema(t *testing.T) {
 	handler, m := setupRouter(t)
 
@@ -311,7 +327,7 @@ func Test_Router_UploadSource(t *testing.T) {
 	m.On("TableIds").Return([]string{}, nil).Once()
 	m.On("Create", "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", "t_new", mock.Anything).Return("", false, nil).Once()
+	m.On("CreateFromFile", "t_new", mock.Anything, "").Return("", false, nil).Once()
 	m.On("RefreshDerivedMetadata", "id-new").Return(nil).Once()
 	// Load's own TableIds/GetMetadata cache lookups happen inside Refresh,
 	// called once before Load — Load itself just reads the in-memory cache.
@@ -324,6 +340,70 @@ func Test_Router_UploadSource(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "id-new", body["tableId"])
+}
+
+func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
+	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "regions.gpkg"), make([]byte, 10), 0o644))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	handler := rt.Setup()
+
+	m.On("TableIds").Return([]string{}, nil).Once()
+	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes"}, nil).Once()
+	_, err := sourceSvc.Refresh()
+	require.NoError(t, err)
+
+	m.On("Create", "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
+	m.On("GetMetadata", "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("CreateFromFile", "t_new", filepath.Join(dir, "regions.gpkg"), "communes").Return("", false, nil).Once()
+	m.On("RefreshDerivedMetadata", "id-new").Return(nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/sources/regions.gpkg/load?layer=communes", nil)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "id-new", body["tableId"])
+}
+
+func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
+	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{
+		WorkDir:           t.TempDir(),
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	handler := rt.Setup()
+
+	m.On("TableIds").Return([]string{}, nil).Once()
+	m.On("ListLayers", mock.Anything).Return([]string{"communes", "departements"}, nil).Once()
+
+	req := multipartFileRequest(t, "/sources/upload", "file", "regions.gpkg", "not-really-a-gpkg")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body service.Source
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "regions.gpkg", body.Name)
+	assert.Len(t, body.Layers, 2)
 }
 
 func Test_Router_UploadSource_RejectsDisallowedExtension(t *testing.T) {

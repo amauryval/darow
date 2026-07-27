@@ -76,6 +76,7 @@ func (rt *Router) Setup() http.Handler {
 			})
 
 			sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
+			sub.Get("/geometry-types", rt.getGeometryTypes)
 			sub.Post("/bbox", rt.filterByBbox)
 		})
 	})

@@ -12,15 +12,35 @@ import (
 	"gogeoserver/internal/config"
 )
 
+// gpkgExt is the only extension currently treated as a multi-layer format:
+// its layers are enumerated in Source.Layers, and each loads into its own
+// table (a GeoPackage is never "loaded" as a whole).
+const gpkgExt = ".gpkg"
+
+// layerSeparator joins a source file name and layer name into the composite
+// table name each loaded layer is registered under (see Load), so a single
+// GeoPackage can back several independently loaded tables.
+const layerSeparator = "::"
+
 // Source describes a file found in workDir, whether or not it has been
 // loaded into a table yet.
 type Source struct {
-	Name      string    `json:"name"`
-	Ext       string    `json:"ext"`
-	SizeBytes int64     `json:"sizeBytes"`
-	ModTime   time.Time `json:"modTime"`
-	Loaded    bool      `json:"loaded"`
-	TableId   string    `json:"tableId,omitempty"`
+	Name      string        `json:"name"`
+	Ext       string        `json:"ext"`
+	SizeBytes int64         `json:"sizeBytes"`
+	ModTime   time.Time     `json:"modTime"`
+	Loaded    bool          `json:"loaded"`
+	TableId   string        `json:"tableId,omitempty"`
+	Layers    []SourceLayer `json:"layers,omitempty"`
+}
+
+// SourceLayer describes one layer of a multi-layer source (e.g. a
+// GeoPackage feature table), tracked independently since each layer loads
+// into its own table.
+type SourceLayer struct {
+	Name    string `json:"name"`
+	Loaded  bool   `json:"loaded"`
+	TableId string `json:"tableId,omitempty"`
 }
 
 // SourceService scans workDir for loadable files and imports them into
@@ -72,21 +92,44 @@ func (s *SourceService) Refresh() ([]Source, error) {
 			continue
 		}
 
-		tableId, isLoaded := loaded[entry.Name()]
-		sources = append(sources, Source{
+		source := Source{
 			Name:      entry.Name(),
 			Ext:       ext,
 			SizeBytes: info.Size(),
 			ModTime:   info.ModTime(),
-			Loaded:    isLoaded,
-			TableId:   tableId,
-		})
+		}
+		if ext == gpkgExt {
+			source.Layers = s.listLoadedLayers(entry.Name(), loaded)
+		} else {
+			source.TableId, source.Loaded = loaded[entry.Name()]
+		}
+		sources = append(sources, source)
 	}
 
 	s.mu.Lock()
 	s.sources = sources
 	s.mu.Unlock()
 	return sources, nil
+}
+
+// listLoadedLayers enumerates name's layers and cross-references each
+// against loaded (keyed the same way Load names a loaded layer's table), so
+// a multi-layer source's loaded state is tracked per layer. If the file's
+// layers can't be read (e.g. corrupt), it is still listed as a source, just
+// without layer info, rather than failing the whole Refresh.
+func (s *SourceService) listLoadedLayers(name string, loaded map[string]string) []SourceLayer {
+	path := filepath.Join(s.cfg.WorkDir, name)
+	layerNames, err := s.tableService.ListLayers(path)
+	if err != nil {
+		return nil
+	}
+
+	layers := make([]SourceLayer, len(layerNames))
+	for i, layerName := range layerNames {
+		tableId, isLoaded := loaded[name+layerSeparator+layerName]
+		layers[i] = SourceLayer{Name: layerName, Loaded: isLoaded, TableId: tableId}
+	}
+	return layers
 }
 
 // List returns the cache from the last Refresh — it never rescans the
@@ -137,8 +180,11 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 }
 
 // Load imports the source named name, which must match an entry in the
-// current cache (règle 15). Returns the newly created tableId.
-func (s *SourceService) Load(name string) (string, error) {
+// current cache (règle 15). For a multi-layer (.gpkg) source, layer must
+// name one of that source's cached layers — the file itself is never
+// loaded as a whole. For any other source, layer must be empty. Returns
+// the newly created tableId.
+func (s *SourceService) Load(name, layer string) (string, error) {
 	s.mu.RLock()
 	var found *Source
 	for i := range s.sources {
@@ -152,10 +198,36 @@ func (s *SourceService) Load(name string) (string, error) {
 	if found == nil {
 		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
 	}
-	if found.Loaded {
-		return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
+
+	if found.Ext != gpkgExt {
+		if layer != "" {
+			return "", fmt.Errorf("source %q does not support layer selection", name)
+		}
+		if found.Loaded {
+			return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
+		}
+		path := filepath.Join(s.cfg.WorkDir, found.Name)
+		return s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
+	}
+
+	if layer == "" {
+		return "", fmt.Errorf("source %q has multiple layers — specify one", name)
+	}
+	var foundLayer *SourceLayer
+	for i := range found.Layers {
+		if found.Layers[i].Name == layer {
+			foundLayer = &found.Layers[i]
+			break
+		}
+	}
+	if foundLayer == nil {
+		return "", fmt.Errorf("unknown layer %q for source %q — call /sources/refresh first", layer, name)
+	}
+	if foundLayer.Loaded {
+		return "", fmt.Errorf("layer %q of source %q already loaded (table %s)", layer, name, foundLayer.TableId)
 	}
 
 	path := filepath.Join(s.cfg.WorkDir, found.Name)
-	return s.tableService.ImportFromFile(found.Name, path, found.Ext)
+	tableName := found.Name + layerSeparator + layer
+	return s.tableService.ImportFromFile(tableName, path, found.Ext, layer)
 }

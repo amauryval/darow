@@ -40,7 +40,7 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	meta, err := a.GetMetadata(tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path)
+	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
 
 	require.NoError(t, err)
 	assert.True(t, isGeo)
@@ -61,7 +61,7 @@ func Test_Adapter_CreateFromFile_ReprojectsWithoutSwappingAxes(t *testing.T) {
 	meta, err := a.GetMetadata(tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path)
+	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
 	require.NoError(t, err)
 	require.True(t, isGeo)
 
@@ -90,7 +90,7 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	meta, err := a.GetMetadata(tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path)
+	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
 	require.NoError(t, err)
 	require.True(t, isGeo)
 	require.NoError(t, a.UpdateMetadata(tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
@@ -111,6 +111,55 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	assert.InDelta(t, 48.85, maxY, 0.01)
 }
 
+// multiLayerGpkgFixture is a hand-built 2-layer GeoPackage (layer_a: two
+// points, layer_b: one point) generated via Python's stdlib sqlite3 module
+// following the GeoPackage spec directly — DuckDB's spatial extension can
+// read but not write multi-layer GeoPackages (confirmed upstream
+// limitation), so it cannot generate its own multi-layer fixture.
+const multiLayerGpkgFixture = "testdata/multi_layer.gpkg"
+
+func Test_Adapter_ListLayers_SingleLayerSource(t *testing.T) {
+	a := setupAdapter(t)
+	path := writeGeoJSONFixture(t)
+
+	layers, err := a.ListLayers(path)
+
+	require.NoError(t, err)
+	assert.Len(t, layers, 1)
+}
+
+func Test_Adapter_ListLayers_MultiLayerGeoPackage(t *testing.T) {
+	a := setupAdapter(t)
+
+	layers, err := a.ListLayers(multiLayerGpkgFixture)
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"layer_a", "layer_b"}, layers)
+}
+
+func Test_Adapter_CreateFromFile_SelectsNamedLayer(t *testing.T) {
+	a := setupAdapter(t)
+
+	tableId, err := a.Create("layer_b", false, "")
+	require.NoError(t, err)
+	meta, err := a.GetMetadata(tableId)
+	require.NoError(t, err)
+
+	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, multiLayerGpkgFixture, "layer_b")
+
+	require.NoError(t, err)
+	assert.True(t, isGeo)
+	assert.Equal(t, "geom", geometryColumn)
+	count, err := a.RowsCount(tableId)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count)
+
+	var name string
+	query := fmt.Sprintf(`SELECT name FROM %s`, meta.PhysicalName)
+	require.NoError(t, a.QueryRow(query).Scan(&name))
+	assert.Equal(t, "nantes", name)
+}
+
 func Test_Adapter_CreateFromQuery(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
@@ -119,7 +168,7 @@ func Test_Adapter_CreateFromQuery(t *testing.T) {
 	require.NoError(t, err)
 	sourceMeta, err := a.GetMetadata(sourceId)
 	require.NoError(t, err)
-	_, _, err = a.CreateFromFile(sourceMeta.PhysicalName, path)
+	_, _, err = a.CreateFromFile(sourceMeta.PhysicalName, path, "")
 	require.NoError(t, err)
 
 	derivedId, err := a.Create("derived", false, "")

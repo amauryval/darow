@@ -55,6 +55,27 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 	w.Write(mvt)
 }
 
+// getGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed
+// on demand, never cached (règle 10) — a geometry column can mix types, and
+// this isn't a stored metadata field.
+//
+// @Summary List distinct geometry types present in a table
+// @Tags geo
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Success 200 {object} map[string][]string
+// @Router /tables/{tableId}/geometry-types [get]
+func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
+	meta := tableMetadataFromContext(req)
+
+	types, err := rt.geoService.GeometryTypes(meta.TableId)
+	if err != nil {
+		WriteError(w, err, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string][]string{"types": types})
+}
+
 // filterByBbox handles POST /tables/{tableId}/bbox.
 //
 // @Summary Filter row pkeys by bounding box

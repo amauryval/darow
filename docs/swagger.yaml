@@ -36,6 +36,10 @@ definitions:
     properties:
       ext:
         type: string
+      layers:
+        items:
+          $ref: '#/definitions/service.SourceLayer'
+        type: array
       loaded:
         type: boolean
       modTime:
@@ -44,6 +48,15 @@ definitions:
         type: string
       sizeBytes:
         type: integer
+      tableId:
+        type: string
+    type: object
+  service.SourceLayer:
+    properties:
+      loaded:
+        type: boolean
+      name:
+        type: string
       tableId:
         type: string
     type: object
@@ -75,6 +88,10 @@ paths:
         in: path
         name: name
         required: true
+        type: string
+      - description: Layer name (required for multi-layer sources)
+        in: query
+        name: layer
         type: string
       produces:
       - application/json
@@ -284,6 +301,28 @@ paths:
       summary: Export a table
       tags:
       - tables
+  /tables/{tableId}/geometry-types:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+      summary: List distinct geometry types present in a table
+      tags:
+      - geo
   /tables/{tableId}/rows:
     get:
       parameters:

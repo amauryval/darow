@@ -92,6 +92,17 @@ func Test_TableService_LoadedSourceNames(t *testing.T) {
 	assert.Equal(t, map[string]string{"buildings.geojson": "id-1", "roads.geojson": "id-2"}, names)
 }
 
+func Test_TableService_ListLayers(t *testing.T) {
+	svc, m := setupTableService(t)
+
+	m.On("ListLayers", "/data/regions.gpkg").Return([]string{"communes", "departements"}, nil).Once()
+
+	layers, err := svc.ListLayers("/data/regions.gpkg")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"communes", "departements"}, layers)
+}
+
 func Test_TableService_ImportFromFile(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -111,23 +122,38 @@ func Test_TableService_ImportFromFile(t *testing.T) {
 
 			if c.failCreate {
 				m.On("Create", "buildings.geojson", false, "").Return("", errors.New("boom")).Once()
-				_, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson")
+				_, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson", "")
 				assert.Error(t, err)
 				return
 			}
 
 			m.On("Create", "buildings.geojson", false, "").Return("id-1", nil).Once()
 			m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-			m.On("CreateFromFile", "t_id1", "/data/buildings.geojson").Return("geom", c.isGeo, nil).Once()
+			m.On("CreateFromFile", "t_id1", "/data/buildings.geojson", "").Return("geom", c.isGeo, nil).Once()
 			if c.wantUpdate {
 				m.On("UpdateMetadata", "id-1", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
 			}
 			m.On("RefreshDerivedMetadata", "id-1").Return(nil).Once()
 
-			tableId, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson")
+			tableId, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson", "")
 
 			require.NoError(t, err)
 			assert.Equal(t, "id-1", tableId)
 		})
 	}
+}
+
+func Test_TableService_ImportFromFile_ForwardsLayer(t *testing.T) {
+	svc, m := setupTableService(t)
+
+	m.On("Create", "regions.gpkg::communes", false, "").Return("id-1", nil).Once()
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
+	m.On("CreateFromFile", "t_id1", "/data/regions.gpkg", "communes").Return("geom", true, nil).Once()
+	m.On("UpdateMetadata", "id-1", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
+	m.On("RefreshDerivedMetadata", "id-1").Return(nil).Once()
+
+	tableId, err := svc.ImportFromFile("regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes")
+
+	require.NoError(t, err)
+	assert.Equal(t, "id-1", tableId)
 }

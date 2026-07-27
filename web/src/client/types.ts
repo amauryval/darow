@@ -11,6 +11,12 @@ export interface Metadata {
   srid: number;
 }
 
+export interface SourceLayer {
+  name: string;
+  loaded: boolean;
+  tableId?: string;
+}
+
 export interface Source {
   name: string;
   ext: string;
@@ -18,6 +24,7 @@ export interface Source {
   modTime: string;
   loaded: boolean;
   tableId?: string;
+  layers?: SourceLayer[];
 }
 
 export type RowValue = string | number | boolean | null;

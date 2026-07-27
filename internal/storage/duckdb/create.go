@@ -57,15 +57,22 @@ func (a *Adapter) createSpatialIndex(physicalName, geometryColumn string) error 
 // CreateFromFile materializes physicalName from a source file readable by
 // ST_Read (GeoJSON, Shapefile, CSV, GeoPackage). ST_Read only reads the
 // file — it never backs CRUD operations (règle 13) — so the result is
-// always a materialized table with a generated __pkey.
-func (a *Adapter) CreateFromFile(physicalName, sourcePath string) (string, bool, error) {
+// always a materialized table with a generated __pkey. layer selects one
+// layer of a multi-layer source (e.g. GeoPackage); pass "" for formats that
+// hold a single layer.
+func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
 	}
 
-	_, err := a.Exec(fmt.Sprintf(
-		`CREATE TABLE %s AS SELECT uuid()::TEXT AS __pkey, * FROM ST_Read(?)`, physicalName,
-	), sourcePath)
+	query := `CREATE TABLE %s AS SELECT uuid()::TEXT AS __pkey, * FROM ST_Read(?)`
+	args := []any{sourcePath}
+	if layer != "" {
+		query = `CREATE TABLE %s AS SELECT uuid()::TEXT AS __pkey, * FROM ST_Read(?, layer=?)`
+		args = append(args, layer)
+	}
+
+	_, err := a.Exec(fmt.Sprintf(query, physicalName), args...)
 	if err != nil {
 		return "", false, fmt.Errorf("reading source file: %w", err)
 	}
@@ -108,6 +115,30 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath string) (string, bool,
 	}
 
 	return geometryColumn, true, nil
+}
+
+// ListLayers returns the layer names sourcePath exposes to ST_Read, via
+// DuckDB's ST_Read_Meta. A single-layer source (GeoJSON, CSV, most
+// Shapefiles) still reports its one layer.
+func (a *Adapter) ListLayers(sourcePath string) ([]string, error) {
+	rows, err := a.Query(
+		`SELECT layer.name FROM (SELECT unnest(layers) AS layer FROM st_read_meta(?))`,
+		sourcePath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reading source metadata: %w", err)
+	}
+	defer rows.Close()
+
+	layers := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		layers = append(layers, name)
+	}
+	return layers, rows.Err()
 }
 
 // CreateFromQuery materializes physicalName from a caller-provided SELECT

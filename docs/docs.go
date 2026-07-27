@@ -106,6 +106,12 @@ const docTemplate = `{
                         "name": "name",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Layer name (required for multi-layer sources)",
+                        "name": "layer",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -364,6 +370,40 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/tables/{tableId}/geometry-types": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geo"
+                ],
+                "summary": "List distinct geometry types present in a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
                         }
                     }
                 }
@@ -698,6 +738,12 @@ const docTemplate = `{
                 "ext": {
                     "type": "string"
                 },
+                "layers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/service.SourceLayer"
+                    }
+                },
                 "loaded": {
                     "type": "boolean"
                 },
@@ -709,6 +755,20 @@ const docTemplate = `{
                 },
                 "sizeBytes": {
                     "type": "integer"
+                },
+                "tableId": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.SourceLayer": {
+            "type": "object",
+            "properties": {
+                "loaded": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
                 },
                 "tableId": {
                     "type": "string"

@@ -76,7 +76,7 @@ func Test_SourceService_Load(t *testing.T) {
 			tableSvc, _ := setupTableService(t)
 			svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
 
-			_, err := svc.Load(c.requestedName)
+			_, err := svc.Load(c.requestedName, "")
 
 			if c.wantErr {
 				assert.Error(t, err)
@@ -174,7 +174,7 @@ func Test_SourceService_Load_RejectsAlreadyLoaded(t *testing.T) {
 	_, err := svc.Refresh()
 	require.NoError(t, err)
 
-	_, err = svc.Load("buildings.geojson")
+	_, err = svc.Load("buildings.geojson", "")
 	assert.Error(t, err)
 }
 
@@ -196,11 +196,107 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 
 	m.On("Create", "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", "t_new", filepath.Join(dir, "buildings.geojson")).Return("", false, nil).Once()
+	m.On("CreateFromFile", "t_new", filepath.Join(dir, "buildings.geojson"), "").Return("", false, nil).Once()
 	m.On("RefreshDerivedMetadata", "id-new").Return(nil).Once()
 
-	tableId, err := svc.Load("buildings.geojson")
+	tableId, err := svc.Load("buildings.geojson", "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-new", tableId)
+}
+
+func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "buildings.geojson", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh()
+	require.NoError(t, err)
+
+	_, err = svc.Load("buildings.geojson", "some_layer")
+	assert.Error(t, err)
+}
+
+func Test_SourceService_Refresh_PopulatesGpkgLayers(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "regions.gpkg", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{"id-1"}, nil).Once()
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "regions.gpkg::communes"}, nil).Once()
+	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+
+	sources, err := svc.Refresh()
+
+	require.NoError(t, err)
+	require.Len(t, sources, 1)
+	assert.False(t, sources[0].Loaded)
+	assert.Empty(t, sources[0].TableId)
+	require.Len(t, sources[0].Layers, 2)
+	assert.Equal(t, SourceLayer{Name: "communes", Loaded: true, TableId: "id-1"}, sources[0].Layers[0])
+	assert.Equal(t, SourceLayer{Name: "departements", Loaded: false}, sources[0].Layers[1])
+}
+
+func Test_SourceService_Load_GpkgLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "regions.gpkg", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{}, nil).Once()
+	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+
+	_, err := svc.Refresh()
+	require.NoError(t, err)
+
+	m.On("Create", "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
+	m.On("GetMetadata", "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("CreateFromFile", "t_new", filepath.Join(dir, "regions.gpkg"), "communes").Return("geom", true, nil).Once()
+	m.On("UpdateMetadata", "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
+	m.On("RefreshDerivedMetadata", "id-new").Return(nil).Once()
+
+	tableId, err := svc.Load("regions.gpkg", "communes")
+
+	require.NoError(t, err)
+	assert.Equal(t, "id-new", tableId)
+}
+
+func Test_SourceService_Load_GpkgRequiresLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "regions.gpkg", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{}, nil).Once()
+	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes"}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+
+	_, err := svc.Refresh()
+	require.NoError(t, err)
+
+	_, err = svc.Load("regions.gpkg", "")
+	assert.Error(t, err)
 }

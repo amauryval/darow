@@ -162,12 +162,18 @@ func (m *Storage) GeometryTypes(tableId string) ([]string, error) {
 	return types, callArgs.Error(1)
 }
 
-func (m *Storage) CreateFromFile(physicalName, sourcePath string) (string, bool, error) {
-	callArgs := m.Called(physicalName, sourcePath)
+func (m *Storage) CreateFromFile(physicalName, sourcePath, layer string) (string, bool, error) {
+	callArgs := m.Called(physicalName, sourcePath, layer)
 	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
 }
 
 func (m *Storage) CreateFromQuery(physicalName, sourceQuery string) (string, bool, error) {
 	callArgs := m.Called(physicalName, sourceQuery)
 	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
+}
+
+func (m *Storage) ListLayers(sourcePath string) ([]string, error) {
+	callArgs := m.Called(sourcePath)
+	layers, _ := callArgs.Get(0).([]string)
+	return layers, callArgs.Error(1)
 }

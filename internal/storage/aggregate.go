@@ -5,8 +5,13 @@ package storage
 // and reports the resolved geometry column so the caller can persist it via
 // UpdateMetadata.
 type TableCreator interface {
-	CreateFromFile(physicalName, sourcePath string) (geometryColumn string, isGeo bool, err error)
+	CreateFromFile(physicalName, sourcePath, layer string) (geometryColumn string, isGeo bool, err error)
 	CreateFromQuery(physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
+
+	// ListLayers returns the names of every layer sourcePath exposes to
+	// ST_Read (e.g. a GeoPackage's feature tables), for formats that can
+	// hold more than one.
+	ListLayers(sourcePath string) ([]string, error)
 }
 
 // Storage aggregates every capability a service needs from the storage

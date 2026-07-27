@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"gogeoserver/internal/service"
 )
 
 // listSources handles GET /sources.
@@ -62,12 +64,30 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if _, err := rt.sourceService.Refresh(); err != nil {
+	sources, err := rt.sourceService.Refresh()
+	if err != nil {
 		WriteError(w, err, http.StatusInternalServerError)
 		return
 	}
 
-	tableId, err := rt.sourceService.Load(savedName)
+	var uploaded *service.Source
+	for i := range sources {
+		if sources[i].Name == savedName {
+			uploaded = &sources[i]
+			break
+		}
+	}
+	if uploaded != nil && len(uploaded.Layers) > 1 {
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(uploaded)
+		return
+	}
+
+	layer := ""
+	if uploaded != nil && len(uploaded.Layers) == 1 {
+		layer = uploaded.Layers[0].Name
+	}
+	tableId, err := rt.sourceService.Load(savedName, layer)
 	if err != nil {
 		WriteError(w, err, http.StatusBadRequest)
 		return
@@ -80,19 +100,22 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 
 // loadSource handles POST /sources/{name}/load. name is validated against
 // the cache by SourceService.Load itself (règle 15) — this handler does no
-// path validation of its own.
+// path validation of its own. layer selects one layer of a multi-layer
+// (.gpkg) source; required for those, rejected otherwise.
 //
 // @Summary Load a source file into a new table
 // @Tags sources
 // @Produce json
 // @Param name path string true "Source file name"
+// @Param layer query string false "Layer name (required for multi-layer sources)"
 // @Success 201 {object} map[string]string
 // @Failure 409 {object} ErrorResponse
 // @Router /sources/{name}/load [post]
 func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
+	layer := req.URL.Query().Get("layer")
 
-	tableId, err := rt.sourceService.Load(name)
+	tableId, err := rt.sourceService.Load(name, layer)
 	if err != nil {
 		WriteError(w, err, http.StatusConflict)
 		return

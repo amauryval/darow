@@ -14,6 +14,10 @@ const loadingName = ref<string | null>(null);
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+function layerKey(source: Source, layerName: string): string {
+  return `${source.name}::${layerName}`;
+}
+
 async function load() {
   loading.value = true;
   error.value = null;
@@ -38,18 +42,19 @@ async function refresh() {
   }
 }
 
-async function onLoad(source: Source) {
-  loadingName.value = source.name;
+async function onLoad(source: Source, layerName?: string) {
+  const key = layerName ? layerKey(source, layerName) : source.name;
+  loadingName.value = key;
   error.value = null;
   try {
-    await loadSource(source.name);
+    await loadSource(source.name, layerName);
     // refresh (not load): the backend's source cache only recomputes each
     // entry's `loaded` status on an explicit rescan (LoadedSourceNames is
     // read inside Refresh) — Load() itself never touches that cache, so a
     // plain re-fetch of the stale cache would still show "Non chargée".
     await refresh();
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : `Impossible de charger ${source.name}`;
+    error.value = e instanceof ApiError ? e.message : `Impossible de charger ${key}`;
   } finally {
     loadingName.value = null;
   }
@@ -66,8 +71,14 @@ async function onFileSelected(event: Event) {
   uploading.value = true;
   error.value = null;
   try {
-    const { tableId } = await uploadSource(file);
-    router.push(`/tables/${tableId}`);
+    const result = await uploadSource(file);
+    if ("tableId" in result) {
+      router.push(`/tables/${result.tableId}`);
+    } else {
+      // Multi-layer GeoPackage: no layer was auto-selected — show it in the
+      // list so the user can load a specific layer.
+      await refresh();
+    }
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : `Impossible de charger ${file.name}`;
   } finally {
@@ -126,38 +137,80 @@ onMounted(load);
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
-          <tr v-for="source in sources" :key="source.name">
-            <td class="px-4 py-2.5 font-medium text-slate-800">{{ source.name }}</td>
-            <td class="px-4 py-2.5 text-slate-500">{{ formatSize(source.sizeBytes) }}</td>
-            <td class="px-4 py-2.5">
-              <span
-                v-if="source.loaded"
-                class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-              >
-                Chargée
-              </span>
-              <span v-else class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                Non chargée
-              </span>
-            </td>
-            <td class="px-4 py-2.5 text-right">
-              <RouterLink
-                v-if="source.loaded && source.tableId"
-                :to="`/tables/${source.tableId}`"
-                class="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-              >
-                Voir la table
-              </RouterLink>
-              <button
-                v-else
-                class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                :disabled="loadingName === source.name"
-                @click="onLoad(source)"
-              >
-                {{ loadingName === source.name ? "Chargement..." : "Charger" }}
-              </button>
-            </td>
-          </tr>
+          <template v-for="source in sources" :key="source.name">
+            <tr v-if="!source.layers || source.layers.length === 0">
+              <td class="px-4 py-2.5 font-medium text-slate-800">{{ source.name }}</td>
+              <td class="px-4 py-2.5 text-slate-500">{{ formatSize(source.sizeBytes) }}</td>
+              <td class="px-4 py-2.5">
+                <span
+                  v-if="source.loaded"
+                  class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                >
+                  Chargée
+                </span>
+                <span v-else class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                  Non chargée
+                </span>
+              </td>
+              <td class="px-4 py-2.5 text-right">
+                <RouterLink
+                  v-if="source.loaded && source.tableId"
+                  :to="`/tables/${source.tableId}`"
+                  class="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                >
+                  Voir la table
+                </RouterLink>
+                <button
+                  v-else
+                  class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  :disabled="loadingName === source.name"
+                  @click="onLoad(source)"
+                >
+                  {{ loadingName === source.name ? "Chargement..." : "Charger" }}
+                </button>
+              </td>
+            </tr>
+            <template v-else>
+              <tr>
+                <td class="px-4 py-2.5 font-medium text-slate-800" colspan="2">{{ source.name }}</td>
+                <td class="px-4 py-2.5 text-xs text-slate-400" colspan="2">
+                  {{ source.layers.length }} couches — {{ formatSize(source.sizeBytes) }}
+                </td>
+              </tr>
+              <tr v-for="layer in source.layers" :key="layerKey(source, layer.name)">
+                <td class="px-4 py-2.5 pl-8 text-slate-700">{{ layer.name }}</td>
+                <td class="px-4 py-2.5"></td>
+                <td class="px-4 py-2.5">
+                  <span
+                    v-if="layer.loaded"
+                    class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                  >
+                    Chargée
+                  </span>
+                  <span v-else class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                    Non chargée
+                  </span>
+                </td>
+                <td class="px-4 py-2.5 text-right">
+                  <RouterLink
+                    v-if="layer.loaded && layer.tableId"
+                    :to="`/tables/${layer.tableId}`"
+                    class="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                  >
+                    Voir la table
+                  </RouterLink>
+                  <button
+                    v-else
+                    class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    :disabled="loadingName === layerKey(source, layer.name)"
+                    @click="onLoad(source, layer.name)"
+                  >
+                    {{ loadingName === layerKey(source, layer.name) ? "Chargement..." : "Charger" }}
+                  </button>
+                </td>
+              </tr>
+            </template>
+          </template>
           <tr v-if="!loading && sources.length === 0">
             <td colspan="4" class="px-4 py-8 text-center text-sm text-slate-400">Aucune source détectée.</td>
           </tr>

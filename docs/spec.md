@@ -187,8 +187,17 @@ type Source struct {
     Ext       string
     SizeBytes int64
     ModTime   time.Time
-    Loaded    bool      // true si déjà chargé en base
+    Loaded    bool      // true si déjà chargé en base (toujours false pour un .gpkg — 7.1)
     TableId   string    // renseigné uniquement si Loaded
+    Layers    []SourceLayer // peuplé uniquement pour un .gpkg (7.1)
+}
+
+// SourceLayer suit l'état de chargement d'une couche d'un .gpkg
+// indépendamment des autres — voir 7.1.
+type SourceLayer struct {
+    Name    string
+    Loaded  bool
+    TableId string
 }
 
 type SourceManager interface {
@@ -207,8 +216,9 @@ type SourceManager interface {
     // Load importe la source nommée. name DOIT correspondre à une entrée
     // du cache courant — jamais un chemin construit depuis la requête HTTP
     // sans être passé par ce cache (règle 15, protection contre la
-    // traversée de répertoire).
-    Load(name string) (tableId string, err error)
+    // traversée de répertoire). layer est requis pour un .gpkg (doit nommer
+    // une entrée de Source.Layers), rejeté sinon (7.1).
+    Load(name, layer string) (tableId string, err error)
 }
 ```
 
@@ -255,15 +265,13 @@ func (s *SourceService) Refresh() ([]Source, error) {
             continue
         }
 
-        tableId, isLoaded := loaded[entry.Name()]
-        sources = append(sources, Source{
-            Name:      entry.Name(),
-            Ext:       ext,
-            SizeBytes: info.Size(),
-            ModTime:   info.ModTime(),
-            Loaded:    isLoaded,
-            TableId:   tableId,
-        })
+        source := Source{Name: entry.Name(), Ext: ext, SizeBytes: info.Size(), ModTime: info.ModTime()}
+        if ext == ".gpkg" {
+            source.Layers = s.listLoadedLayers(entry.Name(), loaded) // 7.1
+        } else {
+            source.TableId, source.Loaded = loaded[entry.Name()]
+        }
+        sources = append(sources, source)
     }
 
     s.mu.Lock()
@@ -281,8 +289,10 @@ func (s *SourceService) List() []Source {
 // Load : name doit exister dans le cache (règle 15) — ReadDir ne renvoie
 // que des noms de fichiers simples, jamais de chemin avec séparateurs,
 // donc filepath.Join(workDir, name) reste borné à workDir par construction
-// une fois validé contre le cache.
-func (s *SourceService) Load(name string) (string, error) {
+// une fois validé contre le cache. Pour un .gpkg, layer doit nommer une
+// entrée de found.Layers (7.1) ; pour tout autre format, layer doit être
+// vide.
+func (s *SourceService) Load(name, layer string) (string, error) {
     s.mu.RLock()
     var found *Source
     for i := range s.sources {
@@ -296,12 +306,29 @@ func (s *SourceService) Load(name string) (string, error) {
     if found == nil {
         return "", fmt.Errorf("source inconnue %q — appeler /sources/refresh d'abord", name)
     }
-    if found.Loaded {
-        return "", fmt.Errorf("source %q déjà chargée (table %s)", name, found.TableId)
+
+    if found.Ext != ".gpkg" {
+        if layer != "" {
+            return "", fmt.Errorf("source %q ne supporte pas la sélection de couche", name)
+        }
+        if found.Loaded {
+            return "", fmt.Errorf("source %q déjà chargée (table %s)", name, found.TableId)
+        }
+        path := filepath.Join(s.cfg.WorkDir, found.Name)
+        return s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
     }
 
+    // .gpkg : layer requis, validé contre found.Layers (règle 15), jamais
+    // chargé "en entier" (7.1).
+    layerEntry := findLayer(found.Layers, layer)
+    if layerEntry == nil {
+        return "", fmt.Errorf("couche %q inconnue pour la source %q", layer, name)
+    }
+    if layerEntry.Loaded {
+        return "", fmt.Errorf("couche %q déjà chargée (table %s)", layer, layerEntry.TableId)
+    }
     path := filepath.Join(s.cfg.WorkDir, found.Name)
-    return s.tableService.ImportFromFile(found.Name, path, found.Ext)
+    return s.tableService.ImportFromFile(found.Name+"::"+layer, path, found.Ext, layer)
 }
 ```
 
@@ -784,20 +811,21 @@ func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
 |                   | `/tables/{tableId}`                   | DELETE      | Supprime une table + ses données                | `204: No Content`                     |
 | **Sources**       | `/sources`                            | GET         | Liste les fichiers de `workDir` en cache (chargés ou non) | `200: [{"name": "...", "loaded": true, ...}]` |
 |                   | `/sources/refresh`                    | POST        | Rescanne `workDir`, met à jour le cache         | `200: [{"name": "...", ...}]`         |
-|                   | `/sources/{name}/load`                | POST        | Charge la source nommée dans une nouvelle table | `201: {"tableId": "..."}`             |
+|                   | `/sources/{name}/load?layer=`         | POST        | Charge la source (ou une couche `.gpkg`) dans une nouvelle table | `201: {"tableId": "..."}` |
 | **Données**       | `/tables/{tableId}/rows`              | GET         | Liste les lignes (pagination)                   | `200: {"rows": [...], "total": 100, "limit": 100, "offset": 0}` |
 |                   | `/tables/{tableId}/rows`              | POST        | Ajoute une ou plusieurs lignes                  | `201: {"pkeys": ["...", ...]}`        |
 |                   | `/tables/{tableId}/rows/{pkey}`       | GET         | Récupère une ligne par pkey                     | `200: {"row": {...}}`                 |
 |                   | `/tables/{tableId}/rows/{pkey}`       | PATCH       | Met à jour une ligne                            | `200: {"row": {...}}`                 |
 |                   | `/tables/{tableId}/rows/{pkey}`       | DELETE      | Supprime une ligne                              | `204: No Content`                     |
 | **Géo (MVT)**     | `/tables/{tableId}/tiles/{z}/{x}/{y}` | GET         | Récupère une tuile MVT                          | `200: []byte (application/x-protobuf)`|
+|                   | `/tables/{tableId}/geometry-types`    | GET         | Types de géométrie distincts (règle 10)         | `200: {"types": ["POLYGON", ...]}`    |
 | **Géo (Requêtes)**| `/tables/{tableId}/bbox`              | POST        | Filtre les pkeys dans un bbox                   | `200: {"pkeys": ["...", ...]}`        |
 | **Schémas**       | `/tables/{tableId}/schema`            | GET         | Schéma de la table (colonnes + types)            | `200: {"columns": [{"name": "...", "type": "..."}]}` |
 |                   | `/tables/{tableId}/columns`           | POST        | Ajoute une colonne                              | `201: {"name": "...", "type": "..."}` |
 | **Dérivation**    | `/tables/{tableId}/derive`            | POST        | Crée une table à partir d'une requête `SELECT`  | `201: {"tableId": "..."}`             |
 | **Export**        | `/tables/{tableId}/export`            | GET         | Exporte la table en GeoJSON/CSV                 | `200: file`                           |
 
-Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source est déjà chargée (voir `SourceService.Load`, 3.2).
+Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source (ou, pour un `.gpkg`, la couche demandée) est déjà chargée, ou si `layer` est absent/inconnu pour un `.gpkg` (voir `SourceService.Load`, 3.2, et 7.1).
 
 ### 6.2 Router (`chi`)
 
@@ -878,11 +906,13 @@ func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 
 // loadSource implements POST /sources/{name}/load. name est validé contre
 // le cache par SourceService.Load lui-même (règle 15) — le handler ne fait
-// aucune validation de chemin ici, ce n'est pas sa responsabilité.
+// aucune validation de chemin ici, ce n'est pas sa responsabilité. layer
+// (query param) sélectionne une couche pour un .gpkg (7.1).
 func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
     name := chi.URLParam(req, "name")
+    layer := req.URL.Query().Get("layer")
 
-    tableId, err := rt.sourceService.Load(name)
+    tableId, err := rt.sourceService.Load(name, layer)
     if err != nil {
         WriteError(w, err, http.StatusConflict)
         return
@@ -968,7 +998,7 @@ func WriteError(w http.ResponseWriter, err error, code int) {
 
 ## 7. Chargement de données (`SourceService.Load`)
 
-`SourceService.Load` (section 3.2) appelle `TableService.ImportFromFile(name, path, ext)` avec un chemin déjà résolu et validé dans `workDir`.
+`SourceService.Load` (section 3.2) appelle `TableService.ImportFromFile(name, path, ext, layer)` avec un chemin déjà résolu et validé dans `workDir` — `layer` reste vide hors GeoPackage (7.1).
 
 `ST_Read` est un mécanisme de **lecture** du fichier source, jamais un mode de stockage : il ne permet ni `AddColumn`, ni `Update`/`InsertRow`/`Remove` fiables, ni `__pkey`. La table doit toujours être matérialisée (règle 13) :
 
@@ -990,6 +1020,22 @@ CREATE INDEX idx_t_a1b2c3_geom ON t_a1b2c3 USING RTREE (geom);
 
 1. **Nom de la colonne géométrique variable selon le format source** (souvent `geom`, parfois `wkb_geometry` selon Shapefile/GeoPackage/GeoJSON). Inspecter après chargement (`DESCRIBE t_a1b2c3`), stocker dans `metadata.geometryColumn` — ne jamais supposer un nom fixe.
 2. **SRID.** `Tile()` compare en Web Mercator (EPSG:3857). Si la donnée source est en 4326 (GeoJSON standard) ou autre SRID, reprojeter au chargement (`ST_Transform(geom, 'EPSG:4326', 'EPSG:3857')`) — choix par défaut si les données servent surtout au rendu carte. Reprojection à la volée dans `Tile()` uniquement si l'usage hors-carte de la précision native est explicitement demandé.
+
+### 7.1 Sources multi-couches (GeoPackage)
+
+Un GeoPackage (`.gpkg`) peut contenir plusieurs couches (tables de features distinctes). `ST_Read` ne lit qu'une seule couche par appel — celle passée en paramètre nommé `layer`, ou la première par défaut si omis :
+
+```sql
+SELECT * FROM ST_Read('/data/sources/regions.gpkg', layer='communes');
+```
+
+Les couches disponibles se découvrent via `ST_Read_Meta`, qui expose un champ `layers` (liste de structs, dont `name`) sans matérialiser aucune donnée :
+
+```sql
+SELECT layer.name FROM (SELECT unnest(layers) AS layer FROM st_read_meta('/data/sources/regions.gpkg'));
+```
+
+Un `.gpkg` n'est donc jamais « chargé » comme un tout : chaque couche se charge indépendamment dans sa propre table via `ImportFromFile(name, path, ext, layer)`, avec `name` composé comme `"<fichier>::<couche>"` pour distinguer les tables issues d'un même fichier. `Source.Layers` (un `SourceLayer{Name, Loaded, TableId}` par couche) remplace, pour ce format, l'état `Loaded`/`TableId` au niveau du fichier — chaque couche a son propre statut de chargement, sans état global pour le fichier entier.
 
 ---
 

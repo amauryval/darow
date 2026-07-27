@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import maplibregl, { Map, type LngLatBoundsLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { getGeometryTypes } from "../client/geo";
 
 const props = defineProps<{
   tableId: string;
@@ -24,33 +25,55 @@ function parseBbox(bbox: string): LngLatBoundsLike | null {
   ];
 }
 
-function addTableLayer(m: Map) {
+// A geometry column can mix types (règle 10) — classify by substring so
+// POINT/MULTIPOINT, LINESTRING/MULTILINESTRING and POLYGON/MULTIPOLYGON
+// all match, and only the layer(s) matching what's actually present get
+// added, instead of always drawing fill+line+circle regardless of type.
+function classifyGeometryTypes(types: string[]) {
+  return {
+    hasPolygon: types.some((t) => t.includes("POLYGON")),
+    hasLine: types.some((t) => t.includes("LINESTRING")),
+    hasPoint: types.some((t) => t.includes("POINT")),
+  };
+}
+
+async function addTableLayer(m: Map) {
   const sourceId = `table-${props.tableId}`;
   m.addSource(sourceId, {
     type: "vector",
     tiles: [`${location.origin}/tables/${props.tableId}/tiles/{z}/{x}/{y}`],
   });
-  m.addLayer({
-    id: `${sourceId}-fill`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "layer",
-    paint: { "fill-color": "#6366f1", "fill-opacity": 0.35 },
-  });
-  m.addLayer({
-    id: `${sourceId}-line`,
-    type: "line",
-    source: sourceId,
-    "source-layer": "layer",
-    paint: { "line-color": "#4338ca", "line-width": 1.5 },
-  });
-  m.addLayer({
-    id: `${sourceId}-point`,
-    type: "circle",
-    source: sourceId,
-    "source-layer": "layer",
-    paint: { "circle-color": "#4338ca", "circle-radius": 4, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 },
-  });
+
+  const { types } = await getGeometryTypes(props.tableId).catch(() => ({ types: [] as string[] }));
+  const { hasPolygon, hasLine, hasPoint } = classifyGeometryTypes(types);
+
+  if (hasPolygon) {
+    m.addLayer({
+      id: `${sourceId}-fill`,
+      type: "fill",
+      source: sourceId,
+      "source-layer": "layer",
+      paint: { "fill-color": "#6366f1", "fill-opacity": 0.35 },
+    });
+  }
+  if (hasPolygon || hasLine) {
+    m.addLayer({
+      id: `${sourceId}-line`,
+      type: "line",
+      source: sourceId,
+      "source-layer": "layer",
+      paint: { "line-color": "#4338ca", "line-width": 1.5 },
+    });
+  }
+  if (hasPoint) {
+    m.addLayer({
+      id: `${sourceId}-point`,
+      type: "circle",
+      source: sourceId,
+      "source-layer": "layer",
+      paint: { "circle-color": "#4338ca", "circle-radius": 4, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 },
+    });
+  }
 }
 
 onMounted(() => {

@@ -166,10 +166,17 @@ func (s *TableService) LoadedSourceNames() (map[string]string, error) {
 	return names, nil
 }
 
+// ListLayers returns the layer names a source file exposes, used by
+// SourceService.Refresh to populate Source.Layers for multi-layer formats.
+func (s *TableService) ListLayers(path string) ([]string, error) {
+	return s.storage.ListLayers(path)
+}
+
 // ImportFromFile registers a new table from a source file: it creates the
 // metadata row, materializes the physical table via ST_Read, resolves the
-// geometry column and SRID, and refreshes derived metadata.
-func (s *TableService) ImportFromFile(name, path, ext string) (string, error) {
+// geometry column and SRID, and refreshes derived metadata. layer selects
+// one layer of a multi-layer source (e.g. GeoPackage); pass "" otherwise.
+func (s *TableService) ImportFromFile(name, path, ext, layer string) (string, error) {
 	tableId, err := s.storage.Create(name, false, "")
 	if err != nil {
 		return "", err
@@ -180,7 +187,7 @@ func (s *TableService) ImportFromFile(name, path, ext string) (string, error) {
 		return "", err
 	}
 
-	geometryColumn, isGeo, err := s.storage.CreateFromFile(meta.PhysicalName, path)
+	geometryColumn, isGeo, err := s.storage.CreateFromFile(meta.PhysicalName, path, layer)
 	if err != nil {
 		return "", fmt.Errorf("importing %q: %w", name, err)
 	}
