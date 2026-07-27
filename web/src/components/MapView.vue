@@ -42,6 +42,7 @@ async function addTableLayer(m: Map) {
   m.addSource(sourceId, {
     type: "vector",
     tiles: [`${location.origin}/tables/${props.tableId}/tiles/{z}/{x}/{y}`],
+    //bounds: // TODO
   });
 
   const { types } = await getGeometryTypes(props.tableId).catch(() => ({ types: [] as string[] }));
