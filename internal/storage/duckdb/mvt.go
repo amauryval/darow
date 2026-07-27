@@ -29,20 +29,23 @@ func (a *Adapter) Tile(tableId string, zoom, x, y int) ([]byte, error) {
 	// safe filter that can only drop otherwise-broken features, never a
 	// valid one.
 	query := fmt.Sprintf(`
+        WITH tile AS (
+            SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
+        )
         SELECT ST_AsMVT(
             {geom: mvt_geom, pkey: pkey},
             'layer'
         ) AS mvt
         FROM (
-            SELECT TRY(ST_AsMVTGeom(%s, ST_Extent(ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER))), 4096, 256, true)) AS mvt_geom, __pkey AS pkey
-            FROM %s
-            WHERE ST_Intersects(%s, ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)))
+            SELECT TRY(ST_AsMVTGeom(%s, ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey
+            FROM %s, tile
+            WHERE ST_Intersects_Extent(%s, tile.envelope)
         )
         WHERE mvt_geom IS NOT NULL
     `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
 
 	var mvt []byte
-	err = a.QueryRow(query, zoom, x, y, zoom, x, y).Scan(&mvt)
+	err = a.QueryRow(query, zoom, x, y).Scan(&mvt)
 	return mvt, err
 }
 

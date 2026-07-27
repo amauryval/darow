@@ -51,7 +51,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 	// the round trip for a client/CDN that already has the tile. Short
 	// max-age since a tile changes as soon as the next write lands.
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
 	w.Write(mvt)
 }
 
