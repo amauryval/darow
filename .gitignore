@@ -1,0 +1,13 @@
+bin/server
+cmd/.DS_Store
+
+web/node_modules/
+web/tsconfig.tsbuildinfo
+# Real build output (mise run ui-build) lands in internal/webui/dist since
+# go:embed paths are relative to the embedding package — never committed;
+# index.html is kept as a tracked placeholder so `go:embed` always has at
+# least one file on a fresh clone, before the UI has been built.
+internal/webui/dist/*
+!internal/webui/dist/index.html
+data/geo.db
+data/sources/*.gpkg

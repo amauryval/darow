@@ -1,0 +1,16 @@
+# config.yaml — valeurs par défaut, surchargeables par variables d'environnement
+# ou par argument de ligne de commande pour workDir (voir docs/spec.md 2.3).
+server:
+  port: 8080
+
+duckdb:
+  path: "./data/geo.db"
+
+sources:
+  workDir: "./data/sources"
+  maxSizeBytes: 104857600 # 100 Mo — fichier au-delà exclu de la liste chargeable
+  allowedExtensions: [".geojson", ".shp", ".csv", ".gpkg"]
+
+api:
+  defaultRowLimit: 100
+  maxRowLimit: 1000

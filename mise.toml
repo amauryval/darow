@@ -1,0 +1,61 @@
+[tools]
+go = "1.26.4"
+node = "22"
+"go:github.com/swaggo/swag/cmd/swag" = "1.16.6"
+
+[env]
+_.path = ["./bin"]
+# Overrides a stale CGO_LDFLAGS exported by this machine's ~/.bashrc (points
+# at a scratchpad from an unrelated project) that breaks cgo linking for
+# the duckdb driver.
+CGO_LDFLAGS = ""
+
+[tasks.test]
+description = "Run all Go tests"
+run = "go test ./..."
+
+[tasks."test-race"]
+description = "Run all Go tests with the race detector"
+run = "go test ./... -race"
+
+[tasks.lint]
+description = "Run go vet and gofmt checks"
+run = """
+go vet ./...
+gofmt -l .
+"""
+
+[tasks.docs]
+description = "Regenerate Swagger docs (docs/docs.go) from handler annotations"
+run = "swag init -g cmd/server/main.go -o docs"
+sources = ["internal/router/**/*.go", "cmd/server/main.go"]
+outputs = ["docs/docs.go", "docs/swagger.json", "docs/swagger.yaml"]
+
+[tasks."ui-install"]
+description = "Install web UI dependencies"
+dir = "web"
+run = "npm install"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks."ui-build"]
+description = "Build the web UI into internal/webui/dist (embedded by go:embed)"
+dir = "web"
+depends = ["ui-install"]
+run = "npm run build"
+
+[tasks."ui-dev"]
+description = "Run the web UI dev server (proxies /tables, /sources to :8080)"
+dir = "web"
+depends = ["ui-install"]
+run = "npm run dev"
+
+[tasks.build]
+description = "Build the server binary"
+depends = ["docs", "ui-build"]
+run = "go build -o bin/server ./cmd/server"
+
+[tasks."run-dev"]
+description = "Run the server against config.yaml"
+depends = ["docs", "ui-build"]
+run = "go run ./cmd/server"

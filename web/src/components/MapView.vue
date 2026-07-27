@@ -1,0 +1,108 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted, ref, watch } from "vue";
+import maplibregl, { Map, type LngLatBoundsLike } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+
+const props = defineProps<{
+  tableId: string;
+  bbox?: string;
+}>();
+
+const container = ref<HTMLDivElement | null>(null);
+let map: Map | null = null;
+
+// Metadata.bbox is reported as "minX,minY,maxX,maxY" in EPSG:4326 (the
+// server reprojects it from the geometry column's storage SRID) so it
+// can be handed to fitBounds directly.
+function parseBbox(bbox: string): LngLatBoundsLike | null {
+  const parts = bbox.split(",").map(Number);
+  if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
+  const [minX, minY, maxX, maxY] = parts;
+  return [
+    [minX, minY],
+    [maxX, maxY],
+  ];
+}
+
+function addTableLayer(m: Map) {
+  const sourceId = `table-${props.tableId}`;
+  m.addSource(sourceId, {
+    type: "vector",
+    tiles: [`${location.origin}/tables/${props.tableId}/tiles/{z}/{x}/{y}`],
+  });
+  m.addLayer({
+    id: `${sourceId}-fill`,
+    type: "fill",
+    source: sourceId,
+    "source-layer": "layer",
+    paint: { "fill-color": "#6366f1", "fill-opacity": 0.35 },
+  });
+  m.addLayer({
+    id: `${sourceId}-line`,
+    type: "line",
+    source: sourceId,
+    "source-layer": "layer",
+    paint: { "line-color": "#4338ca", "line-width": 1.5 },
+  });
+  m.addLayer({
+    id: `${sourceId}-point`,
+    type: "circle",
+    source: sourceId,
+    "source-layer": "layer",
+    paint: { "circle-color": "#4338ca", "circle-radius": 4, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 },
+  });
+}
+
+onMounted(() => {
+  if (!container.value) return;
+
+  map = new maplibregl.Map({
+    container: container.value,
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: "raster",
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution: "© OpenStreetMap contributors",
+        },
+      },
+      layers: [{ id: "osm", type: "raster", source: "osm" }],
+    },
+    center: [0, 0],
+    zoom: 1,
+  });
+
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  map.on("load", () => {
+    if (!map) return;
+    addTableLayer(map);
+
+    const bounds = props.bbox ? parseBbox(props.bbox) : null;
+    if (bounds) {
+      map.fitBounds(bounds, { padding: 32, animate: false });
+    }
+  });
+});
+
+onUnmounted(() => {
+  map?.remove();
+  map = null;
+});
+
+watch(
+  () => props.bbox,
+  (bbox) => {
+    const bounds = bbox ? parseBbox(bbox) : null;
+    if (bounds && map) {
+      map.fitBounds(bounds, { padding: 32, animate: false });
+    }
+  },
+);
+</script>
+
+<template>
+  <div ref="container" class="h-full w-full rounded-lg" />
+</template>

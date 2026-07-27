@@ -1,0 +1,468 @@
+basePath: /
+definitions:
+  router.ErrorResponse:
+    properties:
+      code:
+        type: integer
+      error:
+        type: string
+      message:
+        type: string
+    type: object
+  router.metadataDTO:
+    properties:
+      bbox:
+        type: string
+      createdAt:
+        type: string
+      geometryColumn:
+        type: string
+      isGeo:
+        type: boolean
+      physicalName:
+        type: string
+      rowCount:
+        type: integer
+      srid:
+        type: integer
+      tableId:
+        type: string
+      tableName:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  service.Source:
+    properties:
+      ext:
+        type: string
+      loaded:
+        type: boolean
+      modTime:
+        type: string
+      name:
+        type: string
+      sizeBytes:
+        type: integer
+      tableId:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT,
+    dérivation.
+  title: GeoAPI
+  version: "1.0"
+paths:
+  /sources:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/service.Source'
+            type: array
+      summary: List cached sources
+      tags:
+      - sources
+  /sources/{name}/load:
+    post:
+      parameters:
+      - description: Source file name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Load a source file into a new table
+      tags:
+      - sources
+  /sources/refresh:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/service.Source'
+            type: array
+      summary: Rescan workDir
+      tags:
+      - sources
+  /sources/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Upload a file and load it into a new table
+      tags:
+      - sources
+  /tables:
+    get:
+      description: Liste toutes les tables avec leurs métadonnées
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/router.metadataDTO'
+            type: array
+      summary: List tables
+      tags:
+      - tables
+  /tables/{tableId}:
+    delete:
+      description: Supprime une table et ses données
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Delete a table
+      tags:
+      - tables
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/router.metadataDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Get table metadata
+      tags:
+      - tables
+  /tables/{tableId}/bbox:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+      summary: Filter row pkeys by bounding box
+      tags:
+      - geo
+  /tables/{tableId}/columns:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Add a column
+      tags:
+      - tables
+  /tables/{tableId}/derive:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Source table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Derive a table from a SELECT query
+      tags:
+      - tables
+  /tables/{tableId}/export:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: csv or geojson
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Export a table
+      tags:
+      - tables
+  /tables/{tableId}/rows:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List rows
+      tags:
+      - rows
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Add one or more rows
+      tags:
+      - rows
+  /tables/{tableId}/rows/{pkey}:
+    delete:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Row primary key
+        in: path
+        name: pkey
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Delete a row
+      tags:
+      - rows
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Row primary key
+        in: path
+        name: pkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Get a row by pkey
+      tags:
+      - rows
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Row primary key
+        in: path
+        name: pkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Update a row
+      tags:
+      - rows
+  /tables/{tableId}/schema:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get table schema
+      tags:
+      - tables
+  /tables/{tableId}/tiles/{z}/{x}/{y}:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Zoom level
+        in: path
+        name: z
+        required: true
+        type: integer
+      - description: Tile X
+        in: path
+        name: x
+        required: true
+        type: integer
+      - description: Tile Y
+        in: path
+        name: "y"
+        required: true
+        type: integer
+      produces:
+      - application/x-protobuf
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      summary: Get an MVT tile
+      tags:
+      - geo
+swagger: "2.0"

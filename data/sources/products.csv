@@ -1,0 +1,11 @@
+sku,name,category,price,stock
+SKU-001,Wireless Mouse,Electronics,19.99,142
+SKU-002,Mechanical Keyboard,Electronics,79.90,58
+SKU-003,USB-C Cable 1m,Electronics,7.50,320
+SKU-004,Notebook A5,Office,3.20,410
+SKU-005,Ballpoint Pen Pack,Office,4.75,265
+SKU-006,Standing Desk,Furniture,349.00,12
+SKU-007,Ergonomic Chair,Furniture,215.50,27
+SKU-008,Desk Lamp,Furniture,34.99,89
+SKU-009,Water Bottle,Lifestyle,12.00,176
+SKU-010,Backpack,Lifestyle,45.00,64
