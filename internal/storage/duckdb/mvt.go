@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"fmt"
 
 	"gogeoserver/internal/storage"
@@ -8,7 +9,8 @@ import (
 
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
 // validated before interpolation (règle 1); zoom/x/y are bound parameters.
-func (a *Adapter) Tile(tableId string, zoom, x, y int) ([]byte, error) {
+// Stops early if ctx is cancelled.
+func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
 	meta, err := a.GetMetadata(tableId)
 	if err != nil {
 		return nil, err
@@ -45,7 +47,7 @@ func (a *Adapter) Tile(tableId string, zoom, x, y int) ([]byte, error) {
     `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
 
 	var mvt []byte
-	err = a.QueryRow(query, zoom, x, y).Scan(&mvt)
+	err = a.QueryRowContext(ctx, query, zoom, x, y).Scan(&mvt)
 	return mvt, err
 }
 

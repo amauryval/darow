@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,10 +21,22 @@ func Test_Adapter_Tile(t *testing.T) {
 	a := setupAdapter(t)
 	tableId, _ := createGeoTableWithPoint(t, a)
 
-	mvt, err := a.Tile(tableId, 0, 0, 0)
+	mvt, err := a.Tile(context.Background(), tableId, 0, 0, 0)
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
+}
+
+func Test_Adapter_Tile_StopsOnCancelledContext(t *testing.T) {
+	a := setupAdapter(t)
+	tableId, _ := createGeoTableWithPoint(t, a)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.Tile(ctx, tableId, 0, 0, 0)
+
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func Test_Adapter_FilterByBbox(t *testing.T) {

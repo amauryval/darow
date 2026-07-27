@@ -167,7 +167,7 @@ func Test_Router_GetTile(t *testing.T) {
 	handler, m := setupRouter(t)
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
-	m.On("Tile", "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
+	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
 

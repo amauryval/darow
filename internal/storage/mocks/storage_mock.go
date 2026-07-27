@@ -1,6 +1,7 @@
 package mocks
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/stretchr/testify/mock"
@@ -138,8 +139,8 @@ func (m *Storage) BulkInsert(tableId string, rows []map[string]any) ([]string, e
 	return pkeys, callArgs.Error(1)
 }
 
-func (m *Storage) Tile(tableId string, zoom, x, y int) ([]byte, error) {
-	callArgs := m.Called(tableId, zoom, x, y)
+func (m *Storage) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
+	callArgs := m.Called(ctx, tableId, zoom, x, y)
 	tile, _ := callArgs.Get(0).([]byte)
 	return tile, callArgs.Error(1)
 }

@@ -1,6 +1,9 @@
 package storage
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Metadata holds config fields (set once, changed only via UpdateMetadata)
 // and derived fields (RowCount, Bbox — recomputed by RefreshDerivedMetadata
@@ -88,7 +91,9 @@ type TableWriter interface {
 // table is geo and which column holds its geometry lives in MetadataReader,
 // the single source of truth.
 type GeoTableManager interface {
-	Tile(tableId string, zoom, x, y int) ([]byte, error)
+	// Tile stops early if ctx is cancelled (e.g. a MapLibre client
+	// aborting a request for a zoom level it has since scrolled past).
+	Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error)
 	FilterByBbox(tableId string, bbox [4]float64) ([]string, error)
 	GeometryTypes(tableId string) ([]string, error)
 

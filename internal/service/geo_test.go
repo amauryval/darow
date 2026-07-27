@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -22,13 +23,13 @@ func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
 	geoSvc, m, _ := setupGeoService(t)
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
-	m.On("Tile", "id-1", 1, 2, 3).Return([]byte("mvt-data"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("mvt-data"), nil).Once()
 
-	tile, err := geoSvc.GetTile("id-1", 1, 2, 3)
+	tile, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("mvt-data"), tile)
 
-	tile2, err := geoSvc.GetTile("id-1", 1, 2, 3)
+	tile2, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("mvt-data"), tile2)
 }
@@ -37,9 +38,9 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	geoSvc, m, tableSvc := setupGeoService(t)
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
-	m.On("Tile", "id-1", 1, 2, 3).Return([]byte("old"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("old"), nil).Once()
 
-	tile, err := geoSvc.GetTile("id-1", 1, 2, 3)
+	tile, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("old"), tile)
 
@@ -48,9 +49,9 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	tableSvc.invalidateMetadataCache("id-1")
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, nil).Once()
-	m.On("Tile", "id-1", 1, 2, 3).Return([]byte("new"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("new"), nil).Once()
 
-	tile2, err := geoSvc.GetTile("id-1", 1, 2, 3)
+	tile2, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("new"), tile2)
 }

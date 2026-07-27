@@ -41,7 +41,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	mvt, err := rt.geoService.GetTile(meta.TableId, z, x, y)
+	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y)
 	if err != nil {
 		WriteError(w, err, http.StatusInternalServerError)
 		return

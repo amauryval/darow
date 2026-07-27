@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/patrickmn/go-cache"
@@ -27,7 +28,7 @@ func NewGeoService(storage storage.GeoTableManager, tableSvc *TableService, tile
 // RefreshDerivedMetadata, règle 9) automatically invalidates tiles from
 // the previous version, with no separate invalidation mechanism
 // (règle 20).
-func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
+func (g *GeoService) GetTile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
 	meta, err := g.tableSvc.GetMetadata(tableId)
 	if err != nil {
 		return nil, err
@@ -38,7 +39,7 @@ func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
 		return val.([]byte), nil
 	}
 
-	mvt, err := g.storage.Tile(tableId, zoom, x, y)
+	mvt, err := g.storage.Tile(ctx, tableId, zoom, x, y)
 	if err != nil {
 		return nil, err
 	}

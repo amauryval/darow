@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -88,6 +89,12 @@ func (a *Adapter) Query(query string, args ...any) (*sql.Rows, error) {
 // QueryRow runs a read-only query expected to return at most one row.
 func (a *Adapter) QueryRow(query string, args ...any) *sql.Row {
 	return a.db.QueryRow(query, args...)
+}
+
+// QueryRowContext runs a read-only query expected to return at most one
+// row, interrupting it in DuckDB if ctx is cancelled before it completes.
+func (a *Adapter) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return a.db.QueryRowContext(ctx, query, args...)
 }
 
 // Exec runs a write statement, serialized against every other write

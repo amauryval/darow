@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import maplibregl, { Map, type LngLatBoundsLike } from "maplibre-gl";
+import maplibregl, { Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { getGeometryTypes } from "../client/geo";
+import { getGeometryTypes, tileUrl } from "../client/geo";
 
 const props = defineProps<{
   tableId: string;
@@ -15,14 +15,10 @@ let map: Map | null = null;
 // Metadata.bbox is reported as "minX,minY,maxX,maxY" in EPSG:4326 (the
 // server reprojects it from the geometry column's storage SRID) so it
 // can be handed to fitBounds directly.
-function parseBbox(bbox: string): LngLatBoundsLike | null {
+function parseBbox(bbox: string): [number, number, number, number] | null {
   const parts = bbox.split(",").map(Number);
   if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
-  const [minX, minY, maxX, maxY] = parts;
-  return [
-    [minX, minY],
-    [maxX, maxY],
-  ];
+  return parts as [number, number, number, number];
 }
 
 // A geometry column can mix types (règle 10) — classify by substring so
@@ -39,10 +35,11 @@ function classifyGeometryTypes(types: string[]) {
 
 async function addTableLayer(m: Map) {
   const sourceId = `table-${props.tableId}`;
+  const bounds = props.bbox ? parseBbox(props.bbox) : null;
   m.addSource(sourceId, {
     type: "vector",
-    tiles: [`${location.origin}/tables/${props.tableId}/tiles/{z}/{x}/{y}`],
-    //bounds: // TODO
+    tiles: [`${location.origin}${tileUrl(props.tableId)}`],
+    ...(bounds ? { bounds } : {}),
   });
 
   const { types } = await getGeometryTypes(props.tableId).catch(() => ({ types: [] as string[] }));
