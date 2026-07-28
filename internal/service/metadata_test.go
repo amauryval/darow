@@ -1,0 +1,88 @@
+package service
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/patrickmn/go-cache"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/mocks"
+)
+
+func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage) {
+	m := &mocks.Storage{}
+	svc := NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	t.Cleanup(func() { m.AssertExpectations(t) })
+	return svc, m
+}
+
+func Test_MetadataService_GetMetadata(t *testing.T) {
+	cases := []struct {
+		name        string
+		cacheHits   int
+		failStorage bool
+		wantErr     bool
+	}{
+		{name: "fetches from storage on miss then caches", cacheHits: 2},
+		{name: "storage error propagates", failStorage: true, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m := setupMetadataService(t)
+
+			if c.failStorage {
+				m.On("GetMetadata", "id-1").Return((*storage.Metadata)(nil), errors.New("boom")).Once()
+				_, err := svc.GetMetadata("id-1")
+				assert.Error(t, err)
+				return
+			}
+
+			m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+			for i := 0; i < c.cacheHits; i++ {
+				meta, err := svc.GetMetadata("id-1")
+				require.NoError(t, err)
+				assert.Equal(t, "id-1", meta.TableId)
+			}
+		})
+	}
+}
+
+func Test_MetadataService_ListTables(t *testing.T) {
+	svc, m := setupMetadataService(t)
+
+	m.On("TableIds").Return([]string{"id-1", "id-2"}, nil).Once()
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", "id-2").Return(&storage.Metadata{TableId: "id-2"}, nil).Once()
+
+	tables, err := svc.ListTables()
+
+	require.NoError(t, err)
+	assert.Len(t, tables, 2)
+}
+
+func Test_MetadataService_RemoveTable(t *testing.T) {
+	svc, m := setupMetadataService(t)
+
+	m.On("Remove", "id-1").Return(nil).Once()
+
+	err := svc.RemoveTable("id-1")
+
+	require.NoError(t, err)
+}
+
+func Test_MetadataService_Rollback_ReportsOriginalErrorWhenCleanupAlsoFails(t *testing.T) {
+	svc, m := setupMetadataService(t)
+
+	m.On("Remove", "id-1").Return(errors.New("db locked")).Once()
+
+	err := svc.Rollback("id-1", errors.New("corrupt file"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "corrupt file")
+	assert.Contains(t, err.Error(), "db locked")
+}

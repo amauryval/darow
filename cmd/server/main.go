@@ -51,9 +51,14 @@ func main() {
 		log.Fatalf("sources workDir: %v", err)
 	}
 
-	tableService := service.NewTableService(storageAdapter, cache.New(5*time.Minute, 10*time.Minute))
-	geoService := service.NewGeoService(storageAdapter, tableService, cache.New(5*time.Minute, 10*time.Minute))
-	sourceService := service.NewSourceService(cfg.Sources, tableService)
+	metadataService := service.NewMetadataService(storageAdapter, cache.New(5*time.Minute, 10*time.Minute))
+	rowService := service.NewRowService(storageAdapter, metadataService)
+	schemaService := service.NewSchemaService(storageAdapter)
+	deriveService := service.NewDeriveService(metadataService, storageAdapter)
+	importService := service.NewImportService(metadataService, storageAdapter)
+	geoService := service.NewGeoService(storageAdapter, metadataService, cache.New(5*time.Minute, 10*time.Minute))
+	sourceService := service.NewSourceService(cfg.Sources, importService)
+	exportService := service.NewExportService(rowService, geoService)
 
 	if _, err := sourceService.Refresh(); err != nil {
 		log.Fatalf("initial source scan: %v", err)
@@ -64,7 +69,7 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	rt := router.NewRouter(tableService, geoService, sourceService, cfg.API, uiAssets)
+	rt := router.NewRouter(metadataService, rowService, schemaService, deriveService, geoService, sourceService, exportService, cfg.API, uiAssets)
 
 	addr := ":" + strconv.Itoa(cfg.Server.Port)
 	log.Printf("GeoAPI listening on %s", addr)

@@ -24,7 +24,7 @@ func Test_SourceService_Refresh(t *testing.T) {
 	writeFixture(t, dir, "too_big.geojson", 200)
 	writeFixture(t, dir, "ignored.txt", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -44,7 +44,7 @@ func Test_SourceService_Refresh_MarksLoadedSources(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{"id-1"}, nil).Once()
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "buildings.geojson"}, nil).Once()
 
@@ -73,7 +73,7 @@ func Test_SourceService_Load(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tableSvc, _ := setupTableService(t)
+			tableSvc, _ := setupImportService(t)
 			svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
 
 			_, err := svc.Load(c.requestedName, "")
@@ -134,7 +134,7 @@ func Test_SourceService_Upload(t *testing.T) {
 				writeFixture(t, dir, "buildings.geojson", 10)
 			}
 
-			tableSvc, _ := setupTableService(t)
+			tableSvc, _ := setupImportService(t)
 			svc := NewSourceService(config.SourcesConfig{
 				WorkDir:           dir,
 				MaxSizeBytes:      c.maxSize,
@@ -161,7 +161,7 @@ func Test_SourceService_Load_RejectsAlreadyLoaded(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{"id-1"}, nil).Once()
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "buildings.geojson"}, nil).Once()
 
@@ -182,7 +182,7 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -212,7 +212,7 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -244,7 +244,7 @@ func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -269,7 +269,7 @@ func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -289,7 +289,7 @@ func Test_SourceService_Refresh_PopulatesGpkgLayers(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "regions.gpkg", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{"id-1"}, nil).Once()
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "regions.gpkg::communes"}, nil).Once()
 	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
@@ -315,7 +315,7 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "regions.gpkg", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 
@@ -344,7 +344,7 @@ func Test_SourceService_Load_GpkgRequiresLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "regions.gpkg", 100)
 
-	tableSvc, m := setupTableService(t)
+	tableSvc, m := setupImportService(t)
 	m.On("TableIds").Return([]string{}, nil).Once()
 	m.On("ListLayers", filepath.Join(dir, "regions.gpkg")).Return([]string{"communes"}, nil).Once()
 

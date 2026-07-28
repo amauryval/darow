@@ -43,6 +43,16 @@ type SourceLayer struct {
 	TableId string `json:"tableId,omitempty"`
 }
 
+// tableImporter is everything SourceService needs from TableService —
+// declared here, the consumer, rather than depending on the concrete
+// *TableService: this is SourceService's actual dependency, not
+// TableService's whole method set.
+type tableImporter interface {
+	LoadedSourceNames() (map[string]string, error)
+	ListLayers(path string) ([]string, error)
+	ImportFromFile(name, path, ext, layer string) (string, error)
+}
+
 // SourceService scans workDir for loadable files and imports them into
 // tables on demand. name is only ever accepted from the last Refresh/List
 // cache (règle 15) — never a path built freely from the HTTP request, to
@@ -52,7 +62,7 @@ type SourceLayer struct {
 // "not loaded yet" check before either has actually imported it.
 type SourceService struct {
 	cfg          config.SourcesConfig
-	tableService *TableService
+	tableService tableImporter
 
 	mu      sync.Mutex
 	sources []Source
@@ -60,7 +70,7 @@ type SourceService struct {
 
 // NewSourceService builds a SourceService scanning cfg.WorkDir and
 // importing through tableService.
-func NewSourceService(cfg config.SourcesConfig, tableService *TableService) *SourceService {
+func NewSourceService(cfg config.SourcesConfig, tableService tableImporter) *SourceService {
 	return &SourceService{cfg: cfg, tableService: tableService}
 }
 

@@ -29,9 +29,9 @@ Ces règles s'appliquent à tout le code produit pour ce projet, quelle que soit
 17. **Toute écriture ou modification d'une structure de code (struct, interface, méthode, handler) s'accompagne des tests associés dans le même changement.** Pas de test différé "à la fin" — une struct/fonction livrée sans son test n'est pas considérée terminée.
 18. **Tout paramètre susceptible d'être ajusté sans recompiler (limites, tailles max, chemins) vit dans le composant `config`, jamais en constante codée en dur dans le storage/service/router.** Voir section 2.
 19. **Toute table géométrique reçoit un index spatial RTREE sur sa colonne géométrique**, créé immédiatement après le chargement/derive (sections 7, 8). Sans lui, `Tile`/`FilterByBbox` scannent la table entière à chaque appel.
-20. **Les tuiles MVT sont mises en cache**, clé incluant `UpdatedAt` de la table (`GeoService`, section 5.3). Une tuile déjà servie pour la même version de la table ne recalcule jamais `ST_AsMVT`.
+20. **Les tuiles MVT sont mises en cache**, clé incluant `UpdatedAt` de la table (`GeoService`, section 5.5). Une tuile déjà servie pour la même version de la table ne recalcule jamais `ST_AsMVT`.
 21. **Toute écriture DuckDB (`Exec`, transaction, `CREATE TABLE`) passe par le verrou applicatif unique de `DuckDBAdapter`** (section 4.6). DuckDB n'autorise qu'un seul writer actif à la fois ; des écritures concurrentes non sérialisées échouent ou corrompent l'état.
-22. **Une écriture sur la colonne géométrique (`Update`, `InsertRow`, `BulkInsert`) attend du WKT en entrée et le convertit via `ST_GeomFromText(?)`** — jamais un bind direct comme pour une colonne scalaire. Cohérent avec le WKT déjà utilisé en sortie (règle 7). Une écriture qui touche la colonne géométrique déclenche `RefreshDerivedMetadata` (règle 9) via `TableService`, jamais directement dans le storage layer.
+22. **Une écriture sur la colonne géométrique (`Update`, `InsertRow`, `BulkInsert`) attend du WKT en entrée et le convertit via `ST_GeomFromText(?)`** — jamais un bind direct comme pour une colonne scalaire. Cohérent avec le WKT déjà utilisé en sortie (règle 7). Une écriture qui touche la colonne géométrique déclenche `RefreshDerived` (règle 9) via `RowService` pour une écriture de rows, ou via `ImportService`/`DeriveService` lors de la création d'une table — jamais directement dans le storage layer.
 
 ---
 
@@ -53,7 +53,7 @@ graph TD
 **Couches :**
 - **Config** : chargée une fois au démarrage, injectée dans les autres couches — jamais lue depuis un global ailleurs dans le code.
 - **API REST** : Router (`chi`) + Middlewares + Swagger UI
-- **Service Layer** : `GeoService` (MVT, requêtes géo), `TableService` (CRUD, métadonnées), `SourceService` (scan/chargement de `workDir`)
+- **Service Layer** : `MetadataService` (cache de métadonnées), `RowService` (CRUD de rows), `SchemaService` (colonnes), `DeriveService`/`ImportService` (création de table), `GeoService` (MVT, requêtes géo), `SourceService` (scan/chargement de `workDir`), `ExportService` (CSV/GeoJSON) — voir section 5
 - **Storage Layer** :
   - `SQLWrapper` (interface d'abstraction SQL)
   - `DuckDBAdapter` (implémente `SQLWrapper`)
@@ -164,9 +164,10 @@ func main() {
         cfg.Sources.WorkDir = workDirFlag
     }
 
-    sourceService := service.NewSourceService(cfg.Sources, tableService)
-    tableService := service.NewTableService(storage, cache.New(5*time.Minute, 10*time.Minute))
-    router := router.NewRouter(tableService, geoService, sourceService)
+    metadataService := service.NewMetadataService(storage, cache.New(5*time.Minute, 10*time.Minute))
+    importService := service.NewImportService(metadataService, storage)
+    sourceService := service.NewSourceService(cfg.Sources, importService)
+    router := router.NewRouter(metadataService, rowService, schemaService, deriveService, geoService, sourceService, exportService, cfg.API, uiAssets)
     // ...
 }
 ```
@@ -225,15 +226,23 @@ type SourceManager interface {
 ### 3.2 Implémentation
 
 ```go
+// tableImporter est ce dont SourceService a besoin — déclaré ici, le
+// consommateur, plutôt que dépendre du type concret *ImportService (5.4).
+type tableImporter interface {
+    LoadedSourceNames() (map[string]string, error)
+    ListLayers(path string) ([]string, error)
+    ImportFromFile(name, path, ext, layer string) (string, error)
+}
+
 type SourceService struct {
     cfg          config.SourcesConfig
-    tableService *TableService
+    tableService tableImporter
 
-    mu      sync.RWMutex
+    mu      sync.Mutex // tenu pour toute la durée du check-then-import de Load
     sources []Source
 }
 
-func NewSourceService(cfg config.SourcesConfig, tableService *TableService) *SourceService {
+func NewSourceService(cfg config.SourcesConfig, tableService tableImporter) *SourceService {
     return &SourceService{cfg: cfg, tableService: tableService}
 }
 
@@ -451,7 +460,7 @@ type MetadataWriter interface {
     // table, bumps UpdatedAt, and persists them. Must be called after
     // InsertRow, BulkInsert, row Update/Remove, and any Update touching the
     // geometry column. UpdatedAt is what invalidates GeoService's tile
-    // cache (section 5.3, règle 20).
+    // cache (section 5.5, règle 20).
     RefreshDerivedMetadata(tableId string) error
 }
 ```
@@ -520,7 +529,11 @@ func BuildFilter(conditions []FilterCondition, validColumns []string) (filter st
 }
 ```
 
+`storage.Storage` (l'agrégat plus haut) documente ce qu'un adaptateur complet doit implémenter — aucun service n'en dépend directement. Chaque service déclare, dans son propre paquet, l'interface étroite composée à partir de `MetadataManager`/`TableManager`/`GeoTableManager`/`TableCreator` qui correspond exactement à ce qu'il appelle (voir 5.1–5.6, 7) ; l'adaptateur DuckDB la satisfait implicitement (typage structurel Go), sans changement de câblage dans `main.go`.
+
 ### 4.6 `SQLWrapper` / `DuckDBAdapter`
+
+`SQLWrapper` n'est jamais exposé à un service : `Query`/`QueryRow`/`Exec`/`Begin` restent un détail interne du paquet `duckdb`, utilisé par `DuckDBAdapter` pour implémenter ses propres méthodes typées. Un service qui pouvait y accéder aurait pu contourner toute validation d'identifiant (règle 1) en écrivant du SQL directement au lieu de passer par les méthodes ci-dessus.
 
 ```go
 type SQLWrapper interface {
@@ -643,7 +656,7 @@ func (d *DuckDBAdapter) BulkInsert(tableId string, rows []map[string]any) ([]str
 }
 
 // Update : chaque colonne de updates est mise à jour dans une unique
-// requête (spec §5.1) — un update multi-colonnes est atomique, jamais un
+// requête (spec §5.2) — un update multi-colonnes est atomique, jamais un
 // Exec par colonne. Si une colonne est la colonne géométrique, sa valeur
 // (WKT) est convertie via ST_GeomFromText(?) plutôt que bindée directement
 // — une géométrie n'est pas une valeur scalaire (règle 22). Chaque colonne
@@ -696,19 +709,30 @@ Le chargement de l'extension spatiale (`LOAD spatial;`) est une étape d'initial
 
 ## 5. Service Layer
 
-### 5.1 `TableService` : cache invalidé sur écriture
+Ce qui était `TableService` (métadonnées + cache, CRUD de rows, schéma, dérivation, import) est
+éclaté en cinq services à responsabilité unique — `MetadataService`, `RowService`,
+`SchemaService`, `DeriveService`, `ImportService` — plus `GeoService` et `ExportService`. Chacun
+dépend du storage layer via une interface qu'il déclare lui-même (4.6), jamais via
+`storage.Storage` : par exemple `SchemaService` n'a besoin que de `storage.TableManager`, jamais
+de métadonnées ni de `GeoTableManager`.
+
+`MetadataService` est le seul propriétaire du cache de métadonnées (règle 11) : tous les autres
+services y accèdent via un port étroit qu'ils déclarent (`metadataGetter`, `metadataRefresher`,
+`metadataStore`...), jamais en cachant indépendamment — l'invalidation reste à un seul endroit.
+
+### 5.1 `MetadataService` : seul propriétaire du cache de métadonnées
 
 ```go
-type TableService struct {
+type MetadataService struct {
     storage storage.MetadataManager
     cache   *cache.Cache
 }
 
-func NewTableService(s storage.MetadataManager, c *cache.Cache) *TableService {
-    return &TableService{storage: s, cache: c}
+func NewMetadataService(s storage.MetadataManager, c *cache.Cache) *MetadataService {
+    return &MetadataService{storage: s, cache: c}
 }
 
-func (s *TableService) GetMetadata(tableId string) (*storage.Metadata, error) {
+func (s *MetadataService) GetMetadata(tableId string) (*storage.Metadata, error) {
     if val, ok := s.cache.Get("metadata_" + tableId); ok {
         return val.(*storage.Metadata), nil
     }
@@ -722,13 +746,24 @@ func (s *TableService) GetMetadata(tableId string) (*storage.Metadata, error) {
     return meta, nil
 }
 
+func (s *MetadataService) ListTables() ([]*storage.Metadata, error) {
+    // implémentation : storage.TableIds() puis GetMetadata par id (mis en
+    // cache au passage)
+}
+
+// Create enregistre la ligne metadata d'une nouvelle table logique, utilisé
+// par DeriveService/ImportService avant de matérialiser sa table physique.
+func (s *MetadataService) Create(tableName string, isGeo bool, geometryColumn string) (string, error) {
+    return s.storage.Create(tableName, isGeo, geometryColumn)
+}
+
 // invalidateMetadataCache doit être appelée après toute écriture qui change
-// metadata: UpdateMetadata, RefreshDerivedMetadata, Remove (règle 11).
-func (s *TableService) invalidateMetadataCache(tableId string) {
+// metadata: UpdateMetadata, RefreshDerived, RemoveTable, Rollback (règle 11).
+func (s *MetadataService) invalidateMetadataCache(tableId string) {
     s.cache.Delete("metadata_" + tableId)
 }
 
-func (s *TableService) UpdateMetadata(tableId string, updates map[string]any) error {
+func (s *MetadataService) UpdateMetadata(tableId string, updates map[string]any) error {
     if err := s.storage.UpdateMetadata(tableId, updates); err != nil {
         return err
     }
@@ -736,38 +771,40 @@ func (s *TableService) UpdateMetadata(tableId string, updates map[string]any) er
     return nil
 }
 
-// UpdateRow met à jour toutes les colonnes de updates pour les pkeys donnés
-// en un seul appel storage, donc un PATCH multi-colonnes est atomique :
-// soit toutes les colonnes changent, soit aucune. Si une des colonnes est
-// la colonne géométrique, RefreshDerivedMetadata recalcule bbox et bumpe
-// UpdatedAt (règle 9) — c'est ce qui invalide le cache de tuiles de
-// GeoService (5.3, règle 20) et le cache de métadonnées (règle 11). Un
-// update ne touchant que des champs scalaires ne déclenche ni l'un ni
-// l'autre.
-func (s *TableService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
-    meta, err := s.GetMetadata(tableId)
-    if err != nil {
+func (s *MetadataService) RemoveTable(tableId string) error {
+    if err := s.storage.Remove(tableId); err != nil {
         return err
     }
-
-    if err := s.storage.Update(tableId, pkeys, updates); err != nil {
-        return err
-    }
-
-    if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
-        if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
-            return err
-        }
-        s.invalidateMetadataCache(tableId)
-    }
-
+    s.invalidateMetadataCache(tableId)
     return nil
 }
 
+// RefreshDerived recalcule RowCount/Bbox/UpdatedAt (règle 9) et invalide le
+// cache. Appelée par RowService et ImportService/DeriveService après toute
+// écriture qui change le nombre de lignes ou touche la colonne géométrique
+// — c'est ce qui invalide le cache de tuiles de GeoService (5.5, règle 20).
+func (s *MetadataService) RefreshDerived(tableId string) error {
+    if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
+        return err
+    }
+    s.invalidateMetadataCache(tableId)
+    return nil
+}
+
+// Rollback supprime la ligne metadata (et la table physique partiellement
+// créée, via le DROP TABLE IF EXISTS de storage.Remove) après un échec en
+// cours de création dans DeriveService/ImportService (BUG-2) : une création
+// ratée ne doit jamais laisser une ligne metadata sans table physique.
+func (s *MetadataService) Rollback(tableId string, cause error) error {
+    if err := s.RemoveTable(tableId); err != nil {
+        return fmt.Errorf("%w (cleanup also failed: %v)", cause, err)
+    }
+    return cause
+}
+
 // LoadedSourceNames retourne les tableName déjà présents en metadata,
-// utilisé par SourceService.Refresh (3.2) pour marquer une source comme
-// déjà chargée.
-func (s *TableService) LoadedSourceNames() (map[string]string, error) {
+// utilisé par ImportService pour satisfaire SourceService.Refresh (3.2).
+func (s *MetadataService) LoadedSourceNames() (map[string]string, error) {
     ids, err := s.storage.TableIds()
     if err != nil {
         return nil, err
@@ -784,33 +821,122 @@ func (s *TableService) LoadedSourceNames() (map[string]string, error) {
 }
 ```
 
-### 5.2 Typage de sortie des rows
+### 5.2 `RowService` : CRUD de rows, atomique et typé
 
-Principe (règle 12) : la sortie JSON de l'API utilise des types JSON natifs, jamais une reproduction directe des types Go du driver DuckDB. `Row.Values` reste un `map[string]any` (schéma dynamique par table), mais chaque valeur est convertie explicitement selon `ColumnType` :
+```go
+// metadataRefresher est ce dont RowService a besoin de MetadataService :
+// lire les métadonnées (pour savoir quelle colonne est géométrique) et
+// rafraîchir les champs dérivés après une écriture (règle 9).
+type metadataRefresher interface {
+    GetMetadata(tableId string) (*storage.Metadata, error)
+    RefreshDerived(tableId string) error
+}
+
+type RowService struct {
+    storage  storage.TableManager
+    metadata metadataRefresher
+}
+
+func NewRowService(storage storage.TableManager, metadata metadataRefresher) *RowService {
+    return &RowService{storage: storage, metadata: metadata}
+}
+
+// UpdateRow met à jour toutes les colonnes de updates pour les pkeys donnés
+// en un seul appel storage, donc un PATCH multi-colonnes est atomique :
+// soit toutes les colonnes changent, soit aucune. Si une des colonnes est
+// la colonne géométrique, RefreshDerived recalcule bbox et bumpe UpdatedAt
+// (règle 9). Un update ne touchant que des champs scalaires ne déclenche
+// rien de plus.
+func (s *RowService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
+    meta, err := s.metadata.GetMetadata(tableId)
+    if err != nil {
+        return err
+    }
+
+    if err := s.storage.Update(tableId, pkeys, updates); err != nil {
+        return err
+    }
+
+    if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
+        return s.metadata.RefreshDerived(tableId)
+    }
+    return nil
+}
+```
+
+Principe de typage de sortie (règle 12) : la sortie JSON de l'API utilise des types JSON natifs, jamais une reproduction directe des types Go du driver DuckDB. `Row.Values` reste un `map[string]any` (schéma dynamique par table), mais chaque valeur est convertie explicitement selon `ColumnType` :
 - `DATE` → `"YYYY-MM-DD"`
 - `TIMESTAMP`/`TIMESTAMPTZ` → ISO 8601 complet
 - colonne géométrique → absente du résultat (règle 7)
 
-### 5.3 `GeoService` : cache des tuiles
+### 5.3 `SchemaService` : structure, pas donnée
+
+`Schema`/`AddColumn` ne déclenchent jamais `RefreshDerived` (ajouter une colonne n'affecte ni
+`RowCount` ni `Bbox`) : `SchemaService` n'a donc aucune dépendance vers `MetadataService`, juste
+`storage.TableManager`.
+
+### 5.4 `DeriveService` et `ImportService` : créer une table, avec rollback
+
+Les deux services suivent le même schéma — enregistrer la ligne `metadata` puis matérialiser la
+table physique, avec compensation (`Rollback`, 5.1) si la matérialisation échoue (BUG-2) — d'où un
+port `metadataStore` partagé :
 
 ```go
+// metadataStore est ce dont DeriveService/ImportService ont besoin de
+// MetadataService pour enregistrer une nouvelle table logique et nettoyer
+// en cas d'échec de sa matérialisation.
+type metadataStore interface {
+    GetMetadata(tableId string) (*storage.Metadata, error)
+    Create(tableName string, isGeo bool, geometryColumn string) (string, error)
+    UpdateMetadata(tableId string, updates map[string]any) error
+    RefreshDerived(tableId string) error
+    Rollback(tableId string, cause error) error
+}
+
+type DeriveService struct {
+    metadata metadataStore
+    storage  storage.TableCreator // n'utilise que CreateFromQuery
+}
+
+// DeriveTable matérialise une nouvelle table à partir d'une requête SELECT
+// fournie par l'appelant (règle 4). Table dérivée = instantané figé, jamais
+// une vue (règle 13).
+func (s *DeriveService) DeriveTable(sourceTableId, query, newTableName string) (string, error) {
+    // implémentation : validateSelectOnly, puis Create/GetMetadata/
+    // CreateFromQuery/UpdateMetadata/RefreshDerived, Rollback à chaque échec
+}
+```
+
+`ImportService` a en plus besoin de `LoadedSourceNames` (d'où `metadataImporter`, qui embarque
+`metadataStore`) pour satisfaire à lui seul le `tableImporter` que `SourceService` attend (7) — les
+trois méthodes de ce port (`LoadedSourceNames`, `ListLayers`, `ImportFromFile`) vivent donc sur
+`ImportService`, `LoadedSourceNames` délèguant directement à `MetadataService.LoadedSourceNames`.
+
+### 5.5 `GeoService` : cache des tuiles
+
+```go
+// metadataGetter est ce dont GeoService a besoin de MetadataService :
+// lire les métadonnées en cache, pour clé de cache sur UpdatedAt.
+type metadataGetter interface {
+    GetMetadata(tableId string) (*storage.Metadata, error)
+}
+
 type GeoService struct {
-    storage  storage.GeoTableManager
-    tableSvc *TableService // GetMetadata déjà caché (règle 11)
+    storage   storage.GeoTableManager
+    metadata  metadataGetter
     tileCache *cache.Cache
 }
 
-func NewGeoService(storage storage.GeoTableManager, tableSvc *TableService, tileCache *cache.Cache) *GeoService {
-    return &GeoService{storage: storage, tableSvc: tableSvc, tileCache: tileCache}
+func NewGeoService(storage storage.GeoTableManager, metadata metadataGetter, tileCache *cache.Cache) *GeoService {
+    return &GeoService{storage: storage, metadata: metadata, tileCache: tileCache}
 }
 
 // GetTile sert une tuile depuis le cache pour la version courante de la
 // table. La clé inclut UpdatedAt : une écriture sur la table change
-// UpdatedAt (via RefreshDerivedMetadata, règle 9), ce qui invalide
-// automatiquement les tuiles de l'ancienne version sans mécanisme séparé
-// (règle 20).
+// UpdatedAt (via RefreshDerived, règle 9), ce qui invalide automatiquement
+// les tuiles de l'ancienne version sans mécanisme séparé (règle 20).
 func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
-    meta, err := g.tableSvc.GetMetadata(tableId)
+    meta, err := g.metadata.GetMetadata(tableId)
     if err != nil {
         return nil, err
     }
@@ -830,7 +956,49 @@ func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
 }
 ```
 
-`RefreshDerivedMetadata` (4.4) doit mettre à jour `UpdatedAt` en plus de `RowCount`/`Bbox` — c'est ce qui fait fonctionner l'invalidation de `GetTile` sans code d'invalidation dédié.
+`RefreshDerived` (5.1) doit mettre à jour `UpdatedAt` en plus de `RowCount`/`Bbox` — c'est ce qui fait fonctionner l'invalidation de `GetTile` sans code d'invalidation dédié.
+
+### 5.6 `ExportService` : export = domaine, pas transport
+
+L'export CSV/GeoJSON (`GET /tables/{tableId}/export`) est de la logique métier, pas un détail de
+transport HTTP : `ExportService.Export` construit le corps de la réponse et son content-type, le
+router se limite à poser les en-têtes et écrire le corps.
+
+```go
+// rowLister et geometryFetcher sont la composition exacte dont
+// ExportService a besoin, déclarée ici (le consommateur).
+type rowLister interface {
+    ListRows(tableId string, offset, limit int64) (*RowsPage, error)
+}
+
+type geometryFetcher interface {
+    // GetGeometryGeoJSON : seule exception export à "jamais la colonne
+    // géométrique dans une lecture de rows" (règle 7).
+    GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error)
+}
+
+type ExportService struct {
+    rows     rowLister
+    geometry geometryFetcher
+}
+
+func NewExportService(rows rowLister, geometry geometryFetcher) *ExportService {
+    return &ExportService{rows: rows, geometry: geometry}
+}
+
+// Export rend toutes les lignes de meta au format demandé ("csv" ou
+// "geojson"), déjà résolu par le caller (le défaut par type de table est
+// une décision HTTP, pas domaine). Une erreur de validation (format
+// inconnu, GeoJSON sur une table non géo) est un *ExportValidationError,
+// que le router mappe en 400 ; toute autre erreur reste un 500.
+func (s *ExportService) Export(meta *storage.Metadata, format string) (body []byte, contentType string, err error) {
+    // implémentation : ListRows puis rendu CSV ou GeoJSON (avec
+    // GetGeometryGeoJSON pour ce dernier)
+}
+```
+
+Instancié dans `main.go` avec `RowService` et `GeoService` eux-mêmes (chacun satisfait
+implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance storage.
 
 ---
 
@@ -875,14 +1043,31 @@ import (
     _ "your-app/docs"
 )
 
+// metadataAPI/rowAPI/schemaAPI/deriveAPI/geoAPI/sourceAPI (déclarées dans le
+// paquet router, un fichier ports.go) sont exactement les méthodes que le
+// router appelle sur chaque service — jamais les types concrets
+// *service.MetadataService/RowService/SchemaService/DeriveService/
+// GeoService/SourceService, qui les satisfont implicitement. Un test de
+// handler peut les satisfaire avec un double plus léger que le service
+// entier.
 type Router struct {
-    tableService  *service.TableService
-    geoService    *service.GeoService
-    sourceService *service.SourceService
+    metadataService metadataAPI
+    rowService      rowAPI
+    schemaService   schemaAPI
+    deriveService   deriveAPI
+    geoService      geoAPI
+    sourceService   sourceAPI
+    exportService   *service.ExportService
 }
 
-func NewRouter(tableSvc *service.TableService, geoSvc *service.GeoService, sourceSvc *service.SourceService) *Router {
-    return &Router{tableService: tableSvc, geoService: geoSvc, sourceService: sourceSvc}
+func NewRouter(
+    metadataSvc metadataAPI, rowSvc rowAPI, schemaSvc schemaAPI, deriveSvc deriveAPI,
+    geoSvc geoAPI, sourceSvc sourceAPI, exportSvc *service.ExportService,
+) *Router {
+    return &Router{
+        metadataService: metadataSvc, rowService: rowSvc, schemaService: schemaSvc, deriveService: deriveSvc,
+        geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
+    }
 }
 
 func (rt *Router) Setup() http.Handler {
@@ -967,7 +1152,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
         return
     }
 
-    // Cache-Control complète le cache applicatif de GeoService (5.3, règle
+    // Cache-Control complète le cache applicatif de GeoService (5.5, règle
     // 20) : évite même l'aller-retour réseau pour un client/CDN qui a déjà
     // la tuile. max-age court car une tuile change dès la prochaine écriture.
     w.Header().Set("Cache-Control", "public, max-age=3600")
@@ -1041,7 +1226,7 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 
 ## 7. Chargement de données (`SourceService.Load`)
 
-`SourceService.Load` (section 3.2) appelle `TableService.ImportFromFile(name, path, ext, layer)` avec un chemin déjà résolu et validé dans `workDir` — `layer` reste vide hors GeoPackage (7.1).
+`SourceService.Load` (section 3.2) appelle `ImportService.ImportFromFile(name, path, ext, layer)` avec un chemin déjà résolu et validé dans `workDir` — `layer` reste vide hors GeoPackage (7.1). `SourceService` dépend d'un `tableImporter` (`LoadedSourceNames`, `ListLayers`, `ImportFromFile` — déclaré dans son propre paquet), pas du type concret `*ImportService` : sa dépendance réelle est ces trois méthodes (5.4), satisfaites par `ImportService`.
 
 `ImportFromFile` (et de façon symétrique `DeriveTable`, section 8) enregistre d'abord la ligne
 `metadata` (`storage.Create`) puis matérialise la table physique. Si la matérialisation échoue
@@ -1142,11 +1327,17 @@ Une table dérivée est un instantané figé au moment de la création — pas d
 │   │   ├── sqlwrapper.go
 │   │   └── metadata.go
 │   ├── service/
-│   │   ├── table.go
+│   │   ├── metadata.go
+│   │   ├── rows.go
+│   │   ├── schema.go
+│   │   ├── derive.go
+│   │   ├── import.go
 │   │   ├── geo.go
+│   │   ├── export.go
 │   │   └── source.go
 │   └── router/
-│       ├── handlers.go
+│       ├── ports.go
+│       ├── handlers_*.go
 │       ├── middleware.go
 │       └── routes.go
 ├── config.yaml
@@ -1166,11 +1357,11 @@ Seule la table `metadata` a un schéma à faire évoluer, géré par `CREATE TAB
 ## 10. Tests
 
 ```go
-func TestTableService_GetMetadata(t *testing.T) {
+func TestMetadataService_GetMetadata(t *testing.T) {
     mockStorage := &mocks.MetadataManager{}
     mockStorage.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil)
 
-    svc := service.NewTableService(mockStorage, cache.New(5*time.Minute, 10*time.Minute))
+    svc := service.NewMetadataService(mockStorage, cache.New(5*time.Minute, 10*time.Minute))
     meta, err := svc.GetMetadata("id-1")
 
     assert.NoError(t, err)
@@ -1194,7 +1385,7 @@ func TestSourceService_Refresh_ExcludesOversizedAndDisallowedFiles(t *testing.T)
         WorkDir:           dir,
         MaxSizeBytes:      100 * 1024 * 1024,
         AllowedExtensions: []string{".geojson"},
-    }, mockTableService)
+    }, mockImportService)
 
     sources, err := svc.Refresh()
 
@@ -1204,7 +1395,7 @@ func TestSourceService_Refresh_ExcludesOversizedAndDisallowedFiles(t *testing.T)
 }
 
 func TestSourceService_Load_RejectsNameNotInCache(t *testing.T) {
-    svc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, mockTableService)
+    svc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, mockImportService)
     // pas de Refresh() appelé — le cache est vide
 
     _, err := svc.Load("../../etc/passwd")
@@ -1226,12 +1417,12 @@ Chaque étape dépend de la précédente — suivre l'ordre, ne pas parallélise
 5. Interfaces `MetadataManager` / `TableManager` / `GeoTableManager` (4.4) + mocks associés pour les tests des couches supérieures.
 6. `MetadataWriter.RefreshDerivedMetadata`, appelée après chaque écriture, mettant aussi à jour `UpdatedAt` (4.4, règle 9) + test vérifiant le recalcul après `InsertRow`/`Update`/`Remove`.
 7. `BuildFilter` / `FilterCondition` (4.5) + tests (colonnes/opérateurs valides et rejetés) — prérequis de `GetRowsWithFilter`.
-8. `TableService` avec cache et invalidation explicite, `LoadedSourceNames`, `UpdateRow` orchestrant `RefreshDerivedMetadata` conditionnel sur la colonne géométrique (5.1, règles 9, 11, 22) + tests vérifiant l'invalidation après écriture scalaire vs géométrique.
+8. `MetadataService` avec cache et invalidation explicite (`RefreshDerived`, `Rollback`) et `RowService.UpdateRow` orchestrant `RefreshDerived` conditionnel sur la colonne géométrique (5.1, 5.2, règles 9, 11, 22) + tests vérifiant l'invalidation après écriture scalaire vs géométrique.
 9. Conversion typée de `Row.Values` selon `ColumnType` (5.2) + tests par type (date, timestamp, exclusion géométrie).
-10. `SourceService` : `Refresh`/`List`/`Load` (section 3) + tests sur répertoire de fixtures (filtrage taille/extension, rejet nom hors-cache, conflit si déjà chargé).
-11. `TableService.ImportFromFile` : CTAS + résolution nom colonne géo + gestion SRID + création de l'index RTREE (section 7, règle 19) + tests sur au moins deux formats (GeoJSON, Shapefile) vérifiant la présence de l'index.
-12. `/derive` avec restriction `SELECT`-only + matérialisation + index RTREE si la table dérivée est géo (section 8, règle 19) + tests rejetant les requêtes non-`SELECT`.
-13. `GeoService`/`Tile`/`GeometryTypes`/`FilterByBbox`, avec cache de tuiles clé sur `UpdatedAt` (5.3, règle 20) + tests sur une table géo de référence, y compris un test d'invalidation après écriture.
+10. `SourceService` : `Refresh`/`List`/`Load` (section 3), dépendant du port `tableImporter` (7) + tests sur répertoire de fixtures (filtrage taille/extension, rejet nom hors-cache, conflit si déjà chargé).
+11. `ImportService.ImportFromFile` : CTAS + résolution nom colonne géo + gestion SRID + création de l'index RTREE (section 7, règle 19, 5.4) + tests sur au moins deux formats (GeoJSON, Shapefile) vérifiant la présence de l'index.
+12. `DeriveService.DeriveTable` avec restriction `SELECT`-only + matérialisation + index RTREE si la table dérivée est géo (section 8, règle 19, 5.4) + tests rejetant les requêtes non-`SELECT`.
+13. `GeoService`/`Tile`/`GeometryTypes`/`FilterByBbox`, avec cache de tuiles clé sur `UpdatedAt` (5.5, règle 20) + tests sur une table géo de référence, y compris un test d'invalidation après écriture.
 14. Router `chi` + handlers, y compris `/sources` et `Cache-Control` sur `getTile` (6.2), attention au shadowing de paramètre (note 6.2) + tests HTTP par handler.
 15. Swagger (6.3).
 16. Revue finale de couverture de tests sur l'ensemble des étapes précédentes.

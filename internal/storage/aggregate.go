@@ -14,10 +14,18 @@ type TableCreator interface {
 	ListLayers(sourcePath string) ([]string, error)
 }
 
-// Storage aggregates every capability a service needs from the storage
-// layer, implemented by DuckDBAdapter (and, later, PostGISAdapter).
+// Storage aggregates every capability the storage layer exposes,
+// implemented by DuckDBAdapter (and, later, PostGISAdapter). It exists to
+// document/assert that an adapter is complete — no service depends on
+// Storage itself. Each service instead declares its own narrow interface
+// over the subset it actually calls (composed from MetadataManager,
+// TableManager, GeoTableManager, TableCreator below), so its real
+// dependency surface is visible at the call site. SQLWrapper is
+// deliberately not part of this aggregate: raw Query/Exec/Begin access
+// would let a service bypass identifier validation (règle 1) by writing
+// SQL directly instead of going through the typed methods below — it
+// stays an implementation detail of the duckdb package.
 type Storage interface {
-	SQLWrapper
 	MetadataManager
 	TableManager
 	GeoTableManager

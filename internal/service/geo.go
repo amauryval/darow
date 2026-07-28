@@ -9,18 +9,24 @@ import (
 	"gogeoserver/internal/storage"
 )
 
+// metadataGetter is what GeoService needs from MetadataService: cached
+// metadata reads, to key the tile cache on UpdatedAt.
+type metadataGetter interface {
+	GetMetadata(tableId string) (*storage.Metadata, error)
+}
+
 // GeoService provides tile and geospatial query access on top of the
 // storage layer, caching MVT tiles per table version.
 type GeoService struct {
 	storage   storage.GeoTableManager
-	tableSvc  *TableService
+	metadata  metadataGetter
 	tileCache *cache.Cache
 }
 
-// NewGeoService builds a GeoService backed by storage, using tableSvc for
+// NewGeoService builds a GeoService backed by storage, using metadata for
 // cached metadata reads and tileCache to cache rendered tiles.
-func NewGeoService(storage storage.GeoTableManager, tableSvc *TableService, tileCache *cache.Cache) *GeoService {
-	return &GeoService{storage: storage, tableSvc: tableSvc, tileCache: tileCache}
+func NewGeoService(storage storage.GeoTableManager, metadata metadataGetter, tileCache *cache.Cache) *GeoService {
+	return &GeoService{storage: storage, metadata: metadata, tileCache: tileCache}
 }
 
 // GetTile serves a tile from cache for the table's current version. The
@@ -29,7 +35,7 @@ func NewGeoService(storage storage.GeoTableManager, tableSvc *TableService, tile
 // the previous version, with no separate invalidation mechanism
 // (règle 20).
 func (g *GeoService) GetTile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
-	meta, err := g.tableSvc.GetMetadata(tableId)
+	meta, err := g.metadata.GetMetadata(tableId)
 	if err != nil {
 		return nil, err
 	}

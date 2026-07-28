@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"gogeoserver/internal/storage"
 )
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
@@ -24,45 +26,74 @@ func validateSelectOnly(query string) error {
 	return nil
 }
 
+// metadataStore is what DeriveService/ImportService need from
+// MetadataService to register a new logical table and clean up if
+// materializing its physical table fails — declared here, the consumer,
+// rather than depending on the concrete *MetadataService.
+type metadataStore interface {
+	GetMetadata(tableId string) (*storage.Metadata, error)
+	Create(tableName string, isGeo bool, geometryColumn string) (string, error)
+	UpdateMetadata(tableId string, updates map[string]any) error
+	RefreshDerived(tableId string) error
+	Rollback(tableId string, cause error) error
+}
+
+// queryMaterializer is what DeriveService needs from the storage layer.
+type queryMaterializer interface {
+	CreateFromQuery(physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
+}
+
+// DeriveService materializes new tables from caller-provided SELECT
+// queries (règle 4).
+type DeriveService struct {
+	metadata metadataStore
+	storage  queryMaterializer
+}
+
+// NewDeriveService builds a DeriveService registering new tables via
+// metadata and materializing them via storage.
+func NewDeriveService(metadata metadataStore, storage queryMaterializer) *DeriveService {
+	return &DeriveService{metadata: metadata, storage: storage}
+}
+
 // DeriveTable materializes a new table from a caller-provided SELECT query
 // (règle 4: anything else is rejected before reaching Exec). The derived
 // table is a frozen snapshot, never a view (règle 13) and never synced
 // with its source.
-func (s *TableService) DeriveTable(sourceTableId, query, newTableName string) (string, error) {
+func (s *DeriveService) DeriveTable(sourceTableId, query, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {
 		return "", err
 	}
 
-	if _, err := s.GetMetadata(sourceTableId); err != nil {
+	if _, err := s.metadata.GetMetadata(sourceTableId); err != nil {
 		return "", err
 	}
 
-	tableId, err := s.storage.Create(newTableName, false, "")
+	tableId, err := s.metadata.Create(newTableName, false, "")
 	if err != nil {
 		return "", err
 	}
 
-	meta, err := s.storage.GetMetadata(tableId)
+	meta, err := s.metadata.GetMetadata(tableId)
 	if err != nil {
-		return "", s.rollbackCreate(tableId, err)
+		return "", s.metadata.Rollback(tableId, err)
 	}
 
 	geometryColumn, isGeo, err := s.storage.CreateFromQuery(meta.PhysicalName, query)
 	if err != nil {
-		return "", s.rollbackCreate(tableId, fmt.Errorf("deriving table: %w", err))
+		return "", s.metadata.Rollback(tableId, fmt.Errorf("deriving table: %w", err))
 	}
 
 	if isGeo {
-		if err := s.storage.UpdateMetadata(tableId, map[string]any{
+		if err := s.metadata.UpdateMetadata(tableId, map[string]any{
 			"isGeo": true, "geometryColumn": geometryColumn,
 		}); err != nil {
-			return "", s.rollbackCreate(tableId, err)
+			return "", s.metadata.Rollback(tableId, err)
 		}
 	}
 
-	if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
-		return "", s.rollbackCreate(tableId, err)
+	if err := s.metadata.RefreshDerived(tableId); err != nil {
+		return "", s.metadata.Rollback(tableId, err)
 	}
-	s.invalidateMetadataCache(tableId)
 	return tableId, nil
 }

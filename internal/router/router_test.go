@@ -27,15 +27,20 @@ func setupRouter(t *testing.T) (http.Handler, *mocks.Storage) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
-	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
-	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+	metadataSvc := service.NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc)
+	schemaSvc := service.NewSchemaService(m)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc)
 
 	uiAssets := fstest.MapFS{
 		"index.html": {Data: []byte("<html>ui</html>")},
 	}
 
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	return rt.Setup(), m
 }
 
@@ -167,12 +172,17 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
-	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
-	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+	metadataSvc := service.NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc)
+	schemaSvc := service.NewSchemaService(m)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
 
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
@@ -334,15 +344,20 @@ func Test_Router_UploadSource(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
-	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	metadataSvc := service.NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc)
+	schemaSvc := service.NewSchemaService(m)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           t.TempDir(),
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()
@@ -367,17 +382,22 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
-	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	metadataSvc := service.NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc)
+	schemaSvc := service.NewSchemaService(m)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "regions.gpkg"), make([]byte, 10), 0o644))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()
@@ -402,15 +422,20 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
-	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	metadataSvc := service.NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc)
+	schemaSvc := service.NewSchemaService(m)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           t.TempDir(),
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()

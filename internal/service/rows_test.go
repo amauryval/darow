@@ -4,11 +4,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/mocks"
 )
+
+func setupRowService(t *testing.T) (*RowService, *mocks.Storage) {
+	m := &mocks.Storage{}
+	metadata := NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	svc := NewRowService(m, metadata)
+	t.Cleanup(func() { m.AssertExpectations(t) })
+	return svc, m
+}
 
 func Test_ConvertValue(t *testing.T) {
 	cases := []struct {
@@ -31,8 +41,8 @@ func Test_ConvertValue(t *testing.T) {
 	}
 }
 
-func Test_TableService_ListRows(t *testing.T) {
-	svc, m := setupTableService(t)
+func Test_RowService_ListRows(t *testing.T) {
+	svc, m := setupRowService(t)
 
 	m.On("GetPkeys", "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
 	m.On("GetRowsByPkey", "id-1", []string{"pk-1"}).Return([]storage.Row{
@@ -49,8 +59,8 @@ func Test_TableService_ListRows(t *testing.T) {
 	assert.Equal(t, "2024-01-01", page.Rows[0].Values["createdAt"])
 }
 
-func Test_TableService_GetRow_NotFound(t *testing.T) {
-	svc, m := setupTableService(t)
+func Test_RowService_GetRow_NotFound(t *testing.T) {
+	svc, m := setupRowService(t)
 
 	m.On("GetRowsByPkey", "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
@@ -58,4 +68,32 @@ func Test_TableService_GetRow_NotFound(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, row)
+}
+
+func Test_RowService_UpdateRow(t *testing.T) {
+	cases := []struct {
+		name           string
+		column         string
+		geometryColumn string
+		wantRefresh    bool
+	}{
+		{name: "scalar column does not refresh derived metadata", column: "height", geometryColumn: "geom"},
+		{name: "geometry column refreshes derived metadata", column: "geom", geometryColumn: "geom", wantRefresh: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m := setupRowService(t)
+
+			updates := map[string]any{c.column: "value"}
+			m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}, nil).Once()
+			m.On("Update", "id-1", []string{"pk-1"}, updates).Return(nil).Once()
+			if c.wantRefresh {
+				m.On("RefreshDerivedMetadata", "id-1").Return(nil).Once()
+			}
+
+			err := svc.UpdateRow("id-1", []string{"pk-1"}, updates)
+			require.NoError(t, err)
+		})
+	}
 }

@@ -13,10 +13,10 @@ import (
 	"gogeoserver/internal/storage/mocks"
 )
 
-func setupGeoService(t *testing.T) (*GeoService, *mocks.Storage, *TableService) {
-	tableSvc, m := setupTableService(t)
-	geoSvc := NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
-	return geoSvc, m, tableSvc
+func setupGeoService(t *testing.T) (*GeoService, *mocks.Storage, *MetadataService) {
+	metadataSvc, m := setupMetadataService(t)
+	geoSvc := NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
+	return geoSvc, m, metadataSvc
 }
 
 func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
@@ -35,7 +35,7 @@ func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
 }
 
 func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
-	geoSvc, m, tableSvc := setupGeoService(t)
+	geoSvc, m, metadataSvc := setupGeoService(t)
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
 	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("old"), nil).Once()
@@ -46,7 +46,7 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 
 	// Simulates a write bumping UpdatedAt (RefreshDerivedMetadata) and its
 	// mandatory metadata cache invalidation (règle 11).
-	tableSvc.invalidateMetadataCache("id-1")
+	metadataSvc.invalidateMetadataCache("id-1")
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, nil).Once()
 	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("new"), nil).Once()

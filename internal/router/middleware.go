@@ -20,7 +20,7 @@ func (rt *Router) tableMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		tableId := chi.URLParam(req, "tableId")
 
-		meta, err := rt.tableService.GetMetadata(tableId)
+		meta, err := rt.metadataService.GetMetadata(tableId)
 		if err != nil {
 			WriteError(w, req, err, http.StatusNotFound)
 			return

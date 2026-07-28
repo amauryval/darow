@@ -13,20 +13,35 @@ import (
 	"gogeoserver/internal/service"
 )
 
-// Router wires the HTTP layer to the service layer.
+// Router wires the HTTP layer to the service layer, depending on each
+// service through the narrow port it actually calls (metadataAPI, rowAPI,
+// schemaAPI, deriveAPI, geoAPI, sourceAPI — see ports.go) rather than the
+// concrete service types.
 type Router struct {
-	tableService  *service.TableService
-	geoService    *service.GeoService
-	sourceService *service.SourceService
-	apiCfg        config.APIConfig
-	uiAssets      fs.FS
+	metadataService metadataAPI
+	rowService      rowAPI
+	schemaService   schemaAPI
+	deriveService   deriveAPI
+	geoService      geoAPI
+	sourceService   sourceAPI
+	exportService   *service.ExportService
+	apiCfg          config.APIConfig
+	uiAssets        fs.FS
 }
 
-// NewRouter builds a Router serving tableSvc, geoSvc, and sourceSvc,
-// honoring apiCfg's row pagination limits (règle 18). uiAssets is the
-// admin UI's built static files, served under /ui.
-func NewRouter(tableSvc *service.TableService, geoSvc *service.GeoService, sourceSvc *service.SourceService, apiCfg config.APIConfig, uiAssets fs.FS) *Router {
-	return &Router{tableService: tableSvc, geoService: geoSvc, sourceService: sourceSvc, apiCfg: apiCfg, uiAssets: uiAssets}
+// NewRouter builds a Router serving every service above, honoring
+// apiCfg's row pagination limits (règle 18). uiAssets is the admin UI's
+// built static files, served under /ui.
+func NewRouter(
+	metadataSvc metadataAPI, rowSvc rowAPI, schemaSvc schemaAPI, deriveSvc deriveAPI,
+	geoSvc geoAPI, sourceSvc sourceAPI, exportSvc *service.ExportService,
+	apiCfg config.APIConfig, uiAssets fs.FS,
+) *Router {
+	return &Router{
+		metadataService: metadataSvc, rowService: rowSvc, schemaService: schemaSvc, deriveService: deriveSvc,
+		geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
+		apiCfg: apiCfg, uiAssets: uiAssets,
+	}
 }
 
 // Setup builds the chi router with every route from docs/spec.md section 6.1.

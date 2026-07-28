@@ -3,12 +3,23 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/mocks"
 )
+
+func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Storage) {
+	m := &mocks.Storage{}
+	metadata := NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
+	svc := NewDeriveService(metadata, m)
+	t.Cleanup(func() { m.AssertExpectations(t) })
+	return svc, m
+}
 
 func Test_ValidateSelectOnly(t *testing.T) {
 	cases := []struct {
@@ -38,7 +49,7 @@ func Test_ValidateSelectOnly(t *testing.T) {
 	}
 }
 
-func Test_TableService_DeriveTable(t *testing.T) {
+func Test_DeriveService_DeriveTable(t *testing.T) {
 	cases := []struct {
 		name        string
 		query       string
@@ -66,7 +77,7 @@ func Test_TableService_DeriveTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m := setupTableService(t)
+			svc, m := setupDeriveService(t)
 
 			if c.wantErr {
 				_, err := svc.DeriveTable("id-src", c.query, "derived")
@@ -93,8 +104,8 @@ func Test_TableService_DeriveTable(t *testing.T) {
 
 // A failure materializing the derived table must not leave an orphaned
 // metadata row: the Create above it must be rolled back (BUG-2).
-func Test_TableService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
-	svc, m := setupTableService(t)
+func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
+	svc, m := setupDeriveService(t)
 
 	m.On("GetMetadata", "id-src").Return(&storage.Metadata{TableId: "id-src"}, nil).Once()
 	m.On("Create", "derived", false, "").Return("id-derived", nil).Once()
@@ -107,8 +118,8 @@ func Test_TableService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *
 	assert.Error(t, err)
 }
 
-func Test_TableService_DeriveTable_UnknownSourceTable(t *testing.T) {
-	svc, m := setupTableService(t)
+func Test_DeriveService_DeriveTable_UnknownSourceTable(t *testing.T) {
+	svc, m := setupDeriveService(t)
 
 	m.On("GetMetadata", "id-src").Return((*storage.Metadata)(nil), errors.New("not found")).Once()
 

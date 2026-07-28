@@ -1,6 +1,10 @@
 package router
 
-import "gogeoserver/internal/storage"
+import (
+	"time"
+
+	"gogeoserver/internal/storage"
+)
 
 // metadataDTO is the JSON representation of a table's metadata.
 type metadataDTO struct {
@@ -22,8 +26,8 @@ func toMetadataDTO(m *storage.Metadata) metadataDTO {
 		PhysicalName:   m.PhysicalName,
 		TableName:      m.TableName,
 		IsGeo:          m.IsGeo,
-		CreatedAt:      m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:      m.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		CreatedAt:      m.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:      m.UpdatedAt.Format(time.RFC3339),
 		GeometryColumn: m.GeometryColumn,
 		RowCount:       m.RowCount,
 		Bbox:           m.Bbox,

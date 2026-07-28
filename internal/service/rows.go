@@ -31,7 +31,29 @@ func convertValue(colType string, value any) any {
 	}
 }
 
-func (s *TableService) convertRow(tableId string, row storage.Row) (storage.Row, error) {
+// metadataRefresher is what RowService needs from MetadataService: read
+// metadata (to check which column is geometry) and refresh derived fields
+// after a write (règle 9).
+type metadataRefresher interface {
+	GetMetadata(tableId string) (*storage.Metadata, error)
+	RefreshDerived(tableId string) error
+}
+
+// RowService provides row CRUD on top of the storage layer, converting
+// values to native JSON types (règle 12) and excluding the geometry
+// column from reads (règle 7).
+type RowService struct {
+	storage  storage.TableManager
+	metadata metadataRefresher
+}
+
+// NewRowService builds a RowService backed by storage, using metadata to
+// read table metadata and refresh derived fields after a write.
+func NewRowService(storage storage.TableManager, metadata metadataRefresher) *RowService {
+	return &RowService{storage: storage, metadata: metadata}
+}
+
+func (s *RowService) convertRow(tableId string, row storage.Row) (storage.Row, error) {
 	converted := storage.Row{Pkey: row.Pkey, Values: make(map[string]any, len(row.Values))}
 	for col, val := range row.Values {
 		colType, err := s.storage.ColumnType(tableId, col)
@@ -43,7 +65,7 @@ func (s *TableService) convertRow(tableId string, row storage.Row) (storage.Row,
 	return converted, nil
 }
 
-func (s *TableService) convertRows(tableId string, rows []storage.Row) ([]storage.Row, error) {
+func (s *RowService) convertRows(tableId string, rows []storage.Row) ([]storage.Row, error) {
 	converted := make([]storage.Row, 0, len(rows))
 	for _, row := range rows {
 		c, err := s.convertRow(tableId, row)
@@ -58,7 +80,7 @@ func (s *TableService) convertRows(tableId string, rows []storage.Row) ([]storag
 // ListRows returns a page of rows ordered deterministically by pkey
 // (règle 8), with values converted to native JSON types (règle 12) and the
 // geometry column always excluded (règle 7).
-func (s *TableService) ListRows(tableId string, offset, limit int64) (*RowsPage, error) {
+func (s *RowService) ListRows(tableId string, offset, limit int64) (*RowsPage, error) {
 	pkeys, err := s.storage.GetPkeys(tableId, offset, limit)
 	if err != nil {
 		return nil, err
@@ -86,7 +108,7 @@ func (s *TableService) ListRows(tableId string, offset, limit int64) (*RowsPage,
 }
 
 // GetRow fetches a single row by pkey, or nil if it does not exist.
-func (s *TableService) GetRow(tableId, pkey string) (*storage.Row, error) {
+func (s *RowService) GetRow(tableId, pkey string) (*storage.Row, error) {
 	rows, err := s.storage.GetRowsByPkey(tableId, []string{pkey})
 	if err != nil {
 		return nil, err
@@ -105,10 +127,70 @@ func (s *TableService) GetRow(tableId, pkey string) (*storage.Row, error) {
 // ListRowsWithFilter returns rows matching filter, produced exclusively by
 // storage.BuildFilter (règle 5), with values converted to native JSON
 // types (règle 12).
-func (s *TableService) ListRowsWithFilter(tableId, filter string, args []any, limit int) ([]storage.Row, error) {
+func (s *RowService) ListRowsWithFilter(tableId, filter string, args []any, limit int) ([]storage.Row, error) {
 	rows, err := s.storage.GetRowsWithFilter(tableId, filter, args, limit)
 	if err != nil {
 		return nil, err
 	}
 	return s.convertRows(tableId, rows)
+}
+
+// UpdateRow updates every column in updates for the given pkeys in a
+// single storage call, so a multi-column update is atomic (règle 9,
+// spec §5.1: either every column changes or none does). Writing the
+// geometry column triggers RefreshDerived, which recomputes bbox and bumps
+// UpdatedAt (règle 9) — the signal that invalidates GeoService's tile
+// cache (règle 20) and MetadataService's cache (règle 11). Updating only
+// scalar fields triggers neither.
+func (s *RowService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
+	meta, err := s.metadata.GetMetadata(tableId)
+	if err != nil {
+		return err
+	}
+
+	if err := s.storage.Update(tableId, pkeys, updates); err != nil {
+		return err
+	}
+
+	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
+		if err := s.metadata.RefreshDerived(tableId); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// InsertRow inserts a single row and refreshes derived metadata (règle 9).
+func (s *RowService) InsertRow(tableId string, values map[string]any) (string, error) {
+	pkey, err := s.storage.InsertRow(tableId, values)
+	if err != nil {
+		return "", err
+	}
+	if err := s.metadata.RefreshDerived(tableId); err != nil {
+		return "", err
+	}
+	return pkey, nil
+}
+
+// BulkInsertRows inserts every row in a single transaction and refreshes
+// derived metadata (règle 6, règle 9).
+func (s *RowService) BulkInsertRows(tableId string, rows []map[string]any) ([]string, error) {
+	pkeys, err := s.storage.BulkInsert(tableId, rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.metadata.RefreshDerived(tableId); err != nil {
+		return nil, err
+	}
+	return pkeys, nil
+}
+
+// RemoveRows deletes the given rows and refreshes derived metadata
+// (règle 9).
+func (s *RowService) RemoveRows(tableId string, pkeys []string) error {
+	if err := s.storage.RemoveRows(tableId, pkeys); err != nil {
+		return err
+	}
+	return s.metadata.RefreshDerived(tableId)
 }
