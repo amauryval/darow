@@ -25,10 +25,15 @@ func NewMetadataService(s storage.MetadataManager, c *expirable.LRU[string, *sto
 	return &MetadataService{storage: s, cache: c}
 }
 
-// GetMetadata returns tableId's metadata, from cache when present.
+// GetMetadata returns tableId's metadata, from cache when present. Always
+// a copy, never the cached pointer itself (§4.1) — Metadata is a flat
+// struct, so nothing here shares state across callers that a single
+// unguarded mutation could corrupt for every other request holding the
+// same cached entry.
 func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
 	if meta, ok := s.cache.Get(tableId); ok {
-		return meta, nil
+		copied := *meta
+		return &copied, nil
 	}
 
 	meta, err := s.storage.GetMetadata(ctx, tableId)
@@ -37,7 +42,8 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (*sto
 	}
 
 	s.cache.Add(tableId, meta)
-	return meta, nil
+	copied := *meta
+	return &copied, nil
 }
 
 // ListTables returns metadata for every registered table.
@@ -113,8 +119,14 @@ func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause er
 	return cause
 }
 
-// LoadedSourceNames maps each already-loaded source file name to its
-// tableId, used by SourceService.Refresh to mark sources as loaded.
+// LoadedSourceNames maps each already-loaded source file name (or, for a
+// multi-layer source, "file::layer") to its tableId, used by
+// SourceService.Refresh to mark sources as loaded. Keyed on
+// SourceName/SourceLayer, not TableName — which PATCH /tables/{id} may
+// rename freely — so renaming a table never detaches it from its source,
+// nor lets an unrelated table masquerade as one by coincidence of name
+// (NEW-BUG-5). A table with no SourceName (e.g. created via /derive) is
+// not a loaded source and is excluded.
 func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
 	ids, err := s.storage.TableIds(ctx)
 	if err != nil {
@@ -126,7 +138,14 @@ func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]str
 		if err != nil {
 			return nil, err
 		}
-		names[meta.TableName] = meta.TableId
+		if meta.SourceName == "" {
+			continue
+		}
+		key := meta.SourceName
+		if meta.SourceLayer != "" {
+			key = meta.SourceName + layerSeparator + meta.SourceLayer
+		}
+		names[key] = meta.TableId
 	}
 	return names, nil
 }

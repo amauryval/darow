@@ -68,6 +68,42 @@ func Test_MetadataService_ListTables(t *testing.T) {
 	assert.Len(t, tables, 2)
 }
 
+// NEW-BUG-5: renaming a table loaded from a source (tableName only, via
+// PATCH /tables/{id} → UpdateMetadata) must not detach it from that
+// source — LoadedSourceNames keys on SourceName, which a rename never
+// touches, not on TableName.
+func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
+	svc, m := setupMetadataService(t)
+
+	m.On("TableIds", mock.Anything).Return([]string{"id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{
+		TableId: "id-1", TableName: "my renamed communes", SourceName: "communes.geojson",
+	}, nil).Once()
+
+	names, err := svc.LoadedSourceNames(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"communes.geojson": "id-1"}, names)
+}
+
+// NEW-BUG-5: renaming an unrelated table to a file name that happens to
+// match a source (e.g. "communes.geojson") must not make it pass for that
+// source's table — matching is on SourceName, set only at import time,
+// never on the freely-renamable TableName.
+func Test_MetadataService_LoadedSourceNames_RenameToSourceNameDoesNotHijack(t *testing.T) {
+	svc, m := setupMetadataService(t)
+
+	m.On("TableIds", mock.Anything).Return([]string{"id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{
+		TableId: "id-1", TableName: "communes.geojson", SourceName: "",
+	}, nil).Once()
+
+	names, err := svc.LoadedSourceNames(context.Background())
+
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}
+
 func Test_MetadataService_RemoveTable(t *testing.T) {
 	svc, m := setupMetadataService(t)
 

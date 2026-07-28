@@ -16,6 +16,11 @@ import (
 	"gogeoserver/internal/storage"
 )
 
+// sourceName/sourceLayer (NEW-BUG-5) are new columns without a
+// schemaMigrations entry: a database created before they existed won't
+// have them, and GetMetadata's SELECT will fail against it until it's
+// recreated or migrated by hand — accepted as a known limitation rather
+// than a migration for these two columns specifically.
 const metadataSchema = `
 CREATE TABLE IF NOT EXISTS metadata (
     tableId TEXT PRIMARY KEY,

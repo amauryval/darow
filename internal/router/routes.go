@@ -133,22 +133,5 @@ func (rt *Router) Setup() http.Handler {
 		v1.With(rt.tableMiddleware).Get("/tables/{tableId}/export", rt.exportTable)
 	})
 
-	// Backward-compatible redirects from the unversioned root (HTTP-2 —
-	// versioned API) while the front finishes migrating to /api/v1.
-	// StatusPermanentRedirect (308), unlike 301/302, keeps the original
-	// method and body, so a POST/PATCH/DELETE redirects correctly too.
-	r.Handle("/sources", http.HandlerFunc(redirectToAPIv1))
-	r.Handle("/sources/*", http.HandlerFunc(redirectToAPIv1))
-	r.Handle("/tables", http.HandlerFunc(redirectToAPIv1))
-	r.Handle("/tables/*", http.HandlerFunc(redirectToAPIv1))
-
 	return r
-}
-
-func redirectToAPIv1(w http.ResponseWriter, req *http.Request) {
-	target := "/api/v1" + req.URL.Path
-	if req.URL.RawQuery != "" {
-		target += "?" + req.URL.RawQuery
-	}
-	http.Redirect(w, req, target, http.StatusPermanentRedirect)
 }

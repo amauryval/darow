@@ -19,9 +19,10 @@ type ExportValidationError struct{ msg string }
 func (e *ExportValidationError) Error() string { return e.msg }
 
 // rowLister is what ExportService needs to fetch a table's rows, one
-// bounded page at a time (PERF-2).
+// bounded page at a time (PERF-2), without a per-page COUNT(*) it has no
+// use for (§4.2).
 type rowLister interface {
-	ListRows(ctx context.Context, tableId string, offset, limit int64) (*RowsPage, error)
+	ListRowsPage(ctx context.Context, tableId string, offset, limit int64) ([]storage.Row, error)
 }
 
 // geometryFetcher is what ExportService needs to fetch each row's
@@ -96,22 +97,25 @@ func (s *ExportService) Export(ctx context.Context, w io.Writer, meta *storage.M
 }
 
 // forEachPage calls fn with successive pages of meta's table's rows,
-// batchSize rows at a time, until every row has been visited.
+// batchSize rows at a time, until every row has been visited. A page
+// shorter than batchSize is always the last one — GetPkeys never returns
+// more than the limit it was given — so this needs no separate total
+// count to know when to stop (§4.2).
 func (s *ExportService) forEachPage(ctx context.Context, meta *storage.Metadata, fn func([]storage.Row) error) error {
 	var offset int64
 	for {
-		page, err := s.rows.ListRows(ctx, meta.TableId, offset, s.batchSize)
+		rows, err := s.rows.ListRowsPage(ctx, meta.TableId, offset, s.batchSize)
 		if err != nil {
 			return err
 		}
-		if len(page.Rows) == 0 {
+		if len(rows) == 0 {
 			return nil
 		}
-		if err := fn(page.Rows); err != nil {
+		if err := fn(rows); err != nil {
 			return err
 		}
-		offset += int64(len(page.Rows))
-		if offset >= page.Total {
+		offset += int64(len(rows))
+		if int64(len(rows)) < s.batchSize {
 			return nil
 		}
 	}

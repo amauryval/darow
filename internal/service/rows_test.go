@@ -65,6 +65,39 @@ func Test_RowService_ListRows(t *testing.T) {
 	assert.Equal(t, "2024-01-01", page.Rows[0].Values["createdAt"])
 }
 
+// §4.2: ListRowsPage, used by export's page-by-page streaming, must never
+// call RowsCount — unlike ListRows, which needs it for UI pagination. The
+// mock's t.Cleanup(AssertExpectations) would fail this test if it did.
+func Test_RowService_ListRowsPage(t *testing.T) {
+	svc, m := setupRowService(t)
+
+	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
+	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
+		{Pkey: "pk-1", Values: map[string]any{"name": "a"}},
+	}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
+
+	rows, err := svc.ListRowsPage(context.Background(), "id-1", 0, 10)
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "pk-1", rows[0].Pkey)
+}
+
+// An empty page must not call GetRowsByPkey at all, matching ListRows's
+// existing behavior for the same case.
+func Test_RowService_ListRowsPage_EmptyPage(t *testing.T) {
+	svc, m := setupRowService(t)
+
+	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{}, nil).Once()
+
+	rows, err := svc.ListRowsPage(context.Background(), "id-1", 0, 10)
+
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
 func Test_RowService_GetRow_NotFound(t *testing.T) {
 	svc, m := setupRowService(t)
 

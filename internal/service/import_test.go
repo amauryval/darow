@@ -26,9 +26,13 @@ func setupImportService(t *testing.T) (*ImportService, *mocks.Storage) {
 func Test_ImportService_LoadedSourceNames(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("TableIds", mock.Anything).Return([]string{"id-1", "id-2"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "buildings.geojson"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", TableName: "roads.geojson"}, nil).Once()
+	// Keyed on SourceName, not TableName — a table with no SourceName
+	// (e.g. from /derive) is excluded, and a table renamed away from its
+	// source file's name still resolves by its SourceName (NEW-BUG-5).
+	m.On("TableIds", mock.Anything).Return([]string{"id-1", "id-2", "id-3"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "renamed table", SourceName: "buildings.geojson"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", TableName: "roads.geojson", SourceName: "roads.geojson"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-3").Return(&storage.Metadata{TableId: "id-3", TableName: "derived"}, nil).Once()
 
 	names, err := svc.LoadedSourceNames(context.Background())
 
@@ -61,26 +65,29 @@ func Test_ImportService_DetectCRS(t *testing.T) {
 
 func Test_ImportService_ImportFromFile(t *testing.T) {
 	cases := []struct {
-		name       string
-		isGeo      bool
-		srid       int
-		wantUpdate bool
-		failCreate bool
+		name  string
+		isGeo bool
+		srid  int
 	}{
-		{name: "non geo file skips metadata update"},
-		{name: "geo file updates isGeo, geometryColumn and srid", isGeo: true, srid: 4326, wantUpdate: true},
+		{name: "non geo file"},
+		{name: "geo file updates isGeo, geometryColumn and srid", isGeo: true, srid: 4326},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m := setupImportService(t)
 
+			updates := map[string]any{"sourceName": "buildings.geojson", "sourceLayer": ""}
+			if c.isGeo {
+				updates["isGeo"] = true
+				updates["geometryColumn"] = "geom"
+				updates["srid"] = c.srid
+			}
+
 			m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-1", nil).Once()
 			m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
 			m.On("CreateFromFile", mock.Anything, "t_id1", "/data/buildings.geojson", "", 0).Return("geom", c.isGeo, c.srid, nil).Once()
-			if c.wantUpdate {
-				m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": c.srid}).Return(nil).Once()
-			}
+			m.On("UpdateMetadata", mock.Anything, "id-1", updates).Return(nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
 			tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
@@ -107,7 +114,9 @@ func Test_ImportService_ImportFromFile_ForwardsSridOverride(t *testing.T) {
 	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-1", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/lambert.geojson", "", 2154).Return("geom", true, 2154, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 2154}).Return(nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{
+		"sourceName": "lambert.geojson", "sourceLayer": "", "isGeo": true, "geometryColumn": "geom", "srid": 2154,
+	}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
 	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
@@ -154,7 +163,9 @@ func Test_ImportService_ImportFromFile_ForwardsLayer(t *testing.T) {
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-1", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/regions.gpkg", "communes", 0).Return("geom", true, 4326, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 4326}).Return(nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{
+		"sourceName": "regions.gpkg", "sourceLayer": "communes", "isGeo": true, "geometryColumn": "geom", "srid": 4326,
+	}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
 	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes", 0)

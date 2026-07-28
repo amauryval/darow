@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:
@@ -68,12 +69,24 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 		return "", s.metadata.Rollback(ctx, tableId, fmt.Errorf("importing %q: %w", name, err))
 	}
 
+	// sourceName/sourceLayer are independent of tableName, which
+	// PATCH /tables/{id} may rename freely — LoadedSourceNames keys on
+	// these instead, so renaming a table doesn't detach it from its
+	// source (NEW-BUG-5). name is the bare file name for a single-layer
+	// source, but the composite "file::layer" tableName for a multi-layer
+	// one — sourceName strips the layer suffix back off in that case.
+	sourceName := name
+	if layer != "" {
+		sourceName = strings.TrimSuffix(name, layerSeparator+layer)
+	}
+	updates := map[string]any{"sourceName": sourceName, "sourceLayer": layer}
 	if isGeo {
-		if err := s.metadata.UpdateMetadata(ctx, tableId, map[string]any{
-			"isGeo": true, "geometryColumn": geometryColumn, "srid": resolvedSrid,
-		}); err != nil {
-			return "", s.metadata.Rollback(ctx, tableId, err)
-		}
+		updates["isGeo"] = true
+		updates["geometryColumn"] = geometryColumn
+		updates["srid"] = resolvedSrid
+	}
+	if err := s.metadata.UpdateMetadata(ctx, tableId, updates); err != nil {
+		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 
 	if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {

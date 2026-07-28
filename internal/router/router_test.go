@@ -591,7 +591,6 @@ func Test_Router_ExportTable_ExemptFromRequestTimeout(t *testing.T) {
 	})
 	m.On("Columns", mock.Anything, "id-2").Return([]string{}, nil).Once()
 	m.On("GetPkeys", mock.Anything, "id-2", int64(0), int64(1000)).Return([]string{}, nil).Once()
-	m.On("RowsCount", mock.Anything, "id-2").Return(int64(0), nil).Once()
 
 	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc,
 		config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30},
@@ -613,7 +612,6 @@ func Test_Router_ExportTable_CSV(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{}, nil).Once()
 	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(1000)).Return([]string{}, nil).Once()
-	m.On("RowsCount", mock.Anything, "id-1").Return(int64(0), nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/export", nil)
 
@@ -621,16 +619,20 @@ func Test_Router_ExportTable_CSV(t *testing.T) {
 	assert.Equal(t, "text/csv", rec.Header().Get("Content-Type"))
 }
 
-func Test_Router_RootPaths_RedirectToAPIv1(t *testing.T) {
+// §4.3: the unversioned root redirects existed only "while the front
+// migrates to /api/v1" — the front has migrated (web/src/client/http.ts's
+// API_BASE is /api/v1 with no exception) and these paths widened the root
+// surface for no live consumer. They are gone: the root now 404s like any
+// other unregistered path.
+func Test_Router_RootPaths_NoLongerRedirect(t *testing.T) {
 	cases := []struct {
 		method string
 		path   string
-		want   string
 	}{
-		{http.MethodGet, "/sources", "/api/v1/sources"},
-		{http.MethodPost, "/sources/refresh", "/api/v1/sources/refresh"},
-		{http.MethodGet, "/tables", "/api/v1/tables"},
-		{http.MethodGet, "/tables/id-1?foo=bar", "/api/v1/tables/id-1?foo=bar"},
+		{http.MethodGet, "/sources"},
+		{http.MethodPost, "/sources/refresh"},
+		{http.MethodGet, "/tables"},
+		{http.MethodGet, "/tables/id-1"},
 	}
 
 	for _, c := range cases {
@@ -639,8 +641,7 @@ func Test_Router_RootPaths_RedirectToAPIv1(t *testing.T) {
 
 			rec := doRequest(handler, c.method, c.path, nil)
 
-			assert.Equal(t, http.StatusPermanentRedirect, rec.Code)
-			assert.Equal(t, c.want, rec.Header().Get("Location"))
+			assert.Equal(t, http.StatusNotFound, rec.Code)
 		})
 	}
 }
@@ -757,7 +758,9 @@ func Test_Router_LoadSource_WithSridQueryParam(t *testing.T) {
 	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 2154}).Return(nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{
+		"sourceName": "lambert.geojson", "sourceLayer": "", "isGeo": true, "geometryColumn": "geom", "srid": 2154,
+	}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/lambert.geojson/load?srid=2154", nil)
@@ -829,6 +832,7 @@ func Test_Router_UploadSource(t *testing.T) {
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", mock.Anything, "", 0).Return("", false, 0, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "buildings.geojson", "sourceLayer": ""}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 	// Load's own TableIds/GetMetadata cache lookups happen inside Refresh,
 	// called once before Load — Load itself just reads the in-memory cache.
@@ -873,6 +877,7 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("", false, 0, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "regions.gpkg", "sourceLayer": "communes"}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/regions.gpkg/load?layer=communes", nil)

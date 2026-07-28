@@ -18,16 +18,16 @@ type fakeRowLister struct {
 	err   error
 }
 
-func (f *fakeRowLister) ListRows(ctx context.Context, tableId string, offset, limit int64) (*RowsPage, error) {
+func (f *fakeRowLister) ListRowsPage(ctx context.Context, tableId string, offset, limit int64) ([]storage.Row, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	for _, page := range f.pages {
 		if page.Offset == offset {
-			return page, nil
+			return page.Rows, nil
 		}
 	}
-	return &RowsPage{}, nil
+	return nil, nil
 }
 
 type fakeGeometryFetcher struct {

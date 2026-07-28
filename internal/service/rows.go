@@ -118,6 +118,27 @@ func (s *RowService) ListRows(ctx context.Context, tableId string, offset, limit
 	return &RowsPage{Rows: rows, Total: total, Limit: limit, Offset: offset}, nil
 }
 
+// ListRowsPage returns up to limit rows starting at offset, without the
+// total row count ListRows computes for UI pagination — used by export's
+// page-by-page streaming (§4.2), which only needs to know whether a page
+// came back short (the last page) and has no use for a running total that
+// would otherwise mean one extra COUNT(*) per page.
+func (s *RowService) ListRowsPage(ctx context.Context, tableId string, offset, limit int64) ([]storage.Row, error) {
+	pkeys, err := s.storage.GetPkeys(ctx, tableId, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(pkeys) == 0 {
+		return nil, nil
+	}
+
+	rows, err := s.storage.GetRowsByPkey(ctx, tableId, pkeys)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertRows(ctx, tableId, rows)
+}
+
 // GetRow fetches a single row by pkey, or nil if it does not exist.
 func (s *RowService) GetRow(ctx context.Context, tableId, pkey string) (*storage.Row, error) {
 	rows, err := s.storage.GetRowsByPkey(ctx, tableId, []string{pkey})

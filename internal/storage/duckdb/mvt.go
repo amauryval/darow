@@ -15,10 +15,10 @@ import (
 // zoom — shrinking to near-zero at high zoom, so it never needs to be
 // switched off past some threshold.
 func tileSimplifyTolerance(zoom int) float64 {
-    const webMercatorCircumference = 40075016
-    const tilePixels = 256
-    tolerance := webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
-    return math.Max(tolerance, 0.25)
+	const webMercatorCircumference = 40075016
+	const tilePixels = 256
+	tolerance := webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
+	return math.Max(tolerance, 0.25)
 }
 
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
