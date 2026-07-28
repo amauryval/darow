@@ -81,6 +81,12 @@ func (a *Adapter) Close() error {
 	return a.db.Close()
 }
 
+// Ping checks that the underlying DuckDB connection is alive, for use by
+// a readiness probe.
+func (a *Adapter) Ping(ctx context.Context) error {
+	return a.db.PingContext(ctx)
+}
+
 // Query runs a read-only query and returns its result set, interrupting it
 // in DuckDB if ctx is cancelled before it completes.
 func (a *Adapter) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {

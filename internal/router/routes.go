@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"io/fs"
 	"net/http"
 	"time"
@@ -28,20 +29,22 @@ type Router struct {
 	exportService   *service.ExportService
 	apiCfg          config.APIConfig
 	uiAssets        fs.FS
+	ready           func(ctx context.Context) error
 }
 
 // NewRouter builds a Router serving every service above, honoring
 // apiCfg's row pagination limits (règle 18). uiAssets is the admin UI's
-// built static files, served under /ui.
+// built static files, served under /ui. ready backs /readyz — it should
+// ping the underlying storage connection.
 func NewRouter(
 	metadataSvc metadataAPI, rowSvc rowAPI, schemaSvc schemaAPI, deriveSvc deriveAPI,
 	geoSvc geoAPI, sourceSvc sourceAPI, exportSvc *service.ExportService,
-	apiCfg config.APIConfig, uiAssets fs.FS,
+	apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
 ) *Router {
 	return &Router{
 		metadataService: metadataSvc, rowService: rowSvc, schemaService: schemaSvc, deriveService: deriveSvc,
 		geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
-		apiCfg: apiCfg, uiAssets: uiAssets,
+		apiCfg: apiCfg, uiAssets: uiAssets, ready: ready,
 	}
 }
 
@@ -49,12 +52,16 @@ func NewRouter(
 func (rt *Router) Setup() http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(middleware.RequestID)
+	r.Use(slogLogger)
 	r.Use(middleware.Recoverer)
 	if rt.apiCfg.RequestTimeoutSec > 0 {
 		r.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
 	}
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
+
+	r.Get("/healthz", rt.healthz)
+	r.Get("/readyz", rt.readyz)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 

@@ -18,9 +18,15 @@ type Config struct {
 	Cache   CacheConfig   `yaml:"cache"`
 }
 
-// ServerConfig holds HTTP server settings.
+// ServerConfig holds HTTP server settings: the listen port, per-connection
+// timeouts, and how long a graceful shutdown waits for in-flight requests
+// before giving up.
 type ServerConfig struct {
-	Port int `yaml:"port"`
+	Port               int `yaml:"port"`
+	ReadTimeoutSec     int `yaml:"readTimeoutSec"`
+	WriteTimeoutSec    int `yaml:"writeTimeoutSec"`
+	IdleTimeoutSec     int `yaml:"idleTimeoutSec"`
+	ShutdownTimeoutSec int `yaml:"shutdownTimeoutSec"`
 }
 
 // DuckDBConfig holds the DuckDB database file path.
@@ -36,12 +42,14 @@ type SourcesConfig struct {
 }
 
 // APIConfig holds settings adjustable without recompiling (règle 18) for
-// row pagination limits, request body size, and per-request timeout.
+// row pagination limits, request body size, per-request timeout, and the
+// page size ExportService streams at (PERF-2).
 type APIConfig struct {
 	DefaultRowLimit   int   `yaml:"defaultRowLimit"`
 	MaxRowLimit       int   `yaml:"maxRowLimit"`
 	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
 	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
+	ExportBatchSize   int64 `yaml:"exportBatchSize"`
 }
 
 // CacheConfig holds TTL and max item count for every in-memory cache
@@ -58,7 +66,13 @@ type CacheConfig struct {
 
 func defaultConfig() Config {
 	return Config{
-		Server: ServerConfig{Port: 8080},
+		Server: ServerConfig{
+			Port:               8080,
+			ReadTimeoutSec:     15,
+			WriteTimeoutSec:    30,
+			IdleTimeoutSec:     60,
+			ShutdownTimeoutSec: 10,
+		},
 		DuckDB: DuckDBConfig{Path: "./data/geo.db"},
 		Sources: SourcesConfig{
 			WorkDir:           "./data/sources",
@@ -70,6 +84,7 @@ func defaultConfig() Config {
 			MaxRowLimit:       1000,
 			MaxBodyBytes:      10 * 1024 * 1024,
 			RequestTimeoutSec: 30,
+			ExportBatchSize:   1000,
 		},
 		Cache: CacheConfig{
 			MetadataTTLSec:   300,

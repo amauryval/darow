@@ -407,19 +407,19 @@ construisent plus de service réel.
 2. [FAIT] **PERF-4** : propager `context.Context` sur **toutes** les méthodes storage et service (à faire
    dans le même mouvement que l'étape 4 pour ne casser les signatures qu'une fois) ; timeout par
    requête via middleware.
-3. **PERF-2** : export en streaming, borné et paginé.
+3. [FAIT] **PERF-2** : export en streaming, borné et paginé.
 4. **PERF-3** : [NE PAS FAIRE] pool de connexions DuckDB avec `LOAD spatial` au hook de connexion ; `writeMu`
    conservé pour les écritures uniquement. Valider sous `-race` et sous charge.
 5. [FAIT] **PERF-5** : TTL et **taille max** des caches en config (règle 18) ; cache de tuiles borné (LRU).
 
 ### Étape 6 — Exploitation *(≈ 1 j)*
 
-1. `http.Server` avec timeouts + `Shutdown(ctx)` sur `SIGINT`/`SIGTERM`, fermeture propre de DuckDB.
-2. `/healthz` (process) et `/readyz` (ping DuckDB).
-3. `log/slog` structuré + identifiant de requête (`middleware.RequestID`) ; supprimer les
+1. [FAIT] `http.Server` avec timeouts + `Shutdown(ctx)` sur `SIGINT`/`SIGTERM`, fermeture propre de DuckDB.
+2. [FAIT] `/healthz` (process) et `/readyz` (ping DuckDB).
+3. [FAIT] `log/slog` structuré + identifiant de requête (`middleware.RequestID`) ; supprimer les
    `log.Fatalf` hors bootstrap.
 4. [NE PAS FAIRE] Métriques Prometheus (latence, tuiles servies, hit-ratio des caches).
-5. **HTTP-2** : [NE PAS FAIRE] `ETag` sur les tuiles dérivé de `UpdatedAt`, `max-age` court.
+5. [FAIT] **HTTP-2** : `ETag` sur les tuiles dérivé de `UpdatedAt`, `max-age` court.
 
 ### Étape 7 — Fondations d'évolutivité *(≈ 2–3 j)*
 

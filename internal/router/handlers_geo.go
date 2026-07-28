@@ -2,10 +2,13 @@ package router
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"gogeoserver/internal/storage"
 )
 
 func parseTileCoords(req *http.Request) (z, x, y int, err error) {
@@ -41,18 +44,34 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Complements GeoService's application cache (règle 20): spares even
+	// the round trip for a client/CDN that already has the tile. The ETag
+	// is derived from UpdatedAt (HTTP-2), so it changes as soon as the next
+	// write lands; max-age stays short since nothing invalidates a CDN's
+	// copy in between.
+	etag := tileETag(meta, z, x, y)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	if req.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
-	// Complements GeoService's application cache (règle 20): spares even
-	// the round trip for a client/CDN that already has the tile. Short
-	// max-age since a tile changes as soon as the next write lands.
-	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
 	w.Write(mvt)
+}
+
+// tileETag derives an ETag for a tile from its table's UpdatedAt: any write
+// that touches the table's rows bumps UpdatedAt (règle 9), which changes
+// the ETag for every tile of that table.
+func tileETag(meta *storage.Metadata, z, x, y int) string {
+	return fmt.Sprintf(`"%s-%d-%d-%d-%d"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano())
 }
 
 // getGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed

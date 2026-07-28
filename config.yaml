@@ -2,6 +2,10 @@
 # ou par argument de ligne de commande pour workDir (voir docs/spec.md 2.3).
 server:
   port: 8080
+  readTimeoutSec: 15
+  writeTimeoutSec: 30
+  idleTimeoutSec: 60
+  shutdownTimeoutSec: 10
 
 duckdb:
   path: "./data/geo.db"
@@ -16,6 +20,7 @@ api:
   maxRowLimit: 1000
   maxBodyBytes: 10485760 # 10 Mo
   requestTimeoutSec: 30
+  exportBatchSize: 1000
 
 cache:
   metadataTTLSec: 300

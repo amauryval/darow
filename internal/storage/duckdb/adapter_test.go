@@ -174,6 +174,20 @@ func Test_Adapter_Remove_DropsTableAndMetadata(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func Test_Adapter_Ping(t *testing.T) {
+	a := setupAdapter(t)
+
+	assert.NoError(t, a.Ping(context.Background()))
+}
+
+func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
+	a, err := New(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, a.Close())
+
+	assert.Error(t, a.Ping(context.Background()))
+}
+
 func Test_Adapter_RefreshDerivedMetadata(t *testing.T) {
 	a := setupAdapter(t)
 	tableId := createScalarTable(t, a)

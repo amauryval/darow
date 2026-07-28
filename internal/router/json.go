@@ -2,7 +2,7 @@ package router
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 )
 
@@ -12,6 +12,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("encoding json response: %v", err)
+		slog.Error("encoding json response", "error", err)
 	}
 }

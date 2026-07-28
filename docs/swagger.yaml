@@ -67,6 +67,26 @@ info:
   title: GeoAPI
   version: "1.0"
 paths:
+  /healthz:
+    get:
+      responses:
+        "200":
+          description: OK
+      summary: Liveness probe
+      tags:
+      - ops
+  /readyz:
+    get:
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Readiness probe
+      tags:
+      - ops
   /sources:
     get:
       produces:

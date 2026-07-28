@@ -1,12 +1,11 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"io"
 
 	"gogeoserver/internal/storage"
 )
@@ -19,7 +18,8 @@ type ExportValidationError struct{ msg string }
 
 func (e *ExportValidationError) Error() string { return e.msg }
 
-// rowLister is what ExportService needs to fetch a table's rows.
+// rowLister is what ExportService needs to fetch a table's rows, one
+// bounded page at a time (PERF-2).
 type rowLister interface {
 	ListRows(ctx context.Context, tableId string, offset, limit int64) (*RowsPage, error)
 }
@@ -31,101 +31,186 @@ type geometryFetcher interface {
 	GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys []string) (map[string]string, error)
 }
 
+// columnLister is what ExportService needs to know a table's column
+// names and order, so the CSV header can be written before any row is
+// fetched instead of being inferred by scanning every row into memory.
+type columnLister interface {
+	Schema(ctx context.Context, tableId string) ([]ColumnSchema, error)
+}
+
 // ExportService renders a table's rows as CSV or GeoJSON — export is
-// domain logic, not HTTP transport: the router only sets headers and
-// writes the returned body.
+// domain logic, not HTTP transport: the router only sets headers and lets
+// Export stream the body directly to the response. Rows are fetched
+// batchSize at a time (PERF-2), so memory use stays bounded regardless of
+// table size instead of holding every row and the full rendered body at
+// once.
 type ExportService struct {
-	rows     rowLister
-	geometry geometryFetcher
+	rows      rowLister
+	geometry  geometryFetcher
+	columns   columnLister
+	batchSize int64
 }
 
-// NewExportService builds an ExportService reading rows via rows and,
-// for GeoJSON, geometry via geometry.
-func NewExportService(rows rowLister, geometry geometryFetcher) *ExportService {
-	return &ExportService{rows: rows, geometry: geometry}
-}
-
-// Export renders every row of meta's table in format ("csv" or
-// "geojson"), returning the body and its content type.
-func (s *ExportService) Export(ctx context.Context, meta *storage.Metadata, format string) (body []byte, contentType string, err error) {
-	page, err := s.rows.ListRows(ctx, meta.TableId, 0, meta.RowCount)
-	if err != nil {
-		return nil, "", err
+// NewExportService builds an ExportService reading rows via rows, column
+// order via columns, and, for GeoJSON, geometry via geometry. batchSize
+// bounds how many rows are held in memory at once (PERF-2); a value <= 0
+// falls back to 1000.
+func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLister, batchSize int64) *ExportService {
+	if batchSize <= 0 {
+		batchSize = 1000
 	}
+	return &ExportService{rows: rows, geometry: geometry, columns: columns, batchSize: batchSize}
+}
 
+// ContentType validates format ("csv" or "geojson") against meta and
+// returns the response's content type, without touching storage. The
+// router must call this — and set the response header on success —
+// before calling Export, since Export streams directly to the response
+// body and can no longer change the status code once it starts writing.
+func (s *ExportService) ContentType(meta *storage.Metadata, format string) (string, error) {
 	switch format {
 	case "csv":
-		return exportCSV(page.Rows), "text/csv", nil
+		return "text/csv", nil
 	case "geojson":
 		if !meta.IsGeo {
-			return nil, "", &ExportValidationError{fmt.Sprintf("table %q has no geometry to export as GeoJSON", meta.TableId)}
+			return "", &ExportValidationError{fmt.Sprintf("table %q has no geometry to export as GeoJSON", meta.TableId)}
 		}
-		body, err := s.exportGeoJSON(ctx, meta.TableId, page.Rows)
-		return body, "application/geo+json", err
+		return "application/geo+json", nil
 	default:
-		return nil, "", &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
+		return "", &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
 	}
 }
 
-func sortedColumns(rows []storage.Row) []string {
-	seen := map[string]bool{}
-	var cols []string
-	for _, row := range rows {
-		for col := range row.Values {
-			if !seen[col] {
-				seen[col] = true
-				cols = append(cols, col)
-			}
+// Export streams every row of meta's table to w in format, fetching rows
+// batchSize at a time (PERF-2) rather than loading the whole table into
+// memory. Callers must have already validated format via ContentType.
+func (s *ExportService) Export(ctx context.Context, w io.Writer, meta *storage.Metadata, format string) error {
+	switch format {
+	case "csv":
+		return s.exportCSV(ctx, w, meta)
+	case "geojson":
+		return s.exportGeoJSON(ctx, w, meta)
+	default:
+		return &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
+	}
+}
+
+// forEachPage calls fn with successive pages of meta's table's rows,
+// batchSize rows at a time, until every row has been visited.
+func (s *ExportService) forEachPage(ctx context.Context, meta *storage.Metadata, fn func([]storage.Row) error) error {
+	var offset int64
+	for {
+		page, err := s.rows.ListRows(ctx, meta.TableId, offset, s.batchSize)
+		if err != nil {
+			return err
+		}
+		if len(page.Rows) == 0 {
+			return nil
+		}
+		if err := fn(page.Rows); err != nil {
+			return err
+		}
+		offset += int64(len(page.Rows))
+		if offset >= page.Total {
+			return nil
 		}
 	}
-	sort.Strings(cols)
-	return cols
 }
 
-func exportCSV(rows []storage.Row) []byte {
-	var buf bytes.Buffer
-	cols := sortedColumns(rows)
-	writer := csv.NewWriter(&buf)
-
-	writer.Write(append([]string{"pkey"}, cols...))
-	for _, row := range rows {
-		record := make([]string, 0, len(cols)+1)
-		record = append(record, row.Pkey)
-		for _, col := range cols {
-			record = append(record, fmt.Sprintf("%v", row.Values[col]))
-		}
-		writer.Write(record)
-	}
-	writer.Flush()
-	return buf.Bytes()
-}
-
-func (s *ExportService) exportGeoJSON(ctx context.Context, tableId string, rows []storage.Row) ([]byte, error) {
-	pkeys := make([]string, len(rows))
-	for i, row := range rows {
-		pkeys[i] = row.Pkey
-	}
-
-	geometries, err := s.geometry.GetGeometryGeoJSON(ctx, tableId, pkeys)
+// exportColumns returns meta's table's column names in schema order,
+// excluding the geometry column (règle 7 — rows never carry it either).
+func (s *ExportService) exportColumns(ctx context.Context, meta *storage.Metadata) ([]string, error) {
+	schema, err := s.columns.Schema(ctx, meta.TableId)
 	if err != nil {
 		return nil, err
 	}
 
-	features := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		properties := map[string]any{}
-		for col, val := range row.Values {
-			properties[col] = val
+	cols := make([]string, 0, len(schema))
+	for _, col := range schema {
+		if col.Name == meta.GeometryColumn {
+			continue
 		}
-		features = append(features, map[string]any{
-			"type":       "Feature",
-			"properties": properties,
-			"geometry":   json.RawMessage(geometries[row.Pkey]),
-		})
+		cols = append(cols, col.Name)
+	}
+	return cols, nil
+}
+
+func (s *ExportService) exportCSV(ctx context.Context, w io.Writer, meta *storage.Metadata) error {
+	cols, err := s.exportColumns(ctx, meta)
+	if err != nil {
+		return err
 	}
 
-	return json.Marshal(map[string]any{
-		"type":     "FeatureCollection",
-		"features": features,
+	writer := csv.NewWriter(w)
+	if err := writer.Write(append([]string{"pkey"}, cols...)); err != nil {
+		return err
+	}
+
+	err = s.forEachPage(ctx, meta, func(rows []storage.Row) error {
+		for _, row := range rows {
+			record := make([]string, 0, len(cols)+1)
+			record = append(record, row.Pkey)
+			for _, col := range cols {
+				record = append(record, fmt.Sprintf("%v", row.Values[col]))
+			}
+			if err := writer.Write(record); err != nil {
+				return err
+			}
+		}
+		writer.Flush()
+		return writer.Error()
 	})
+	if err != nil {
+		return err
+	}
+
+	writer.Flush()
+	return writer.Error()
+}
+
+func (s *ExportService) exportGeoJSON(ctx context.Context, w io.Writer, meta *storage.Metadata) error {
+	if _, err := io.WriteString(w, `{"type":"FeatureCollection","features":[`); err != nil {
+		return err
+	}
+
+	first := true
+	err := s.forEachPage(ctx, meta, func(rows []storage.Row) error {
+		pkeys := make([]string, len(rows))
+		for i, row := range rows {
+			pkeys[i] = row.Pkey
+		}
+
+		geometries, err := s.geometry.GetGeometryGeoJSON(ctx, meta.TableId, pkeys)
+		if err != nil {
+			return err
+		}
+
+		for _, row := range rows {
+			if !first {
+				if _, err := io.WriteString(w, ","); err != nil {
+					return err
+				}
+			}
+			first = false
+
+			feature, err := json.Marshal(map[string]any{
+				"type":       "Feature",
+				"properties": row.Values,
+				"geometry":   json.RawMessage(geometries[row.Pkey]),
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(feature); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = io.WriteString(w, "]}")
+	return err
 }

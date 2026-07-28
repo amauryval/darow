@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -35,13 +36,13 @@ func setupRouter(t *testing.T) (http.Handler, *mocks.Storage) {
 	importSvc := service.NewImportService(metadataSvc, m)
 	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 
 	uiAssets := fstest.MapFS{
 		"index.html": {Data: []byte("<html>ui</html>")},
 	}
 
-	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, func(context.Context) error { return nil })
 	return rt.Setup(), m
 }
 
@@ -57,6 +58,44 @@ func doRequest(handler http.Handler, method, path string, body any) *httptest.Re
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func Test_Router_Healthz(t *testing.T) {
+	handler, _ := setupRouter(t)
+
+	rec := doRequest(handler, http.MethodGet, "/healthz", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func Test_Router_Readyz_OK(t *testing.T) {
+	handler, _ := setupRouter(t)
+
+	rec := doRequest(handler, http.MethodGet, "/readyz", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func Test_Router_Readyz_ReportsUnavailableOnStorageFailure(t *testing.T) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+
+	failingPing := func(context.Context) error { return errors.New("duckdb unreachable") }
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, failingPing)
+
+	rec := doRequest(rt.Setup(), http.MethodGet, "/readyz", nil)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func Test_Router_GetTableMetadata(t *testing.T) {
@@ -182,10 +221,10 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 	importSvc := service.NewImportService(metadataSvc, m)
 	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
 
-	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets, func(context.Context) error { return nil })
 	handler := rt.Setup()
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
@@ -208,6 +247,34 @@ func Test_Router_GetTile(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/vnd.mapbox-vector-tile", rec.Header().Get("Content-Type"))
 	assert.Equal(t, []byte("mvt"), rec.Body.Bytes())
+	assert.NotEmpty(t, rec.Header().Get("ETag"))
+	assert.Equal(t, "public, max-age=60", rec.Header().Get("Cache-Control"))
+}
+
+func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
+	first := doRequest(handler, http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
+	etag := first.Header().Get("ETag")
+
+	req := httptest.NewRequest(http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotModified, rec.Code)
+}
+
+func Test_TileETag_ChangesWithUpdatedAt(t *testing.T) {
+	meta := &storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
+
+	before := tileETag(meta, 1, 2, 3)
+	meta.UpdatedAt = time.Unix(2, 0)
+	after := tileETag(meta, 1, 2, 3)
+
+	assert.NotEqual(t, before, after)
 }
 
 func Test_Router_FilterByBbox(t *testing.T) {
@@ -290,7 +357,8 @@ func Test_Router_ExportTable_CSV(t *testing.T) {
 	handler, m := setupRouter(t)
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once()
-	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(0)).Return([]string{}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{}, nil).Once()
+	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(1000)).Return([]string{}, nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(0), nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/tables/id-1/export", nil)
@@ -358,9 +426,9 @@ func Test_Router_UploadSource(t *testing.T) {
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".geojson"},
 	}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, func(context.Context) error { return nil })
 	handler := rt.Setup()
 
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
@@ -398,9 +466,9 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".gpkg"},
 	}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, func(context.Context) error { return nil })
 	handler := rt.Setup()
 
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
@@ -436,9 +504,9 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 		MaxSizeBytes:      1000,
 		AllowedExtensions: []string{".gpkg"},
 	}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, func(context.Context) error { return nil })
 	handler := rt.Setup()
 
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()

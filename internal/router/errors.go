@@ -2,8 +2,10 @@ package router
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 var (
@@ -25,7 +27,12 @@ type ErrorResponse struct {
 func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	message := err.Error()
 	if code >= 500 {
-		log.Printf("%s %s: %v", req.Method, req.URL.Path, err)
+		slog.Error("request failed",
+			"method", req.Method,
+			"path", req.URL.Path,
+			"request_id", middleware.GetReqID(req.Context()),
+			"error", err,
+		)
 		message = http.StatusText(code)
 	}
 	writeJSON(w, code, ErrorResponse{
