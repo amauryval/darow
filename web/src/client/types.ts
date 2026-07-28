@@ -27,6 +27,11 @@ export interface Source {
   layers?: SourceLayer[];
 }
 
+export interface SourceCRS {
+  srid: number | null;
+  authName: string;
+}
+
 export type RowValue = string | number | boolean | null;
 
 export interface Row {

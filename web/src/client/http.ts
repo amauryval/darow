@@ -20,6 +20,18 @@ export class ApiError extends Error {
   }
 }
 
+// errorMessage turns any caught value into a user-facing string: the
+// server's own message for an ApiError, or fallback plus the underlying
+// error's message for anything else (e.g. a network failure — the request
+// never reached the server at all, so there is no ApiError to unwrap, but
+// the browser's own error text, "Failed to fetch" and the like, is still
+// more diagnosable than a bare generic string).
+export function errorMessage(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) return e.message;
+  if (e instanceof Error) return `${fallback} : ${e.message}`;
+  return fallback;
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ErrorResponse | null;

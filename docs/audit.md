@@ -436,13 +436,20 @@ construisent plus de service réel.
 
 ### Étape 8 — Compléter le domaine *(≈ 2–3 j)*
 
-1. **GEO-1** : détecter le CRS source (`ST_Read_Meta`), le stocker dans `metadata.srid`, reprojeter
-   depuis lui. Test de non-régression sur un fichier Lambert-93.
-2. Exposer les capacités déjà implémentées : `POST /tables/{id}/filter` (via `BuildFilter`),
-   `GET /tables/{id}/columns/{col}/distinct`, `PATCH /tables/{id}` (renommage).
-3. Gestion des sources : `DELETE /sources/{name}`, remplacement explicite.
-4. **GEO-3** : attributs sélectionnables dans les tuiles + simplification par zoom.
-5. **GEO-2** : support multi-colonnes géométriques (ou refus explicite et documenté).
+1. [FAIT] **GEO-1** : détecter le CRS source (`ST_Read_Meta` → `Adapter.DetectCRS`), le stocker
+   dans `metadata.srid`, reprojeter depuis lui. L'utilisateur peut surcharger l'EPSG détecté
+   (`GET /sources/{name}/metadata` en preview, `?srid=` sur `load`/`upload`) — nécessaire quand la
+   source ne déclare aucun CRS. Test de non-régression sur un fichier Lambert-93
+   (`Test_Adapter_CreateFromFile_ReprojectsFromNonWGS84CRS`, suite de conformité).
+2. [FAIT] Exposé : `POST /tables/{id}/filter` (via `BuildFilter`),
+   `GET /tables/{id}/columns/{col}/distinct`, `PATCH /tables/{id}` (renommage, UI incluse).
+3. [FAIT] Gestion des sources : `DELETE /sources/{name}` (supprime le fichier et la/les table(s)
+   associée(s) si chargée(s)) ; remplacement explicite = suppression puis ré-upload.
+4. [FAIT] **GEO-3** : attributs sélectionnables dans les tuiles (`?attrs=`) + simplification par
+   zoom (`ST_SimplifyPreserveTopology`, tolérance ≈ 1 pixel au zoom courant).
+5. [FAIT] **GEO-2** : refus explicite et documenté des sources multi-colonnes géométriques
+   (`findGeometryColumn` erreur si plus d'une colonne `GEOMETRY`) plutôt qu'un support complet —
+   celui-ci toucherait `GeoTableManager`, `RowService`, MVT et export dans leur ensemble.
 
 ---
 

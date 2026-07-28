@@ -71,6 +71,14 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "Upload a file and load it into a new table",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Explicit source EPSG code, overriding auto-detection",
+                        "name": "srid",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "201": {
                         "description": "Created",
@@ -83,6 +91,34 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sources/{name}": {
+            "delete": {
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Delete a source file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/router.ErrorResponse"
                         }
@@ -112,6 +148,12 @@ const docTemplate = `{
                         "description": "Layer name (required for multi-layer sources)",
                         "name": "layer",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Explicit source EPSG code, overriding auto-detection",
+                        "name": "srid",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -126,6 +168,47 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sources/{name}/metadata": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Preview a source's detected CRS",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Layer name (for multi-layer sources)",
+                        "name": "layer",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/router.ErrorResponse"
                         }
@@ -215,6 +298,41 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Rename a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/router.metadataDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/api/v1/tables/{tableId}/bbox": {
@@ -283,6 +401,48 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/columns/{col}/distinct": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "List a column's distinct values",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "col",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -364,6 +524,44 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/filter": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Filter rows by column conditions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -669,6 +867,12 @@ const docTemplate = `{
                         "name": "y",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated non-geometry columns to embed in the tile",
+                        "name": "attrs",
+                        "in": "query"
                     }
                 ],
                 "responses": {

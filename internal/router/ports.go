@@ -15,6 +15,7 @@ type metadataAPI interface {
 	GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error)
 	ListTables(ctx context.Context) ([]*storage.Metadata, error)
 	RemoveTable(ctx context.Context, tableId string) error
+	UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error
 }
 
 // rowAPI is everything the router calls on *service.RowService.
@@ -25,6 +26,8 @@ type rowAPI interface {
 	BulkInsertRows(ctx context.Context, tableId string, rows []map[string]any) ([]string, error)
 	UpdateRow(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error
 	RemoveRows(ctx context.Context, tableId string, pkeys []string) error
+	ListRowsWithFilter(ctx context.Context, tableId, filter string, args []any, limit int) ([]storage.Row, error)
+	GetDistinctValues(ctx context.Context, tableId, column string) ([]any, error)
 }
 
 // schemaAPI is everything the router calls on *service.SchemaService.
@@ -40,7 +43,7 @@ type deriveAPI interface {
 
 // geoAPI is everything the router calls on *service.GeoService.
 type geoAPI interface {
-	GetTile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error)
+	GetTile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error)
 	GeometryTypes(ctx context.Context, tableId string) ([]string, error)
 	FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error)
 }
@@ -50,7 +53,9 @@ type sourceAPI interface {
 	List() []service.Source
 	Refresh(ctx context.Context) ([]service.Source, error)
 	Upload(filename string, content io.Reader) (string, error)
-	Load(ctx context.Context, name, layer string) (string, error)
+	Load(ctx context.Context, name, layer string, srid int) (string, error)
+	Delete(ctx context.Context, name string) error
+	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
 	MaxUploadBytes() int64
 }
 

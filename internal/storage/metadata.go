@@ -96,7 +96,9 @@ type TableWriter interface {
 type GeoTableManager interface {
 	// Tile stops early if ctx is cancelled (e.g. a MapLibre client
 	// aborting a request for a zoom level it has since scrolled past).
-	Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error)
+	// attrs selects extra non-geometry columns to embed in the tile
+	// (GEO-3), validated by the caller against the table's real columns.
+	Tile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error)
 	FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error)
 	GeometryTypes(ctx context.Context, tableId string) ([]string, error)
 

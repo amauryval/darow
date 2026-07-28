@@ -12,13 +12,13 @@ duckdb:
 
 sources:
   workDir: "./data/sources"
-  maxSizeBytes: 1048576000 # 100 Mo
+  maxSizeBytes: 1048576000 # 10000 Mo
   allowedExtensions: [".geojson", ".shp", ".csv", ".gpkg"]
 
 api:
   defaultRowLimit: 100
   maxRowLimit: 1000
-  maxBodyBytes: 10485760 # 10 Mo
+  maxBodyBytes: 1048576000 # 1000 Mo
   requestTimeoutSec: 30
   exportBatchSize: 1000
 

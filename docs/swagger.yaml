@@ -81,6 +81,24 @@ paths:
       summary: List cached sources
       tags:
       - sources
+  /api/v1/sources/{name}:
+    delete:
+      parameters:
+      - description: Source file name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Delete a source file
+      tags:
+      - sources
   /api/v1/sources/{name}/load:
     post:
       parameters:
@@ -93,6 +111,10 @@ paths:
         in: query
         name: layer
         type: string
+      - description: Explicit source EPSG code, overriding auto-detection
+        in: query
+        name: srid
+        type: integer
       produces:
       - application/json
       responses:
@@ -107,6 +129,33 @@ paths:
           schema:
             $ref: '#/definitions/router.ErrorResponse'
       summary: Load a source file into a new table
+      tags:
+      - sources
+  /api/v1/sources/{name}/metadata:
+    get:
+      parameters:
+      - description: Source file name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Layer name (for multi-layer sources)
+        in: query
+        name: layer
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Preview a source's detected CRS
       tags:
       - sources
   /api/v1/sources/refresh:
@@ -127,6 +176,11 @@ paths:
     post:
       consumes:
       - multipart/form-data
+      parameters:
+      - description: Explicit source EPSG code, overriding auto-detection
+        in: query
+        name: srid
+        type: integer
       produces:
       - application/json
       responses:
@@ -198,6 +252,29 @@ paths:
       summary: Get table metadata
       tags:
       - tables
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/router.metadataDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Rename a table
+      tags:
+      - tables
   /api/v1/tables/{tableId}/bbox:
     post:
       consumes:
@@ -246,6 +323,34 @@ paths:
           schema:
             $ref: '#/definitions/router.ErrorResponse'
       summary: Add a column
+      tags:
+      - tables
+  /api/v1/tables/{tableId}/columns/{col}/distinct:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Column name
+        in: path
+        name: col
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: List a column's distinct values
       tags:
       - tables
   /api/v1/tables/{tableId}/derive:
@@ -299,6 +404,31 @@ paths:
           schema:
             $ref: '#/definitions/router.ErrorResponse'
       summary: Export a table
+      tags:
+      - tables
+  /api/v1/tables/{tableId}/filter:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Filter rows by column conditions
       tags:
       - tables
   /api/v1/tables/{tableId}/geometry-types:
@@ -494,6 +624,10 @@ paths:
         name: "y"
         required: true
         type: integer
+      - description: Comma-separated non-geometry columns to embed in the tile
+        in: query
+        name: attrs
+        type: string
       produces:
       - application/vnd.mapbox-vector-tile
       responses:

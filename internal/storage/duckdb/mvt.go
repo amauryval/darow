@@ -3,14 +3,28 @@ package duckdb
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 
 	"gogeoserver/internal/storage"
 )
 
+// tileSimplifyTolerance returns the ST_SimplifyPreserveTopology tolerance
+// (in Web Mercator meters) that collapses to roughly one output pixel at
+// zoom — shrinking to near-zero at high zoom, so it never needs to be
+// switched off past some threshold.
+func tileSimplifyTolerance(zoom int) float64 {
+	const webMercatorCircumference = 40075016.6855785
+	const tilePixels = 256
+	return webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
+}
+
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
-// validated before interpolation (règle 1); zoom/x/y are bound parameters.
-// Stops early if ctx is cancelled.
-func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
+// validated before interpolation (règle 1); zoom/x/y and the source CRS
+// string are bound parameters. attrs embeds extra non-geometry columns in
+// each feature (GEO-3) — the caller must have already validated them
+// against the table's real columns. Stops early if ctx is cancelled.
+func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error) {
 	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
@@ -23,6 +37,18 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]b
 		return nil, err
 	}
 
+	attrSelects := make([]string, len(attrs))
+	structFields := make([]string, len(attrs))
+	for i, attr := range attrs {
+		quotedAttr, err := storage.QuoteIdentifier(attr)
+		if err != nil {
+			return nil, err
+		}
+		alias := fmt.Sprintf("attr_%d", i)
+		attrSelects[i] = fmt.Sprintf(", %s AS %s", quotedAttr, alias)
+		structFields[i] = fmt.Sprintf(", '%s': %s", strings.ReplaceAll(attr, "'", "''"), alias)
+	}
+
 	// ST_AsMVTGeom is a known source of corrupt (non-NULL, but invalid)
 	// clipped geometry for certain source/tile combinations — an upstream
 	// DuckDB spatial defect (github.com/duckdb/duckdb-spatial#792), not
@@ -30,25 +56,27 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]b
 	// clipping). TRY() plus filtering NULL catches only some cases, since
 	// the corruption doesn't always surface as NULL, but it's a cheap,
 	// safe filter that can only drop otherwise-broken features, never a
-	// valid one.
+	// valid one. The geometry is simplified to the tile's pixel resolution
+	// before clipping, so a low zoom over detailed polygons doesn't process
+	// full-resolution vertices for nothing (GEO-3).
 	query := fmt.Sprintf(`
         WITH tile AS (
             SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
         )
         SELECT ST_AsMVT(
-            {geom: mvt_geom, pkey: pkey},
+            {'geom': mvt_geom, 'pkey': pkey%s},
             'layer'
         ) AS mvt
         FROM (
-            SELECT TRY(ST_AsMVTGeom(%s, ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey
+            SELECT TRY(ST_AsMVTGeom(ST_SimplifyPreserveTopology(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
             FROM %s, tile
             WHERE ST_Intersects_Extent(%s, tile.envelope)
         )
         WHERE mvt_geom IS NOT NULL
-    `, quotedGeom, meta.PhysicalName, quotedGeom)
+    `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), meta.PhysicalName, quotedGeom)
 
 	var mvt []byte
-	err = a.QueryRow(ctx, query, zoom, x, y).Scan(&mvt)
+	err = a.QueryRow(ctx, query, zoom, x, y, tileSimplifyTolerance(zoom)).Scan(&mvt)
 	return mvt, err
 }
 

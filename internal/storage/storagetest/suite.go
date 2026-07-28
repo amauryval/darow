@@ -39,6 +39,7 @@ func RunSuite(t *testing.T, newStorage NewStorage) {
 	t.Run("Geo_GetGeometryGeoJSON", func(t *testing.T) { testGeoGetGeometryGeoJSON(t, newStorage) })
 	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newStorage) })
 	t.Run("Create_FromQuery", func(t *testing.T) { testCreateFromQuery(t, newStorage) })
+	t.Run("Create_FromFile_DetectsAndReprojectsFromNonWGS84CRS", func(t *testing.T) { testCreateFromFileDetectsNonWGS84CRS(t, newStorage) })
 }
 
 // geoJSONFixture writes a two-point, one-property FeatureCollection to a
@@ -58,6 +59,25 @@ func geoJSONFixture(t *testing.T) string {
 	return path
 }
 
+// lambert93Fixture writes a single-point GeoJSON declaring an explicit
+// non-WGS84 CRS (EPSG:2154, Lambert-93 — common for French datasets).
+// GeoJSON's "crs" member is deprecated by RFC 7946 but still respected by
+// GDAL-backed readers for legacy files, which is exactly the format
+// real-world Lambert-93 exports use.
+func lambert93Fixture(t *testing.T) string {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lambert93.geojson")
+	content := `{
+		"type": "FeatureCollection",
+		"crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::2154"}},
+		"features": [
+			{"type": "Feature", "properties": {"name": "a"}, "geometry": {"type": "Point", "coordinates": [652709.0, 6862735.0]}}
+		]
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	return path
+}
+
 // newGeoTable creates a table and materializes it from geoJSONFixture,
 // returning its tableId and the pkeys of the two fixture rows in file
 // order.
@@ -69,7 +89,7 @@ func newGeoTable(t *testing.T, s storage.Storage) (tableId string, pkeys []strin
 	meta, err := s.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := s.CreateFromFile(ctx, meta.PhysicalName, geoJSONFixture(t), "")
+	geometryColumn, isGeo, _, err := s.CreateFromFile(ctx, meta.PhysicalName, geoJSONFixture(t), "", 0)
 	require.NoError(t, err)
 	require.True(t, isGeo)
 	require.NoError(t, s.UpdateMetadata(ctx, tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
@@ -249,7 +269,7 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
 	ctx := context.Background()
 	tableId, pkeys := newGeoTable(t, s)
 
-	mvt, err := s.Tile(ctx, tableId, 0, 0, 0)
+	mvt, err := s.Tile(ctx, tableId, 0, 0, 0, nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
 
@@ -295,6 +315,30 @@ func testCreateListLayers(t *testing.T, newStorage NewStorage) {
 	layers, err := s.ListLayers(ctx, geoJSONFixture(t))
 	require.NoError(t, err)
 	assert.Len(t, layers, 1)
+}
+
+// GEO-1: the source CRS must be detected (or overridable) rather than
+// always assumed WGS84 — a Lambert-93 (EPSG:2154) source, ultra-common for
+// French datasets, must still land at the correct Web Mercator position.
+func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	path := lambert93Fixture(t)
+
+	authName, authCode, err := s.DetectCRS(ctx, path, "")
+	require.NoError(t, err)
+	assert.Equal(t, "EPSG", authName)
+	assert.Equal(t, 2154, authCode)
+
+	tableId, err := s.Create(ctx, "lambert", false, "")
+	require.NoError(t, err)
+	meta, err := s.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	_, isGeo, srid, err := s.CreateFromFile(ctx, meta.PhysicalName, path, "", 0)
+	require.NoError(t, err)
+	require.True(t, isGeo)
+	assert.Equal(t, 2154, srid)
 }
 
 func testCreateFromQuery(t *testing.T, newStorage NewStorage) {

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
@@ -34,19 +36,22 @@ func NewGeoService(storage storage.GeoTableManager, metadata metadataGetter, til
 // cache key includes UpdatedAt: any write that bumps it (via
 // RefreshDerivedMetadata, règle 9) automatically invalidates tiles from
 // the previous version, with no separate invalidation mechanism
-// (règle 20).
-func (g *GeoService) GetTile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
+// (règle 20). attrs is folded into the key too, since it changes a tile's
+// content for the same table version (GEO-3).
+func (g *GeoService) GetTile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error) {
 	meta, err := g.metadata.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
 
-	key := fmt.Sprintf("tile_%s_%d_%d_%d_%d", tableId, zoom, x, y, meta.UpdatedAt.UnixNano())
+	sortedAttrs := slices.Clone(attrs)
+	slices.Sort(sortedAttrs)
+	key := fmt.Sprintf("tile_%s_%d_%d_%d_%d_%s", tableId, zoom, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sortedAttrs, ","))
 	if mvt, ok := g.tileCache.Get(key); ok {
 		return mvt, nil
 	}
 
-	mvt, err := g.storage.Tile(ctx, tableId, zoom, x, y)
+	mvt, err := g.storage.Tile(ctx, tableId, zoom, x, y, attrs)
 	if err != nil {
 		return nil, err
 	}

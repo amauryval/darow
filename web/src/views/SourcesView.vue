@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { listSources, loadSource, refreshSources, uploadSource } from "../client/sources";
+import { deleteSource, getSourceMetadata, listSources, loadSource, refreshSources, uploadSource } from "../client/sources";
 import type { Source } from "../client/types";
-import { ApiError } from "../client/http";
+import { errorMessage } from "../client/http";
 
 const router = useRouter();
 
@@ -11,11 +11,24 @@ const sources = ref<Source[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const loadingName = ref<string | null>(null);
+const deletingName = ref<string | null>(null);
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+// EPSG-editing state for the row/layer currently being loaded: null when
+// no row is mid-load. epsgInput is the editable value shown to the user,
+// pre-filled from getSourceMetadata's detection but always overridable —
+// required outright when detection comes back null.
+const epsgEditingKey = ref<string | null>(null);
+const epsgInput = ref("");
+const epsgDetecting = ref(false);
+
 function layerKey(source: Source, layerName: string): string {
   return `${source.name}::${layerName}`;
+}
+
+function isValidEpsg(value: string): boolean {
+  return /^[1-9]\d*$/.test(value.trim());
 }
 
 async function load() {
@@ -24,7 +37,7 @@ async function load() {
   try {
     sources.value = (await listSources()) ?? [];
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de charger les sources";
+    error.value = errorMessage(e, "Impossible de charger les sources");
   } finally {
     loading.value = false;
   }
@@ -36,27 +49,65 @@ async function refresh() {
   try {
     sources.value = (await refreshSources()) ?? [];
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de rafraîchir les sources";
+    error.value = errorMessage(e, "Impossible de rafraîchir les sources");
   } finally {
     loading.value = false;
   }
 }
 
-async function onLoad(source: Source, layerName?: string) {
+async function startLoad(source: Source, layerName?: string) {
+  const key = layerName ? layerKey(source, layerName) : source.name;
+  epsgEditingKey.value = key;
+  epsgInput.value = "";
+  epsgDetecting.value = true;
+  error.value = null;
+  try {
+    const crs = await getSourceMetadata(source.name, layerName);
+    if (epsgEditingKey.value === key) {
+      epsgInput.value = crs.srid ? String(crs.srid) : "";
+    }
+  } catch (e) {
+    error.value = errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`);
+  } finally {
+    epsgDetecting.value = false;
+  }
+}
+
+function cancelLoad() {
+  epsgEditingKey.value = null;
+  epsgInput.value = "";
+}
+
+async function confirmLoad(source: Source, layerName?: string) {
   const key = layerName ? layerKey(source, layerName) : source.name;
   loadingName.value = key;
   error.value = null;
   try {
-    await loadSource(source.name, layerName);
+    await loadSource(source.name, layerName, Number(epsgInput.value));
+    epsgEditingKey.value = null;
     // refresh (not load): the backend's source cache only recomputes each
     // entry's `loaded` status on an explicit rescan (LoadedSourceNames is
     // read inside Refresh) — Load() itself never touches that cache, so a
     // plain re-fetch of the stale cache would still show "Non chargée".
     await refresh();
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : `Impossible de charger ${key}`;
+    error.value = errorMessage(e, `Impossible de charger ${key}`);
   } finally {
     loadingName.value = null;
+  }
+}
+
+async function onDelete(name: string) {
+  if (!confirm(`Supprimer le fichier "${name}" ? La table associée sera aussi supprimée si elle existe.`)) return;
+  deletingName.value = name;
+  error.value = null;
+  try {
+    await deleteSource(name);
+    await refresh();
+  } catch (e) {
+    error.value = errorMessage(e, `Impossible de supprimer ${name}`);
+  } finally {
+    deletingName.value = null;
   }
 }
 
@@ -80,7 +131,7 @@ async function onFileSelected(event: Event) {
       await refresh();
     }
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : `Impossible de charger ${file.name}`;
+    error.value = errorMessage(e, `Impossible de charger ${file.name}`);
   } finally {
     uploading.value = false;
     if (fileInput.value) fileInput.value.value = "";
@@ -160,21 +211,60 @@ onMounted(load);
                 >
                   Voir la table
                 </RouterLink>
-                <button
-                  v-else
-                  class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  :disabled="loadingName === source.name"
-                  @click="onLoad(source)"
-                >
-                  {{ loadingName === source.name ? "Chargement..." : "Charger" }}
-                </button>
+                <div v-else-if="epsgEditingKey === source.name" class="flex items-center justify-end gap-2">
+                  <input
+                    v-model="epsgInput"
+                    type="text"
+                    inputmode="numeric"
+                    :placeholder="epsgDetecting ? 'Détection...' : 'Code EPSG'"
+                    :disabled="epsgDetecting"
+                    class="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:bg-slate-50"
+                  />
+                  <button
+                    class="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                    :disabled="epsgDetecting || !isValidEpsg(epsgInput) || loadingName === source.name"
+                    @click="confirmLoad(source)"
+                  >
+                    {{ loadingName === source.name ? "Chargement..." : "Confirmer" }}
+                  </button>
+                  <button
+                    class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    @click="cancelLoad"
+                  >
+                    Annuler
+                  </button>
+                </div>
+                <div v-else class="flex items-center justify-end gap-2">
+                  <button
+                    class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    @click="startLoad(source)"
+                  >
+                    Charger
+                  </button>
+                  <button
+                    class="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    :disabled="deletingName === source.name"
+                    @click="onDelete(source.name)"
+                  >
+                    {{ deletingName === source.name ? "Suppression..." : "Supprimer" }}
+                  </button>
+                </div>
               </td>
             </tr>
             <template v-else>
               <tr>
                 <td class="px-4 py-2.5 font-medium text-slate-800" colspan="2">{{ source.name }}</td>
-                <td class="px-4 py-2.5 text-xs text-slate-400" colspan="2">
+                <td class="px-4 py-2.5 text-xs text-slate-400" colspan="1">
                   {{ source.layers.length }} couches — {{ formatSize(source.sizeBytes) }}
+                </td>
+                <td class="px-4 py-2.5 text-right">
+                  <button
+                    class="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    :disabled="deletingName === source.name"
+                    @click="onDelete(source.name)"
+                  >
+                    {{ deletingName === source.name ? "Suppression..." : "Supprimer le fichier" }}
+                  </button>
                 </td>
               </tr>
               <tr v-for="layer in source.layers" :key="layerKey(source, layer.name)">
@@ -199,13 +289,35 @@ onMounted(load);
                   >
                     Voir la table
                   </RouterLink>
+                  <div v-else-if="epsgEditingKey === layerKey(source, layer.name)" class="flex items-center justify-end gap-2">
+                    <input
+                      v-model="epsgInput"
+                      type="text"
+                      inputmode="numeric"
+                      :placeholder="epsgDetecting ? 'Détection...' : 'Code EPSG'"
+                      :disabled="epsgDetecting"
+                      class="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:bg-slate-50"
+                    />
+                    <button
+                      class="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                      :disabled="epsgDetecting || !isValidEpsg(epsgInput) || loadingName === layerKey(source, layer.name)"
+                      @click="confirmLoad(source, layer.name)"
+                    >
+                      {{ loadingName === layerKey(source, layer.name) ? "Chargement..." : "Confirmer" }}
+                    </button>
+                    <button
+                      class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      @click="cancelLoad"
+                    >
+                      Annuler
+                    </button>
+                  </div>
                   <button
                     v-else
-                    class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                    :disabled="loadingName === layerKey(source, layer.name)"
-                    @click="onLoad(source, layer.name)"
+                    class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    @click="startLoad(source, layer.name)"
                   >
-                    {{ loadingName === layerKey(source, layer.name) ? "Chargement..." : "Charger" }}
+                    Charger
                   </button>
                 </td>
               </tr>

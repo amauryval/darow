@@ -82,6 +82,8 @@ func (rt *Router) Setup() http.Handler {
 			// overhead before SourceService.Upload's own oversize check runs.
 			sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
 			sub.Post("/{name}/load", rt.loadSource)
+			sub.Get("/{name}/metadata", rt.getSourceMetadata)
+			sub.Delete("/{name}", rt.deleteSource)
 		})
 
 		v1.Route("/tables", func(sub chi.Router) {
@@ -91,12 +93,15 @@ func (rt *Router) Setup() http.Handler {
 				sub.Use(rt.tableMiddleware)
 
 				sub.Get("/", rt.getTableMetadata)
+				sub.Patch("/", rt.renameTable)
 				sub.Delete("/", rt.deleteTable)
 
 				sub.Get("/schema", rt.getSchema)
 				sub.Post("/columns", rt.addColumn)
 				sub.Post("/derive", rt.deriveTable)
 				sub.Get("/export", rt.exportTable)
+				sub.Post("/filter", rt.filterRows)
+				sub.Get("/columns/{col}/distinct", rt.getDistinctValues)
 
 				sub.Route("/rows", func(sub chi.Router) {
 					sub.Get("/", rt.listRows)

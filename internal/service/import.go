@@ -11,12 +11,14 @@ import (
 type metadataImporter interface {
 	metadataStore
 	LoadedSourceNames(ctx context.Context) (map[string]string, error)
+	RemoveTable(ctx context.Context, tableId string) error
 }
 
 // fileMaterializer is what ImportService needs from the storage layer.
 type fileMaterializer interface {
-	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string) (geometryColumn string, isGeo bool, err error)
+	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
 	ListLayers(ctx context.Context, sourcePath string) ([]string, error)
+	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
 }
 
 // ImportService registers new tables from source files found in workDir
@@ -49,7 +51,8 @@ func (s *ImportService) ListLayers(ctx context.Context, path string) ([]string, 
 // metadata row, materializes the physical table via ST_Read, resolves the
 // geometry column and SRID, and refreshes derived metadata. layer selects
 // one layer of a multi-layer source (e.g. GeoPackage); pass "" otherwise.
-func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, layer string) (string, error) {
+// srid pins the source CRS explicitly; pass 0 to detect it from the file.
+func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error) {
 	tableId, err := s.metadata.Create(ctx, name, false, "")
 	if err != nil {
 		return "", err
@@ -60,14 +63,14 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 
-	geometryColumn, isGeo, err := s.storage.CreateFromFile(ctx, meta.PhysicalName, path, layer)
+	geometryColumn, isGeo, resolvedSrid, err := s.storage.CreateFromFile(ctx, meta.PhysicalName, path, layer, srid)
 	if err != nil {
 		return "", s.metadata.Rollback(ctx, tableId, fmt.Errorf("importing %q: %w", name, err))
 	}
 
 	if isGeo {
 		if err := s.metadata.UpdateMetadata(ctx, tableId, map[string]any{
-			"isGeo": true, "geometryColumn": geometryColumn,
+			"isGeo": true, "geometryColumn": geometryColumn, "srid": resolvedSrid,
 		}); err != nil {
 			return "", s.metadata.Rollback(ctx, tableId, err)
 		}
@@ -77,4 +80,17 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 	return tableId, nil
+}
+
+// DetectCRS reports the authority/code of a source layer's declared CRS
+// (0 if undetectable), for a caller to preview before importing.
+func (s *ImportService) DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error) {
+	return s.storage.DetectCRS(ctx, path, layer)
+}
+
+// RemoveTable deletes tableId's metadata and physical table, used by
+// SourceService.Delete to cascade a source file's removal to any table(s)
+// loaded from it.
+func (s *ImportService) RemoveTable(ctx context.Context, tableId string) error {
+	return s.metadata.RemoveTable(ctx, tableId)
 }

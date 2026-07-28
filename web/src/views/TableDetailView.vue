@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { deleteTable, exportUrl, getSchema, getTable, listRows } from "../client/tables";
+import { deleteTable, exportUrl, getSchema, getTable, listRows, renameTable } from "../client/tables";
 import type { ColumnSchema, Metadata, Row } from "../client/types";
-import { ApiError } from "../client/http";
+import { errorMessage } from "../client/http";
 
 // MapLibre GL is the largest dependency in the bundle — load it only when
 // a geo table's map tab is actually opened.
@@ -22,6 +22,9 @@ const tab = ref<"rows" | "schema" | "map">("rows");
 const loading = ref(false);
 const error = ref<string | null>(null);
 const deleting = ref(false);
+const renaming = ref(false);
+const editingName = ref(false);
+const nameInput = ref("");
 
 const rowColumns = computed(() => columns.value.map((c) => c.name).filter((name) => name !== table.value?.geometryColumn));
 
@@ -55,9 +58,28 @@ async function loadAll() {
   try {
     await Promise.all([loadTable(), loadSchema(), loadRows()]);
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de charger la table";
+    error.value = errorMessage(e, "Impossible de charger la table");
   } finally {
     loading.value = false;
+  }
+}
+
+function startRename() {
+  nameInput.value = table.value?.tableName ?? "";
+  editingName.value = true;
+}
+
+async function confirmRename() {
+  if (!nameInput.value.trim()) return;
+  renaming.value = true;
+  error.value = null;
+  try {
+    table.value = await renameTable(props.tableId, nameInput.value.trim());
+    editingName.value = false;
+  } catch (e) {
+    error.value = errorMessage(e, "Impossible de renommer la table");
+  } finally {
+    renaming.value = false;
   }
 }
 
@@ -68,7 +90,7 @@ async function onDelete() {
     await deleteTable(props.tableId);
     router.push("/tables");
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de supprimer la table";
+    error.value = errorMessage(e, "Impossible de supprimer la table");
     deleting.value = false;
   }
 }
@@ -92,7 +114,32 @@ onMounted(loadAll);
 
     <div v-if="table" class="mt-2 mb-6 flex items-start justify-between">
       <div>
-        <h1 class="text-lg font-semibold text-slate-900">{{ table.tableName }}</h1>
+        <div v-if="editingName" class="flex items-center gap-2">
+          <input
+            v-model="nameInput"
+            type="text"
+            class="rounded-md border border-slate-300 px-2 py-1 text-lg font-semibold text-slate-900"
+            @keyup.enter="confirmRename"
+            @keyup.esc="editingName = false"
+          />
+          <button
+            class="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            :disabled="renaming || !nameInput.trim()"
+            @click="confirmRename"
+          >
+            {{ renaming ? "..." : "Enregistrer" }}
+          </button>
+          <button
+            class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            @click="editingName = false"
+          >
+            Annuler
+          </button>
+        </div>
+        <h1 v-else class="group flex items-center gap-2 text-lg font-semibold text-slate-900">
+          {{ table.tableName }}
+          <button class="text-xs font-medium text-slate-400 hover:text-indigo-600" @click="startRename">Renommer</button>
+        </h1>
         <p class="text-sm text-slate-500">
           {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
         </p>

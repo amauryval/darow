@@ -46,7 +46,9 @@ type SourceLayer struct {
 type tableImporter interface {
 	LoadedSourceNames(ctx context.Context) (map[string]string, error)
 	ListLayers(ctx context.Context, path string) ([]string, error)
-	ImportFromFile(ctx context.Context, name, path, ext, layer string) (string, error)
+	ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error)
+	DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error)
+	RemoveTable(ctx context.Context, tableId string) error
 }
 
 // SourceService scans workDir for loadable files and imports them into
@@ -207,12 +209,13 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 // Load imports the source named name, which must match an entry in the
 // current cache (règle 15). For a multi-layer (.gpkg) source, layer must
 // name one of that source's cached layers — the file itself is never
-// loaded as a whole. For any other source, layer must be empty. Returns
-// the newly created tableId. Held under mu for its whole duration (see
-// SourceService doc) — the on-success update of the cached entry below is
-// what lets an immediate second Load, with no Refresh in between, see the
-// source as loaded instead of importing it again.
-func (s *SourceService) Load(ctx context.Context, name, layer string) (string, error) {
+// loaded as a whole. For any other source, layer must be empty. srid pins
+// the source CRS explicitly (GEO-1); pass 0 to detect it from the file.
+// Returns the newly created tableId. Held under mu for its whole duration
+// (see SourceService doc) — the on-success update of the cached entry
+// below is what lets an immediate second Load, with no Refresh in
+// between, see the source as loaded instead of importing it again.
+func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -236,7 +239,7 @@ func (s *SourceService) Load(ctx context.Context, name, layer string) (string, e
 			return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
 		}
 		path := filepath.Join(s.cfg.WorkDir, found.Name)
-		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "")
+		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "", srid)
 		if err != nil {
 			return "", err
 		}
@@ -264,11 +267,94 @@ func (s *SourceService) Load(ctx context.Context, name, layer string) (string, e
 
 	path := filepath.Join(s.cfg.WorkDir, found.Name)
 	tableName := found.Name + layerSeparator + layer
-	tableId, err := s.tableService.ImportFromFile(ctx, tableName, path, found.Ext, layer)
+	tableId, err := s.tableService.ImportFromFile(ctx, tableName, path, found.Ext, layer, srid)
 	if err != nil {
 		return "", err
 	}
 	foundLayer.Loaded = true
 	foundLayer.TableId = tableId
 	return tableId, nil
+}
+
+// sourcePath resolves name (and, for a multi-layer source, layer) against
+// the cache exactly like Load does (règle 15 — name is never turned into a
+// path without this check), without mutating any loaded state.
+func (s *SourceService) sourcePath(name, layer string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var found *Source
+	for i := range s.sources {
+		if s.sources[i].Name == name {
+			found = &s.sources[i]
+			break
+		}
+	}
+	if found == nil {
+		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
+	}
+
+	if format, known := lookupSourceFormat(found.Ext); known && format.MultiLayer && layer != "" {
+		found := slices.ContainsFunc(found.Layers, func(l SourceLayer) bool { return l.Name == layer })
+		if !found {
+			return "", fmt.Errorf("unknown layer %q for source %q — call /sources/refresh first", layer, name)
+		}
+	}
+
+	return filepath.Join(s.cfg.WorkDir, name), nil
+}
+
+// DetectCRS reports the authority/code of a source's declared CRS (0 if
+// undetectable), so a caller can preview it before Load — the "editable
+// EPSG" flow (GEO-1). layer selects one layer of a multi-layer source.
+func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error) {
+	path, err := s.sourcePath(name, layer)
+	if err != nil {
+		return "", 0, err
+	}
+	return s.tableService.DetectCRS(ctx, path, layer)
+}
+
+// Delete removes name from workDir (règle 15 — validated against the
+// cache, never an unvalidated path) and drops its cache entry. If the
+// source (or one of its layers) was already loaded, the associated
+// table(s) are removed too, so no metadata row survives its source file.
+// Explicit replacement is delete-then-upload — Upload still refuses to
+// overwrite an existing file.
+func (s *SourceService) Delete(ctx context.Context, name string) error {
+	s.mu.Lock()
+
+	index := -1
+	for i := range s.sources {
+		if s.sources[i].Name == name {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		s.mu.Unlock()
+		return fmt.Errorf("unknown source %q — call /sources/refresh first", name)
+	}
+	found := s.sources[index]
+	path := filepath.Join(s.cfg.WorkDir, name)
+	s.sources = slices.Delete(s.sources, index, index+1)
+	s.mu.Unlock()
+
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing file: %w", err)
+	}
+
+	if found.Loaded && found.TableId != "" {
+		if err := s.tableService.RemoveTable(ctx, found.TableId); err != nil {
+			return err
+		}
+	}
+	for _, layer := range found.Layers {
+		if layer.Loaded && layer.TableId != "" {
+			if err := s.tableService.RemoveTable(ctx, layer.TableId); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

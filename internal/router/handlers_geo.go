@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -24,6 +26,14 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 	return
 }
 
+func parseTileAttrs(req *http.Request) []string {
+	raw := req.URL.Query().Get("attrs")
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
 // getTile handles GET /tables/{tableId}/tiles/{z}/{x}/{y}.
 //
 // @Summary Get an MVT tile
@@ -33,6 +43,7 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 // @Param z path int true "Zoom level"
 // @Param x path int true "Tile X"
 // @Param y path int true "Tile Y"
+// @Param attrs query string false "Comma-separated non-geometry columns to embed in the tile"
 // @Success 200 {file} byte
 // @Router /api/v1/tables/{tableId}/tiles/{z}/{x}/{y} [get]
 func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
@@ -44,12 +55,18 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	attrs := parseTileAttrs(req)
+	if err := rt.validateColumns(req.Context(), meta, attrs); err != nil {
+		WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
 	// Complements GeoService's application cache (règle 20): spares even
 	// the round trip for a client/CDN that already has the tile. The ETag
 	// is derived from UpdatedAt (HTTP-2), so it changes as soon as the next
 	// write lands; max-age stays short since nothing invalidates a CDN's
 	// copy in between.
-	etag := tileETag(meta, z, x, y)
+	etag := tileETag(meta, z, x, y, attrs)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	if req.Header.Get("If-None-Match") == etag {
@@ -57,7 +74,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y)
+	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y, attrs)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -69,9 +86,12 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 
 // tileETag derives an ETag for a tile from its table's UpdatedAt: any write
 // that touches the table's rows bumps UpdatedAt (règle 9), which changes
-// the ETag for every tile of that table.
-func tileETag(meta *storage.Metadata, z, x, y int) string {
-	return fmt.Sprintf(`"%s-%d-%d-%d-%d"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano())
+// the ETag for every tile of that table. attrs is folded in since it
+// changes the tile's content for the same table version (GEO-3).
+func tileETag(meta *storage.Metadata, z, x, y int, attrs []string) string {
+	sorted := slices.Clone(attrs)
+	slices.Sort(sorted)
+	return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","))
 }
 
 // getGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed

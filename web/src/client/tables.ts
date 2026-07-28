@@ -13,6 +13,10 @@ export function deleteTable(tableId: string): Promise<void> {
   return del(`/tables/${tableId}`);
 }
 
+export function renameTable(tableId: string, tableName: string): Promise<Metadata> {
+  return patch(`/tables/${tableId}`, { tableName });
+}
+
 export function getSchema(tableId: string): Promise<SchemaResponse> {
   return get(`/tables/${tableId}/schema`);
 }

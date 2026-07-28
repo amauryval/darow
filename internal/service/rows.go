@@ -146,6 +146,26 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, tableId, filter str
 	return s.convertRows(ctx, tableId, rows)
 }
 
+// GetDistinctValues returns column's distinct values, converted to native
+// JSON types (règle 12) the same way row reads are.
+func (s *RowService) GetDistinctValues(ctx context.Context, tableId, column string) ([]any, error) {
+	values, err := s.storage.GetDistinctValues(ctx, tableId, column)
+	if err != nil {
+		return nil, err
+	}
+
+	types, err := s.schema.Types(ctx, tableId)
+	if err != nil {
+		return nil, err
+	}
+
+	converted := make([]any, len(values))
+	for i, v := range values {
+		converted[i] = convertValue(types[column], v)
+	}
+	return converted, nil
+}
+
 // UpdateRow updates every column in updates for the given pkeys in a
 // single storage call, so a multi-column update is atomic (règle 9,
 // spec §5.1: either every column changes or none does). Writing the

@@ -41,11 +41,12 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
+	geometryColumn, isGeo, srid, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
 
 	require.NoError(t, err)
 	assert.True(t, isGeo)
 	assert.Equal(t, "geom", geometryColumn)
+	assert.Equal(t, 4326, srid, "GeoJSON with no explicit crs declares WGS84")
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_geom"))
 
 	count, err := a.RowsCount(context.Background(), tableId)
@@ -62,7 +63,7 @@ func Test_Adapter_CreateFromFile_ReprojectsWithoutSwappingAxes(t *testing.T) {
 	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
+	geometryColumn, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
 	require.NoError(t, err)
 	require.True(t, isGeo)
 
@@ -91,7 +92,7 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
+	geometryColumn, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
 	require.NoError(t, err)
 	require.True(t, isGeo)
 	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
@@ -146,7 +147,7 @@ func Test_Adapter_CreateFromFile_SelectsNamedLayer(t *testing.T) {
 	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, multiLayerGpkgFixture, "layer_b")
+	geometryColumn, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, multiLayerGpkgFixture, "layer_b", 0)
 
 	require.NoError(t, err)
 	assert.True(t, isGeo)
@@ -169,7 +170,7 @@ func Test_Adapter_CreateFromQuery(t *testing.T) {
 	require.NoError(t, err)
 	sourceMeta, err := a.GetMetadata(context.Background(), sourceId)
 	require.NoError(t, err)
-	_, _, err = a.CreateFromFile(context.Background(), sourceMeta.PhysicalName, path, "")
+	_, _, _, err = a.CreateFromFile(context.Background(), sourceMeta.PhysicalName, path, "", 0)
 	require.NoError(t, err)
 
 	derivedId, err := a.Create(context.Background(), "derived", false, "")

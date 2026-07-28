@@ -78,7 +78,7 @@ func Test_SourceService_Load(t *testing.T) {
 			tableSvc, _ := setupImportService(t)
 			svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
 
-			_, err := svc.Load(context.Background(), c.requestedName, "")
+			_, err := svc.Load(context.Background(), c.requestedName, "", 0)
 
 			if c.wantErr {
 				assert.Error(t, err)
@@ -176,7 +176,7 @@ func Test_SourceService_Load_RejectsAlreadyLoaded(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	_, err = svc.Load(context.Background(), "buildings.geojson", "")
+	_, err = svc.Load(context.Background(), "buildings.geojson", "", 0)
 	assert.Error(t, err)
 }
 
@@ -198,10 +198,10 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "").Return("", false, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
-	tableId, err := svc.Load(context.Background(), "buildings.geojson", "")
+	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-new", tableId)
@@ -228,14 +228,14 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "").Return("", false, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
-	tableId, err := svc.Load(context.Background(), "buildings.geojson", "")
+	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "id-new", tableId)
 
-	_, err = svc.Load(context.Background(), "buildings.geojson", "")
+	_, err = svc.Load(context.Background(), "buildings.geojson", "", 0)
 	assert.ErrorContains(t, err, "already loaded")
 }
 
@@ -283,7 +283,7 @@ func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	_, err = svc.Load(context.Background(), "buildings.geojson", "some_layer")
+	_, err = svc.Load(context.Background(), "buildings.geojson", "some_layer", 0)
 	assert.Error(t, err)
 }
 
@@ -332,11 +332,11 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes").Return("geom", true, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("geom", true, 4326, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 4326}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
-	tableId, err := svc.Load(context.Background(), "regions.gpkg", "communes")
+	tableId, err := svc.Load(context.Background(), "regions.gpkg", "communes", 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-new", tableId)
@@ -359,6 +359,125 @@ func Test_SourceService_Load_GpkgRequiresLayer(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	_, err = svc.Load(context.Background(), "regions.gpkg", "")
+	_, err = svc.Load(context.Background(), "regions.gpkg", "", 0)
+	assert.Error(t, err)
+}
+
+func Test_SourceService_Load_ForwardsSridOverride(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "lambert.geojson", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 2154}).Return(nil).Once()
+	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
+
+	tableId, err := svc.Load(context.Background(), "lambert.geojson", "", 2154)
+
+	require.NoError(t, err)
+	assert.Equal(t, "id-new", tableId)
+}
+
+func Test_SourceService_DetectCRS(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "lambert.geojson", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "lambert.geojson"), "").Return("EPSG", 2154, nil).Once()
+
+	authName, authCode, err := svc.DetectCRS(context.Background(), "lambert.geojson", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "EPSG", authName)
+	assert.Equal(t, 2154, authCode)
+}
+
+func Test_SourceService_DetectCRS_RejectsUnknownSource(t *testing.T) {
+	tableSvc, _ := setupImportService(t)
+	svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+
+	_, _, err := svc.DetectCRS(context.Background(), "../../etc/passwd", "")
+
+	assert.Error(t, err)
+}
+
+func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "buildings.geojson", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("TableIds", mock.Anything).Return([]string{"id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "buildings.geojson"}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+
+	err = svc.Delete(context.Background(), "buildings.geojson")
+
+	require.NoError(t, err)
+	_, statErr := os.Stat(filepath.Join(dir, "buildings.geojson"))
+	assert.True(t, os.IsNotExist(statErr))
+	assert.Empty(t, svc.List())
+}
+
+func Test_SourceService_Delete_UnloadedSourceSkipsTableRemoval(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "buildings.geojson", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	err = svc.Delete(context.Background(), "buildings.geojson")
+
+	require.NoError(t, err)
+}
+
+func Test_SourceService_Delete_RejectsUnknownSource(t *testing.T) {
+	tableSvc, _ := setupImportService(t)
+	svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+
+	err := svc.Delete(context.Background(), "unknown.geojson")
+
 	assert.Error(t, err)
 }

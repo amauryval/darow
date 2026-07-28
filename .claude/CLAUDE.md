@@ -43,7 +43,8 @@ that contradicts it should flag the conflict rather than silently resolve it.
 -   Git commands that change state (`commit`, `push`, `checkout`, `merge`, `rebase`, `reset`,
     `stash`, `worktree add/remove`, `branch -D`, ...) are forbidden unless explicitly requested.
 -   Every new/changed struct, interface, method, or handler ships with its test in the same change
-    (see `docs/spec.md` règle 17) — no deferred tests.
+    (see `docs/spec.md` règle 17) — no deferred tests. This applies to Go only: `web/src/client/`
+    changes do not need accompanying vitest tests unless explicitly asked for.
 -   Any SQL identifier (table/column) interpolated into a query must go through
     `storage.ValidateIdentifier` first; values are always bound parameters, never interpolated.
 

@@ -139,8 +139,8 @@ func (m *Storage) BulkInsert(ctx context.Context, tableId string, rows []map[str
 	return pkeys, callArgs.Error(1)
 }
 
-func (m *Storage) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
-	callArgs := m.Called(ctx, tableId, zoom, x, y)
+func (m *Storage) Tile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error) {
+	callArgs := m.Called(ctx, tableId, zoom, x, y, attrs)
 	tile, _ := callArgs.Get(0).([]byte)
 	return tile, callArgs.Error(1)
 }
@@ -163,9 +163,9 @@ func (m *Storage) GeometryTypes(ctx context.Context, tableId string) ([]string, 
 	return types, callArgs.Error(1)
 }
 
-func (m *Storage) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string) (string, bool, error) {
-	callArgs := m.Called(ctx, physicalName, sourcePath, layer)
-	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
+func (m *Storage) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
+	callArgs := m.Called(ctx, physicalName, sourcePath, layer, sridOverride)
+	return callArgs.String(0), callArgs.Bool(1), callArgs.Int(2), callArgs.Error(3)
 }
 
 func (m *Storage) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
@@ -177,4 +177,9 @@ func (m *Storage) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 	callArgs := m.Called(ctx, sourcePath)
 	layers, _ := callArgs.Get(0).([]string)
 	return layers, callArgs.Error(1)
+}
+
+func (m *Storage) DetectCRS(ctx context.Context, sourcePath, layer string) (string, int, error) {
+	callArgs := m.Called(ctx, sourcePath, layer)
+	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
 }

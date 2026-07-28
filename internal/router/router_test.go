@@ -137,6 +137,94 @@ func Test_Router_DeleteTable(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func Test_Router_RenameTable(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "old"}, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{"tableName": "new"}).Return(nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "new"}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1", map[string]string{"tableName": "new"})
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body metadataDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "new", body.TableName)
+}
+
+func Test_Router_RenameTable_RejectsEmptyName(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1", map[string]string{"tableName": ""})
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func Test_Router_FilterRows(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
+	m.On("GetRowsWithFilter", mock.Anything, "id-1", `"height" > ?`, []any{float64(10)}, 0).Return([]storage.Row{
+		{Pkey: "pk-1", Values: map[string]any{"height": 12}},
+	}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/filter", map[string]any{
+		"conditions": []map[string]any{{"column": "height", "operator": ">", "value": 10}},
+	})
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	rows, _ := body["rows"].([]any)
+	assert.Len(t, rows, 1)
+}
+
+func Test_Router_FilterRows_RejectsUnknownColumn(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/filter", map[string]any{
+		"conditions": []map[string]any{{"column": "nope", "operator": "=", "value": 1}},
+	})
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func Test_Router_GetDistinctValues(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
+	m.On("GetDistinctValues", mock.Anything, "id-1", "name").Return([]any{"a", "b"}, nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/columns/name/distinct", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, []any{"a", "b"}, body["values"])
+}
+
+func Test_Router_GetDistinctValues_RejectsGeometryColumn(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"geom"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "geom").Return("GEOMETRY", nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/columns/geom/distinct", nil)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func Test_Router_ListRows(t *testing.T) {
 	handler, m := setupRouter(t)
 
@@ -227,20 +315,40 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets, func(context.Context) error { return nil })
 	handler := rt.Setup()
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
-
+	// A declared Content-Length over the limit is now rejected by
+	// maxBodyBytes itself, before routing even reaches tableMiddleware —
+	// GetMetadata is deliberately not stubbed, so an unexpected call here
+	// would fail the test.
 	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/rows", map[string]any{
 		"rows": []map[string]any{{"height": 12, "name": "well over ten bytes of JSON"}},
 	})
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+}
+
+// A declared Content-Length over the limit must be rejected before any
+// body byte is read — waiting for http.MaxBytesReader to trip mid-stream
+// on a real (non-httptest) connection can surface as a raw connection
+// reset on the client instead of this clean, explicit error.
+func Test_Router_MaxBodyBytes_RejectsDeclaredContentLengthWithoutReadingBody(t *testing.T) {
+	handler, _ := setupRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tables/id-1/rows", bytes.NewReader(nil))
+	req.ContentLength = 999 * 1024 * 1024
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	var body ErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Contains(t, body.Error, "exceeds")
 }
 
 func Test_Router_GetTile(t *testing.T) {
 	handler, m := setupRouter(t)
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
-	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
+	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string(nil)).Return([]byte("mvt"), nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 
@@ -251,11 +359,36 @@ func Test_Router_GetTile(t *testing.T) {
 	assert.Equal(t, "public, max-age=60", rec.Header().Get("Cache-Control"))
 }
 
+func Test_Router_GetTile_WithAttrs(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
+	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string{"name"}).Return([]byte("mvt"), nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3?attrs=name", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func Test_Router_GetTile_RejectsUnknownAttr(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3?attrs=nope", nil)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
 	handler, m := setupRouter(t)
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
-	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
+	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string(nil)).Return([]byte("mvt"), nil).Once()
 	first := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 	etag := first.Header().Get("ETag")
 
@@ -270,11 +403,20 @@ func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
 func Test_TileETag_ChangesWithUpdatedAt(t *testing.T) {
 	meta := &storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
 
-	before := tileETag(meta, 1, 2, 3)
+	before := tileETag(meta, 1, 2, 3, nil)
 	meta.UpdatedAt = time.Unix(2, 0)
-	after := tileETag(meta, 1, 2, 3)
+	after := tileETag(meta, 1, 2, 3, nil)
 
 	assert.NotEqual(t, before, after)
+}
+
+func Test_TileETag_ChangesWithAttrs(t *testing.T) {
+	meta := &storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
+
+	withoutAttrs := tileETag(meta, 1, 2, 3, nil)
+	withAttrs := tileETag(meta, 1, 2, 3, []string{"name"})
+
+	assert.NotEqual(t, withoutAttrs, withAttrs)
 }
 
 func Test_Router_FilterByBbox(t *testing.T) {
@@ -421,6 +563,117 @@ func Test_Router_LoadSource_UnknownName(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }
 
+// setupRouterWithSourceDir wires a router like setupRouter, but with
+// SourceService pointed at a caller-controlled workDir — needed for tests
+// that must have a real file on disk before Refresh picks it up.
+func setupRouterWithSourceDir(t *testing.T, dir string, allowedExtensions []string) (http.Handler, *mocks.Storage) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: allowedExtensions,
+	}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets, func(context.Context) error { return nil })
+	return rt.Setup(), m
+}
+
+func Test_Router_GetSourceMetadata(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lambert.geojson"), []byte("{}"), 0o644))
+	handler, m := setupRouterWithSourceDir(t, dir, []string{".geojson"})
+
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+	doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
+
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "lambert.geojson"), "").Return("EPSG", 2154, nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/sources/lambert.geojson/metadata", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.EqualValues(t, 2154, body["srid"])
+	assert.Equal(t, "EPSG", body["authName"])
+}
+
+func Test_Router_GetSourceMetadata_NullSridWhenUndetectable(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plain.geojson"), []byte("{}"), 0o644))
+	handler, m := setupRouterWithSourceDir(t, dir, []string{".geojson"})
+
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+	doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
+
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "plain.geojson"), "").Return("", 0, nil).Once()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/sources/plain.geojson/metadata", nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Nil(t, body["srid"])
+}
+
+func Test_Router_GetSourceMetadata_UnknownSource(t *testing.T) {
+	handler, _ := setupRouter(t)
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/sources/unknown.geojson/metadata", nil)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func Test_Router_LoadSource_WithSridQueryParam(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lambert.geojson"), []byte("{}"), 0o644))
+	handler, m := setupRouterWithSourceDir(t, dir, []string{".geojson"})
+
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+	doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
+
+	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
+	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"isGeo": true, "geometryColumn": "geom", "srid": 2154}).Return(nil).Once()
+	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/lambert.geojson/load?srid=2154", nil)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+}
+
+func Test_Router_DeleteSource(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "buildings.geojson"), []byte("{}"), 0o644))
+	handler, m := setupRouterWithSourceDir(t, dir, []string{".geojson"})
+
+	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
+	doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
+
+	rec := doRequest(handler, http.MethodDelete, "/api/v1/sources/buildings.geojson", nil)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	_, statErr := os.Stat(filepath.Join(dir, "buildings.geojson"))
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func Test_Router_DeleteSource_UnknownName(t *testing.T) {
+	handler, _ := setupRouter(t)
+
+	rec := doRequest(handler, http.MethodDelete, "/api/v1/sources/unknown.geojson", nil)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func multipartFileRequest(t *testing.T, path, fieldName, filename, content string) *http.Request {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -458,7 +711,7 @@ func Test_Router_UploadSource(t *testing.T) {
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", mock.Anything, "").Return("", false, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", mock.Anything, "", 0).Return("", false, 0, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 	// Load's own TableIds/GetMetadata cache lookups happen inside Refresh,
 	// called once before Load — Load itself just reads the in-memory cache.
@@ -502,7 +755,7 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes").Return("", false, nil).Once()
+	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("", false, 0, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/regions.gpkg/load?layer=communes", nil)

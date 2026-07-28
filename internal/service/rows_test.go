@@ -76,6 +76,22 @@ func Test_RowService_GetRow_NotFound(t *testing.T) {
 	assert.Nil(t, row)
 }
 
+func Test_RowService_GetDistinctValues(t *testing.T) {
+	svc, m := setupRowService(t)
+
+	m.On("GetDistinctValues", mock.Anything, "id-1", "createdAt").Return([]any{
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+	}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+
+	values, err := svc.GetDistinctValues(context.Background(), "id-1", "createdAt")
+
+	require.NoError(t, err)
+	assert.Equal(t, []any{"2024-01-01", "2024-02-01"}, values)
+}
+
 func Test_RowService_UpdateRow(t *testing.T) {
 	cases := []struct {
 		name           string
