@@ -7,8 +7,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"gogeoserver/internal/config"
 	"gogeoserver/internal/storage"
 )
+
+// tablesHandler serves table-level endpoints: metadata, schema, columns,
+// derive, filter, and distinct-value lookups.
+type tablesHandler struct {
+	tableResolver
+	columnValidator
+	deriveService deriveAPI
+	rowService    rowAPI // filterRows only
+	apiCfg        config.APIConfig
+}
+
+// newTablesHandler builds a tablesHandler from the service ports it needs.
+func newTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, apiCfg config.APIConfig) *tablesHandler {
+	return &tablesHandler{
+		tableResolver:   newTableResolver(metadataSvc),
+		columnValidator: newColumnValidator(schemaSvc),
+		deriveService:   deriveSvc,
+		rowService:      rowSvc,
+		apiCfg:          apiCfg,
+	}
+}
 
 // listTables handles GET /tables.
 //
@@ -18,8 +40,8 @@ import (
 // @Produce json
 // @Success 200 {array} metadataDTO
 // @Router /api/v1/tables [get]
-func (rt *Router) listTables(w http.ResponseWriter, req *http.Request) {
-	tables, err := rt.metadataService.ListTables(req.Context())
+func (th *tablesHandler) listTables(w http.ResponseWriter, req *http.Request) {
+	tables, err := th.metadataService.ListTables(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -41,8 +63,8 @@ func (rt *Router) listTables(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} metadataDTO
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId} [get]
-func (rt *Router) getTableMetadata(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) getTableMetadata(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -59,8 +81,8 @@ func (rt *Router) getTableMetadata(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} metadataDTO
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId} [patch]
-func (rt *Router) renameTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) renameTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -77,12 +99,12 @@ func (rt *Router) renameTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := rt.metadataService.UpdateMetadata(req.Context(), meta.TableId, map[string]any{"tableName": body.TableName}); err != nil {
+	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, map[string]any{"tableName": body.TableName}); err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	updated, err := rt.metadataService.GetMetadata(req.Context(), meta.TableId)
+	updated, err := th.metadataService.GetMetadata(req.Context(), meta.TableId)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -99,13 +121,13 @@ func (rt *Router) renameTable(w http.ResponseWriter, req *http.Request) {
 // @Success 204
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId} [delete]
-func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) deleteTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
 
-	if err := rt.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
+	if err := th.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
@@ -120,13 +142,13 @@ func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string]any
 // @Router /api/v1/tables/{tableId}/schema [get]
-func (rt *Router) getSchema(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) getSchema(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
 
-	schema, err := rt.schemaService.Schema(req.Context(), meta)
+	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -149,8 +171,8 @@ func (rt *Router) getSchema(w http.ResponseWriter, req *http.Request) {
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/columns [post]
-func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) addColumn(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -164,7 +186,7 @@ func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := rt.schemaService.AddColumn(req.Context(), meta, body.Name, body.Type); err != nil {
+	if err := th.schemaService.AddColumn(req.Context(), meta, body.Name, body.Type); err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
@@ -183,8 +205,8 @@ func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/derive [post]
-func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
-	if _, ok := rt.resolveTable(w, req); !ok {
+func (th *tablesHandler) deriveTable(w http.ResponseWriter, req *http.Request) {
+	if _, ok := th.resolveTable(w, req); !ok {
 		return
 	}
 
@@ -197,7 +219,7 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	tableId, err := rt.deriveService.DeriveTable(req.Context(), body.Query, body.NewTableName)
+	tableId, err := th.deriveService.DeriveTable(req.Context(), body.Query, body.NewTableName)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -219,8 +241,8 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/filter [post]
-func (rt *Router) filterRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -234,7 +256,7 @@ func (rt *Router) filterRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	schema, err := rt.schemaService.Schema(req.Context(), meta)
+	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -256,13 +278,13 @@ func (rt *Router) filterRows(w http.ResponseWriter, req *http.Request) {
 	// way, so a client can't force the whole table into memory.
 	limit := body.Limit
 	if limit <= 0 {
-		limit = rt.apiCfg.DefaultRowLimit
+		limit = th.apiCfg.DefaultRowLimit
 	}
-	if limit > rt.apiCfg.MaxRowLimit {
-		limit = rt.apiCfg.MaxRowLimit
+	if limit > th.apiCfg.MaxRowLimit {
+		limit = th.apiCfg.MaxRowLimit
 	}
 
-	rows, err := rt.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
+	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -287,19 +309,19 @@ func (rt *Router) filterRows(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/columns/{col}/distinct [get]
-func (rt *Router) getDistinctValues(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (th *tablesHandler) getDistinctValues(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.resolveTable(w, req)
 	if !ok {
 		return
 	}
 	col := chi.URLParam(req, "col")
 
-	if err := rt.validateColumns(req.Context(), meta, []string{col}); err != nil {
+	if err := th.validateColumns(req.Context(), meta, []string{col}); err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	values, err := rt.rowService.GetDistinctValues(req.Context(), meta, col)
+	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return

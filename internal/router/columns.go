@@ -8,17 +8,27 @@ import (
 	"gogeoserver/internal/storage"
 )
 
+// columnValidator checks client-supplied column names against a table's
+// real schema. Embedded by every handler family that takes column names
+// from the client: /filter, /columns/{col}/distinct, tile attrs.
+type columnValidator struct {
+	schemaService schemaAPI
+}
+
+// newColumnValidator builds a columnValidator backed by the given schemaAPI port.
+func newColumnValidator(schemaSvc schemaAPI) columnValidator {
+	return columnValidator{schemaService: schemaSvc}
+}
+
 // validateColumns checks that every name in requested is a real column of
 // meta's table, excluding the geometry column (règle 7 — never surface
-// geometry through a generic column-name path). Used by any handler that
-// takes column names from the client: /filter, /columns/{col}/distinct,
-// tile attrs.
-func (rt *Router) validateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
+// geometry through a generic column-name path).
+func (cv columnValidator) validateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
 	if len(requested) == 0 {
 		return nil
 	}
 
-	schema, err := rt.schemaService.Schema(ctx, meta)
+	schema, err := cv.schemaService.Schema(ctx, meta)
 	if err != nil {
 		return err
 	}

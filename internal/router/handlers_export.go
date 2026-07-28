@@ -7,7 +7,23 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"gogeoserver/internal/service"
 )
+
+// exportHandler serves table export, streaming rows in CSV or GeoJSON.
+type exportHandler struct {
+	tableResolver
+	exportService *service.ExportService
+}
+
+// newExportHandler builds an exportHandler from the service ports it needs.
+func newExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService) *exportHandler {
+	return &exportHandler{
+		tableResolver: newTableResolver(metadataSvc),
+		exportService: exportSvc,
+	}
+}
 
 // exportTable handles GET /tables/{tableId}/export?format=csv|geojson.
 // format defaults to "geojson" for geo tables and "csv" otherwise.
@@ -24,8 +40,8 @@ import (
 // @Success 200 {file} byte
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/export [get]
-func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (eh *exportHandler) exportTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := eh.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -38,7 +54,7 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	contentType, err := rt.exportService.ContentType(meta, format)
+	contentType, err := eh.exportService.ContentType(meta, format)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -57,7 +73,7 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.%s"`, meta.TableName, format))
-	if err := rt.exportService.Export(req.Context(), w, meta, format); err != nil {
+	if err := eh.exportService.Export(req.Context(), w, meta, format); err != nil {
 		slog.Error("streaming export failed",
 			"method", req.Method,
 			"path", req.URL.Path,

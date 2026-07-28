@@ -1,6 +1,19 @@
 package router
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
+
+// opsHandler serves the liveness/readiness probes used by an orchestrator.
+type opsHandler struct {
+	ready func(ctx context.Context) error
+}
+
+// newOpsHandler builds an opsHandler from the readiness probe it needs.
+func newOpsHandler(ready func(ctx context.Context) error) *opsHandler {
+	return &opsHandler{ready: ready}
+}
 
 // healthz reports that the process itself is alive, regardless of storage
 // state — used by an orchestrator to decide whether to restart the
@@ -10,7 +23,7 @@ import "net/http"
 // @Tags ops
 // @Success 200
 // @Router /healthz [get]
-func (rt *Router) healthz(w http.ResponseWriter, req *http.Request) {
+func (oh *opsHandler) healthz(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -23,8 +36,8 @@ func (rt *Router) healthz(w http.ResponseWriter, req *http.Request) {
 // @Success 200
 // @Failure 503 {object} ErrorResponse
 // @Router /readyz [get]
-func (rt *Router) readyz(w http.ResponseWriter, req *http.Request) {
-	if err := rt.ready(req.Context()); err != nil {
+func (oh *opsHandler) readyz(w http.ResponseWriter, req *http.Request) {
+	if err := oh.ready(req.Context()); err != nil {
 		WriteError(w, req, err, http.StatusServiceUnavailable)
 		return
 	}

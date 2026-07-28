@@ -13,6 +13,23 @@ import (
 	"gogeoserver/internal/storage"
 )
 
+// geoHandler serves geo-specific endpoints: MVT tiles, geometry types, and
+// bbox filtering.
+type geoHandler struct {
+	tableResolver
+	columnValidator
+	geoService geoAPI
+}
+
+// newGeoHandler builds a geoHandler from the service ports it needs.
+func newGeoHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI) *geoHandler {
+	return &geoHandler{
+		tableResolver:   newTableResolver(metadataSvc),
+		columnValidator: newColumnValidator(schemaSvc),
+		geoService:      geoSvc,
+	}
+}
+
 func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 	z, err = strconv.Atoi(chi.URLParam(req, "z"))
 	if err != nil {
@@ -46,8 +63,8 @@ func parseTileAttrs(req *http.Request) []string {
 // @Param attrs query string false "Comma-separated non-geometry columns to embed in the tile"
 // @Success 200 {file} byte
 // @Router /api/v1/tables/{tableId}/tiles/{z}/{x}/{y} [get]
-func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (gh *geoHandler) getTile(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -59,7 +76,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 	}
 
 	attrs := parseTileAttrs(req)
-	if err := rt.validateColumns(req.Context(), meta, attrs); err != nil {
+	if err := gh.validateColumns(req.Context(), meta, attrs); err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
@@ -77,7 +94,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	mvt, err := rt.geoService.GetTile(req.Context(), meta, z, x, y, attrs)
+	mvt, err := gh.geoService.GetTile(req.Context(), meta, z, x, y, attrs)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -107,13 +124,13 @@ func tileETag(meta storage.Metadata, z, x, y int, attrs []string) string {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/geometry-types [get]
-func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (gh *geoHandler) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.resolveTable(w, req)
 	if !ok {
 		return
 	}
 
-	types, err := rt.geoService.GeometryTypes(req.Context(), meta)
+	types, err := gh.geoService.GeometryTypes(req.Context(), meta)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -130,8 +147,8 @@ func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/bbox [post]
-func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (gh *geoHandler) filterByBbox(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -144,7 +161,7 @@ func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pkeys, err := rt.geoService.FilterByBbox(req.Context(), meta, body.Bbox)
+	pkeys, err := gh.geoService.FilterByBbox(req.Context(), meta, body.Bbox)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return

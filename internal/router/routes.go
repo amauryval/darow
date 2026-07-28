@@ -13,24 +13,21 @@ import (
 	_ "gogeoserver/docs"
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
 )
 
-// Router wires the HTTP layer to the service layer, depending on each
-// service through the narrow port it actually calls (metadataAPI, rowAPI,
-// schemaAPI, deriveAPI, geoAPI, sourceAPI — see ports.go) rather than the
-// concrete service types.
+// Router wires the HTTP layer to the service layer. Each family of
+// endpoints (tables, rows, geo, sources, export, ops) is served by its own
+// handler struct, holding only the service ports (see ports.go) and config
+// it actually needs — never the concrete service types.
 type Router struct {
-	metadataService metadataAPI
-	rowService      rowAPI
-	schemaService   schemaAPI
-	deriveService   deriveAPI
-	geoService      geoAPI
-	sourceService   sourceAPI
-	exportService   *service.ExportService
-	apiCfg          config.APIConfig
-	uiAssets        fs.FS
-	ready           func(ctx context.Context) error
+	tables   *tablesHandler
+	rows     *rowsHandler
+	geo      *geoHandler
+	sources  *sourcesHandler
+	export   *exportHandler
+	ops      *opsHandler
+	apiCfg   config.APIConfig
+	uiAssets fs.FS
 }
 
 // NewRouter builds a Router serving every service above, honoring
@@ -43,25 +40,15 @@ func NewRouter(
 	apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
 ) *Router {
 	return &Router{
-		metadataService: metadataSvc, rowService: rowSvc, schemaService: schemaSvc, deriveService: deriveSvc,
-		geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
-		apiCfg: apiCfg, uiAssets: uiAssets, ready: ready,
+		tables:   newTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, apiCfg),
+		rows:     newRowsHandler(metadataSvc, rowSvc, apiCfg),
+		geo:      newGeoHandler(metadataSvc, schemaSvc, geoSvc),
+		sources:  newSourcesHandler(sourceSvc),
+		export:   newExportHandler(metadataSvc, exportSvc),
+		ops:      newOpsHandler(ready),
+		apiCfg:   apiCfg,
+		uiAssets: uiAssets,
 	}
-}
-
-// resolveTable fetches the {tableId} path param's metadata (served from
-// MetadataService's cache in the common case), writing a 404 and reporting
-// ok=false if the table does not exist. Callers must stop handling the
-// request when ok is false.
-func (rt *Router) resolveTable(w http.ResponseWriter, req *http.Request) (meta storage.Metadata, ok bool) {
-	tableId := chi.URLParam(req, "tableId")
-
-	meta, err := rt.metadataService.GetMetadata(req.Context(), tableId)
-	if err != nil {
-		WriteError(w, req, err, http.StatusNotFound)
-		return storage.Metadata{}, false
-	}
-	return meta, true
 }
 
 // Setup builds the chi router with every route from docs/spec.md section 6.1.
@@ -73,8 +60,8 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
-	r.Get("/healthz", rt.healthz)
-	r.Get("/readyz", rt.readyz)
+	r.Get("/healthz", rt.ops.healthz)
+	r.Get("/readyz", rt.ops.readyz)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -96,46 +83,46 @@ func (rt *Router) Setup() http.Handler {
 			}
 
 			v1.Route("/sources", func(sub chi.Router) {
-				sub.Get("/", rt.listSources)
-				sub.Post("/refresh", rt.refreshSources)
+				sub.Get("/", rt.sources.listSources)
+				sub.Post("/refresh", rt.sources.refreshSources)
 				// Overrides the global body cap: an upload is a whole source file
 				// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
 				// covers multipart framing (boundary, headers) around the file part
 				// itself, so a file right at the limit isn't cut off by framing
 				// overhead before SourceService.Upload's own oversize check runs.
-				sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
-				sub.Post("/{name}/load", rt.loadSource)
-				sub.Get("/{name}/metadata", rt.getSourceMetadata)
-				sub.Delete("/{name}", rt.deleteSource)
+				sub.With(maxBodyBytes(rt.sources.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.sources.uploadSource)
+				sub.Post("/{name}/load", rt.sources.loadSource)
+				sub.Get("/{name}/metadata", rt.sources.getSourceMetadata)
+				sub.Delete("/{name}", rt.sources.deleteSource)
 			})
 
 			v1.Route("/tables", func(sub chi.Router) {
-				sub.Get("/", rt.listTables)
+				sub.Get("/", rt.tables.listTables)
 
 				sub.Route("/{tableId}", func(sub chi.Router) {
-					sub.Get("/", rt.getTableMetadata)
-					sub.Patch("/", rt.renameTable)
-					sub.Delete("/", rt.deleteTable)
+					sub.Get("/", rt.tables.getTableMetadata)
+					sub.Patch("/", rt.tables.renameTable)
+					sub.Delete("/", rt.tables.deleteTable)
 
-					sub.Get("/schema", rt.getSchema)
-					sub.Post("/columns", rt.addColumn)
-					sub.Post("/derive", rt.deriveTable)
-					sub.Post("/filter", rt.filterRows)
-					sub.Get("/columns/{col}/distinct", rt.getDistinctValues)
+					sub.Get("/schema", rt.tables.getSchema)
+					sub.Post("/columns", rt.tables.addColumn)
+					sub.Post("/derive", rt.tables.deriveTable)
+					sub.Post("/filter", rt.tables.filterRows)
+					sub.Get("/columns/{col}/distinct", rt.tables.getDistinctValues)
 
 					sub.Route("/rows", func(sub chi.Router) {
-						sub.Get("/", rt.listRows)
-						sub.Post("/", rt.addRows)
+						sub.Get("/", rt.rows.listRows)
+						sub.Post("/", rt.rows.addRows)
 						sub.Route("/{pkey}", func(sub chi.Router) {
-							sub.Get("/", rt.getRow)
-							sub.Patch("/", rt.updateRow)
-							sub.Delete("/", rt.deleteRow)
+							sub.Get("/", rt.rows.getRow)
+							sub.Patch("/", rt.rows.updateRow)
+							sub.Delete("/", rt.rows.deleteRow)
 						})
 					})
 
-					sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
-					sub.Get("/geometry-types", rt.getGeometryTypes)
-					sub.Post("/bbox", rt.filterByBbox)
+					sub.Get("/tiles/{z}/{x}/{y}", rt.geo.getTile)
+					sub.Get("/geometry-types", rt.geo.getGeometryTypes)
+					sub.Post("/bbox", rt.geo.filterByBbox)
 				})
 			})
 		})
@@ -144,7 +131,7 @@ func (rt *Router) Setup() http.Handler {
 		// legitimately run past any normal request's time budget on a large
 		// table — middleware.Timeout would otherwise cancel it mid-stream,
 		// truncating an already-200'd response (NEW-BUG-7).
-		v1.Get("/tables/{tableId}/export", rt.exportTable)
+		v1.Get("/tables/{tableId}/export", rt.export.exportTable)
 	})
 
 	return r

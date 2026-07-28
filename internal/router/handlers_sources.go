@@ -9,6 +9,17 @@ import (
 	"gogeoserver/internal/service"
 )
 
+// sourcesHandler serves workDir source-file endpoints: listing, refreshing,
+// uploading, loading, previewing CRS, and deleting.
+type sourcesHandler struct {
+	sourceService sourceAPI
+}
+
+// newSourcesHandler builds a sourcesHandler from the service port it needs.
+func newSourcesHandler(sourceSvc sourceAPI) *sourcesHandler {
+	return &sourcesHandler{sourceService: sourceSvc}
+}
+
 // parseSrid reads an optional "srid" query param, 0 (auto-detect) if
 // absent.
 func parseSrid(req *http.Request) (int, error) {
@@ -26,8 +37,8 @@ func parseSrid(req *http.Request) (int, error) {
 // @Produce json
 // @Success 200 {array} service.Source
 // @Router /api/v1/sources [get]
-func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, http.StatusOK, rt.sourceService.List())
+func (sh *sourcesHandler) listSources(w http.ResponseWriter, req *http.Request) {
+	writeJSON(w, http.StatusOK, sh.sourceService.List())
 }
 
 // refreshSources handles POST /sources/refresh.
@@ -37,8 +48,8 @@ func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Success 200 {array} service.Source
 // @Router /api/v1/sources/refresh [post]
-func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
-	sources, err := rt.sourceService.Refresh(req.Context())
+func (sh *sourcesHandler) refreshSources(w http.ResponseWriter, req *http.Request) {
+	sources, err := sh.sourceService.Refresh(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -64,7 +75,7 @@ func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/sources/upload [post]
-func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
+func (sh *sourcesHandler) uploadSource(w http.ResponseWriter, req *http.Request) {
 	srid, err := parseSrid(req)
 	if err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
@@ -78,13 +89,13 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	}
 	defer file.Close()
 
-	savedName, err := rt.sourceService.Upload(header.Filename, file)
+	savedName, err := sh.sourceService.Upload(header.Filename, file)
 	if err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	sources, err := rt.sourceService.Refresh(req.Context())
+	sources, err := sh.sourceService.Refresh(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -106,7 +117,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	if uploaded != nil && len(uploaded.Layers) == 1 {
 		layer = uploaded.Layers[0].Name
 	}
-	tableId, err := rt.sourceService.Load(req.Context(), savedName, layer, srid)
+	tableId, err := sh.sourceService.Load(req.Context(), savedName, layer, srid)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -132,7 +143,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 // @Success 201 {object} map[string]string
 // @Failure 409 {object} ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
-func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
+func (sh *sourcesHandler) loadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 	srid, err := parseSrid(req)
@@ -141,7 +152,7 @@ func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	tableId, err := rt.sourceService.Load(req.Context(), name, layer, srid)
+	tableId, err := sh.sourceService.Load(req.Context(), name, layer, srid)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -165,11 +176,11 @@ func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string]any
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/sources/{name}/metadata [get]
-func (rt *Router) getSourceMetadata(w http.ResponseWriter, req *http.Request) {
+func (sh *sourcesHandler) getSourceMetadata(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 
-	authName, authCode, err := rt.sourceService.DetectCRS(req.Context(), name, layer)
+	authName, authCode, err := sh.sourceService.DetectCRS(req.Context(), name, layer)
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
@@ -195,10 +206,10 @@ func (rt *Router) getSourceMetadata(w http.ResponseWriter, req *http.Request) {
 // @Success 204
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/sources/{name} [delete]
-func (rt *Router) deleteSource(w http.ResponseWriter, req *http.Request) {
+func (sh *sourcesHandler) deleteSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 
-	if err := rt.sourceService.Delete(req.Context(), name); err != nil {
+	if err := sh.sourceService.Delete(req.Context(), name); err != nil {
 		WriteError(w, req, err, mapServiceError(err))
 		return
 	}

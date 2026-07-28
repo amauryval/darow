@@ -6,20 +6,38 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"gogeoserver/internal/config"
 )
 
-func (rt *Router) paginationParams(req *http.Request) (offset, limit int64) {
+// rowsHandler serves row-level CRUD endpoints under /tables/{tableId}/rows.
+type rowsHandler struct {
+	tableResolver
+	rowService rowAPI
+	apiCfg     config.APIConfig
+}
+
+// newRowsHandler builds a rowsHandler from the service ports it needs.
+func newRowsHandler(metadataSvc metadataAPI, rowSvc rowAPI, apiCfg config.APIConfig) *rowsHandler {
+	return &rowsHandler{
+		tableResolver: newTableResolver(metadataSvc),
+		rowService:    rowSvc,
+		apiCfg:        apiCfg,
+	}
+}
+
+func (rh *rowsHandler) paginationParams(req *http.Request) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
 
-	limit = int64(rt.apiCfg.DefaultRowLimit)
+	limit = int64(rh.apiCfg.DefaultRowLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > int64(rt.apiCfg.MaxRowLimit) {
-		limit = int64(rt.apiCfg.MaxRowLimit)
+	if limit > int64(rh.apiCfg.MaxRowLimit) {
+		limit = int64(rh.apiCfg.MaxRowLimit)
 	}
 	return offset, limit
 }
@@ -34,14 +52,14 @@ func (rt *Router) paginationParams(req *http.Request) (offset, limit int64) {
 // @Param limit query int false "Pagination limit"
 // @Success 200 {object} map[string]any
 // @Router /api/v1/tables/{tableId}/rows [get]
-func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (rh *rowsHandler) listRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.resolveTable(w, req)
 	if !ok {
 		return
 	}
-	offset, limit := rt.paginationParams(req)
+	offset, limit := rh.paginationParams(req)
 
-	page, err := rt.rowService.ListRows(req.Context(), meta, offset, limit)
+	page, err := rh.rowService.ListRows(req.Context(), meta, offset, limit)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -66,8 +84,8 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 // @Success 201 {object} map[string][]string
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows [post]
-func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (rh *rowsHandler) addRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -88,10 +106,10 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 	var err error
 	if len(body.Rows) == 1 {
 		var pkey string
-		pkey, err = rt.rowService.InsertRow(req.Context(), meta, body.Rows[0])
+		pkey, err = rh.rowService.InsertRow(req.Context(), meta, body.Rows[0])
 		pkeys = []string{pkey}
 	} else {
-		pkeys, err = rt.rowService.BulkInsertRows(req.Context(), meta, body.Rows)
+		pkeys, err = rh.rowService.BulkInsertRows(req.Context(), meta, body.Rows)
 	}
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
@@ -111,14 +129,14 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string]any
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [get]
-func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (rh *rowsHandler) getRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.resolveTable(w, req)
 	if !ok {
 		return
 	}
 	pkey := chi.URLParam(req, "pkey")
 
-	row, err := rt.rowService.GetRow(req.Context(), meta, pkey)
+	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -142,8 +160,8 @@ func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [patch]
-func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (rh *rowsHandler) updateRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.resolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -156,13 +174,13 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if len(updates) > 0 {
-		if err := rt.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates); err != nil {
+		if err := rh.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates); err != nil {
 			WriteError(w, req, err, mapServiceError(err))
 			return
 		}
 	}
 
-	row, err := rt.rowService.GetRow(req.Context(), meta, pkey)
+	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -182,14 +200,14 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 // @Param pkey path string true "Row primary key"
 // @Success 204
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [delete]
-func (rt *Router) deleteRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rt.resolveTable(w, req)
+func (rh *rowsHandler) deleteRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.resolveTable(w, req)
 	if !ok {
 		return
 	}
 	pkey := chi.URLParam(req, "pkey")
 
-	if err := rt.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
+	if err := rh.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
