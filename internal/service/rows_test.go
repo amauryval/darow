@@ -16,7 +16,7 @@ import (
 
 func setupRowService(t *testing.T) (*RowService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	metadataCache := expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute)
+	metadataCache := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, metadataCache)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
@@ -57,7 +57,7 @@ func Test_RowService_ListRows(t *testing.T) {
 	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(1), nil).Once()
 
-	page, err := svc.ListRows(context.Background(), "id-1", 0, 10)
+	page, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), page.Total)
@@ -78,7 +78,7 @@ func Test_RowService_ListRowsPage(t *testing.T) {
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
 
-	rows, err := svc.ListRowsPage(context.Background(), "id-1", 0, 10)
+	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -92,7 +92,7 @@ func Test_RowService_ListRowsPage_EmptyPage(t *testing.T) {
 
 	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{}, nil).Once()
 
-	rows, err := svc.ListRowsPage(context.Background(), "id-1", 0, 10)
+	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	assert.Empty(t, rows)
@@ -103,7 +103,7 @@ func Test_RowService_GetRow_NotFound(t *testing.T) {
 
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
-	row, err := svc.GetRow(context.Background(), "id-1", "missing")
+	row, err := svc.GetRow(context.Background(), storage.Metadata{TableId: "id-1"}, "missing")
 
 	require.NoError(t, err)
 	assert.Nil(t, row)
@@ -119,7 +119,7 @@ func Test_RowService_GetDistinctValues(t *testing.T) {
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
 
-	values, err := svc.GetDistinctValues(context.Background(), "id-1", "createdAt")
+	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt")
 
 	require.NoError(t, err)
 	assert.Equal(t, []any{"2024-01-01", "2024-02-01"}, values)
@@ -141,13 +141,13 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			svc, m := setupRowService(t)
 
 			updates := map[string]any{c.column: "value"}
-			m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}, nil).Once()
+			meta := storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}
 			m.On("Update", mock.Anything, "id-1", []string{"pk-1"}, updates).Return(nil).Once()
 			if c.wantRefresh {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 			}
 
-			err := svc.UpdateRow(context.Background(), "id-1", []string{"pk-1"}, updates)
+			err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates)
 			require.NoError(t, err)
 		})
 	}

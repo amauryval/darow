@@ -26,11 +26,7 @@ func tileSimplifyTolerance(zoom int) float64 {
 // string are bound parameters. attrs embeds extra non-geometry columns in
 // each feature (GEO-3) — the caller must have already validated them
 // against the table's real columns. Stops early if ctx is cancelled.
-func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error) {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return nil, err
-	}
+func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -84,11 +80,7 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int, attr
 
 // FilterByBbox returns the primary keys of rows whose geometry intersects
 // bbox ([minX, minY, maxX, maxY]).
-func (a *Adapter) FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error) {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return nil, err
-	}
+func (a *Adapter) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -122,11 +114,7 @@ func (a *Adapter) FilterByBbox(ctx context.Context, tableId string, bbox [4]floa
 
 // GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
 // fragment, keyed by pkey. Used only by table export.
-func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys []string) (map[string]string, error) {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return nil, err
-	}
+func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -167,11 +155,7 @@ func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys 
 
 // GeometryTypes runs a lightweight distinct scan over the geometry column;
 // not cached (règle 10), since a geometry column can mix types.
-func (a *Adapter) GeometryTypes(ctx context.Context, tableId string) ([]string, error) {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return nil, err
-	}
+func (a *Adapter) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}

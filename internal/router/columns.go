@@ -13,12 +13,12 @@ import (
 // geometry through a generic column-name path). Used by any handler that
 // takes column names from the client: /filter, /columns/{col}/distinct,
 // tile attrs.
-func (rt *Router) validateColumns(ctx context.Context, meta *storage.Metadata, requested []string) error {
+func (rt *Router) validateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
 	if len(requested) == 0 {
 		return nil
 	}
 
-	schema, err := rt.schemaService.Schema(ctx, meta.TableId)
+	schema, err := rt.schemaService.Schema(ctx, meta)
 	if err != nil {
 		return err
 	}

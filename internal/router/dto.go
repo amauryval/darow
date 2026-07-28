@@ -20,7 +20,7 @@ type metadataDTO struct {
 	Srid           int    `json:"srid"`
 }
 
-func toMetadataDTO(m *storage.Metadata) metadataDTO {
+func toMetadataDTO(m storage.Metadata) metadataDTO {
 	return metadataDTO{
 		TableId:        m.TableId,
 		PhysicalName:   m.PhysicalName,

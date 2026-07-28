@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"gogeoserver/internal/storage"
 	"gogeoserver/internal/storage/mocks"
 )
 
@@ -28,7 +29,7 @@ func Test_SchemaService_Schema(t *testing.T) {
 	m.On("ColumnType", mock.Anything, "id-1", "__pkey").Return("VARCHAR", nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 
-	schema, err := svc.Schema(context.Background(), "id-1")
+	schema, err := svc.Schema(context.Background(), storage.Metadata{TableId: "id-1"})
 
 	require.NoError(t, err)
 	assert.Equal(t, []ColumnSchema{{Name: "__pkey", Type: "VARCHAR"}, {Name: "height", Type: "DOUBLE"}}, schema)
@@ -39,7 +40,7 @@ func Test_SchemaService_AddColumn(t *testing.T) {
 
 	m.On("AddColumn", mock.Anything, "id-1", "height", "DOUBLE").Return(nil).Once()
 
-	err := svc.AddColumn(context.Background(), "id-1", "height", "DOUBLE")
+	err := svc.AddColumn(context.Background(), storage.Metadata{TableId: "id-1"}, "height", "DOUBLE")
 
 	require.NoError(t, err)
 }

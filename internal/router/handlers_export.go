@@ -25,7 +25,10 @@ import (
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/export [get]
 func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 
 	format := req.URL.Query().Get("format")
 	if format == "" {

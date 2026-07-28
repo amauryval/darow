@@ -13,6 +13,7 @@ import (
 	_ "gogeoserver/docs"
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/service"
+	"gogeoserver/internal/storage"
 )
 
 // Router wires the HTTP layer to the service layer, depending on each
@@ -46,6 +47,21 @@ func NewRouter(
 		geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
 		apiCfg: apiCfg, uiAssets: uiAssets, ready: ready,
 	}
+}
+
+// resolveTable fetches the {tableId} path param's metadata (served from
+// MetadataService's cache in the common case), writing a 404 and reporting
+// ok=false if the table does not exist. Callers must stop handling the
+// request when ok is false.
+func (rt *Router) resolveTable(w http.ResponseWriter, req *http.Request) (meta storage.Metadata, ok bool) {
+	tableId := chi.URLParam(req, "tableId")
+
+	meta, err := rt.metadataService.GetMetadata(req.Context(), tableId)
+	if err != nil {
+		WriteError(w, req, err, http.StatusNotFound)
+		return storage.Metadata{}, false
+	}
+	return meta, true
 }
 
 // Setup builds the chi router with every route from docs/spec.md section 6.1.
@@ -97,8 +113,6 @@ func (rt *Router) Setup() http.Handler {
 				sub.Get("/", rt.listTables)
 
 				sub.Route("/{tableId}", func(sub chi.Router) {
-					sub.Use(rt.tableMiddleware)
-
 					sub.Get("/", rt.getTableMetadata)
 					sub.Patch("/", rt.renameTable)
 					sub.Delete("/", rt.deleteTable)
@@ -130,7 +144,7 @@ func (rt *Router) Setup() http.Handler {
 		// legitimately run past any normal request's time budget on a large
 		// table — middleware.Timeout would otherwise cancel it mid-stream,
 		// truncating an already-200'd response (NEW-BUG-7).
-		v1.With(rt.tableMiddleware).Get("/tables/{tableId}/export", rt.exportTable)
+		v1.Get("/tables/{tableId}/export", rt.exportTable)
 	})
 
 	return r

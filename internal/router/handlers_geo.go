@@ -47,7 +47,10 @@ func parseTileAttrs(req *http.Request) []string {
 // @Success 200 {file} byte
 // @Router /api/v1/tables/{tableId}/tiles/{z}/{x}/{y} [get]
 func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 
 	z, x, y, err := parseTileCoords(req)
 	if err != nil {
@@ -74,7 +77,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y, attrs)
+	mvt, err := rt.geoService.GetTile(req.Context(), meta, z, x, y, attrs)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -88,7 +91,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 // that touches the table's rows bumps UpdatedAt (règle 9), which changes
 // the ETag for every tile of that table. attrs is folded in since it
 // changes the tile's content for the same table version (GEO-3).
-func tileETag(meta *storage.Metadata, z, x, y int, attrs []string) string {
+func tileETag(meta storage.Metadata, z, x, y int, attrs []string) string {
 	sorted := slices.Clone(attrs)
 	slices.Sort(sorted)
 	return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","))
@@ -105,9 +108,12 @@ func tileETag(meta *storage.Metadata, z, x, y int, attrs []string) string {
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/geometry-types [get]
 func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 
-	types, err := rt.geoService.GeometryTypes(req.Context(), meta.TableId)
+	types, err := rt.geoService.GeometryTypes(req.Context(), meta)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -125,7 +131,10 @@ func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/bbox [post]
 func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 
 	var body struct {
 		Bbox [4]float64 `json:"bbox"`
@@ -135,7 +144,7 @@ func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pkeys, err := rt.geoService.FilterByBbox(req.Context(), meta.TableId, body.Bbox)
+	pkeys, err := rt.geoService.FilterByBbox(req.Context(), meta, body.Bbox)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return

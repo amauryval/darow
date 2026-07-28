@@ -12,40 +12,42 @@ import (
 // Declared here, the consumer, so a handler test can satisfy it with a
 // lighter double than the whole MetadataService.
 type metadataAPI interface {
-	GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error)
-	ListTables(ctx context.Context) ([]*storage.Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
+	ListTables(ctx context.Context) ([]storage.Metadata, error)
 	RemoveTable(ctx context.Context, tableId string) error
 	UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error
 }
 
-// rowAPI is everything the router calls on *service.RowService.
+// rowAPI is everything the router calls on *service.RowService. Every
+// method takes the caller's already-resolved storage.Metadata (§4.2) —
+// each handler resolves it via resolveTable — rather than a tableId.
 type rowAPI interface {
-	ListRows(ctx context.Context, tableId string, offset, limit int64) (*service.RowsPage, error)
-	GetRow(ctx context.Context, tableId, pkey string) (*storage.Row, error)
-	InsertRow(ctx context.Context, tableId string, values map[string]any) (string, error)
-	BulkInsertRows(ctx context.Context, tableId string, rows []map[string]any) ([]string, error)
-	UpdateRow(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error
-	RemoveRows(ctx context.Context, tableId string, pkeys []string) error
-	ListRowsWithFilter(ctx context.Context, tableId, filter string, args []any, limit int) ([]storage.Row, error)
-	GetDistinctValues(ctx context.Context, tableId, column string) ([]any, error)
+	ListRows(ctx context.Context, meta storage.Metadata, offset, limit int64) (*service.RowsPage, error)
+	GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error)
+	InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error)
+	BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error)
+	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error
+	RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error
+	ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error)
+	GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error)
 }
 
 // schemaAPI is everything the router calls on *service.SchemaService.
 type schemaAPI interface {
-	Schema(ctx context.Context, tableId string) ([]service.ColumnSchema, error)
-	AddColumn(ctx context.Context, tableId, colName, colType string) error
+	Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error)
+	AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error
 }
 
 // deriveAPI is everything the router calls on *service.DeriveService.
 type deriveAPI interface {
-	DeriveTable(ctx context.Context, sourceTableId, query, newTableName string) (string, error)
+	DeriveTable(ctx context.Context, query, newTableName string) (string, error)
 }
 
 // geoAPI is everything the router calls on *service.GeoService.
 type geoAPI interface {
-	GetTile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error)
-	GeometryTypes(ctx context.Context, tableId string) ([]string, error)
-	FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error)
+	GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error)
+	GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error)
+	FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error)
 }
 
 // sourceAPI is everything the router calls on *service.SourceService.

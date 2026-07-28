@@ -918,7 +918,7 @@ type DeriveService struct {
 // DeriveTable matérialise une nouvelle table à partir d'une requête SELECT
 // fournie par l'appelant (règle 4). Table dérivée = instantané figé, jamais
 // une vue (règle 13).
-func (s *DeriveService) DeriveTable(sourceTableId, query, newTableName string) (string, error) {
+func (s *DeriveService) DeriveTable(query, newTableName string) (string, error) {
     // implémentation : validateSelectOnly, puis Create/GetMetadata/
     // CreateFromQuery/UpdateMetadata/RefreshDerived, Rollback à chaque échec
 }
@@ -1197,8 +1197,10 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
     }
 
     // DeriveTable doit rejeter tout ce qui n'est pas un SELECT (règle 4).
+    // sourceTableId (path param) ne sert qu'à faire résoudre 404 par le
+    // routeur si la table source n'existe pas — la query peut référencer
+    // n'importe quelle(s) table(s), donc il n'est jamais transmis au service.
     tableId, err := rt.tableService.DeriveTable(
-        chi.URLParam(req, "tableId"),
         body.Query,
         body.NewTableName,
     )

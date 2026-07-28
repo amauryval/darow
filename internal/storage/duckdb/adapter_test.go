@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gogeoserver/internal/storage"
 )
 
 func setupAdapter(t *testing.T) *Adapter {
@@ -18,7 +20,7 @@ func setupAdapter(t *testing.T) *Adapter {
 	return a
 }
 
-func createScalarTable(t *testing.T, a *Adapter) string {
+func createScalarTable(t *testing.T, a *Adapter) storage.Metadata {
 	tableId, err := a.Create(context.Background(), "widgets", false, "")
 	require.NoError(t, err)
 
@@ -27,19 +29,19 @@ func createScalarTable(t *testing.T, a *Adapter) string {
 
 	_, err = a.Exec(context.Background(), "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY, name TEXT)")
 	require.NoError(t, err)
-	return tableId
+	return meta
 }
 
-func createGeoTable(t *testing.T, a *Adapter) (tableId, geomCol string) {
+func createGeoTable(t *testing.T, a *Adapter) (meta storage.Metadata, geomCol string) {
 	tableId, err := a.Create(context.Background(), "buildings", true, "geom")
 	require.NoError(t, err)
 
-	meta, err := a.GetMetadata(context.Background(), tableId)
+	meta, err = a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
 	_, err = a.Exec(context.Background(), "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY, geom GEOMETRY)")
 	require.NoError(t, err)
-	return tableId, "geom"
+	return meta, "geom"
 }
 
 func Test_New_InitializesSchemaIdempotently(t *testing.T) {
@@ -67,23 +69,23 @@ func Test_New_CreatesMissingParentDirectory(t *testing.T) {
 func Test_Adapter_CreateAndGetMetadata(t *testing.T) {
 	a := setupAdapter(t)
 
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
-	meta, err := a.GetMetadata(context.Background(), tableId)
+	refreshed, err := a.GetMetadata(context.Background(), meta.TableId)
 	require.NoError(t, err)
-	assert.Equal(t, "widgets", meta.TableName)
-	assert.False(t, meta.IsGeo)
-	assert.Contains(t, meta.PhysicalName, "t_")
+	assert.Equal(t, "widgets", refreshed.TableName)
+	assert.False(t, refreshed.IsGeo)
+	assert.Contains(t, refreshed.PhysicalName, "t_")
 }
 
 func Test_Adapter_InsertRow_And_GetRowsByPkey(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
-	pkey, err := a.InsertRow(context.Background(), tableId, map[string]any{"name": "widget-1"})
+	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "widget-1"})
 	require.NoError(t, err)
 
-	rows, err := a.GetRowsByPkey(context.Background(), tableId, []string{pkey})
+	rows, err := a.GetRowsByPkey(context.Background(), meta, []string{pkey})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "widget-1", rows[0].Values["name"])
@@ -91,14 +93,14 @@ func Test_Adapter_InsertRow_And_GetRowsByPkey(t *testing.T) {
 
 func Test_Adapter_BulkInsert_TransactionalAndConcurrencySafe(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_, err := a.BulkInsert(context.Background(), tableId, []map[string]any{
+			_, err := a.BulkInsert(context.Background(), meta, []map[string]any{
 				{"name": "a"}, {"name": "b"},
 			})
 			assert.NoError(t, err)
@@ -106,35 +108,35 @@ func Test_Adapter_BulkInsert_TransactionalAndConcurrencySafe(t *testing.T) {
 	}
 	wg.Wait()
 
-	count, err := a.RowsCount(context.Background(), tableId)
+	count, err := a.RowsCount(context.Background(), meta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 20, count)
 }
 
 func Test_Adapter_Update_GeometryColumn_InvalidWKT(t *testing.T) {
 	a := setupAdapter(t)
-	tableId, geomCol := createGeoTable(t, a)
+	meta, geomCol := createGeoTable(t, a)
 
-	pkey, err := a.InsertRow(context.Background(), tableId, map[string]any{})
+	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{})
 	require.NoError(t, err)
 
-	err = a.Update(context.Background(), tableId, []string{pkey}, map[string]any{geomCol: "not-a-valid-wkt"})
+	err = a.Update(context.Background(), meta, []string{pkey}, map[string]any{geomCol: "not-a-valid-wkt"})
 	assert.Error(t, err)
 
-	err = a.Update(context.Background(), tableId, []string{pkey}, map[string]any{geomCol: "POINT(1 2)"})
+	err = a.Update(context.Background(), meta, []string{pkey}, map[string]any{geomCol: "POINT(1 2)"})
 	assert.NoError(t, err)
 }
 
 func Test_Adapter_GetPkeys_OrderedDeterministically(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
 	for i := 0; i < 5; i++ {
-		_, err := a.InsertRow(context.Background(), tableId, map[string]any{"name": "x"})
+		_, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "x"})
 		require.NoError(t, err)
 	}
 
-	pkeys, err := a.GetPkeys(context.Background(), tableId, 0, 100)
+	pkeys, err := a.GetPkeys(context.Background(), meta, 0, 100)
 	require.NoError(t, err)
 	assert.Len(t, pkeys, 5)
 	assert.True(t, sortedAscending(pkeys))
@@ -151,25 +153,25 @@ func sortedAscending(s []string) bool {
 
 func Test_Adapter_RemoveRows(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
-	pkey, err := a.InsertRow(context.Background(), tableId, map[string]any{"name": "x"})
+	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "x"})
 	require.NoError(t, err)
 
-	require.NoError(t, a.RemoveRows(context.Background(), tableId, []string{pkey}))
+	require.NoError(t, a.RemoveRows(context.Background(), meta, []string{pkey}))
 
-	rows, err := a.GetRowsByPkey(context.Background(), tableId, []string{pkey})
+	rows, err := a.GetRowsByPkey(context.Background(), meta, []string{pkey})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
 
 func Test_Adapter_Remove_DropsTableAndMetadata(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
-	require.NoError(t, a.Remove(context.Background(), tableId))
+	require.NoError(t, a.Remove(context.Background(), meta.TableId))
 
-	exists, err := a.TableExists(context.Background(), tableId)
+	exists, err := a.TableExists(context.Background(), meta.TableId)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -190,14 +192,14 @@ func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
 
 func Test_Adapter_RefreshDerivedMetadata(t *testing.T) {
 	a := setupAdapter(t)
-	tableId := createScalarTable(t, a)
+	meta := createScalarTable(t, a)
 
-	_, err := a.InsertRow(context.Background(), tableId, map[string]any{"name": "x"})
+	_, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "x"})
 	require.NoError(t, err)
 
-	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId))
+	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), meta.TableId))
 
-	meta, err := a.GetMetadata(context.Background(), tableId)
+	refreshed, err := a.GetMetadata(context.Background(), meta.TableId)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, meta.RowCount)
+	assert.EqualValues(t, 1, refreshed.RowCount)
 }

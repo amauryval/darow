@@ -32,39 +32,40 @@ func NewSchemaService(storage storage.TableManager, c *expirable.LRU[string, []C
 	return &SchemaService{storage: storage, cache: c}
 }
 
-// Schema returns the name and type of every column of tableId's
-// underlying table, geometry column included (this describes structure,
-// not row data, so règle 7 does not apply), from cache when present
-// (PERF-1): one DESCRIBE-driven population, not one per column, per
-// cache miss.
-func (s *SchemaService) Schema(ctx context.Context, tableId string) ([]ColumnSchema, error) {
-	if schema, ok := s.cache.Get(tableId); ok {
+// Schema returns the name and type of every column of meta's underlying
+// table, geometry column included (this describes structure, not row
+// data, so règle 7 does not apply), from cache when present (PERF-1): one
+// DESCRIBE-driven population, not one per column, per cache miss. meta is
+// the caller's already-resolved metadata (§4.2); only its TableId is used
+// as the cache key.
+func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
+	if schema, ok := s.cache.Get(meta.TableId); ok {
 		return schema, nil
 	}
 
-	cols, err := s.storage.Columns(ctx, tableId)
+	cols, err := s.storage.Columns(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
 
 	schema := make([]ColumnSchema, 0, len(cols))
 	for _, col := range cols {
-		colType, err := s.storage.ColumnType(ctx, tableId, col)
+		colType, err := s.storage.ColumnType(ctx, meta, col)
 		if err != nil {
 			return nil, err
 		}
 		schema = append(schema, ColumnSchema{Name: col, Type: colType})
 	}
 
-	s.cache.Add(tableId, schema)
+	s.cache.Add(meta.TableId, schema)
 	return schema, nil
 }
 
-// Types returns tableId's column-name-to-DuckDB-type map, from the same
+// Types returns meta's column-name-to-DuckDB-type map, from the same
 // cache as Schema, so converting row values (RowService.convertRow) never
 // issues one DESCRIBE call per column (PERF-1).
-func (s *SchemaService) Types(ctx context.Context, tableId string) (map[string]string, error) {
-	schema, err := s.Schema(ctx, tableId)
+func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[string]string, error) {
+	schema, err := s.Schema(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +77,12 @@ func (s *SchemaService) Types(ctx context.Context, tableId string) (map[string]s
 	return types, nil
 }
 
-// AddColumn adds colName of type colType to tableId's underlying table and
+// AddColumn adds colName of type colType to meta's underlying table and
 // invalidates its cached schema (PERF-1).
-func (s *SchemaService) AddColumn(ctx context.Context, tableId, colName, colType string) error {
-	if err := s.storage.AddColumn(ctx, tableId, colName, colType); err != nil {
+func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
+	if err := s.storage.AddColumn(ctx, meta, colName, colType); err != nil {
 		return err
 	}
-	s.cache.Remove(tableId)
+	s.cache.Remove(meta.TableId)
 	return nil
 }

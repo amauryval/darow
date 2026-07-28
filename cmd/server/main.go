@@ -61,7 +61,7 @@ func main() {
 		log.Fatalf("sources workDir: %v", err)
 	}
 
-	metadataCache := expirable.NewLRU[string, *storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
+	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
 	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
 
@@ -70,7 +70,7 @@ func main() {
 	rowService := service.NewRowService(storageAdapter, metadataService, schemaService)
 	deriveService := service.NewDeriveService(metadataService, storageAdapter)
 	importService := service.NewImportService(metadataService, storageAdapter)
-	geoService := service.NewGeoService(storageAdapter, metadataService, tileCache)
+	geoService := service.NewGeoService(storageAdapter, tileCache)
 	sourceService := service.NewSourceService(cfg.Sources, importService)
 	exportService := service.NewExportService(rowService, geoService, schemaService, cfg.API.ExportBatchSize)
 

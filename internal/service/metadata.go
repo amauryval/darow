@@ -16,44 +16,40 @@ import (
 // (PERF-5), never unbounded.
 type MetadataService struct {
 	storage storage.MetadataManager
-	cache   *expirable.LRU[string, *storage.Metadata]
+	cache   *expirable.LRU[string, storage.Metadata]
 }
 
 // NewMetadataService builds a MetadataService backed by storage, using c
 // to cache metadata reads.
-func NewMetadataService(s storage.MetadataManager, c *expirable.LRU[string, *storage.Metadata]) *MetadataService {
+func NewMetadataService(s storage.MetadataManager, c *expirable.LRU[string, storage.Metadata]) *MetadataService {
 	return &MetadataService{storage: s, cache: c}
 }
 
-// GetMetadata returns tableId's metadata, from cache when present. Always
-// a copy, never the cached pointer itself (§4.1) — Metadata is a flat
-// struct, so nothing here shares state across callers that a single
-// unguarded mutation could corrupt for every other request holding the
-// same cached entry.
-func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
+// GetMetadata returns tableId's metadata, from cache when present. Metadata
+// is a value type (§4.1), so every caller already gets its own copy with no
+// extra step.
+func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	if meta, ok := s.cache.Get(tableId); ok {
-		copied := *meta
-		return &copied, nil
+		return meta, nil
 	}
 
 	meta, err := s.storage.GetMetadata(ctx, tableId)
 	if err != nil {
-		return nil, err
+		return storage.Metadata{}, err
 	}
 
 	s.cache.Add(tableId, meta)
-	copied := *meta
-	return &copied, nil
+	return meta, nil
 }
 
 // ListTables returns metadata for every registered table.
-func (s *MetadataService) ListTables(ctx context.Context) ([]*storage.Metadata, error) {
+func (s *MetadataService) ListTables(ctx context.Context) ([]storage.Metadata, error) {
 	ids, err := s.storage.TableIds(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	tables := make([]*storage.Metadata, 0, len(ids))
+	tables := make([]storage.Metadata, 0, len(ids))
 	for _, id := range ids {
 		meta, err := s.GetMetadata(ctx, id)
 		if err != nil {

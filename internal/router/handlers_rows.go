@@ -35,10 +35,13 @@ func (rt *Router) paginationParams(req *http.Request) (offset, limit int64) {
 // @Success 200 {object} map[string]any
 // @Router /api/v1/tables/{tableId}/rows [get]
 func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 	offset, limit := rt.paginationParams(req)
 
-	page, err := rt.rowService.ListRows(req.Context(), meta.TableId, offset, limit)
+	page, err := rt.rowService.ListRows(req.Context(), meta, offset, limit)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -64,7 +67,10 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows [post]
 func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 
 	var body struct {
 		Rows []map[string]any `json:"rows"`
@@ -82,10 +88,10 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 	var err error
 	if len(body.Rows) == 1 {
 		var pkey string
-		pkey, err = rt.rowService.InsertRow(req.Context(), meta.TableId, body.Rows[0])
+		pkey, err = rt.rowService.InsertRow(req.Context(), meta, body.Rows[0])
 		pkeys = []string{pkey}
 	} else {
-		pkeys, err = rt.rowService.BulkInsertRows(req.Context(), meta.TableId, body.Rows)
+		pkeys, err = rt.rowService.BulkInsertRows(req.Context(), meta, body.Rows)
 	}
 	if err != nil {
 		WriteError(w, req, err, mapServiceError(err))
@@ -106,10 +112,13 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [get]
 func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 	pkey := chi.URLParam(req, "pkey")
 
-	row, err := rt.rowService.GetRow(req.Context(), meta.TableId, pkey)
+	row, err := rt.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -134,7 +143,10 @@ func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 // @Failure 400 {object} ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [patch]
 func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 	pkey := chi.URLParam(req, "pkey")
 
 	var updates map[string]any
@@ -144,13 +156,13 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if len(updates) > 0 {
-		if err := rt.rowService.UpdateRow(req.Context(), meta.TableId, []string{pkey}, updates); err != nil {
+		if err := rt.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates); err != nil {
 			WriteError(w, req, err, mapServiceError(err))
 			return
 		}
 	}
 
-	row, err := rt.rowService.GetRow(req.Context(), meta.TableId, pkey)
+	row, err := rt.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -171,10 +183,13 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 // @Success 204
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [delete]
 func (rt *Router) deleteRow(w http.ResponseWriter, req *http.Request) {
-	meta := tableMetadataFromContext(req)
+	meta, ok := rt.resolveTable(w, req)
+	if !ok {
+		return
+	}
 	pkey := chi.URLParam(req, "pkey")
 
-	if err := rt.rowService.RemoveRows(req.Context(), meta.TableId, []string{pkey}); err != nil {
+	if err := rt.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}

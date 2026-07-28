@@ -29,12 +29,12 @@ func setupRouter(t *testing.T) (http.Handler, *mocks.Storage) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 
@@ -80,12 +80,12 @@ func Test_Router_Readyz_ReportsUnavailableOnStorageFailure(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
@@ -114,9 +114,9 @@ func Test_Router_GetTableMetadata(t *testing.T) {
 			handler, m := setupRouter(t)
 
 			if c.failLookup {
-				m.On("GetMetadata", mock.Anything, c.tableId).Return((*storage.Metadata)(nil), assert.AnError).Once()
+				m.On("GetMetadata", mock.Anything, c.tableId).Return(storage.Metadata{}, assert.AnError).Once()
 			} else {
-				m.On("GetMetadata", mock.Anything, c.tableId).Return(&storage.Metadata{TableId: c.tableId, TableName: "widgets"}, nil).Once()
+				m.On("GetMetadata", mock.Anything, c.tableId).Return(storage.Metadata{TableId: c.tableId, TableName: "widgets"}, nil).Once()
 			}
 
 			rec := doRequest(handler, http.MethodGet, "/api/v1/tables/"+c.tableId, nil)
@@ -129,7 +129,7 @@ func Test_Router_GetTableMetadata(t *testing.T) {
 func Test_Router_DeleteTable(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
 	rec := doRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", nil)
@@ -140,9 +140,9 @@ func Test_Router_DeleteTable(t *testing.T) {
 func Test_Router_RenameTable(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "old"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "old"}, nil).Once()
 	m.On("UpdateMetadata", mock.Anything, "id-1", map[string]any{"tableName": "new"}).Return(nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "new"}, nil).Once()
 
 	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1", map[string]string{"tableName": "new"})
 
@@ -155,7 +155,7 @@ func Test_Router_RenameTable(t *testing.T) {
 func Test_Router_RenameTable_RejectsEmptyName(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 
 	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1", map[string]string{"tableName": ""})
 
@@ -165,7 +165,7 @@ func Test_Router_RenameTable_RejectsEmptyName(t *testing.T) {
 func Test_Router_FilterRows(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 	// An omitted "limit" must fall back to DefaultRowLimit (100 in
@@ -192,7 +192,7 @@ func Test_Router_FilterRows(t *testing.T) {
 func Test_Router_FilterRows_CapsLimitAboveMax(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 	m.On("GetRowsWithFilter", mock.Anything, "id-1", `"height" > ?`, []any{float64(10)}, 1000).Return([]storage.Row{}, nil).Once()
@@ -208,7 +208,7 @@ func Test_Router_FilterRows_CapsLimitAboveMax(t *testing.T) {
 func Test_Router_FilterRows_RejectsUnknownColumn(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 
@@ -222,7 +222,7 @@ func Test_Router_FilterRows_RejectsUnknownColumn(t *testing.T) {
 func Test_Router_GetDistinctValues(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
 	m.On("GetDistinctValues", mock.Anything, "id-1", "name").Return([]any{"a", "b"}, nil).Once()
@@ -238,7 +238,7 @@ func Test_Router_GetDistinctValues(t *testing.T) {
 func Test_Router_GetDistinctValues_RejectsGeometryColumn(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"geom"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "geom").Return("GEOMETRY", nil).Once()
 
@@ -250,7 +250,7 @@ func Test_Router_GetDistinctValues_RejectsGeometryColumn(t *testing.T) {
 func Test_Router_ListRows(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(100)).Return([]string{"pk-1"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"height": 12}},
@@ -270,7 +270,7 @@ func Test_Router_ListRows(t *testing.T) {
 func Test_Router_AddRows(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("InsertRow", mock.Anything, "id-1", map[string]any{"height": float64(12)}).Return("pk-1", nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
@@ -284,7 +284,7 @@ func Test_Router_AddRows(t *testing.T) {
 func Test_Router_GetRow_NotFound(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/rows/missing", nil)
@@ -295,7 +295,7 @@ func Test_Router_GetRow_NotFound(t *testing.T) {
 func Test_Router_UpdateRow(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
 	m.On("Update", mock.Anything, "id-1", []string{"pk-1"}, map[string]any{"height": float64(20)}).Return(nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"height": 20}},
@@ -314,7 +314,7 @@ func Test_Router_UpdateRow(t *testing.T) {
 func Test_Router_UpdateRow_UnknownPkeyReturns404(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
 	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1/rows/missing", map[string]any{})
@@ -325,7 +325,7 @@ func Test_Router_UpdateRow_UnknownPkeyReturns404(t *testing.T) {
 func Test_Router_DeleteRow(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("RemoveRows", mock.Anything, "id-1", []string{"pk-1"}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
@@ -338,12 +338,12 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
@@ -352,9 +352,9 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 	handler := rt.Setup()
 
 	// A declared Content-Length over the limit is now rejected by
-	// maxBodyBytes itself, before routing even reaches tableMiddleware —
-	// GetMetadata is deliberately not stubbed, so an unexpected call here
-	// would fail the test.
+	// maxBodyBytes itself, before routing even reaches the handler's
+	// resolveTable call — GetMetadata is deliberately not stubbed, so an
+	// unexpected call here would fail the test.
 	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/rows", map[string]any{
 		"rows": []map[string]any{{"height": 12, "name": "well over ten bytes of JSON"}},
 	})
@@ -383,7 +383,7 @@ func Test_Router_MaxBodyBytes_RejectsDeclaredContentLengthWithoutReadingBody(t *
 func Test_Router_GetTile(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string(nil)).Return([]byte("mvt"), nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
@@ -398,7 +398,7 @@ func Test_Router_GetTile(t *testing.T) {
 func Test_Router_GetTile_WithAttrs(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
 	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string{"name"}).Return([]byte("mvt"), nil).Once()
@@ -411,7 +411,7 @@ func Test_Router_GetTile_WithAttrs(t *testing.T) {
 func Test_Router_GetTile_RejectsUnknownAttr(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
 
@@ -423,7 +423,7 @@ func Test_Router_GetTile_RejectsUnknownAttr(t *testing.T) {
 func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Tile", mock.Anything, "id-1", 1, 2, 3, []string(nil)).Return([]byte("mvt"), nil).Once()
 	first := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 	etag := first.Header().Get("ETag")
@@ -437,7 +437,7 @@ func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
 }
 
 func Test_TileETag_ChangesWithUpdatedAt(t *testing.T) {
-	meta := &storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
+	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
 
 	before := tileETag(meta, 1, 2, 3, nil)
 	meta.UpdatedAt = time.Unix(2, 0)
@@ -447,7 +447,7 @@ func Test_TileETag_ChangesWithUpdatedAt(t *testing.T) {
 }
 
 func Test_TileETag_ChangesWithAttrs(t *testing.T) {
-	meta := &storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
+	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}
 
 	withoutAttrs := tileETag(meta, 1, 2, 3, nil)
 	withAttrs := tileETag(meta, 1, 2, 3, []string{"name"})
@@ -458,7 +458,7 @@ func Test_TileETag_ChangesWithAttrs(t *testing.T) {
 func Test_Router_FilterByBbox(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("FilterByBbox", mock.Anything, "id-1", [4]float64{0, 0, 1, 1}).Return([]string{"pk-1"}, nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/bbox", map[string]any{"bbox": [4]float64{0, 0, 1, 1}})
@@ -469,7 +469,7 @@ func Test_Router_FilterByBbox(t *testing.T) {
 func Test_Router_GetGeometryTypes(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("GeometryTypes", mock.Anything, "id-1").Return([]string{"POLYGON", "MULTIPOLYGON"}, nil).Once()
 
 	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/geometry-types", nil)
@@ -483,7 +483,7 @@ func Test_Router_GetGeometryTypes(t *testing.T) {
 func Test_Router_GetSchema(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 
@@ -495,7 +495,7 @@ func Test_Router_GetSchema(t *testing.T) {
 func Test_Router_AddColumn(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("AddColumn", mock.Anything, "id-1", "height", "DOUBLE").Return(nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/columns", map[string]string{"name": "height", "type": "DOUBLE"})
@@ -506,9 +506,9 @@ func Test_Router_AddColumn(t *testing.T) {
 func Test_Router_DeriveTable(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Create", mock.Anything, "derived", false, "").Return("id-2", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", PhysicalName: "t_2"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", PhysicalName: "t_2"}, nil).Once()
 	m.On("CreateFromQuery", mock.Anything, "t_2", "SELECT * FROM t_1").Return("", false, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-2").Return(nil).Once()
 
@@ -522,7 +522,7 @@ func Test_Router_DeriveTable(t *testing.T) {
 func Test_Router_DeriveTable_RejectsNonSelect(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/derive", map[string]string{
 		"query": "DROP TABLE t_1", "newTableName": "derived",
@@ -539,9 +539,9 @@ func Test_Router_DeriveTable_RejectsNonSelect(t *testing.T) {
 func Test_Router_DeriveTable_StorageErrorReturns500WithoutLeakingDetail(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Create", mock.Anything, "derived", false, "").Return("id-2", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", PhysicalName: "t_2"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", PhysicalName: "t_2"}, nil).Once()
 	m.On("CreateFromQuery", mock.Anything, "t_2", "SELECT name FROM t_1").
 		Return("", false, errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`)).Once()
 	m.On("Remove", mock.Anything, "id-2").Return(nil).Once()
@@ -568,12 +568,12 @@ func Test_Router_ExportTable_ExemptFromRequestTimeout(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
@@ -583,10 +583,10 @@ func Test_Router_ExportTable_ExemptFromRequestTimeout(t *testing.T) {
 	// second from cache and never call storage (and so never observe its
 	// context) at all.
 	var normalRouteHadDeadline, exportRouteHadDeadline bool
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {
 		_, normalRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 	})
-	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
+	m.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
 		_, exportRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 	})
 	m.On("Columns", mock.Anything, "id-2").Return([]string{}, nil).Once()
@@ -609,7 +609,7 @@ func Test_Router_ExportTable_ExemptFromRequestTimeout(t *testing.T) {
 func Test_Router_ExportTable_CSV(t *testing.T) {
 	handler, m := setupRouter(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{}, nil).Once()
 	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(1000)).Return([]string{}, nil).Once()
 
@@ -685,12 +685,12 @@ func setupRouterWithSourceDir(t *testing.T, dir string, allowedExtensions []stri
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
 		MaxSizeBytes:      1000,
@@ -756,7 +756,7 @@ func Test_Router_LoadSource_WithSridQueryParam(t *testing.T) {
 	doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
 
 	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
 	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{
 		"sourceName": "lambert.geojson", "sourceLayer": "", "isGeo": true, "geometryColumn": "geom", "srid": 2154,
@@ -812,12 +812,12 @@ func Test_Router_UploadSource(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           t.TempDir(),
 		MaxSizeBytes:      1000,
@@ -830,7 +830,7 @@ func Test_Router_UploadSource(t *testing.T) {
 
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", mock.Anything, "", 0).Return("", false, 0, nil).Once()
 	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "buildings.geojson", "sourceLayer": ""}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
@@ -851,12 +851,12 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "regions.gpkg"), make([]byte, 10), 0o644))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
@@ -875,7 +875,7 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 	require.NoError(t, err)
 
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("", false, 0, nil).Once()
 	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "regions.gpkg", "sourceLayer": "communes"}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
@@ -892,12 +892,12 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
 	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
 	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, m)
 	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
 	sourceSvc := service.NewSourceService(config.SourcesConfig{
 		WorkDir:           t.TempDir(),
 		MaxSizeBytes:      1000,

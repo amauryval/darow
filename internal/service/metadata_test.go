@@ -17,7 +17,7 @@ import (
 
 func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	c := expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute)
+	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	svc := NewMetadataService(m, c)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
@@ -39,13 +39,13 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 			svc, m := setupMetadataService(t)
 
 			if c.failStorage {
-				m.On("GetMetadata", mock.Anything, "id-1").Return((*storage.Metadata)(nil), errors.New("boom")).Once()
+				m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("boom")).Once()
 				_, err := svc.GetMetadata(context.Background(), "id-1")
 				assert.Error(t, err)
 				return
 			}
 
-			m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 			for i := 0; i < c.cacheHits; i++ {
 				meta, err := svc.GetMetadata(context.Background(), "id-1")
 				require.NoError(t, err)
@@ -59,8 +59,8 @@ func Test_MetadataService_ListTables(t *testing.T) {
 	svc, m := setupMetadataService(t)
 
 	m.On("TableIds", mock.Anything).Return([]string{"id-1", "id-2"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2"}, nil).Once()
 
 	tables, err := svc.ListTables(context.Background())
 
@@ -76,7 +76,7 @@ func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 	svc, m := setupMetadataService(t)
 
 	m.On("TableIds", mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
 		TableId: "id-1", TableName: "my renamed communes", SourceName: "communes.geojson",
 	}, nil).Once()
 
@@ -94,7 +94,7 @@ func Test_MetadataService_LoadedSourceNames_RenameToSourceNameDoesNotHijack(t *t
 	svc, m := setupMetadataService(t)
 
 	m.On("TableIds", mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
 		TableId: "id-1", TableName: "communes.geojson", SourceName: "",
 	}, nil).Once()
 

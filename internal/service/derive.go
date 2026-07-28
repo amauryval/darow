@@ -32,7 +32,7 @@ func validateSelectOnly(query string) error {
 // materializing its physical table fails — declared here, the consumer,
 // rather than depending on the concrete *MetadataService.
 type metadataStore interface {
-	GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error)
 	UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error
 	RefreshDerived(ctx context.Context, tableId string) error
@@ -61,12 +61,8 @@ func NewDeriveService(metadata metadataStore, storage queryMaterializer) *Derive
 // (règle 4: anything else is rejected before reaching Exec). The derived
 // table is a frozen snapshot, never a view (règle 13) and never synced
 // with its source.
-func (s *DeriveService) DeriveTable(ctx context.Context, sourceTableId, query, newTableName string) (string, error) {
+func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {
-		return "", err
-	}
-
-	if _, err := s.metadata.GetMetadata(ctx, sourceTableId); err != nil {
 		return "", err
 	}
 

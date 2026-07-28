@@ -49,7 +49,7 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	assert.Equal(t, 4326, srid, "GeoJSON with no explicit crs declares WGS84")
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_geom"))
 
-	count, err := a.RowsCount(context.Background(), tableId)
+	count, err := a.RowsCount(context.Background(), meta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
@@ -152,7 +152,7 @@ func Test_Adapter_CreateFromFile_SelectsNamedLayer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, isGeo)
 	assert.Equal(t, "geom", geometryColumn)
-	count, err := a.RowsCount(context.Background(), tableId)
+	count, err := a.RowsCount(context.Background(), meta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count)
 
@@ -215,7 +215,7 @@ func Test_Adapter_CreateFromQuery_PartialProjection(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, isGeo)
 
-	count, err := a.RowsCount(context.Background(), derivedId)
+	count, err := a.RowsCount(context.Background(), derivedMeta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
@@ -244,7 +244,7 @@ func Test_Adapter_CreateFromQuery_GroupBy(t *testing.T) {
 
 	require.NoError(t, err)
 
-	count, err := a.RowsCount(context.Background(), derivedId)
+	count, err := a.RowsCount(context.Background(), derivedMeta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }

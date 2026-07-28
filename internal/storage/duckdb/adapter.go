@@ -151,7 +151,7 @@ func (a *Adapter) TableExists(ctx context.Context, tableId string) (bool, error)
 }
 
 // GetMetadata fetches the metadata row for tableId.
-func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
+func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	row := a.QueryRow(ctx, `
         SELECT tableId, physicalName, tableName, isGeo, createdAt, updatedAt,
                COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid,
@@ -165,12 +165,12 @@ func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (*storage.Met
 		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("table %q not found: %w", tableId, err)
+		return m, fmt.Errorf("table %q not found: %w", tableId, err)
 	}
 	if err != nil {
-		return nil, err
+		return m, err
 	}
-	return &m, nil
+	return m, nil
 }
 
 // Create registers a new logical table in metadata and returns its

@@ -42,7 +42,7 @@ type MetadataManager interface {
 type MetadataReader interface {
 	TableIds(ctx context.Context) ([]string, error)
 	TableExists(ctx context.Context, tableId string) (bool, error)
-	GetMetadata(ctx context.Context, tableId string) (*Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (Metadata, error)
 }
 
 // MetadataWriter exposes write access to table metadata.
@@ -72,46 +72,52 @@ type TableManager interface {
 }
 
 // TableReader exposes read-only access to a data table's rows and schema.
+// Every method takes the table's already-resolved Metadata rather than a
+// tableId, so a caller that already has it (the router's tableMiddleware
+// resolves it once per request; ExportService holds it for a whole
+// export) never forces a redundant metadata SELECT per call (§4.2).
 type TableReader interface {
-	Columns(ctx context.Context, tableId string) ([]string, error)
-	ColumnType(ctx context.Context, tableId, column string) (string, error)
-	RowsCount(ctx context.Context, tableId string) (int64, error)
-	GetPkeys(ctx context.Context, tableId string, offset, limit int64) ([]string, error)
-	GetRowsByPkey(ctx context.Context, tableId string, pKeys []string) ([]Row, error)
-	GetRowsWithFilter(ctx context.Context, tableId string, filter string, args []any, limit int) ([]Row, error)
-	GetDistinctValues(ctx context.Context, tableId, column string) ([]any, error)
+	Columns(ctx context.Context, meta Metadata) ([]string, error)
+	ColumnType(ctx context.Context, meta Metadata, column string) (string, error)
+	RowsCount(ctx context.Context, meta Metadata) (int64, error)
+	GetPkeys(ctx context.Context, meta Metadata, offset, limit int64) ([]string, error)
+	GetRowsByPkey(ctx context.Context, meta Metadata, pKeys []string) ([]Row, error)
+	GetRowsWithFilter(ctx context.Context, meta Metadata, filter string, args []any, limit int) ([]Row, error)
+	GetDistinctValues(ctx context.Context, meta Metadata, column string) ([]any, error)
 }
 
-// TableWriter exposes write access to a data table's rows and schema.
+// TableWriter exposes write access to a data table's rows and schema, on
+// the same Metadata basis as TableReader (§4.2).
 type TableWriter interface {
-	AddColumn(ctx context.Context, tableId, colName, colType string) error
+	AddColumn(ctx context.Context, meta Metadata, colName, colType string) error
 	// Update sets every column in updates for the given rows in a single
 	// statement, so a multi-column update is atomic — either every column
 	// changes or none does.
-	Update(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error
+	Update(ctx context.Context, meta Metadata, pkeys []string, updates map[string]any) error
 	// RemoveRows deletes the given rows. Named distinctly from
 	// MetadataWriter.Remove (which drops the whole table) since Go cannot
 	// expose two methods named Remove with different signatures on one
 	// combined Storage interface — the spec names both "Remove".
-	RemoveRows(ctx context.Context, tableId string, pKeys []string) error
-	InsertRow(ctx context.Context, tableId string, values map[string]any) (string, error)
-	BulkInsert(ctx context.Context, tableId string, rows []map[string]any) ([]string, error)
+	RemoveRows(ctx context.Context, meta Metadata, pKeys []string) error
+	InsertRow(ctx context.Context, meta Metadata, values map[string]any) (string, error)
+	BulkInsert(ctx context.Context, meta Metadata, rows []map[string]any) ([]string, error)
 }
 
-// GeoTableManager exposes geospatial operations on a data table. Whether a
-// table is geo and which column holds its geometry lives in MetadataReader,
-// the single source of truth.
+// GeoTableManager exposes geospatial operations on a data table, on the
+// same Metadata basis as TableReader (§4.2). Whether a table is geo and
+// which column holds its geometry lives in MetadataReader, the single
+// source of truth.
 type GeoTableManager interface {
 	// Tile stops early if ctx is cancelled (e.g. a MapLibre client
 	// aborting a request for a zoom level it has since scrolled past).
 	// attrs selects extra non-geometry columns to embed in the tile
 	// (GEO-3), validated by the caller against the table's real columns.
-	Tile(ctx context.Context, tableId string, zoom, x, y int, attrs []string) ([]byte, error)
-	FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error)
-	GeometryTypes(ctx context.Context, tableId string) ([]string, error)
+	Tile(ctx context.Context, meta Metadata, zoom, x, y int, attrs []string) ([]byte, error)
+	FilterByBbox(ctx context.Context, meta Metadata, bbox [4]float64) ([]string, error)
+	GeometryTypes(ctx context.Context, meta Metadata) ([]string, error)
 
 	// GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
 	// fragment, keyed by pkey. Used only by table export (règle 7 excepts
 	// export from the "never return the geometry column" rule).
-	GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys []string) (map[string]string, error)
+	GetGeometryGeoJSON(ctx context.Context, meta Metadata, pkeys []string) (map[string]string, error)
 }

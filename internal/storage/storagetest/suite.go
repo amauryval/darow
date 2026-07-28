@@ -79,14 +79,14 @@ func lambert93Fixture(t *testing.T) string {
 }
 
 // newGeoTable creates a table and materializes it from geoJSONFixture,
-// returning its tableId and the pkeys of the two fixture rows in file
-// order.
-func newGeoTable(t *testing.T, s storage.Storage) (tableId string, pkeys []string) {
+// returning its refreshed Metadata and the pkeys of the two fixture rows
+// in file order.
+func newGeoTable(t *testing.T, s storage.Storage) (meta storage.Metadata, pkeys []string) {
 	ctx := context.Background()
 
 	tableId, err := s.Create(ctx, "points", false, "")
 	require.NoError(t, err)
-	meta, err := s.GetMetadata(ctx, tableId)
+	meta, err = s.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
 	geometryColumn, isGeo, _, err := s.CreateFromFile(ctx, meta.PhysicalName, geoJSONFixture(t), "", 0)
@@ -95,27 +95,30 @@ func newGeoTable(t *testing.T, s storage.Storage) (tableId string, pkeys []strin
 	require.NoError(t, s.UpdateMetadata(ctx, tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
 	require.NoError(t, s.RefreshDerivedMetadata(ctx, tableId))
 
-	pkeys, err = s.GetPkeys(ctx, tableId, 0, 10)
+	meta, err = s.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	pkeys, err = s.GetPkeys(ctx, meta, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, pkeys, 2)
-	return tableId, pkeys
+	return meta, pkeys
 }
 
 func testMetadataCreateAndRead(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
 
-	tableId, pkeys := newGeoTable(t, s)
+	meta, pkeys := newGeoTable(t, s)
 
 	ids, err := s.TableIds(ctx)
 	require.NoError(t, err)
-	assert.Contains(t, ids, tableId)
+	assert.Contains(t, ids, meta.TableId)
 
-	exists, err := s.TableExists(ctx, tableId)
+	exists, err := s.TableExists(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
-	meta, err := s.GetMetadata(ctx, tableId)
+	meta, err = s.GetMetadata(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.Equal(t, "points", meta.TableName)
 	assert.True(t, meta.IsGeo)
@@ -129,11 +132,11 @@ func testMetadataCreateAndRead(t *testing.T, newStorage NewStorage) {
 func testMetadataRemove(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
+	meta, _ := newGeoTable(t, s)
 
-	require.NoError(t, s.Remove(ctx, tableId))
+	require.NoError(t, s.Remove(ctx, meta.TableId))
 
-	exists, err := s.TableExists(ctx, tableId)
+	exists, err := s.TableExists(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -141,17 +144,17 @@ func testMetadataRemove(t *testing.T, newStorage NewStorage) {
 func testMetadataUpdateAndRefreshDerived(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, pkeys := newGeoTable(t, s)
+	meta, pkeys := newGeoTable(t, s)
 
-	require.NoError(t, s.UpdateMetadata(ctx, tableId, map[string]any{"tableName": "renamed"}))
-	meta, err := s.GetMetadata(ctx, tableId)
+	require.NoError(t, s.UpdateMetadata(ctx, meta.TableId, map[string]any{"tableName": "renamed"}))
+	meta, err := s.GetMetadata(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", meta.TableName)
 
-	require.NoError(t, s.RemoveRows(ctx, tableId, pkeys[:1]))
-	require.NoError(t, s.RefreshDerivedMetadata(ctx, tableId))
+	require.NoError(t, s.RemoveRows(ctx, meta, pkeys[:1]))
+	require.NoError(t, s.RefreshDerivedMetadata(ctx, meta.TableId))
 
-	meta, err = s.GetMetadata(ctx, tableId)
+	meta, err = s.GetMetadata(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.EqualValues(t, len(pkeys)-1, meta.RowCount)
 }
@@ -159,25 +162,25 @@ func testMetadataUpdateAndRefreshDerived(t *testing.T, newStorage NewStorage) {
 func testRowsInsertGetUpdateRemove(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
+	meta, _ := newGeoTable(t, s)
 
-	pkey, err := s.InsertRow(ctx, tableId, map[string]any{"name": "c"})
+	pkey, err := s.InsertRow(ctx, meta, map[string]any{"name": "c"})
 	require.NoError(t, err)
 	require.NotEmpty(t, pkey)
 
-	rows, err := s.GetRowsByPkey(ctx, tableId, []string{pkey})
+	rows, err := s.GetRowsByPkey(ctx, meta, []string{pkey})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "c", rows[0].Values["name"])
 
-	require.NoError(t, s.Update(ctx, tableId, []string{pkey}, map[string]any{"name": "c-updated"}))
-	rows, err = s.GetRowsByPkey(ctx, tableId, []string{pkey})
+	require.NoError(t, s.Update(ctx, meta, []string{pkey}, map[string]any{"name": "c-updated"}))
+	rows, err = s.GetRowsByPkey(ctx, meta, []string{pkey})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "c-updated", rows[0].Values["name"])
 
-	require.NoError(t, s.RemoveRows(ctx, tableId, []string{pkey}))
-	rows, err = s.GetRowsByPkey(ctx, tableId, []string{pkey})
+	require.NoError(t, s.RemoveRows(ctx, meta, []string{pkey}))
+	rows, err = s.GetRowsByPkey(ctx, meta, []string{pkey})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
@@ -185,15 +188,15 @@ func testRowsInsertGetUpdateRemove(t *testing.T, newStorage NewStorage) {
 func testRowsBulkInsert(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, existing := newGeoTable(t, s)
+	meta, existing := newGeoTable(t, s)
 
-	pkeys, err := s.BulkInsert(ctx, tableId, []map[string]any{
+	pkeys, err := s.BulkInsert(ctx, meta, []map[string]any{
 		{"name": "bulk-1"}, {"name": "bulk-2"}, {"name": "bulk-3"},
 	})
 	require.NoError(t, err)
 	assert.Len(t, pkeys, 3)
 
-	count, err := s.RowsCount(ctx, tableId)
+	count, err := s.RowsCount(ctx, meta)
 	require.NoError(t, err)
 	assert.EqualValues(t, len(existing)+3, count)
 }
@@ -201,20 +204,20 @@ func testRowsBulkInsert(t *testing.T, newStorage NewStorage) {
 func testRowsGetPkeysPagination(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
-	_, err := s.BulkInsert(ctx, tableId, []map[string]any{
+	meta, _ := newGeoTable(t, s)
+	_, err := s.BulkInsert(ctx, meta, []map[string]any{
 		{"name": "c"}, {"name": "d"}, {"name": "e"},
 	})
 	require.NoError(t, err)
 
-	all, err := s.GetPkeys(ctx, tableId, 0, 100)
+	all, err := s.GetPkeys(ctx, meta, 0, 100)
 	require.NoError(t, err)
 	require.Len(t, all, 5)
 	for i := 1; i < len(all); i++ {
 		assert.LessOrEqual(t, all[i-1], all[i], "GetPkeys must order deterministically")
 	}
 
-	page, err := s.GetPkeys(ctx, tableId, 2, 2)
+	page, err := s.GetPkeys(ctx, meta, 2, 2)
 	require.NoError(t, err)
 	assert.Equal(t, all[2:4], page)
 }
@@ -222,11 +225,11 @@ func testRowsGetPkeysPagination(t *testing.T, newStorage NewStorage) {
 func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
-	_, err := s.InsertRow(ctx, tableId, map[string]any{"name": "a"})
+	meta, _ := newGeoTable(t, s)
+	_, err := s.InsertRow(ctx, meta, map[string]any{"name": "a"})
 	require.NoError(t, err)
 
-	values, err := s.GetDistinctValues(ctx, tableId, "name")
+	values, err := s.GetDistinctValues(ctx, meta, "name")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []any{"a", "b"}, values)
 }
@@ -234,7 +237,7 @@ func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {
 func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
+	meta, _ := newGeoTable(t, s)
 
 	filter, args, err := storage.BuildFilter(
 		[]storage.FilterCondition{{Column: "name", Operator: "=", Value: "a"}},
@@ -242,7 +245,7 @@ func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
 	)
 	require.NoError(t, err)
 
-	rows, err := s.GetRowsWithFilter(ctx, tableId, filter, args, 10)
+	rows, err := s.GetRowsWithFilter(ctx, meta, filter, args, 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "a", rows[0].Values["name"])
@@ -251,15 +254,15 @@ func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
 func testSchemaAddColumn(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	tableId, _ := newGeoTable(t, s)
+	meta, _ := newGeoTable(t, s)
 
-	require.NoError(t, s.AddColumn(ctx, tableId, "score", "DOUBLE"))
+	require.NoError(t, s.AddColumn(ctx, meta, "score", "DOUBLE"))
 
-	cols, err := s.Columns(ctx, tableId)
+	cols, err := s.Columns(ctx, meta)
 	require.NoError(t, err)
 	assert.Contains(t, cols, "score")
 
-	colType, err := s.ColumnType(ctx, tableId, "score")
+	colType, err := s.ColumnType(ctx, meta, "score")
 	require.NoError(t, err)
 	assert.Equal(t, "DOUBLE", colType)
 }
@@ -344,9 +347,7 @@ func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newStorage NewStorage) {
 func testCreateFromQuery(t *testing.T, newStorage NewStorage) {
 	s := newStorage(t)
 	ctx := context.Background()
-	sourceId, _ := newGeoTable(t, s)
-	sourceMeta, err := s.GetMetadata(ctx, sourceId)
-	require.NoError(t, err)
+	sourceMeta, _ := newGeoTable(t, s)
 
 	derivedId, err := s.Create(ctx, "derived", false, "")
 	require.NoError(t, err)
@@ -355,9 +356,9 @@ func testCreateFromQuery(t *testing.T, newStorage NewStorage) {
 
 	_, _, err = s.CreateFromQuery(ctx, derivedMeta.PhysicalName, "SELECT * FROM "+sourceMeta.PhysicalName)
 	require.NoError(t, err)
-	require.NoError(t, s.RefreshDerivedMetadata(ctx, derivedId))
+	require.NoError(t, s.RefreshDerivedMetadata(ctx, derivedMeta.TableId))
 
-	count, err := s.RowsCount(ctx, derivedId)
+	count, err := s.RowsCount(ctx, derivedMeta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
