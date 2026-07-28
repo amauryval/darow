@@ -33,7 +33,7 @@ func (rt *Router) paginationParams(req *http.Request) (offset, limit int64) {
 // @Param offset query int false "Pagination offset"
 // @Param limit query int false "Pagination limit"
 // @Success 200 {object} map[string]any
-// @Router /tables/{tableId}/rows [get]
+// @Router /api/v1/tables/{tableId}/rows [get]
 func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	offset, limit := rt.paginationParams(req)
@@ -62,7 +62,7 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 201 {object} map[string][]string
 // @Failure 400 {object} ErrorResponse
-// @Router /tables/{tableId}/rows [post]
+// @Router /api/v1/tables/{tableId}/rows [post]
 func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -104,7 +104,7 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 // @Param pkey path string true "Row primary key"
 // @Success 200 {object} map[string]any
 // @Failure 404 {object} ErrorResponse
-// @Router /tables/{tableId}/rows/{pkey} [get]
+// @Router /api/v1/tables/{tableId}/rows/{pkey} [get]
 func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	pkey := chi.URLParam(req, "pkey")
@@ -132,7 +132,7 @@ func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 // @Param pkey path string true "Row primary key"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} ErrorResponse
-// @Router /tables/{tableId}/rows/{pkey} [patch]
+// @Router /api/v1/tables/{tableId}/rows/{pkey} [patch]
 func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	pkey := chi.URLParam(req, "pkey")
@@ -165,7 +165,7 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
 // @Success 204
-// @Router /tables/{tableId}/rows/{pkey} [delete]
+// @Router /api/v1/tables/{tableId}/rows/{pkey} [delete]
 func (rt *Router) deleteRow(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	pkey := chi.URLParam(req, "pkey")

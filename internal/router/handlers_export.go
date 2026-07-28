@@ -25,7 +25,7 @@ import (
 // @Param format query string false "csv or geojson"
 // @Success 200 {file} byte
 // @Failure 400 {object} ErrorResponse
-// @Router /tables/{tableId}/export [get]
+// @Router /api/v1/tables/{tableId}/export [get]
 func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 

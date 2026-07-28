@@ -12,7 +12,7 @@ import (
 // @Tags tables
 // @Produce json
 // @Success 200 {array} metadataDTO
-// @Router /tables [get]
+// @Router /api/v1/tables [get]
 func (rt *Router) listTables(w http.ResponseWriter, req *http.Request) {
 	tables, err := rt.metadataService.ListTables(req.Context())
 	if err != nil {
@@ -35,7 +35,7 @@ func (rt *Router) listTables(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} metadataDTO
 // @Failure 404 {object} ErrorResponse
-// @Router /tables/{tableId} [get]
+// @Router /api/v1/tables/{tableId} [get]
 func (rt *Router) getTableMetadata(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, toMetadataDTO(tableMetadataFromContext(req)))
 }
@@ -48,7 +48,7 @@ func (rt *Router) getTableMetadata(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 204
 // @Failure 404 {object} ErrorResponse
-// @Router /tables/{tableId} [delete]
+// @Router /api/v1/tables/{tableId} [delete]
 func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -66,7 +66,7 @@ func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string]any
-// @Router /tables/{tableId}/schema [get]
+// @Router /api/v1/tables/{tableId}/schema [get]
 func (rt *Router) getSchema(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -92,7 +92,7 @@ func (rt *Router) getSchema(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
-// @Router /tables/{tableId}/columns [post]
+// @Router /api/v1/tables/{tableId}/columns [post]
 func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -123,7 +123,7 @@ func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
-// @Router /tables/{tableId}/derive [post]
+// @Router /api/v1/tables/{tableId}/derive [post]
 func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 

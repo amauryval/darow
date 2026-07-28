@@ -1,4 +1,4 @@
-import { del, get, patch, post } from "./http";
+import { apiUrl, del, get, patch, post } from "./http";
 import type { Metadata, Row, RowsPage, SchemaResponse } from "./types";
 
 export function listTables(): Promise<Metadata[]> {
@@ -47,5 +47,5 @@ export function deriveTable(tableId: string, query: string, newTableName: string
 }
 
 export function exportUrl(tableId: string, format: "csv" | "geojson"): string {
-  return `/tables/${tableId}/export?format=${format}`;
+  return apiUrl(`/tables/${tableId}/export?format=${format}`);
 }

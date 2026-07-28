@@ -34,7 +34,7 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 // @Param x path int true "Tile X"
 // @Param y path int true "Tile Y"
 // @Success 200 {file} byte
-// @Router /tables/{tableId}/tiles/{z}/{x}/{y} [get]
+// @Router /api/v1/tables/{tableId}/tiles/{z}/{x}/{y} [get]
 func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -83,7 +83,7 @@ func tileETag(meta *storage.Metadata, z, x, y int) string {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
-// @Router /tables/{tableId}/geometry-types [get]
+// @Router /api/v1/tables/{tableId}/geometry-types [get]
 func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
@@ -103,7 +103,7 @@ func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
-// @Router /tables/{tableId}/bbox [post]
+// @Router /api/v1/tables/{tableId}/bbox [post]
 func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 

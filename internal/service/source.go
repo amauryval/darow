@@ -13,11 +13,6 @@ import (
 	"gogeoserver/internal/config"
 )
 
-// gpkgExt is the only extension currently treated as a multi-layer format:
-// its layers are enumerated in Source.Layers, and each loads into its own
-// table (a GeoPackage is never "loaded" as a whole).
-const gpkgExt = ".gpkg"
-
 // layerSeparator joins a source file name and layer name into the composite
 // table name each loaded layer is registered under (see Load), so a single
 // GeoPackage can back several independently loaded tables.
@@ -118,7 +113,7 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 			SizeBytes: info.Size(),
 			ModTime:   info.ModTime(),
 		}
-		if ext == gpkgExt {
+		if format, ok := lookupSourceFormat(ext); ok && format.MultiLayer {
 			source.Layers = s.listLoadedLayers(ctx, entry.Name(), loaded)
 		} else {
 			source.TableId, source.Loaded = loaded[entry.Name()]
@@ -232,7 +227,8 @@ func (s *SourceService) Load(ctx context.Context, name, layer string) (string, e
 		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
 	}
 
-	if found.Ext != gpkgExt {
+	format, known := lookupSourceFormat(found.Ext)
+	if !known || !format.MultiLayer {
 		if layer != "" {
 			return "", fmt.Errorf("source %q does not support layer selection", name)
 		}

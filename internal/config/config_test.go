@@ -83,3 +83,51 @@ server: [this is not
 		})
 	}
 }
+
+func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
+	path := writeConfigFile(t, "server:\n  port: 9090\n")
+	t.Setenv("GEOAPI_SERVER_PORT", "7070")
+	t.Setenv("GEOAPI_SOURCES_WORKDIR", "/env/sources")
+	t.Setenv("GEOAPI_SOURCES_ALLOWED_EXTENSIONS", ".csv,.geojson")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, 7070, cfg.Server.Port)
+	assert.Equal(t, "/env/sources", cfg.Sources.WorkDir)
+	assert.Equal(t, []string{".csv", ".geojson"}, cfg.Sources.AllowedExtensions)
+}
+
+func Test_Load_RejectsMalformedEnvValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	t.Setenv("GEOAPI_SERVER_PORT", "not-a-number")
+
+	_, err := Load(path)
+
+	assert.Error(t, err)
+}
+
+func Test_Load_RejectsInvalidValues(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"port out of range", "server:\n  port: 70000\n"},
+		{"negative timeout", "server:\n  readTimeoutSec: -1\n"},
+		{"empty workDir", "sources:\n  workDir: \"\"\n"},
+		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
+		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
+		{"maxRowLimit below defaultRowLimit", "api:\n  defaultRowLimit: 100\n  maxRowLimit: 10\n"},
+		{"zero exportBatchSize", "api:\n  exportBatchSize: 0\n"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeConfigFile(t, c.content)
+
+			_, err := Load(path)
+
+			assert.Error(t, err)
+		})
+	}
+}

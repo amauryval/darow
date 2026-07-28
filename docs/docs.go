@@ -15,39 +15,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/healthz": {
-            "get": {
-                "tags": [
-                    "ops"
-                ],
-                "summary": "Liveness probe",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/readyz": {
-            "get": {
-                "tags": [
-                    "ops"
-                ],
-                "summary": "Readiness probe",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/sources": {
+        "/api/v1/sources": {
             "get": {
                 "produces": [
                     "application/json"
@@ -69,7 +37,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/sources/refresh": {
+        "/api/v1/sources/refresh": {
             "post": {
                 "produces": [
                     "application/json"
@@ -91,7 +59,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/sources/upload": {
+        "/api/v1/sources/upload": {
             "post": {
                 "consumes": [
                     "multipart/form-data"
@@ -122,7 +90,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/sources/{name}/load": {
+        "/api/v1/sources/{name}/load": {
             "post": {
                 "produces": [
                     "application/json"
@@ -165,7 +133,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables": {
+        "/api/v1/tables": {
             "get": {
                 "description": "Liste toutes les tables avec leurs métadonnées",
                 "produces": [
@@ -188,7 +156,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}": {
+        "/api/v1/tables/{tableId}": {
             "get": {
                 "produces": [
                     "application/json"
@@ -249,7 +217,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/bbox": {
+        "/api/v1/tables/{tableId}/bbox": {
             "post": {
                 "consumes": [
                     "application/json"
@@ -286,7 +254,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/columns": {
+        "/api/v1/tables/{tableId}/columns": {
             "post": {
                 "consumes": [
                     "application/json"
@@ -326,7 +294,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/derive": {
+        "/api/v1/tables/{tableId}/derive": {
             "post": {
                 "consumes": [
                     "application/json"
@@ -366,7 +334,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/export": {
+        "/api/v1/tables/{tableId}/export": {
             "get": {
                 "produces": [
                     "application/json",
@@ -407,7 +375,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/geometry-types": {
+        "/api/v1/tables/{tableId}/geometry-types": {
             "get": {
                 "produces": [
                     "application/json"
@@ -441,7 +409,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/rows": {
+        "/api/v1/tables/{tableId}/rows": {
             "get": {
                 "produces": [
                     "application/json"
@@ -523,7 +491,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/rows/{pkey}": {
+        "/api/v1/tables/{tableId}/rows/{pkey}": {
             "get": {
                 "produces": [
                     "application/json"
@@ -635,7 +603,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/schema": {
+        "/api/v1/tables/{tableId}/schema": {
             "get": {
                 "produces": [
                     "application/json"
@@ -664,7 +632,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/tiles/{z}/{x}/{y}": {
+        "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}": {
             "get": {
                 "produces": [
                     "application/vnd.mapbox-vector-tile"
@@ -708,6 +676,38 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "file"
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/readyz": {
+            "get": {
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Readiness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/router.ErrorResponse"
                         }
                     }
                 }

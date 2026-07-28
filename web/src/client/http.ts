@@ -1,5 +1,16 @@
 import type { ErrorResponse } from "./types";
 
+// Every API route lives under this prefix (docs/audit.md HTTP-2 —
+// versioned API); the unversioned root paths still work but only as
+// redirects kept for the transition. apiUrl is also used directly by
+// callers building a URL for <a href>/tile templates rather than going
+// through fetch (tables.ts's exportUrl, geo.ts's tileUrl).
+const API_BASE = "/api/v1";
+
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 export class ApiError extends Error {
   code: number;
 
@@ -21,11 +32,11 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export function get<T>(path: string): Promise<T> {
-  return fetch(path).then((res) => handle<T>(res));
+  return fetch(apiUrl(path)).then((res) => handle<T>(res));
 }
 
 export function post<T>(path: string, body?: unknown): Promise<T> {
-  return fetch(path, {
+  return fetch(apiUrl(path), {
     method: "POST",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -33,7 +44,7 @@ export function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export function patch<T>(path: string, body: unknown): Promise<T> {
-  return fetch(path, {
+  return fetch(apiUrl(path), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -41,11 +52,11 @@ export function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 export function del<T>(path: string): Promise<T> {
-  return fetch(path, { method: "DELETE" }).then((res) => handle<T>(res));
+  return fetch(apiUrl(path), { method: "DELETE" }).then((res) => handle<T>(res));
 }
 
 // No Content-Type header here — the browser sets the multipart boundary
 // itself from the FormData body.
 export function postForm<T>(path: string, form: FormData): Promise<T> {
-  return fetch(path, { method: "POST", body: form }).then((res) => handle<T>(res));
+  return fetch(apiUrl(path), { method: "POST", body: form }).then((res) => handle<T>(res));
 }

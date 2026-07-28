@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, del, get, post } from "./http";
+import { apiUrl, ApiError, del, get, post } from "./http";
 
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -43,12 +43,16 @@ describe("http client", () => {
     await post("/tables/t1/derive", { query: "SELECT 1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/tables/t1/derive",
+      "/api/v1/tables/t1/derive",
       expect.objectContaining({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: "SELECT 1" }),
       }),
     );
+  });
+
+  it("prefixes every request with /api/v1", () => {
+    expect(apiUrl("/tables/t1")).toBe("/api/v1/tables/t1");
   });
 });

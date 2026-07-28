@@ -119,7 +119,7 @@ func Test_Router_GetTableMetadata(t *testing.T) {
 				m.On("GetMetadata", mock.Anything, c.tableId).Return(&storage.Metadata{TableId: c.tableId, TableName: "widgets"}, nil).Once()
 			}
 
-			rec := doRequest(handler, http.MethodGet, "/tables/"+c.tableId, nil)
+			rec := doRequest(handler, http.MethodGet, "/api/v1/tables/"+c.tableId, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 		})
@@ -132,7 +132,7 @@ func Test_Router_DeleteTable(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodDelete, "/tables/id-1", nil)
+	rec := doRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", nil)
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
@@ -149,7 +149,7 @@ func Test_Router_ListRows(t *testing.T) {
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(1), nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/rows", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/rows", nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body map[string]any
@@ -164,7 +164,7 @@ func Test_Router_AddRows(t *testing.T) {
 	m.On("InsertRow", mock.Anything, "id-1", map[string]any{"height": float64(12)}).Return("pk-1", nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/rows", map[string]any{
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/rows", map[string]any{
 		"rows": []map[string]any{{"height": 12}},
 	})
 
@@ -177,7 +177,7 @@ func Test_Router_GetRow_NotFound(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/rows/missing", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/rows/missing", nil)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -193,7 +193,7 @@ func Test_Router_UpdateRow(t *testing.T) {
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 
-	rec := doRequest(handler, http.MethodPatch, "/tables/id-1/rows/pk-1", map[string]any{"height": 20})
+	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1/rows/pk-1", map[string]any{"height": 20})
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
@@ -205,7 +205,7 @@ func Test_Router_DeleteRow(t *testing.T) {
 	m.On("RemoveRows", mock.Anything, "id-1", []string{"pk-1"}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodDelete, "/tables/id-1/rows/pk-1", nil)
+	rec := doRequest(handler, http.MethodDelete, "/api/v1/tables/id-1/rows/pk-1", nil)
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
@@ -229,7 +229,7 @@ func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/rows", map[string]any{
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/rows", map[string]any{
 		"rows": []map[string]any{{"height": 12, "name": "well over ten bytes of JSON"}},
 	})
 
@@ -242,7 +242,7 @@ func Test_Router_GetTile(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/vnd.mapbox-vector-tile", rec.Header().Get("Content-Type"))
@@ -256,10 +256,10 @@ func Test_Router_GetTile_NotModifiedWhenETagMatches(t *testing.T) {
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1, 0)}, nil).Once()
 	m.On("Tile", mock.Anything, "id-1", 1, 2, 3).Return([]byte("mvt"), nil).Once()
-	first := doRequest(handler, http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
+	first := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 	etag := first.Header().Get("ETag")
 
-	req := httptest.NewRequest(http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/id-1/tiles/1/2/3", nil)
 	req.Header.Set("If-None-Match", etag)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -283,7 +283,7 @@ func Test_Router_FilterByBbox(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("FilterByBbox", mock.Anything, "id-1", [4]float64{0, 0, 1, 1}).Return([]string{"pk-1"}, nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/bbox", map[string]any{"bbox": [4]float64{0, 0, 1, 1}})
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/bbox", map[string]any{"bbox": [4]float64{0, 0, 1, 1}})
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
@@ -294,7 +294,7 @@ func Test_Router_GetGeometryTypes(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("GeometryTypes", mock.Anything, "id-1").Return([]string{"POLYGON", "MULTIPOLYGON"}, nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/geometry-types", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/geometry-types", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var body map[string][]string
@@ -309,7 +309,7 @@ func Test_Router_GetSchema(t *testing.T) {
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/schema", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/schema", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
@@ -320,7 +320,7 @@ func Test_Router_AddColumn(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("AddColumn", mock.Anything, "id-1", "height", "DOUBLE").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/columns", map[string]string{"name": "height", "type": "DOUBLE"})
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/columns", map[string]string{"name": "height", "type": "DOUBLE"})
 
 	assert.Equal(t, http.StatusCreated, rec.Code)
 }
@@ -334,7 +334,7 @@ func Test_Router_DeriveTable(t *testing.T) {
 	m.On("CreateFromQuery", mock.Anything, "t_2", "SELECT * FROM t_1").Return("", false, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-2").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/derive", map[string]string{
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/derive", map[string]string{
 		"query": "SELECT * FROM t_1", "newTableName": "derived",
 	})
 
@@ -346,7 +346,7 @@ func Test_Router_DeriveTable_RejectsNonSelect(t *testing.T) {
 
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/tables/id-1/derive", map[string]string{
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/derive", map[string]string{
 		"query": "DROP TABLE t_1", "newTableName": "derived",
 	})
 
@@ -361,16 +361,40 @@ func Test_Router_ExportTable_CSV(t *testing.T) {
 	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(1000)).Return([]string{}, nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(0), nil).Once()
 
-	rec := doRequest(handler, http.MethodGet, "/tables/id-1/export", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1/export", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "text/csv", rec.Header().Get("Content-Type"))
 }
 
+func Test_Router_RootPaths_RedirectToAPIv1(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{http.MethodGet, "/sources", "/api/v1/sources"},
+		{http.MethodPost, "/sources/refresh", "/api/v1/sources/refresh"},
+		{http.MethodGet, "/tables", "/api/v1/tables"},
+		{http.MethodGet, "/tables/id-1?foo=bar", "/api/v1/tables/id-1?foo=bar"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.method+" "+c.path, func(t *testing.T) {
+			handler, _ := setupRouter(t)
+
+			rec := doRequest(handler, c.method, c.path, nil)
+
+			assert.Equal(t, http.StatusPermanentRedirect, rec.Code)
+			assert.Equal(t, c.want, rec.Header().Get("Location"))
+		})
+	}
+}
+
 func Test_Router_ListSources(t *testing.T) {
 	handler, _ := setupRouter(t)
 
-	rec := doRequest(handler, http.MethodGet, "/sources", nil)
+	rec := doRequest(handler, http.MethodGet, "/api/v1/sources", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	// An empty list must serialize as [], not null — a JSON client doing
@@ -384,7 +408,7 @@ func Test_Router_RefreshSources(t *testing.T) {
 
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/sources/refresh", nil)
+	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/refresh", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
@@ -392,7 +416,7 @@ func Test_Router_RefreshSources(t *testing.T) {
 func Test_Router_LoadSource_UnknownName(t *testing.T) {
 	handler, _ := setupRouter(t)
 
-	rec := doRequest(handler, http.MethodPost, "/sources/unknown.geojson/load", nil)
+	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/unknown.geojson/load", nil)
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }
@@ -439,7 +463,7 @@ func Test_Router_UploadSource(t *testing.T) {
 	// Load's own TableIds/GetMetadata cache lookups happen inside Refresh,
 	// called once before Load — Load itself just reads the in-memory cache.
 
-	req := multipartFileRequest(t, "/sources/upload", "file", "buildings.geojson", `{"type":"FeatureCollection","features":[]}`)
+	req := multipartFileRequest(t, "/api/v1/sources/upload", "file", "buildings.geojson", `{"type":"FeatureCollection","features":[]}`)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -481,7 +505,7 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes").Return("", false, nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
-	rec := doRequest(handler, http.MethodPost, "/sources/regions.gpkg/load?layer=communes", nil)
+	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/regions.gpkg/load?layer=communes", nil)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	var body map[string]string
@@ -512,7 +536,7 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 	m.On("TableIds", mock.Anything).Return([]string{}, nil).Once()
 	m.On("ListLayers", mock.Anything, mock.Anything).Return([]string{"communes", "departements"}, nil).Once()
 
-	req := multipartFileRequest(t, "/sources/upload", "file", "regions.gpkg", "not-really-a-gpkg")
+	req := multipartFileRequest(t, "/api/v1/sources/upload", "file", "regions.gpkg", "not-really-a-gpkg")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -526,7 +550,7 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 func Test_Router_UploadSource_RejectsDisallowedExtension(t *testing.T) {
 	handler, _ := setupRouter(t)
 
-	req := multipartFileRequest(t, "/sources/upload", "file", "malware.exe", "x")
+	req := multipartFileRequest(t, "/api/v1/sources/upload", "file", "malware.exe", "x")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

@@ -67,27 +67,7 @@ info:
   title: GeoAPI
   version: "1.0"
 paths:
-  /healthz:
-    get:
-      responses:
-        "200":
-          description: OK
-      summary: Liveness probe
-      tags:
-      - ops
-  /readyz:
-    get:
-      responses:
-        "200":
-          description: OK
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/router.ErrorResponse'
-      summary: Readiness probe
-      tags:
-      - ops
-  /sources:
+  /api/v1/sources:
     get:
       produces:
       - application/json
@@ -101,7 +81,7 @@ paths:
       summary: List cached sources
       tags:
       - sources
-  /sources/{name}/load:
+  /api/v1/sources/{name}/load:
     post:
       parameters:
       - description: Source file name
@@ -129,7 +109,7 @@ paths:
       summary: Load a source file into a new table
       tags:
       - sources
-  /sources/refresh:
+  /api/v1/sources/refresh:
     post:
       produces:
       - application/json
@@ -143,7 +123,7 @@ paths:
       summary: Rescan workDir
       tags:
       - sources
-  /sources/upload:
+  /api/v1/sources/upload:
     post:
       consumes:
       - multipart/form-data
@@ -163,7 +143,7 @@ paths:
       summary: Upload a file and load it into a new table
       tags:
       - sources
-  /tables:
+  /api/v1/tables:
     get:
       description: Liste toutes les tables avec leurs métadonnées
       produces:
@@ -178,7 +158,7 @@ paths:
       summary: List tables
       tags:
       - tables
-  /tables/{tableId}:
+  /api/v1/tables/{tableId}:
     delete:
       description: Supprime une table et ses données
       parameters:
@@ -218,7 +198,7 @@ paths:
       summary: Get table metadata
       tags:
       - tables
-  /tables/{tableId}/bbox:
+  /api/v1/tables/{tableId}/bbox:
     post:
       consumes:
       - application/json
@@ -242,7 +222,7 @@ paths:
       summary: Filter row pkeys by bounding box
       tags:
       - geo
-  /tables/{tableId}/columns:
+  /api/v1/tables/{tableId}/columns:
     post:
       consumes:
       - application/json
@@ -268,7 +248,7 @@ paths:
       summary: Add a column
       tags:
       - tables
-  /tables/{tableId}/derive:
+  /api/v1/tables/{tableId}/derive:
     post:
       consumes:
       - application/json
@@ -294,7 +274,7 @@ paths:
       summary: Derive a table from a SELECT query
       tags:
       - tables
-  /tables/{tableId}/export:
+  /api/v1/tables/{tableId}/export:
     get:
       parameters:
       - description: Table ID
@@ -321,7 +301,7 @@ paths:
       summary: Export a table
       tags:
       - tables
-  /tables/{tableId}/geometry-types:
+  /api/v1/tables/{tableId}/geometry-types:
     get:
       parameters:
       - description: Table ID
@@ -343,7 +323,7 @@ paths:
       summary: List distinct geometry types present in a table
       tags:
       - geo
-  /tables/{tableId}/rows:
+  /api/v1/tables/{tableId}/rows:
     get:
       parameters:
       - description: Table ID
@@ -397,7 +377,7 @@ paths:
       summary: Add one or more rows
       tags:
       - rows
-  /tables/{tableId}/rows/{pkey}:
+  /api/v1/tables/{tableId}/rows/{pkey}:
     delete:
       parameters:
       - description: Table ID
@@ -472,7 +452,7 @@ paths:
       summary: Update a row
       tags:
       - rows
-  /tables/{tableId}/schema:
+  /api/v1/tables/{tableId}/schema:
     get:
       parameters:
       - description: Table ID
@@ -491,7 +471,7 @@ paths:
       summary: Get table schema
       tags:
       - tables
-  /tables/{tableId}/tiles/{z}/{x}/{y}:
+  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
     get:
       parameters:
       - description: Table ID
@@ -524,4 +504,24 @@ paths:
       summary: Get an MVT tile
       tags:
       - geo
+  /healthz:
+    get:
+      responses:
+        "200":
+          description: OK
+      summary: Liveness probe
+      tags:
+      - ops
+  /readyz:
+    get:
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/router.ErrorResponse'
+      summary: Readiness probe
+      tags:
+      - ops
 swagger: "2.0"

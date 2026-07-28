@@ -14,7 +14,7 @@ import (
 // @Tags sources
 // @Produce json
 // @Success 200 {array} service.Source
-// @Router /sources [get]
+// @Router /api/v1/sources [get]
 func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, rt.sourceService.List())
 }
@@ -25,7 +25,7 @@ func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
 // @Tags sources
 // @Produce json
 // @Success 200 {array} service.Source
-// @Router /sources/refresh [post]
+// @Router /api/v1/sources/refresh [post]
 func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 	sources, err := rt.sourceService.Refresh(req.Context())
 	if err != nil {
@@ -48,7 +48,7 @@ func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} ErrorResponse
-// @Router /sources/upload [post]
+// @Router /api/v1/sources/upload [post]
 func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	file, header, err := req.FormFile("file")
 	if err != nil {
@@ -107,7 +107,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 // @Param layer query string false "Layer name (required for multi-layer sources)"
 // @Success 201 {object} map[string]string
 // @Failure 409 {object} ErrorResponse
-// @Router /sources/{name}/load [post]
+// @Router /api/v1/sources/{name}/load [post]
 func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")

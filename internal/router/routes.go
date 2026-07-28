@@ -71,47 +71,66 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui", http.RedirectHandler("/ui/", http.StatusFound))
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
-	r.Route("/sources", func(sub chi.Router) {
-		sub.Get("/", rt.listSources)
-		sub.Post("/refresh", rt.refreshSources)
-		// Overrides the global body cap: an upload is a whole source file
-		// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
-		// covers multipart framing (boundary, headers) around the file part
-		// itself, so a file right at the limit isn't cut off by framing
-		// overhead before SourceService.Upload's own oversize check runs.
-		sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
-		sub.Post("/{name}/load", rt.loadSource)
-	})
+	r.Route("/api/v1", func(v1 chi.Router) {
+		v1.Route("/sources", func(sub chi.Router) {
+			sub.Get("/", rt.listSources)
+			sub.Post("/refresh", rt.refreshSources)
+			// Overrides the global body cap: an upload is a whole source file
+			// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
+			// covers multipart framing (boundary, headers) around the file part
+			// itself, so a file right at the limit isn't cut off by framing
+			// overhead before SourceService.Upload's own oversize check runs.
+			sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
+			sub.Post("/{name}/load", rt.loadSource)
+		})
 
-	r.Route("/tables", func(sub chi.Router) {
-		sub.Get("/", rt.listTables)
+		v1.Route("/tables", func(sub chi.Router) {
+			sub.Get("/", rt.listTables)
 
-		sub.Route("/{tableId}", func(sub chi.Router) {
-			sub.Use(rt.tableMiddleware)
+			sub.Route("/{tableId}", func(sub chi.Router) {
+				sub.Use(rt.tableMiddleware)
 
-			sub.Get("/", rt.getTableMetadata)
-			sub.Delete("/", rt.deleteTable)
+				sub.Get("/", rt.getTableMetadata)
+				sub.Delete("/", rt.deleteTable)
 
-			sub.Get("/schema", rt.getSchema)
-			sub.Post("/columns", rt.addColumn)
-			sub.Post("/derive", rt.deriveTable)
-			sub.Get("/export", rt.exportTable)
+				sub.Get("/schema", rt.getSchema)
+				sub.Post("/columns", rt.addColumn)
+				sub.Post("/derive", rt.deriveTable)
+				sub.Get("/export", rt.exportTable)
 
-			sub.Route("/rows", func(sub chi.Router) {
-				sub.Get("/", rt.listRows)
-				sub.Post("/", rt.addRows)
-				sub.Route("/{pkey}", func(sub chi.Router) {
-					sub.Get("/", rt.getRow)
-					sub.Patch("/", rt.updateRow)
-					sub.Delete("/", rt.deleteRow)
+				sub.Route("/rows", func(sub chi.Router) {
+					sub.Get("/", rt.listRows)
+					sub.Post("/", rt.addRows)
+					sub.Route("/{pkey}", func(sub chi.Router) {
+						sub.Get("/", rt.getRow)
+						sub.Patch("/", rt.updateRow)
+						sub.Delete("/", rt.deleteRow)
+					})
 				})
-			})
 
-			sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
-			sub.Get("/geometry-types", rt.getGeometryTypes)
-			sub.Post("/bbox", rt.filterByBbox)
+				sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
+				sub.Get("/geometry-types", rt.getGeometryTypes)
+				sub.Post("/bbox", rt.filterByBbox)
+			})
 		})
 	})
 
+	// Backward-compatible redirects from the unversioned root (HTTP-2 —
+	// versioned API) while the front finishes migrating to /api/v1.
+	// StatusPermanentRedirect (308), unlike 301/302, keeps the original
+	// method and body, so a POST/PATCH/DELETE redirects correctly too.
+	r.Handle("/sources", http.HandlerFunc(redirectToAPIv1))
+	r.Handle("/sources/*", http.HandlerFunc(redirectToAPIv1))
+	r.Handle("/tables", http.HandlerFunc(redirectToAPIv1))
+	r.Handle("/tables/*", http.HandlerFunc(redirectToAPIv1))
+
 	return r
+}
+
+func redirectToAPIv1(w http.ResponseWriter, req *http.Request) {
+	target := "/api/v1" + req.URL.Path
+	if req.URL.RawQuery != "" {
+		target += "?" + req.URL.RawQuery
+	}
+	http.Redirect(w, req, target, http.StatusPermanentRedirect)
 }

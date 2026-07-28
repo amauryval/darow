@@ -423,17 +423,16 @@ construisent plus de service réel.
 
 ### Étape 7 — Fondations d'évolutivité *(≈ 2–3 j)*
 
-1. **Migrations** du schéma `metadata` : table `schema_version` + migrations ordonnées appliquées au
-   démarrage. Prérequis à toute évolution du modèle.
-2. **Versionner l'API** : monter les routes sous `/api/v1`, garder des redirections depuis la racine
-   le temps de migrer le front.
-3. **Registre de formats source** : un descripteur par format (`extension`, `multiCouches`,
-   `listLayers`, `read`) ; `SourceService` ne connaît plus `.gpkg` en dur.
-4. **Config** : override par variables d'environnement (comme le promet `config.yaml`), flag
-   `--config`, validation des valeurs au chargement (rejet explicite plutôt que comportement
-   silencieux).
-5. **Suite de conformité storage** : une batterie de tests exécutable contre n'importe quel
-   adaptateur, condition d'entrée d'un futur `PostGISAdapter`.
+1. [PAS POUR LE MOMENT] **Migrations** du schéma `metadata` : table `schema_version` + migrations
+   ordonnées appliquées au démarrage. Prérequis à toute évolution du modèle.
+2. [FAIT] **Versionner l'API** : monter les routes sous `/api/v1`, garder des redirections depuis la
+   racine le temps de migrer le front. Front migré (`web/src/client/http.ts`).
+3. [FAIT] **Registre de formats source** : un descripteur par format (`extension`, `multiCouches`) ;
+   `SourceService` ne connaît plus `.gpkg` en dur (voir `internal/service/formats.go`).
+4. [FAIT] **Config** : override par variables d'environnement (`GEOAPI_*`), flag `--config`,
+   validation des valeurs au chargement (rejet explicite plutôt que comportement silencieux).
+5. [FAIT] **Suite de conformité storage** : une batterie de tests exécutable contre n'importe quel
+   adaptateur (`internal/storage/storagetest`), condition d'entrée d'un futur `PostGISAdapter`.
 
 ### Étape 8 — Compléter le domaine *(≈ 2–3 j)*
 

@@ -1,7 +1,7 @@
-import { get, post } from "./http";
+import { apiUrl, get, post } from "./http";
 
 export function tileUrl(tableId: string): string {
-  return `/tables/${tableId}/tiles/{z}/{x}/{y}`;
+  return apiUrl(`/tables/${tableId}/tiles/{z}/{x}/{y}`);
 }
 
 export function filterByBbox(tableId: string, bbox: [number, number, number, number]): Promise<{ pkeys: string[] }> {

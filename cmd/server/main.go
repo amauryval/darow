@@ -35,11 +35,12 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	var workDirFlag string
+	var workDirFlag, configFlag string
 	flag.StringVar(&workDirFlag, "workdir", "", "working directory")
+	flag.StringVar(&configFlag, "config", "config.yaml", "path to config.yaml")
 	flag.Parse()
 
-	cfg, err := config.Load("config.yaml")
+	cfg, err := config.Load(configFlag)
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}

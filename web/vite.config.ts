@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 // Base is /ui/ so the built assets resolve correctly once served by the Go
 // router under that prefix — kept separate from the JSON API paths
-// (/tables, /sources, ...) to avoid any route collision.
+// (/api/v1/tables, /api/v1/sources, ...) to avoid any route collision.
 export default defineConfig({
   base: "/ui/",
   plugins: [vue(), tailwindcss()],
@@ -17,8 +17,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/tables": "http://localhost:8080",
-      "/sources": "http://localhost:8080",
+      "/api": "http://localhost:8080",
     },
   },
 });
