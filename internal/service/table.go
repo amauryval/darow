@@ -83,22 +83,24 @@ func (s *TableService) RemoveTable(tableId string) error {
 	return nil
 }
 
-// UpdateRow updates column for the given pkeys. Writing the geometry
-// column triggers RefreshDerivedMetadata, which recomputes bbox and bumps
-// UpdatedAt (règle 9) — the signal that invalidates GeoService's tile
-// cache (règle 20) and this service's metadata cache (règle 11). Updating
-// a scalar field triggers neither.
-func (s *TableService) UpdateRow(tableId string, pkeys []string, column string, value any) error {
+// UpdateRow updates every column in updates for the given pkeys in a
+// single storage call, so a multi-column update is atomic (règle 9,
+// spec §5.1: either every column changes or none does). Writing the
+// geometry column triggers RefreshDerivedMetadata, which recomputes bbox
+// and bumps UpdatedAt (règle 9) — the signal that invalidates GeoService's
+// tile cache (règle 20) and this service's metadata cache (règle 11).
+// Updating only scalar fields triggers neither.
+func (s *TableService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
 	meta, err := s.GetMetadata(tableId)
 	if err != nil {
 		return err
 	}
 
-	if err := s.storage.Update(tableId, pkeys, column, value); err != nil {
+	if err := s.storage.Update(tableId, pkeys, updates); err != nil {
 		return err
 	}
 
-	if column == meta.GeometryColumn {
+	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
 		if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
 			return err
 		}
@@ -172,6 +174,17 @@ func (s *TableService) ListLayers(path string) ([]string, error) {
 	return s.storage.ListLayers(path)
 }
 
+// rollbackCreate removes tableId's metadata row (and any partially
+// materialized physical table, via storage.Remove's DROP TABLE IF EXISTS)
+// after a failure partway through ImportFromFile/DeriveTable, so a failed
+// creation never leaves a metadata row with no matching physical table.
+func (s *TableService) rollbackCreate(tableId string, cause error) error {
+	if err := s.storage.Remove(tableId); err != nil {
+		return fmt.Errorf("%w (cleanup also failed: %v)", cause, err)
+	}
+	return cause
+}
+
 // ImportFromFile registers a new table from a source file: it creates the
 // metadata row, materializes the physical table via ST_Read, resolves the
 // geometry column and SRID, and refreshes derived metadata. layer selects
@@ -184,24 +197,24 @@ func (s *TableService) ImportFromFile(name, path, ext, layer string) (string, er
 
 	meta, err := s.storage.GetMetadata(tableId)
 	if err != nil {
-		return "", err
+		return "", s.rollbackCreate(tableId, err)
 	}
 
 	geometryColumn, isGeo, err := s.storage.CreateFromFile(meta.PhysicalName, path, layer)
 	if err != nil {
-		return "", fmt.Errorf("importing %q: %w", name, err)
+		return "", s.rollbackCreate(tableId, fmt.Errorf("importing %q: %w", name, err))
 	}
 
 	if isGeo {
 		if err := s.storage.UpdateMetadata(tableId, map[string]any{
 			"isGeo": true, "geometryColumn": geometryColumn,
 		}); err != nil {
-			return "", err
+			return "", s.rollbackCreate(tableId, err)
 		}
 	}
 
 	if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
-		return "", err
+		return "", s.rollbackCreate(tableId, err)
 	}
 	s.invalidateMetadataCache(tableId)
 	return tableId, nil

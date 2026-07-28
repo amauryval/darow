@@ -76,9 +76,6 @@ func (a *Adapter) ColumnType(tableId, column string) (string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return "", err
 	}
-	if err := storage.ValidateIdentifier(column); err != nil {
-		return "", err
-	}
 
 	rows, err := a.Query(fmt.Sprintf(`DESCRIBE %s`, meta.PhysicalName))
 	if err != nil {
@@ -96,6 +93,8 @@ func (a *Adapter) ColumnType(tableId, column string) (string, error) {
 		scanDest[i] = &values[i]
 	}
 
+	// column is only ever compared against DESCRIBE's own output below,
+	// never interpolated into SQL — no identifier validation needed here.
 	for rows.Next() {
 		if err := rows.Scan(scanDest...); err != nil {
 			return "", err
@@ -195,10 +194,11 @@ func (a *Adapter) GetRowsByPkey(tableId string, pKeys []string) ([]storage.Row, 
 
 	excl := ""
 	if meta.IsGeo {
-		if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+		if err != nil {
 			return nil, err
 		}
-		excl = fmt.Sprintf(" EXCLUDE (%s)", meta.GeometryColumn)
+		excl = fmt.Sprintf(" EXCLUDE (%s)", quotedGeom)
 	}
 
 	query := fmt.Sprintf(
@@ -227,10 +227,11 @@ func (a *Adapter) GetRowsWithFilter(tableId string, filter string, args []any, l
 
 	excl := ""
 	if meta.IsGeo {
-		if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+		if err != nil {
 			return nil, err
 		}
-		excl = fmt.Sprintf(" EXCLUDE (%s)", meta.GeometryColumn)
+		excl = fmt.Sprintf(" EXCLUDE (%s)", quotedGeom)
 	}
 
 	where := ""
@@ -257,11 +258,12 @@ func (a *Adapter) GetDistinctValues(tableId, column string) ([]any, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
-	if err := storage.ValidateIdentifier(column); err != nil {
+	quotedCol, err := storage.QuoteIdentifier(column)
+	if err != nil {
 		return nil, err
 	}
 
-	rows, err := a.Query(fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, column, meta.PhysicalName))
+	rows, err := a.Query(fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, quotedCol, meta.PhysicalName))
 	if err != nil {
 		return nil, err
 	}
@@ -287,21 +289,24 @@ func (a *Adapter) AddColumn(tableId, colName, colType string) error {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return err
 	}
-	if err := storage.ValidateIdentifier(colName); err != nil {
+	quotedCol, err := storage.QuoteIdentifier(colName)
+	if err != nil {
 		return err
 	}
 	if err := storage.ValidateIdentifier(colType); err != nil {
 		return err
 	}
 
-	_, err = a.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, meta.PhysicalName, colName, colType))
+	_, err = a.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, meta.PhysicalName, quotedCol, colType))
 	return err
 }
 
-// Update sets column to value for the given rows. Writing the geometry
-// column expects WKT and converts it via ST_GeomFromText (règle 22)
-// instead of binding it directly like a scalar value.
-func (a *Adapter) Update(tableId string, pkeys []string, column string, value any) error {
+// Update sets every column in updates for the given rows in a single
+// statement — a multi-column update is atomic, not one Exec per column.
+// Writing the geometry column expects WKT and converts it via
+// ST_GeomFromText (règle 22) instead of binding it directly like a scalar
+// value.
+func (a *Adapter) Update(tableId string, pkeys []string, updates map[string]any) error {
 	meta, err := a.GetMetadata(tableId)
 	if err != nil {
 		return err
@@ -309,20 +314,30 @@ func (a *Adapter) Update(tableId string, pkeys []string, column string, value an
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return err
 	}
-	if err := storage.ValidateIdentifier(column); err != nil {
-		return err
+	if len(updates) == 0 {
+		return nil
 	}
 
-	setClause := fmt.Sprintf("%s = ?", column)
-	if column == meta.GeometryColumn {
-		setClause = fmt.Sprintf("%s = ST_GeomFromText(CAST(? AS VARCHAR))", column)
+	setClauses := make([]string, 0, len(updates))
+	args := make([]any, 0, len(updates)+len(pkeys))
+	for column, value := range updates {
+		quotedCol, err := storage.QuoteIdentifier(column)
+		if err != nil {
+			return err
+		}
+		if column == meta.GeometryColumn {
+			setClauses = append(setClauses, fmt.Sprintf("%s = ST_GeomFromText(CAST(? AS VARCHAR))", quotedCol))
+		} else {
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", quotedCol))
+		}
+		args = append(args, value)
 	}
+	args = append(args, pkeysToArgs(pkeys)...)
 
 	query := fmt.Sprintf(
 		`UPDATE %s SET %s WHERE __pkey IN (%s)`,
-		meta.PhysicalName, setClause, placeholders(len(pkeys)),
+		meta.PhysicalName, strings.Join(setClauses, ", "), placeholders(len(pkeys)),
 	)
-	args := append([]any{value}, pkeysToArgs(pkeys)...)
 	if _, err := a.Exec(query, args...); err != nil {
 		return fmt.Errorf("update failed (invalid WKT si colonne géométrique): %w", err)
 	}
@@ -377,10 +392,11 @@ func (a *Adapter) buildInsert(meta *storage.Metadata, values map[string]any) (pk
 	args = append(args, pkey)
 
 	for col, val := range values {
-		if err := storage.ValidateIdentifier(col); err != nil {
+		quotedCol, err := storage.QuoteIdentifier(col)
+		if err != nil {
 			return "", "", nil, err
 		}
-		cols = append(cols, col)
+		cols = append(cols, quotedCol)
 		if col == meta.GeometryColumn {
 			placeholderExprs = append(placeholderExprs, "ST_GeomFromText(CAST(? AS VARCHAR))")
 		} else {

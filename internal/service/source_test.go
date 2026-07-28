@@ -205,6 +205,66 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 	assert.Equal(t, "id-new", tableId)
 }
 
+// Without this, a second Load for the same source — with no Refresh in
+// between — would import it again, since the in-memory cache never learns
+// about the first Load's success (BUG-3).
+func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "buildings.geojson", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh()
+	require.NoError(t, err)
+
+	m.On("Create", "buildings.geojson", false, "").Return("id-new", nil).Once()
+	m.On("GetMetadata", "id-new").Return(&storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("CreateFromFile", "t_new", filepath.Join(dir, "buildings.geojson"), "").Return("", false, nil).Once()
+	m.On("RefreshDerivedMetadata", "id-new").Return(nil).Once()
+
+	tableId, err := svc.Load("buildings.geojson", "")
+	require.NoError(t, err)
+	assert.Equal(t, "id-new", tableId)
+
+	_, err = svc.Load("buildings.geojson", "")
+	assert.ErrorContains(t, err, "already loaded")
+}
+
+// List must hand out an independent snapshot: mutating the returned slice
+// (or a Source's Layers within it) must never reach back into the cache
+// Load reads from.
+func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "buildings.geojson", 100)
+
+	tableSvc, m := setupTableService(t)
+	m.On("TableIds").Return([]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh()
+	require.NoError(t, err)
+
+	sources := svc.List()
+	require.Len(t, sources, 1)
+	sources[0].Loaded = true
+	sources[0].TableId = "tampered"
+
+	assert.False(t, svc.List()[0].Loaded)
+	assert.Empty(t, svc.List()[0].TableId)
+}
+
 func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)

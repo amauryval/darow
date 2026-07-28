@@ -1,7 +1,6 @@
 package router
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -17,7 +16,7 @@ import (
 // @Success 200 {array} service.Source
 // @Router /sources [get]
 func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
-	json.NewEncoder(w).Encode(rt.sourceService.List())
+	writeJSON(w, http.StatusOK, rt.sourceService.List())
 }
 
 // refreshSources handles POST /sources/refresh.
@@ -30,10 +29,10 @@ func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
 func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 	sources, err := rt.sourceService.Refresh()
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(sources)
+	writeJSON(w, http.StatusOK, sources)
 }
 
 // uploadSource handles POST /sources/upload (multipart/form-data, field
@@ -53,20 +52,20 @@ func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
 func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	file, header, err := req.FormFile("file")
 	if err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	savedName, err := rt.sourceService.Upload(header.Filename, file)
 	if err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	sources, err := rt.sourceService.Refresh()
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -78,8 +77,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if uploaded != nil && len(uploaded.Layers) > 1 {
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(uploaded)
+		writeJSON(w, http.StatusCreated, uploaded)
 		return
 	}
 
@@ -89,13 +87,12 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	}
 	tableId, err := rt.sourceService.Load(savedName, layer)
 	if err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"tableId": tableId})
+	writeJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
 // loadSource handles POST /sources/{name}/load. name is validated against
@@ -117,11 +114,10 @@ func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 
 	tableId, err := rt.sourceService.Load(name, layer)
 	if err != nil {
-		WriteError(w, err, http.StatusConflict)
+		WriteError(w, req, err, http.StatusConflict)
 		return
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"tableId": tableId})
+	writeJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }

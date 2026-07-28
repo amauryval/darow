@@ -18,21 +18,23 @@ func writeConfigFile(t *testing.T, content string) string {
 
 func Test_Load(t *testing.T) {
 	cases := []struct {
-		name            string
-		path            string
-		content         string
-		useNoFile       bool
-		wantErr         bool
-		wantPort        int
-		wantWorkDir     string
-		wantDefaultRows int
+		name             string
+		path             string
+		content          string
+		useNoFile        bool
+		wantErr          bool
+		wantPort         int
+		wantWorkDir      string
+		wantDefaultRows  int
+		wantMaxBodyBytes int64
 	}{
 		{
-			name:            "file absent falls back to defaults",
-			useNoFile:       true,
-			wantPort:        8080,
-			wantWorkDir:     "./data/sources",
-			wantDefaultRows: 100,
+			name:             "file absent falls back to defaults",
+			useNoFile:        true,
+			wantPort:         8080,
+			wantWorkDir:      "./data/sources",
+			wantDefaultRows:  100,
+			wantMaxBodyBytes: 10 * 1024 * 1024,
 		},
 		{
 			name: "file present overrides defaults",
@@ -74,6 +76,9 @@ server: [this is not
 			assert.Equal(t, c.wantWorkDir, cfg.Sources.WorkDir)
 			if c.wantDefaultRows != 0 {
 				assert.Equal(t, c.wantDefaultRows, cfg.API.DefaultRowLimit)
+			}
+			if c.wantMaxBodyBytes != 0 {
+				assert.Equal(t, c.wantMaxBodyBytes, cfg.API.MaxBodyBytes)
 			}
 		})
 	}

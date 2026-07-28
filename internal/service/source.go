@@ -46,12 +46,15 @@ type SourceLayer struct {
 // SourceService scans workDir for loadable files and imports them into
 // tables on demand. name is only ever accepted from the last Refresh/List
 // cache (règle 15) — never a path built freely from the HTTP request, to
-// eliminate any directory traversal risk.
+// eliminate any directory traversal risk. mu is held for the whole
+// duration of Load's check-then-import, not just around the cache lookup,
+// so two concurrent Load calls for the same source can't both pass the
+// "not loaded yet" check before either has actually imported it.
 type SourceService struct {
 	cfg          config.SourcesConfig
 	tableService *TableService
 
-	mu      sync.RWMutex
+	mu      sync.Mutex
 	sources []Source
 }
 
@@ -59,6 +62,12 @@ type SourceService struct {
 // importing through tableService.
 func NewSourceService(cfg config.SourcesConfig, tableService *TableService) *SourceService {
 	return &SourceService{cfg: cfg, tableService: tableService}
+}
+
+// MaxUploadBytes returns the largest file Upload will accept, used by the
+// router to size the request body limit on /sources/upload.
+func (s *SourceService) MaxUploadBytes() int64 {
+	return s.cfg.MaxSizeBytes
 }
 
 // Refresh rescans workDir and replaces the in-memory cache. Files beyond
@@ -132,16 +141,26 @@ func (s *SourceService) listLoadedLayers(name string, loaded map[string]string) 
 	return layers
 }
 
-// List returns the cache from the last Refresh — it never rescans the
-// disk itself, so an implicit scan per request doesn't defeat the intent
-// of an explicit refresh or cost an os.ReadDir per call.
+// List returns a copy of the cache from the last Refresh — it never
+// rescans the disk itself, so an implicit scan per request doesn't defeat
+// the intent of an explicit refresh or cost an os.ReadDir per call. A copy,
+// not the live internal slice, so a caller can never mutate cache state
+// out from under Load.
 func (s *SourceService) List() []Source {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.sources == nil {
-		return []Source{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneSources(s.sources)
+}
+
+func cloneSources(sources []Source) []Source {
+	out := make([]Source, len(sources))
+	for i, src := range sources {
+		out[i] = src
+		if src.Layers != nil {
+			out[i].Layers = append([]SourceLayer(nil), src.Layers...)
+		}
 	}
-	return s.sources
+	return out
 }
 
 // Upload writes content to workDir under filename, validated against the
@@ -183,9 +202,14 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 // current cache (règle 15). For a multi-layer (.gpkg) source, layer must
 // name one of that source's cached layers — the file itself is never
 // loaded as a whole. For any other source, layer must be empty. Returns
-// the newly created tableId.
+// the newly created tableId. Held under mu for its whole duration (see
+// SourceService doc) — the on-success update of the cached entry below is
+// what lets an immediate second Load, with no Refresh in between, see the
+// source as loaded instead of importing it again.
 func (s *SourceService) Load(name, layer string) (string, error) {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	var found *Source
 	for i := range s.sources {
 		if s.sources[i].Name == name {
@@ -193,8 +217,6 @@ func (s *SourceService) Load(name, layer string) (string, error) {
 			break
 		}
 	}
-	s.mu.RUnlock()
-
 	if found == nil {
 		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
 	}
@@ -207,7 +229,13 @@ func (s *SourceService) Load(name, layer string) (string, error) {
 			return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
 		}
 		path := filepath.Join(s.cfg.WorkDir, found.Name)
-		return s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
+		tableId, err := s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
+		if err != nil {
+			return "", err
+		}
+		found.Loaded = true
+		found.TableId = tableId
+		return tableId, nil
 	}
 
 	if layer == "" {
@@ -229,5 +257,11 @@ func (s *SourceService) Load(name, layer string) (string, error) {
 
 	path := filepath.Join(s.cfg.WorkDir, found.Name)
 	tableName := found.Name + layerSeparator + layer
-	return s.tableService.ImportFromFile(tableName, path, found.Ext, layer)
+	tableId, err := s.tableService.ImportFromFile(tableName, path, found.Ext, layer)
+	if err != nil {
+		return "", err
+	}
+	foundLayer.Loaded = true
+	foundLayer.TableId = tableId
+	return tableId, nil
 }

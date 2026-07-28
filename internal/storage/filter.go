@@ -31,17 +31,21 @@ func BuildFilter(conditions []FilterCondition, validColumns []string) (filter st
 	args = make([]any, 0, len(conditions))
 
 	for _, cond := range conditions {
+		// cond.Column being whitelisted against validColumns — the table's
+		// real, existing columns — is what makes this safe, not its
+		// charset: QuoteIdentifier only escapes it for interpolation.
 		if !slices.Contains(validColumns, cond.Column) {
 			return "", nil, fmt.Errorf("unknown column: %q", cond.Column)
 		}
-		if err := ValidateIdentifier(cond.Column); err != nil {
+		quotedCol, err := QuoteIdentifier(cond.Column)
+		if err != nil {
 			return "", nil, err
 		}
 		if !slices.Contains(allowedOperators, cond.Operator) {
 			return "", nil, fmt.Errorf("unsupported operator: %q", cond.Operator)
 		}
 
-		clauses = append(clauses, fmt.Sprintf("%s %s ?", cond.Column, cond.Operator))
+		clauses = append(clauses, fmt.Sprintf("%s %s ?", quotedCol, cond.Operator))
 		args = append(args, cond.Value)
 	}
 

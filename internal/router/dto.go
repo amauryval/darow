@@ -31,10 +31,17 @@ func toMetadataDTO(m *storage.Metadata) metadataDTO {
 	}
 }
 
+// rowToJSON flattens row under the reserved "pkey" key alongside its other
+// columns. "pkey" always wins: a data column literally named "pkey" (rare,
+// but not impossible on imported data) is dropped rather than silently
+// overwriting the row's real primary key in the response.
 func rowToJSON(row storage.Row) map[string]any {
 	out := make(map[string]any, len(row.Values)+1)
 	out["pkey"] = row.Pkey
 	for col, val := range row.Values {
+		if col == "pkey" {
+			continue
+		}
 		out[col] = val
 	}
 	return out

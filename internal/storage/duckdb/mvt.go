@@ -18,7 +18,8 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]b
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
-	if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
 		return nil, err
 	}
 
@@ -44,7 +45,7 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]b
             WHERE ST_Intersects_Extent(%s, tile.envelope)
         )
         WHERE mvt_geom IS NOT NULL
-    `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
+    `, quotedGeom, meta.PhysicalName, quotedGeom)
 
 	var mvt []byte
 	err = a.QueryRowContext(ctx, query, zoom, x, y).Scan(&mvt)
@@ -61,7 +62,8 @@ func (a *Adapter) FilterByBbox(tableId string, bbox [4]float64) ([]string, error
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
-	if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
 		return nil, err
 	}
 
@@ -69,7 +71,7 @@ func (a *Adapter) FilterByBbox(tableId string, bbox [4]float64) ([]string, error
         SELECT __pkey FROM %s
         WHERE ST_Intersects(%s, ST_MakeEnvelope(?, ?, ?, ?))
         ORDER BY __pkey
-    `, meta.PhysicalName, meta.GeometryColumn)
+    `, meta.PhysicalName, quotedGeom)
 
 	rows, err := a.Query(query, bbox[0], bbox[1], bbox[2], bbox[3])
 	if err != nil {
@@ -98,13 +100,14 @@ func (a *Adapter) GetGeometryGeoJSON(tableId string, pkeys []string) (map[string
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
-	if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
 		return nil, err
 	}
 
 	query := fmt.Sprintf(
 		`SELECT __pkey, CAST(ST_AsGeoJSON(%s) AS VARCHAR) FROM %s WHERE __pkey IN (%s)`,
-		meta.GeometryColumn, meta.PhysicalName, placeholders(len(pkeys)),
+		quotedGeom, meta.PhysicalName, placeholders(len(pkeys)),
 	)
 	rows, err := a.Query(query, pkeysToArgs(pkeys)...)
 	if err != nil {
@@ -133,13 +136,14 @@ func (a *Adapter) GeometryTypes(tableId string) ([]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
-	if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
 		return nil, err
 	}
 
 	query := fmt.Sprintf(
 		`SELECT DISTINCT ST_GeometryType(%s) FROM %s WHERE %s IS NOT NULL`,
-		meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn,
+		quotedGeom, meta.PhysicalName, quotedGeom,
 	)
 	rows, err := a.Query(query)
 	if err != nil {

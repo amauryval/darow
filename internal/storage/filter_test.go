@@ -28,7 +28,7 @@ func Test_BuildFilter(t *testing.T) {
 				{Column: "height", Operator: ">", Value: 10},
 			},
 			validColumns: []string{"height"},
-			wantFilter:   "height > ?",
+			wantFilter:   `"height" > ?`,
 			wantArgs:     []any{10},
 		},
 		{
@@ -38,8 +38,17 @@ func Test_BuildFilter(t *testing.T) {
 				{Column: "name", Operator: "LIKE", Value: "%foo%"},
 			},
 			validColumns: []string{"height", "name"},
-			wantFilter:   "height > ? AND name LIKE ?",
+			wantFilter:   `"height" > ? AND "name" LIKE ?`,
 			wantArgs:     []any{10, "%foo%"},
+		},
+		{
+			name: "accented column name is whitelisted and quoted, not rejected",
+			conditions: []FilterCondition{
+				{Column: "nom_région", Operator: "=", Value: "Bretagne"},
+			},
+			validColumns: []string{"nom_région"},
+			wantFilter:   `"nom_région" = ?`,
+			wantArgs:     []any{"Bretagne"},
 		},
 		{
 			name: "unknown column rejected",
@@ -58,12 +67,13 @@ func Test_BuildFilter(t *testing.T) {
 			wantErr:      true,
 		},
 		{
-			name: "non identifier column rejected even if whitelisted",
+			name: "column with an unusual name is quoted safely rather than rejected, but only once whitelisted against the table's real columns",
 			conditions: []FilterCondition{
 				{Column: "height; DROP TABLE x", Operator: "=", Value: 1},
 			},
 			validColumns: []string{"height; DROP TABLE x"},
-			wantErr:      true,
+			wantFilter:   `"height; DROP TABLE x" = ?`,
+			wantArgs:     []any{1},
 		},
 	}
 

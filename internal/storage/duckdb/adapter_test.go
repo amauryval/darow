@@ -117,10 +117,10 @@ func Test_Adapter_Update_GeometryColumn_InvalidWKT(t *testing.T) {
 	pkey, err := a.InsertRow(tableId, map[string]any{})
 	require.NoError(t, err)
 
-	err = a.Update(tableId, []string{pkey}, geomCol, "not-a-valid-wkt")
+	err = a.Update(tableId, []string{pkey}, map[string]any{geomCol: "not-a-valid-wkt"})
 	assert.Error(t, err)
 
-	err = a.Update(tableId, []string{pkey}, geomCol, "POINT(1 2)")
+	err = a.Update(tableId, []string{pkey}, map[string]any{geomCol: "POINT(1 2)"})
 	assert.NoError(t, err)
 }
 

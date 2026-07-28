@@ -44,12 +44,13 @@ func (a *Adapter) createSpatialIndex(physicalName, geometryColumn string) error 
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return err
 	}
-	if err := storage.ValidateIdentifier(geometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(geometryColumn)
+	if err != nil {
 		return err
 	}
-	_, err := a.Exec(fmt.Sprintf(
+	_, err = a.Exec(fmt.Sprintf(
 		`CREATE INDEX idx_%s_geom ON %s USING RTREE (%s)`,
-		physicalName, physicalName, geometryColumn,
+		physicalName, physicalName, quotedGeom,
 	))
 	return err
 }
@@ -99,12 +100,13 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string
 	// 4326 is (lat, lon), so ST_Transform would silently swap X/Y if told
 	// the source is "EPSG:4326" on lon/lat-ordered input — verified against
 	// a known point (Paris) before fixing this.
-	if err := storage.ValidateIdentifier(geometryColumn); err != nil {
+	quotedGeom, err := storage.QuoteIdentifier(geometryColumn)
+	if err != nil {
 		return "", false, err
 	}
 	updateQuery := fmt.Sprintf(
 		`UPDATE %s SET %s = ST_Transform(%s, 'OGC:CRS84', 'EPSG:3857')`,
-		physicalName, geometryColumn, geometryColumn,
+		physicalName, quotedGeom, quotedGeom,
 	)
 	if _, err := a.Exec(updateQuery); err != nil {
 		return "", false, fmt.Errorf("reprojecting geometry: %w", err)
@@ -148,6 +150,9 @@ func (a *Adapter) ListLayers(sourcePath string) ([]string, error) {
 // direction.
 func (a *Adapter) CreateFromQuery(physicalName, sourceQuery string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
+		return "", false, err
+	}
+	if err := a.validateDeriveQuery(sourceQuery); err != nil {
 		return "", false, err
 	}
 

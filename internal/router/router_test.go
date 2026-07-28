@@ -35,7 +35,7 @@ func setupRouter(t *testing.T) (http.Handler, *mocks.Storage) {
 		"index.html": {Data: []byte("<html>ui</html>")},
 	}
 
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	return rt.Setup(), m
 }
 
@@ -140,7 +140,7 @@ func Test_Router_UpdateRow(t *testing.T) {
 	handler, m := setupRouter(t)
 
 	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
-	m.On("Update", "id-1", []string{"pk-1"}, "height", float64(20)).Return(nil).Once()
+	m.On("Update", "id-1", []string{"pk-1"}, map[string]any{"height": float64(20)}).Return(nil).Once()
 	m.On("GetRowsByPkey", "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"height": 20}},
 	}, nil).Once()
@@ -163,6 +163,27 @@ func Test_Router_DeleteRow(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func Test_Router_MaxBodyBytes_RejectsOversizedRequest(t *testing.T) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	tableSvc := service.NewTableService(m, cache.New(5*time.Minute, 10*time.Minute))
+	geoSvc := service.NewGeoService(m, tableSvc, cache.New(5*time.Minute, 10*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10}, uiAssets)
+	handler := rt.Setup()
+
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/tables/id-1/rows", map[string]any{
+		"rows": []map[string]any{{"height": 12, "name": "well over ten bytes of JSON"}},
+	})
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func Test_Router_GetTile(t *testing.T) {
 	handler, m := setupRouter(t)
 
@@ -172,7 +193,7 @@ func Test_Router_GetTile(t *testing.T) {
 	rec := doRequest(handler, http.MethodGet, "/tables/id-1/tiles/1/2/3", nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "application/x-protobuf", rec.Header().Get("Content-Type"))
+	assert.Equal(t, "application/vnd.mapbox-vector-tile", rec.Header().Get("Content-Type"))
 	assert.Equal(t, []byte("mvt"), rec.Body.Bytes())
 }
 
@@ -321,7 +342,7 @@ func Test_Router_UploadSource(t *testing.T) {
 		AllowedExtensions: []string{".geojson"},
 	}, tableSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()
@@ -356,7 +377,7 @@ func Test_Router_LoadSource_WithLayerQueryParam(t *testing.T) {
 		AllowedExtensions: []string{".gpkg"},
 	}, tableSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()
@@ -389,7 +410,7 @@ func Test_Router_UploadSource_MultiLayerGpkg_SkipsAutoLoad(t *testing.T) {
 		AllowedExtensions: []string{".gpkg"},
 	}, tableSvc)
 	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
-	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}, uiAssets)
+	rt := NewRouter(tableSvc, geoSvc, sourceSvc, config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}, uiAssets)
 	handler := rt.Setup()
 
 	m.On("TableIds").Return([]string{}, nil).Once()

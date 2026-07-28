@@ -495,7 +495,7 @@ paths:
         required: true
         type: integer
       produces:
-      - application/x-protobuf
+      - application/vnd.mapbox-vector-tile
       responses:
         "200":
           description: OK

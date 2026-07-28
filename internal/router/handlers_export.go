@@ -34,7 +34,7 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rt.tableService.ListRows(meta.TableId, 0, meta.RowCount)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -43,12 +43,12 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 		writeCSVExport(w, meta.TableName, page.Rows)
 	case "geojson":
 		if !meta.IsGeo {
-			WriteError(w, fmt.Errorf("table %q has no geometry to export as GeoJSON", meta.TableId), http.StatusBadRequest)
+			WriteError(w, req, fmt.Errorf("table %q has no geometry to export as GeoJSON", meta.TableId), http.StatusBadRequest)
 			return
 		}
-		rt.writeGeoJSONExport(w, meta, page.Rows)
+		rt.writeGeoJSONExport(w, req, meta, page.Rows)
 	default:
-		WriteError(w, fmt.Errorf("unsupported export format: %q", format), http.StatusBadRequest)
+		WriteError(w, req, fmt.Errorf("unsupported export format: %q", format), http.StatusBadRequest)
 	}
 }
 
@@ -86,7 +86,7 @@ func writeCSVExport(w http.ResponseWriter, tableName string, rows []storage.Row)
 	}
 }
 
-func (rt *Router) writeGeoJSONExport(w http.ResponseWriter, meta *storage.Metadata, rows []storage.Row) {
+func (rt *Router) writeGeoJSONExport(w http.ResponseWriter, req *http.Request, meta *storage.Metadata, rows []storage.Row) {
 	pkeys := make([]string, len(rows))
 	for i, row := range rows {
 		pkeys[i] = row.Pkey
@@ -94,7 +94,7 @@ func (rt *Router) writeGeoJSONExport(w http.ResponseWriter, meta *storage.Metada
 
 	geometries, err := rt.geoService.GetGeometryGeoJSON(meta.TableId, pkeys)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 

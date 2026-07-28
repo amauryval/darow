@@ -91,6 +91,22 @@ func Test_TableService_DeriveTable(t *testing.T) {
 	}
 }
 
+// A failure materializing the derived table must not leave an orphaned
+// metadata row: the Create above it must be rolled back (BUG-2).
+func Test_TableService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
+	svc, m := setupTableService(t)
+
+	m.On("GetMetadata", "id-src").Return(&storage.Metadata{TableId: "id-src"}, nil).Once()
+	m.On("Create", "derived", false, "").Return("id-derived", nil).Once()
+	m.On("GetMetadata", "id-derived").Return(&storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+	m.On("CreateFromQuery", "t_derived", "SELECT * FROM t_source").Return("", false, errors.New("unknown table")).Once()
+	m.On("Remove", "id-derived").Return(nil).Once()
+
+	_, err := svc.DeriveTable("id-src", "SELECT * FROM t_source", "derived")
+
+	assert.Error(t, err)
+}
+
 func Test_TableService_DeriveTable_UnknownSourceTable(t *testing.T) {
 	svc, m := setupTableService(t)
 

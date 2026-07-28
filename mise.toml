@@ -50,6 +50,18 @@ dir = "web"
 depends = ["ui-install"]
 run = "npm run dev"
 
+[tasks."ui-lint"]
+description = "Run eslint on the web UI"
+dir = "web"
+depends = ["ui-install"]
+run = "npm run lint"
+
+[tasks."ui-test"]
+description = "Run the web UI's vitest suite"
+dir = "web"
+depends = ["ui-install"]
+run = "npm run test"
+
 [tasks.build]
 description = "Build the server binary"
 depends = ["docs", "ui-build"]

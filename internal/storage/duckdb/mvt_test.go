@@ -13,7 +13,7 @@ func createGeoTableWithPoint(t *testing.T, a *Adapter) (tableId, pkey string) {
 
 	pkey, err := a.InsertRow(tableId, map[string]any{})
 	require.NoError(t, err)
-	require.NoError(t, a.Update(tableId, []string{pkey}, geomCol, "POINT(1 1)"))
+	require.NoError(t, a.Update(tableId, []string{pkey}, map[string]any{geomCol: "POINT(1 1)"}))
 	return tableId, pkey
 }
 

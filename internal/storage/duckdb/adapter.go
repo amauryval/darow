@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/google/uuid"
 
 	"gogeoserver/internal/storage"
 )
@@ -240,7 +240,8 @@ func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
 
 	bbox := ""
 	if meta.IsGeo {
-		if err := storage.ValidateIdentifier(meta.GeometryColumn); err != nil {
+		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+		if err != nil {
 			return err
 		}
 		var minX, minY, maxX, maxY sql.NullFloat64
@@ -256,7 +257,7 @@ func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
                 SELECT ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84') AS g
                 FROM %s WHERE %s IS NOT NULL
             ) t
-        `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
+        `, quotedGeom, meta.PhysicalName, quotedGeom)
 		if err := a.QueryRow(query).Scan(&minX, &minY, &maxX, &maxY); err != nil {
 			return err
 		}

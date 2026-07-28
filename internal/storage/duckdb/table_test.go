@@ -33,6 +33,65 @@ func Test_Adapter_AddColumn(t *testing.T) {
 	assert.Equal(t, "DOUBLE", colType)
 }
 
+// A column name with accents/spaces is common on imported French data
+// (e.g. "nom_région") — it must round-trip through every write/read path,
+// not just be rejected because it doesn't match a strict identifier regex.
+func Test_Adapter_AccentedColumnName_RoundTrips(t *testing.T) {
+	a := setupAdapter(t)
+	tableId := createScalarTable(t, a)
+
+	require.NoError(t, a.AddColumn(tableId, "nom_région", "VARCHAR"))
+
+	colType, err := a.ColumnType(tableId, "nom_région")
+	require.NoError(t, err)
+	assert.Equal(t, "VARCHAR", colType)
+
+	pkey, err := a.InsertRow(tableId, map[string]any{"nom_région": "Île-de-France"})
+	require.NoError(t, err)
+
+	require.NoError(t, a.Update(tableId, []string{pkey}, map[string]any{"nom_région": "Bretagne"}))
+
+	rows, err := a.GetRowsByPkey(tableId, []string{pkey})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Bretagne", rows[0].Values["nom_région"])
+
+	values, err := a.GetDistinctValues(tableId, "nom_région")
+	require.NoError(t, err)
+	assert.Equal(t, []any{"Bretagne"}, values)
+}
+
+// A multi-column update must be one statement, not one per column — an
+// invalid value on one column must leave every column unchanged (SEP-5).
+func Test_Adapter_Update_MultipleColumnsIsAtomic(t *testing.T) {
+	a := setupAdapter(t)
+	tableId, geomCol := createGeoTable(t, a)
+	require.NoError(t, a.AddColumn(tableId, "name", "VARCHAR"))
+
+	pkey, err := a.InsertRow(tableId, map[string]any{"name": "before"})
+	require.NoError(t, err)
+
+	err = a.Update(tableId, []string{pkey}, map[string]any{
+		"name":  "after",
+		geomCol: "not-a-valid-wkt",
+	})
+	assert.Error(t, err)
+
+	rows, err := a.GetRowsByPkey(tableId, []string{pkey})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "before", rows[0].Values["name"], "the scalar column must not have changed when the geometry column failed")
+
+	require.NoError(t, a.Update(tableId, []string{pkey}, map[string]any{
+		"name":  "after",
+		geomCol: "POINT(1 2)",
+	}))
+
+	rows, err = a.GetRowsByPkey(tableId, []string{pkey})
+	require.NoError(t, err)
+	assert.Equal(t, "after", rows[0].Values["name"])
+}
+
 func Test_Adapter_GetRowsWithFilter(t *testing.T) {
 	a := setupAdapter(t)
 	tableId := createScalarTable(t, a)

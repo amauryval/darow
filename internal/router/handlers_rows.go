@@ -40,7 +40,7 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rt.tableService.ListRows(meta.TableId, offset, limit)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -48,7 +48,7 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 	for _, row := range page.Rows {
 		rows = append(rows, rowToJSON(row))
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"rows": rows, "total": page.Total, "limit": page.Limit, "offset": page.Offset,
 	})
 }
@@ -70,11 +70,11 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 		Rows []map[string]any `json:"rows"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 	if len(body.Rows) == 0 {
-		WriteError(w, errNoRowsProvided, http.StatusBadRequest)
+		WriteError(w, req, errNoRowsProvided, http.StatusBadRequest)
 		return
 	}
 
@@ -88,12 +88,11 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 		pkeys, err = rt.tableService.BulkInsertRows(meta.TableId, body.Rows)
 	}
 	if err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string][]string{"pkeys": pkeys})
+	writeJSON(w, http.StatusCreated, map[string][]string{"pkeys": pkeys})
 }
 
 // getRow handles GET /tables/{tableId}/rows/{pkey}.
@@ -112,15 +111,15 @@ func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rt.tableService.GetRow(meta.TableId, pkey)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	if row == nil {
-		WriteError(w, errRowNotFound, http.StatusNotFound)
+		WriteError(w, req, errRowNotFound, http.StatusNotFound)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{"row": rowToJSON(*row)})
+	writeJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
 }
 
 // updateRow handles PATCH /tables/{tableId}/rows/{pkey}.
@@ -140,23 +139,23 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 
 	var updates map[string]any
 	if err := json.NewDecoder(req.Body).Decode(&updates); err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	for column, value := range updates {
-		if err := rt.tableService.UpdateRow(meta.TableId, []string{pkey}, column, value); err != nil {
-			WriteError(w, err, http.StatusBadRequest)
+	if len(updates) > 0 {
+		if err := rt.tableService.UpdateRow(meta.TableId, []string{pkey}, updates); err != nil {
+			WriteError(w, req, err, http.StatusBadRequest)
 			return
 		}
 	}
 
 	row, err := rt.tableService.GetRow(meta.TableId, pkey)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"row": rowToJSON(*row)})
+	writeJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
 }
 
 // deleteRow handles DELETE /tables/{tableId}/rows/{pkey}.
@@ -172,7 +171,7 @@ func (rt *Router) deleteRow(w http.ResponseWriter, req *http.Request) {
 	pkey := chi.URLParam(req, "pkey")
 
 	if err := rt.tableService.RemoveRows(meta.TableId, []string{pkey}); err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -67,13 +67,14 @@ func Test_TableService_UpdateRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m := setupTableService(t)
 
+			updates := map[string]any{c.column: "value"}
 			m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}, nil).Once()
-			m.On("Update", "id-1", []string{"pk-1"}, c.column, "value").Return(nil).Once()
+			m.On("Update", "id-1", []string{"pk-1"}, updates).Return(nil).Once()
 			if c.wantRefresh {
 				m.On("RefreshDerivedMetadata", "id-1").Return(nil).Once()
 			}
 
-			err := svc.UpdateRow("id-1", []string{"pk-1"}, c.column, "value")
+			err := svc.UpdateRow("id-1", []string{"pk-1"}, updates)
 			require.NoError(t, err)
 		})
 	}
@@ -141,6 +142,38 @@ func Test_TableService_ImportFromFile(t *testing.T) {
 			assert.Equal(t, "id-1", tableId)
 		})
 	}
+}
+
+// A failure materializing the physical table must not leave an orphaned
+// metadata row: the Create above it must be rolled back (BUG-2).
+func Test_TableService_ImportFromFile_RollsBackMetadataOnCreateFromFileFailure(t *testing.T) {
+	svc, m := setupTableService(t)
+
+	m.On("Create", "buildings.geojson", false, "").Return("id-1", nil).Once()
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
+	m.On("CreateFromFile", "t_id1", "/data/buildings.geojson", "").Return("", false, errors.New("corrupt file")).Once()
+	m.On("Remove", "id-1").Return(nil).Once()
+
+	_, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson", "")
+
+	assert.Error(t, err)
+}
+
+// If the rollback itself fails, the caller still needs to see the original
+// failure (not just a cleanup error), plus a hint that cleanup failed too.
+func Test_TableService_ImportFromFile_ReportsOriginalErrorWhenRollbackAlsoFails(t *testing.T) {
+	svc, m := setupTableService(t)
+
+	m.On("Create", "buildings.geojson", false, "").Return("id-1", nil).Once()
+	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
+	m.On("CreateFromFile", "t_id1", "/data/buildings.geojson", "").Return("", false, errors.New("corrupt file")).Once()
+	m.On("Remove", "id-1").Return(errors.New("db locked")).Once()
+
+	_, err := svc.ImportFromFile("buildings.geojson", "/data/buildings.geojson", ".geojson", "")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "corrupt file")
+	assert.Contains(t, err.Error(), "db locked")
 }
 
 func Test_TableService_ImportFromFile_ForwardsLayer(t *testing.T) {

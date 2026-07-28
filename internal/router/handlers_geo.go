@@ -25,7 +25,7 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 //
 // @Summary Get an MVT tile
 // @Tags geo
-// @Produce application/x-protobuf
+// @Produce application/vnd.mapbox-vector-tile
 // @Param tableId path string true "Table ID"
 // @Param z path int true "Zoom level"
 // @Param x path int true "Tile X"
@@ -37,13 +37,13 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 
 	z, x, y, err := parseTileCoords(req)
 	if err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	mvt, err := rt.geoService.GetTile(req.Context(), meta.TableId, z, x, y)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -70,10 +70,10 @@ func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 
 	types, err := rt.geoService.GeometryTypes(meta.TableId)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string][]string{"types": types})
+	writeJSON(w, http.StatusOK, map[string][]string{"types": types})
 }
 
 // filterByBbox handles POST /tables/{tableId}/bbox.
@@ -92,14 +92,14 @@ func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
 		Bbox [4]float64 `json:"bbox"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, err, http.StatusBadRequest)
+		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	pkeys, err := rt.geoService.FilterByBbox(meta.TableId, body.Bbox)
 	if err != nil {
-		WriteError(w, err, http.StatusInternalServerError)
+		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string][]string{"pkeys": pkeys})
+	writeJSON(w, http.StatusOK, map[string][]string{"pkeys": pkeys})
 }

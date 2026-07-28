@@ -55,5 +55,10 @@ that contradicts it should flag the conflict rather than silently resolve it.
 -   `mise run docs` — regenerate Swagger docs (`docs/docs.go`) from handler annotations
 -   `mise run ui-install` / `ui-build` / `ui-dev` — web UI deps / production build (into
     `internal/webui/dist`) / Vite dev server
+-   `mise run ui-lint` / `ui-test` — eslint / vitest for the web UI
 -   `mise run build` — build the server binary (regenerates docs and UI first)
 -   `mise run run-dev` — run the server against `config.yaml` (regenerates docs and UI first)
+-   CI (`.github/workflows/ci.yml`) runs `go vet`/`gofmt`, `go test -race`, `ui-lint`/`ui-test`/
+    `ui-build` (via `vue-tsc`/`vitest`/`vite`), and a Docker image build on every push/PR
+-   `Dockerfile` — multi-stage build (UI → Go binary → slim runtime image); see also
+    `.dockerignore`

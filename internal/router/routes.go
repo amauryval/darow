@@ -35,6 +35,7 @@ func (rt *Router) Setup() http.Handler {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -47,7 +48,12 @@ func (rt *Router) Setup() http.Handler {
 	r.Route("/sources", func(sub chi.Router) {
 		sub.Get("/", rt.listSources)
 		sub.Post("/refresh", rt.refreshSources)
-		sub.Post("/upload", rt.uploadSource)
+		// Overrides the global body cap: an upload is a whole source file
+		// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
+		// covers multipart framing (boundary, headers) around the file part
+		// itself, so a file right at the limit isn't cut off by framing
+		// overhead before SourceService.Upload's own oversize check runs.
+		sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
 		sub.Post("/{name}/load", rt.loadSource)
 	})
 

@@ -8,9 +8,10 @@ duckdb:
 
 sources:
   workDir: "./data/sources"
-  maxSizeBytes: 1048576000 # 100 Mo — fichier au-delà exclu de la liste chargeable
+  maxSizeBytes: 1048576000 # 100 Mo
   allowedExtensions: [".geojson", ".shp", ".csv", ".gpkg"]
 
 api:
   defaultRowLimit: 100
   maxRowLimit: 1000
+  maxBodyBytes: 10485760 # 10 Mo

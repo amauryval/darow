@@ -10,7 +10,7 @@ Si une tâche demandée contredit une règle de ce document, la règle de ce doc
 
 Ces règles s'appliquent à tout le code produit pour ce projet, quelle que soit la tâche en cours. Ne jamais les enfreindre pour "simplifier" ou "aller plus vite".
 
-1. **Jamais d'identifiant SQL non validé.** Tout nom de table/colonne interpolé dans une requête (via `fmt.Sprintf` ou équivalent) doit passer par `validateIdentifier` avant. Valeurs (pas identifiants) toujours en paramètres liés (`?`), jamais interpolées.
+1. **Jamais d'identifiant SQL non validé.** Tout nom de table/colonne interpolé dans une requête (via `fmt.Sprintf` ou équivalent) doit passer par `storage.ValidateIdentifier` ou `storage.QuoteIdentifier` avant. `ValidateIdentifier` (rejet par motif alphanumérique strict) est réservé aux identifiants générés côté serveur (`physicalName`, mots-clés de type DuckDB) — jamais à un nom de colonne susceptible de provenir de données importées (accents, espaces, ponctuation d'un CSV/GeoJSON français), qui doit passer par `QuoteIdentifier` (guillemetage, doublement des `"` internes, rejet du seul caractère réellement dangereux dans un identifiant guillemeté : l'octet NUL). Dans les deux cas, la sécurité vient de la validation avant interpolation, pas du jeu de caractères qu'elle autorise. Valeurs (pas identifiants) toujours en paramètres liés (`?`), jamais interpolées.
 2. **`tableId` (UUID) n'est jamais un identifiant SQL.** Chaque table logique a un `physicalName` généré côté serveur (`t_<uuid_sans_tirets>`), stocké dans `metadata`, résolu à chaque accès.
 3. **Génération d'identifiant : `uuid()` (fonction native DuckDB).** Extension spatiale chargée une fois au démarrage (`INSTALL spatial; LOAD spatial;`), jamais par requête individuelle.
 4. **Toute requête SQL fournie par l'utilisateur (`/derive`) est restreinte à `SELECT`.** Aucune requête arbitraire n'atteint `Exec`.
@@ -385,15 +385,30 @@ CREATE INDEX idx_t_a1b2c3_geom ON t_a1b2c3 USING RTREE (geometryColumn);
 ```go
 var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-func validateIdentifier(name string) error {
+// Réservée aux identifiants générés côté serveur (physicalName, mots-clés
+// de type DuckDB) — jamais à un nom de colonne issu de données importées.
+func ValidateIdentifier(name string) error {
     if !identifierRe.MatchString(name) {
         return fmt.Errorf("invalid identifier: %q", name)
     }
     return nil
 }
+
+// Pour tout nom de colonne pouvant provenir de données importées (accents,
+// espaces, ponctuation) : validation par guillemetage, pas par rejet du
+// jeu de caractères.
+func QuoteIdentifier(name string) (string, error) {
+    if name == "" {
+        return "", fmt.Errorf("empty identifier")
+    }
+    if strings.ContainsRune(name, 0) {
+        return "", fmt.Errorf("invalid identifier: %q", name)
+    }
+    return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`, nil
+}
 ```
 
-Appelée avant toute interpolation d'un `physicalName` ou d'un nom de colonne dans une requête SQL (règle 1).
+`ValidateIdentifier` est appelée avant toute interpolation d'un `physicalName` ; `QuoteIdentifier` avant toute interpolation d'un nom de colonne (règle 1). Un nom de colonne n'est jamais passé à `Exec`/`Query` non guillemeté.
 
 ### 4.4 Interfaces Go
 
@@ -466,7 +481,9 @@ type TableReader interface {
 
 type TableWriter interface {
     AddColumn(tableId, colName, colType string) error
-    Update(tableId string, pkeys []string, column string, value any) error
+    // Update met à jour toutes les colonnes de updates en une requête —
+    // un update multi-colonnes est atomique, jamais un Exec par colonne.
+    Update(tableId string, pkeys []string, updates map[string]any) error
     Remove(tableId string, pKeys []string) error
     InsertRow(tableId string, values map[string]any) (string, error)
     // Doit s'exécuter dans une transaction unique — voir règle 6.
@@ -492,9 +509,12 @@ type FilterCondition struct {
     Value    any    // toujours passé en paramètre lié, jamais interpolé
 }
 
-// BuildFilter valide chaque Column contre validColumns et chaque Operator
-// contre la whitelist, puis construit "column op ?" par condition jointe en
-// AND. C'est le seul chemin autorisé vers GetRowsWithFilter — voir règle 5.
+// BuildFilter valide chaque Column contre validColumns (le whitelisting
+// contre le schéma réel de la table est ce qui rend l'interpolation sûre)
+// et chaque Operator contre la whitelist, guillemette Column via
+// QuoteIdentifier (règle 1), puis construit "\"column\" op ?" par condition
+// jointe en AND. C'est le seul chemin autorisé vers GetRowsWithFilter —
+// voir règle 5.
 func BuildFilter(conditions []FilterCondition, validColumns []string) (filter string, args []any, err error) {
     // implémentation : validation puis construction de la clause
 }
@@ -622,11 +642,14 @@ func (d *DuckDBAdapter) BulkInsert(tableId string, rows []map[string]any) ([]str
     return pkeys, nil
 }
 
-// Update : si column est la colonne géométrique, la valeur (WKT) est
-// convertie via ST_GeomFromText(?) plutôt que bindée directement — une
-// géométrie n'est pas une valeur scalaire (règle 22). column est validé
-// comme identifiant (règle 1) avant interpolation dans le SET.
-func (d *DuckDBAdapter) Update(tableId string, pkeys []string, column string, value any) error {
+// Update : chaque colonne de updates est mise à jour dans une unique
+// requête (spec §5.1) — un update multi-colonnes est atomique, jamais un
+// Exec par colonne. Si une colonne est la colonne géométrique, sa valeur
+// (WKT) est convertie via ST_GeomFromText(?) plutôt que bindée directement
+// — une géométrie n'est pas une valeur scalaire (règle 22). Chaque colonne
+// est guillemetée via QuoteIdentifier (règle 1) avant interpolation dans
+// le SET.
+func (d *DuckDBAdapter) Update(tableId string, pkeys []string, updates map[string]any) error {
     meta, err := d.GetMetadata(tableId)
     if err != nil {
         return err
@@ -634,18 +657,26 @@ func (d *DuckDBAdapter) Update(tableId string, pkeys []string, column string, va
     if err := validateIdentifier(meta.PhysicalName); err != nil {
         return err
     }
-    if err := validateIdentifier(column); err != nil {
-        return err
-    }
 
-    setClause := fmt.Sprintf("%s = ?", column)
-    if column == meta.GeometryColumn {
-        setClause = fmt.Sprintf("%s = ST_GeomFromText(?)", column)
+    setClauses := make([]string, 0, len(updates))
+    args := make([]any, 0, len(updates)+len(pkeys))
+    for column, value := range updates {
+        quotedCol, err := quoteIdentifier(column)
+        if err != nil {
+            return err
+        }
+        setClause := fmt.Sprintf("%s = ?", quotedCol)
+        if column == meta.GeometryColumn {
+            setClause = fmt.Sprintf("%s = ST_GeomFromText(?)", quotedCol)
+        }
+        setClauses = append(setClauses, setClause)
+        args = append(args, value)
     }
+    args = append(args, pkeysToArgs(pkeys)...)
 
     query := fmt.Sprintf(
         `UPDATE %s SET %s WHERE __pkey IN (%s)`,
-        meta.PhysicalName, setClause, placeholders(len(pkeys)),
+        meta.PhysicalName, strings.Join(setClauses, ", "), placeholders(len(pkeys)),
     )
 
     d.writeMu.Lock()
@@ -705,22 +736,25 @@ func (s *TableService) UpdateMetadata(tableId string, updates map[string]any) er
     return nil
 }
 
-// UpdateRow met à jour une colonne pour les pkeys donnés. Si column est la
-// colonne géométrique, RefreshDerivedMetadata recalcule bbox et bumpe
+// UpdateRow met à jour toutes les colonnes de updates pour les pkeys donnés
+// en un seul appel storage, donc un PATCH multi-colonnes est atomique :
+// soit toutes les colonnes changent, soit aucune. Si une des colonnes est
+// la colonne géométrique, RefreshDerivedMetadata recalcule bbox et bumpe
 // UpdatedAt (règle 9) — c'est ce qui invalide le cache de tuiles de
 // GeoService (5.3, règle 20) et le cache de métadonnées (règle 11). Un
-// Update sur un champ scalaire ne déclenche ni l'un ni l'autre.
-func (s *TableService) UpdateRow(tableId string, pkeys []string, column string, value any) error {
+// update ne touchant que des champs scalaires ne déclenche ni l'un ni
+// l'autre.
+func (s *TableService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
     meta, err := s.GetMetadata(tableId)
     if err != nil {
         return err
     }
 
-    if err := s.storage.Update(tableId, pkeys, column, value); err != nil {
+    if err := s.storage.Update(tableId, pkeys, updates); err != nil {
         return err
     }
 
-    if column == meta.GeometryColumn {
+    if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
         if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
             return err
         }
@@ -958,7 +992,7 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
         body.NewTableName,
     )
     if err != nil {
-        WriteError(w, err, http.StatusBadRequest)
+        WriteError(w, req, err, http.StatusBadRequest)
         return
     }
 
@@ -983,11 +1017,20 @@ type ErrorResponse struct {
     Code    int    `json:"code"`
 }
 
-func WriteError(w http.ResponseWriter, err error, code int) {
+// Un 5xx journalise err côté serveur (méthode + chemin) et n'en envoie jamais
+// le détail au client (peut contenir du texte d'erreur DuckDB, un
+// physicalName...) — seul un 4xx, causé par la requête de l'appelant
+// lui-même, expose le message sous-jacent.
+func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
+    message := err.Error()
+    if code >= 500 {
+        log.Printf("%s %s: %v", req.Method, req.URL.Path, err)
+        message = http.StatusText(code)
+    }
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(code)
     json.NewEncoder(w).Encode(ErrorResponse{
-        Error:   err.Error(),
+        Error:   message,
         Message: http.StatusText(code),
         Code:    code,
     })
@@ -999,6 +1042,13 @@ func WriteError(w http.ResponseWriter, err error, code int) {
 ## 7. Chargement de données (`SourceService.Load`)
 
 `SourceService.Load` (section 3.2) appelle `TableService.ImportFromFile(name, path, ext, layer)` avec un chemin déjà résolu et validé dans `workDir` — `layer` reste vide hors GeoPackage (7.1).
+
+`ImportFromFile` (et de façon symétrique `DeriveTable`, section 8) enregistre d'abord la ligne
+`metadata` (`storage.Create`) puis matérialise la table physique. Si la matérialisation échoue
+(fichier corrompu, requête invalide) — le cas nominal d'une erreur utilisateur, pas une exception —
+la ligne `metadata` déjà créée est supprimée (`storage.Remove`, dont le `DROP TABLE IF EXISTS` gère
+aussi bien une table jamais créée qu'une table partiellement créée) avant de renvoyer l'erreur.
+Sans cette compensation, une table apparaîtrait dans `GET /tables` sans `physicalName` valide.
 
 `ST_Read` est un mécanisme de **lecture** du fichier source, jamais un mode de stockage : il ne permet ni `AddColumn`, ni `Update`/`InsertRow`/`Remove` fiables, ni `__pkey`. La table doit toujours être matérialisée (règle 13) :
 
@@ -1042,6 +1092,21 @@ Un `.gpkg` n'est donc jamais « chargé » comme un tout : chaque couche se char
 ## 8. Dérivation de tables (`/derive`)
 
 `query` est une requête `SELECT` fournie par l'utilisateur (règle 4) — rejeter tout le reste avant exécution.
+
+Le rejet se fait en deux temps : le service layer fait un rejet rapide sur la forme de la requête
+(pas de `;`, doit commencer par `SELECT`) avant même de toucher le storage layer ; le storage layer
+(`DuckDBAdapter.CreateFromQuery`) fait le contrôle qui compte réellement, en s'appuyant sur le
+propre parseur SQL de DuckDB (`json_serialize_sql`) plutôt que sur une liste noire de mots-clés —
+une liste noire ne peut jamais énumérer toutes les fonctions-table de DuckDB qui lisent des
+fichiers ou de l'état système (`read_csv`, `read_text`, `duckdb_settings`, `st_read_meta`, ...).
+`json_serialize_sql` rejette déjà lui-même tout ce qui n'est pas un unique `SELECT` ; l'arbre
+résultant est ensuite parcouru récursivement pour rejeter tout nœud `TABLE_FUNCTION` (aucune
+fonction-table n'a de raison légitime d'apparaître dans un `/derive`, qui ne fait que joindre des
+tables déjà enregistrées) et tout nœud `BASE_TABLE` dont le nom ne figure pas dans les
+`physicalName` actuellement enregistrés dans `metadata` — `metadata` elle-même n'y figure jamais,
+donc une requête ne peut jamais la lire. Les noms de CTE (`WITH x AS (...)`) sont collectés à part
+et ajoutés à l'ensemble autorisé, puisqu'ils ne résolvent qu'à l'intérieur de la requête qui les
+définit.
 
 Table dérivée = table matérialisée, jamais une vue (règle 13) :
 

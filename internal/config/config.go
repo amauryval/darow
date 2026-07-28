@@ -35,10 +35,11 @@ type SourcesConfig struct {
 }
 
 // APIConfig holds settings adjustable without recompiling (règle 18) for
-// row pagination limits.
+// row pagination limits and request body size.
 type APIConfig struct {
-	DefaultRowLimit int `yaml:"defaultRowLimit"`
-	MaxRowLimit     int `yaml:"maxRowLimit"`
+	DefaultRowLimit int   `yaml:"defaultRowLimit"`
+	MaxRowLimit     int   `yaml:"maxRowLimit"`
+	MaxBodyBytes    int64 `yaml:"maxBodyBytes"`
 }
 
 func defaultConfig() Config {
@@ -53,6 +54,7 @@ func defaultConfig() Config {
 		API: APIConfig{
 			DefaultRowLimit: 100,
 			MaxRowLimit:     1000,
+			MaxBodyBytes:    10 * 1024 * 1024,
 		},
 	}
 }

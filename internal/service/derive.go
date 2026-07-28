@@ -8,26 +8,18 @@ import (
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
 
-// forbiddenKeywords blocks statement chaining and DDL/DML smuggled inside
-// a nominally-SELECT query (e.g. via a CTE or subquery).
-var forbiddenKeywords = []string{
-	"insert", "update", "delete", "drop", "alter", "create",
-	"attach", "detach", "copy", "pragma", "call", "install", "load",
-}
-
+// validateSelectOnly is a cheap fail-fast on the query's shape, rejecting
+// anything before it ever reaches storage. It is intentionally not the
+// authoritative check: storage.CreateFromQuery validates the query's full
+// structure with DuckDB's own parser (règle 4) — a regex/keyword blacklist
+// can never enumerate every table function that reads files or system
+// state, so it isn't trusted to do that job here.
 func validateSelectOnly(query string) error {
 	if strings.Contains(query, ";") {
 		return fmt.Errorf("query must be a single statement")
 	}
 	if !selectOnlyRe.MatchString(query) {
 		return fmt.Errorf("only SELECT queries are allowed")
-	}
-
-	lower := strings.ToLower(query)
-	for _, kw := range forbiddenKeywords {
-		if regexp.MustCompile(`\b` + kw + `\b`).MatchString(lower) {
-			return fmt.Errorf("query contains forbidden keyword: %q", kw)
-		}
 	}
 	return nil
 }
@@ -52,24 +44,24 @@ func (s *TableService) DeriveTable(sourceTableId, query, newTableName string) (s
 
 	meta, err := s.storage.GetMetadata(tableId)
 	if err != nil {
-		return "", err
+		return "", s.rollbackCreate(tableId, err)
 	}
 
 	geometryColumn, isGeo, err := s.storage.CreateFromQuery(meta.PhysicalName, query)
 	if err != nil {
-		return "", fmt.Errorf("deriving table: %w", err)
+		return "", s.rollbackCreate(tableId, fmt.Errorf("deriving table: %w", err))
 	}
 
 	if isGeo {
 		if err := s.storage.UpdateMetadata(tableId, map[string]any{
 			"isGeo": true, "geometryColumn": geometryColumn,
 		}); err != nil {
-			return "", err
+			return "", s.rollbackCreate(tableId, err)
 		}
 	}
 
 	if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
-		return "", err
+		return "", s.rollbackCreate(tableId, err)
 	}
 	s.invalidateMetadataCache(tableId)
 	return tableId, nil

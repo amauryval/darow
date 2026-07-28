@@ -120,8 +120,8 @@ func (m *Storage) AddColumn(tableId, colName, colType string) error {
 	return m.Called(tableId, colName, colType).Error(0)
 }
 
-func (m *Storage) Update(tableId string, pkeys []string, column string, value any) error {
-	return m.Called(tableId, pkeys, column, value).Error(0)
+func (m *Storage) Update(tableId string, pkeys []string, updates map[string]any) error {
+	return m.Called(tableId, pkeys, updates).Error(0)
 }
 
 func (m *Storage) RemoveRows(tableId string, pKeys []string) error {

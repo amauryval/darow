@@ -635,7 +635,7 @@ const docTemplate = `{
         "/tables/{tableId}/tiles/{z}/{x}/{y}": {
             "get": {
                 "produces": [
-                    "application/x-protobuf"
+                    "application/vnd.mapbox-vector-tile"
                 ],
                 "tags": [
                     "geo"

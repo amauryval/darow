@@ -77,7 +77,10 @@ type TableReader interface {
 // TableWriter exposes write access to a data table's rows and schema.
 type TableWriter interface {
 	AddColumn(tableId, colName, colType string) error
-	Update(tableId string, pkeys []string, column string, value any) error
+	// Update sets every column in updates for the given rows in a single
+	// statement, so a multi-column update is atomic — either every column
+	// changes or none does.
+	Update(tableId string, pkeys []string, updates map[string]any) error
 	// RemoveRows deletes the given rows. Named distinctly from
 	// MetadataWriter.Remove (which drops the whole table) since Go cannot
 	// expose two methods named Remove with different signatures on one
