@@ -12,7 +12,7 @@ import (
 
 	_ "gogeoserver/docs"
 	"gogeoserver/internal/config"
-	"gogeoserver/internal/service"
+	"gogeoserver/internal/core"
 )
 
 // Router wires the HTTP layer to the service layer. Each family of
@@ -30,21 +30,19 @@ type Router struct {
 	uiAssets fs.FS
 }
 
-// NewRouter builds a Router serving every service above, honoring
+// NewRouter builds a Router serving every service in svcs, honoring
 // apiCfg's row pagination limits (règle 18). uiAssets is the admin UI's
 // built static files, served under /ui. ready backs /readyz — it should
 // ping the underlying storage connection.
 func NewRouter(
-	metadataSvc metadataAPI, rowSvc rowAPI, schemaSvc schemaAPI, deriveSvc deriveAPI,
-	geoSvc geoAPI, sourceSvc sourceAPI, exportSvc *service.ExportService,
-	apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
+	svcs *core.Services, apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
 ) *Router {
 	return &Router{
-		tables:   newTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, apiCfg),
-		rows:     newRowsHandler(metadataSvc, rowSvc, apiCfg),
-		geo:      newGeoHandler(metadataSvc, schemaSvc, geoSvc),
-		sources:  newSourcesHandler(sourceSvc),
-		export:   newExportHandler(metadataSvc, exportSvc),
+		tables:   newTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
+		rows:     newRowsHandler(svcs.Metadata, svcs.Row, apiCfg),
+		geo:      newGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
+		sources:  newSourcesHandler(svcs.Source),
+		export:   newExportHandler(svcs.Metadata, svcs.Export),
 		ops:      newOpsHandler(ready),
 		apiCfg:   apiCfg,
 		uiAssets: uiAssets,

@@ -10,59 +10,47 @@ import (
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
-	"time"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/config"
-	"gogeoserver/internal/service"
+	"gogeoserver/internal/core"
 	"gogeoserver/internal/storage"
 	"gogeoserver/internal/storage/mocks"
 )
 
 type routerDeps struct {
-	metadataSvc *service.MetadataService
-	rowSvc      *service.RowService
-	schemaSvc   *service.SchemaService
-	deriveSvc   *service.DeriveService
-	geoSvc      *service.GeoService
-	sourceSvc   *service.SourceService
-	exportSvc   *service.ExportService
-	storage     *mocks.Storage
-	uiAssets    fstest.MapFS
+	svcs     *core.Services
+	storage  *mocks.Storage
+	uiAssets fstest.MapFS
 }
 
 func setupRouterDeps(t *testing.T) routerDeps {
 	m := &mocks.Storage{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 
-	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute))
-	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
-	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
-	deriveSvc := service.NewDeriveService(metadataSvc, m)
-	importSvc := service.NewImportService(metadataSvc, m)
-	geoSvc := service.NewGeoService(m, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
-	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
+	cfg := config.Config{
+		Sources: config.SourcesConfig{WorkDir: t.TempDir()},
+		API:     config.APIConfig{ExportBatchSize: 1000},
+		Cache: config.CacheConfig{
+			MetadataMaxItems: 1000, MetadataTTLSec: 300,
+			SchemaMaxItems: 1000, SchemaTTLSec: 300,
+			TileMaxItems: 1000, TileTTLSec: 300,
+		},
+	}
+	svcs := core.NewServices(cfg, m)
 
 	return routerDeps{
-		metadataSvc: metadataSvc,
-		rowSvc:      rowSvc,
-		schemaSvc:   schemaSvc,
-		deriveSvc:   deriveSvc,
-		geoSvc:      geoSvc,
-		sourceSvc:   sourceSvc,
-		exportSvc:   exportSvc,
-		storage:     m,
-		uiAssets:    fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}},
+		svcs:     svcs,
+		storage:  m,
+		uiAssets: fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}},
 	}
 }
 
 func (d routerDeps) newRouter(apiCfg config.APIConfig, ready func(context.Context) error) *Router {
-	return NewRouter(d.metadataSvc, d.rowSvc, d.schemaSvc, d.deriveSvc, d.geoSvc, d.sourceSvc, d.exportSvc, apiCfg, d.uiAssets, ready)
+	return NewRouter(d.svcs, apiCfg, d.uiAssets, ready)
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {
@@ -96,24 +84,24 @@ func Test_NewRouter(t *testing.T) {
 
 	rt := deps.newRouter(apiCfg, ready)
 
-	assert.Same(t, deps.metadataSvc, rt.tables.metadataService)
-	assert.Same(t, deps.schemaSvc, rt.tables.schemaService)
-	assert.Same(t, deps.deriveSvc, rt.tables.deriveService)
-	assert.Same(t, deps.rowSvc, rt.tables.rowService)
+	assert.Same(t, deps.svcs.Metadata, rt.tables.metadataService)
+	assert.Same(t, deps.svcs.Schema, rt.tables.schemaService)
+	assert.Same(t, deps.svcs.Derive, rt.tables.deriveService)
+	assert.Same(t, deps.svcs.Row, rt.tables.rowService)
 	assert.Equal(t, apiCfg, rt.tables.apiCfg)
 
-	assert.Same(t, deps.metadataSvc, rt.rows.metadataService)
-	assert.Same(t, deps.rowSvc, rt.rows.rowService)
+	assert.Same(t, deps.svcs.Metadata, rt.rows.metadataService)
+	assert.Same(t, deps.svcs.Row, rt.rows.rowService)
 	assert.Equal(t, apiCfg, rt.rows.apiCfg)
 
-	assert.Same(t, deps.metadataSvc, rt.geo.metadataService)
-	assert.Same(t, deps.schemaSvc, rt.geo.schemaService)
-	assert.Same(t, deps.geoSvc, rt.geo.geoService)
+	assert.Same(t, deps.svcs.Metadata, rt.geo.metadataService)
+	assert.Same(t, deps.svcs.Schema, rt.geo.schemaService)
+	assert.Same(t, deps.svcs.Geo, rt.geo.geoService)
 
-	assert.Same(t, deps.sourceSvc, rt.sources.sourceService)
+	assert.Same(t, deps.svcs.Source, rt.sources.sourceService)
 
-	assert.Same(t, deps.metadataSvc, rt.export.metadataService)
-	assert.Same(t, deps.exportSvc, rt.export.exportService)
+	assert.Same(t, deps.svcs.Metadata, rt.export.metadataService)
+	assert.Same(t, deps.svcs.Export, rt.export.exportService)
 
 	assert.NoError(t, rt.ops.ready(context.Background()))
 	assert.Equal(t, apiCfg, rt.apiCfg)
