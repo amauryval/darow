@@ -55,9 +55,6 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(slogLogger)
 	r.Use(middleware.Recoverer)
-	if rt.apiCfg.RequestTimeoutSec > 0 {
-		r.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
-	}
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
 	r.Get("/healthz", rt.healthz)
@@ -72,52 +69,68 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
 	r.Route("/api/v1", func(v1 chi.Router) {
-		v1.Route("/sources", func(sub chi.Router) {
-			sub.Get("/", rt.listSources)
-			sub.Post("/refresh", rt.refreshSources)
-			// Overrides the global body cap: an upload is a whole source file
-			// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
-			// covers multipart framing (boundary, headers) around the file part
-			// itself, so a file right at the limit isn't cut off by framing
-			// overhead before SourceService.Upload's own oversize check runs.
-			sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
-			sub.Post("/{name}/load", rt.loadSource)
-			sub.Get("/{name}/metadata", rt.getSourceMetadata)
-			sub.Delete("/{name}", rt.deleteSource)
-		})
+		// middleware.Timeout is scoped to this Group rather than applied at
+		// the very top of Setup, so it never wraps exportTable below — that
+		// route is registered outside the Group precisely to escape it
+		// (NEW-BUG-7). Everything else keeps the same bounded-request budget
+		// as before.
+		v1.Group(func(v1 chi.Router) {
+			if rt.apiCfg.RequestTimeoutSec > 0 {
+				v1.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
+			}
 
-		v1.Route("/tables", func(sub chi.Router) {
-			sub.Get("/", rt.listTables)
+			v1.Route("/sources", func(sub chi.Router) {
+				sub.Get("/", rt.listSources)
+				sub.Post("/refresh", rt.refreshSources)
+				// Overrides the global body cap: an upload is a whole source file
+				// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
+				// covers multipart framing (boundary, headers) around the file part
+				// itself, so a file right at the limit isn't cut off by framing
+				// overhead before SourceService.Upload's own oversize check runs.
+				sub.With(maxBodyBytes(rt.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.uploadSource)
+				sub.Post("/{name}/load", rt.loadSource)
+				sub.Get("/{name}/metadata", rt.getSourceMetadata)
+				sub.Delete("/{name}", rt.deleteSource)
+			})
 
-			sub.Route("/{tableId}", func(sub chi.Router) {
-				sub.Use(rt.tableMiddleware)
+			v1.Route("/tables", func(sub chi.Router) {
+				sub.Get("/", rt.listTables)
 
-				sub.Get("/", rt.getTableMetadata)
-				sub.Patch("/", rt.renameTable)
-				sub.Delete("/", rt.deleteTable)
+				sub.Route("/{tableId}", func(sub chi.Router) {
+					sub.Use(rt.tableMiddleware)
 
-				sub.Get("/schema", rt.getSchema)
-				sub.Post("/columns", rt.addColumn)
-				sub.Post("/derive", rt.deriveTable)
-				sub.Get("/export", rt.exportTable)
-				sub.Post("/filter", rt.filterRows)
-				sub.Get("/columns/{col}/distinct", rt.getDistinctValues)
+					sub.Get("/", rt.getTableMetadata)
+					sub.Patch("/", rt.renameTable)
+					sub.Delete("/", rt.deleteTable)
 
-				sub.Route("/rows", func(sub chi.Router) {
-					sub.Get("/", rt.listRows)
-					sub.Post("/", rt.addRows)
-					sub.Route("/{pkey}", func(sub chi.Router) {
-						sub.Get("/", rt.getRow)
-						sub.Patch("/", rt.updateRow)
-						sub.Delete("/", rt.deleteRow)
+					sub.Get("/schema", rt.getSchema)
+					sub.Post("/columns", rt.addColumn)
+					sub.Post("/derive", rt.deriveTable)
+					sub.Post("/filter", rt.filterRows)
+					sub.Get("/columns/{col}/distinct", rt.getDistinctValues)
+
+					sub.Route("/rows", func(sub chi.Router) {
+						sub.Get("/", rt.listRows)
+						sub.Post("/", rt.addRows)
+						sub.Route("/{pkey}", func(sub chi.Router) {
+							sub.Get("/", rt.getRow)
+							sub.Patch("/", rt.updateRow)
+							sub.Delete("/", rt.deleteRow)
+						})
 					})
-				})
 
-				sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
-				sub.Get("/geometry-types", rt.getGeometryTypes)
-				sub.Post("/bbox", rt.filterByBbox)
+					sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
+					sub.Get("/geometry-types", rt.getGeometryTypes)
+					sub.Post("/bbox", rt.filterByBbox)
+				})
 			})
 		})
+
+		// exportTable streams a table in bounded batches (PERF-2) and can
+		// legitimately run past any normal request's time budget on a large
+		// table — middleware.Timeout would otherwise cancel it mid-stream,
+		// truncating an already-200'd response (NEW-BUG-7).
+		v1.With(rt.tableMiddleware).Get("/tables/{tableId}/export", rt.exportTable)
 	})
 
 	// Backward-compatible redirects from the unversioned root (HTTP-2 —

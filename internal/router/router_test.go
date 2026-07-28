@@ -168,7 +168,10 @@ func Test_Router_FilterRows(t *testing.T) {
 	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
 	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
-	m.On("GetRowsWithFilter", mock.Anything, "id-1", `"height" > ?`, []any{float64(10)}, 0).Return([]storage.Row{
+	// An omitted "limit" must fall back to DefaultRowLimit (100 in
+	// setupRouter's config), not the JSON zero value (NEW-BUG-4) — asserted
+	// by the mock only accepting a call with limit=100, not limit=0.
+	m.On("GetRowsWithFilter", mock.Anything, "id-1", `"height" > ?`, []any{float64(10)}, 100).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"height": 12}},
 	}, nil).Once()
 
@@ -181,6 +184,25 @@ func Test_Router_FilterRows(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	rows, _ := body["rows"].([]any)
 	assert.Len(t, rows, 1)
+}
+
+// NEW-BUG-4: a positive limit above MaxRowLimit (1000 in setupRouter's
+// config) is capped, exactly like GET /rows's paginationParams already
+// caps it, instead of materializing an unbounded result set.
+func Test_Router_FilterRows_CapsLimitAboveMax(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"height"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
+	m.On("GetRowsWithFilter", mock.Anything, "id-1", `"height" > ?`, []any{float64(10)}, 1000).Return([]storage.Row{}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/filter", map[string]any{
+		"conditions": []map[string]any{{"column": "height", "operator": ">", "value": 10}},
+		"limit":      100000000,
+	})
+
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func Test_Router_FilterRows_RejectsUnknownColumn(t *testing.T) {
@@ -284,6 +306,20 @@ func Test_Router_UpdateRow(t *testing.T) {
 	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1/rows/pk-1", map[string]any{"height": 20})
 
 	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// NEW-BUG-1: an empty update body on an unknown pkey must not panic on a
+// nil dereference — GetRow legitimately returns (nil, nil) for a pkey that
+// doesn't exist, and updateRow must check for that exactly like getRow does.
+func Test_Router_UpdateRow_UnknownPkeyReturns404(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}, nil).Once()
+	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
+
+	rec := doRequest(handler, http.MethodPatch, "/api/v1/tables/id-1/rows/missing", map[string]any{})
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func Test_Router_DeleteRow(t *testing.T) {
@@ -495,6 +531,82 @@ func Test_Router_DeriveTable_RejectsNonSelect(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// NEW-SEC-1: an internal storage failure during /derive (e.g. the exact
+// "does not have a column named __pkey" DuckDB error from the original
+// audit) must not leak past a 500 — it is not a request-validation error,
+// so it must not reach the client as a 400 with the raw storage message
+// (which includes physicalName).
+func Test_Router_DeriveTable_StorageErrorReturns500WithoutLeakingDetail(t *testing.T) {
+	handler, m := setupRouter(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil).Once()
+	m.On("Create", mock.Anything, "derived", false, "").Return("id-2", nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", PhysicalName: "t_2"}, nil).Once()
+	m.On("CreateFromQuery", mock.Anything, "t_2", "SELECT name FROM t_1").
+		Return("", false, errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`)).Once()
+	m.On("Remove", mock.Anything, "id-2").Return(nil).Once()
+
+	rec := doRequest(handler, http.MethodPost, "/api/v1/tables/id-1/derive", map[string]string{
+		"query": "SELECT name FROM t_1", "newTableName": "derived",
+	})
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "t_2")
+	assert.NotContains(t, rec.Body.String(), "Binder Error")
+}
+
+// NEW-BUG-7: exportTable must be exempt from middleware.Timeout, since it
+// streams and can legitimately run longer than a normal request's budget.
+// chi's Timeout is purely context-cooperative (it wraps the request context
+// with a deadline and runs the handler synchronously — it never preempts a
+// handler that ignores ctx.Done()), so the only reliable way to observe the
+// exemption in a unit test is the actual mechanism: whether the context
+// reaching the handler carries a deadline at all, not a race against
+// however chi's deferred 504 write happens to interact with whatever the
+// handler already wrote.
+func Test_Router_ExportTable_ExemptFromRequestTimeout(t *testing.T) {
+	m := &mocks.Storage{}
+	t.Cleanup(func() { m.AssertExpectations(t) })
+
+	metadataSvc := service.NewMetadataService(m, expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute))
+	schemaSvc := service.NewSchemaService(m, expirable.NewLRU[string, []service.ColumnSchema](1000, nil, 5*time.Minute))
+	rowSvc := service.NewRowService(m, metadataSvc, schemaSvc)
+	deriveSvc := service.NewDeriveService(metadataSvc, m)
+	importSvc := service.NewImportService(metadataSvc, m)
+	geoSvc := service.NewGeoService(m, metadataSvc, expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute))
+	sourceSvc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, importSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, 1000)
+	uiAssets := fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}}
+
+	// Two distinct tableIds — MetadataService caches GetMetadata per
+	// tableId, so reusing one id across both requests would serve the
+	// second from cache and never call storage (and so never observe its
+	// context) at all.
+	var normalRouteHadDeadline, exportRouteHadDeadline bool
+	m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {
+		_, normalRouteHadDeadline = args.Get(0).(context.Context).Deadline()
+	})
+	m.On("GetMetadata", mock.Anything, "id-2").Return(&storage.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
+		_, exportRouteHadDeadline = args.Get(0).(context.Context).Deadline()
+	})
+	m.On("Columns", mock.Anything, "id-2").Return([]string{}, nil).Once()
+	m.On("GetPkeys", mock.Anything, "id-2", int64(0), int64(1000)).Return([]string{}, nil).Once()
+	m.On("RowsCount", mock.Anything, "id-2").Return(int64(0), nil).Once()
+
+	rt := NewRouter(metadataSvc, rowSvc, schemaSvc, deriveSvc, geoSvc, sourceSvc, exportSvc,
+		config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30},
+		uiAssets, func(context.Context) error { return nil })
+	handler := rt.Setup()
+
+	rec := doRequest(handler, http.MethodGet, "/api/v1/tables/id-1", nil)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, normalRouteHadDeadline, "an ordinary route should be wrapped by middleware.Timeout")
+
+	rec = doRequest(handler, http.MethodGet, "/api/v1/tables/id-2/export", nil)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.False(t, exportRouteHadDeadline, "export should be registered outside the Timeout group (NEW-BUG-7)")
+}
+
 func Test_Router_ExportTable_CSV(t *testing.T) {
 	handler, m := setupRouter(t)
 
@@ -555,12 +667,14 @@ func Test_Router_RefreshSources(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
+// NEW-SEC-1: an unknown source name is a 404 (NotFoundError), not the
+// blanket 409 every source error used to get regardless of cause.
 func Test_Router_LoadSource_UnknownName(t *testing.T) {
 	handler, _ := setupRouter(t)
 
 	rec := doRequest(handler, http.MethodPost, "/api/v1/sources/unknown.geojson/load", nil)
 
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // setupRouterWithSourceDir wires a router like setupRouter, but with
@@ -651,6 +765,9 @@ func Test_Router_LoadSource_WithSridQueryParam(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, rec.Code)
 }
 
+// NEW-BUG-6: Delete must never remove the source file itself — only its
+// loaded table(s), if any. This source was never loaded, so Delete has
+// nothing to do beyond dropping the cache entry.
 func Test_Router_DeleteSource(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "buildings.geojson"), []byte("{}"), 0o644))
@@ -663,7 +780,7 @@ func Test_Router_DeleteSource(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	_, statErr := os.Stat(filepath.Join(dir, "buildings.geojson"))
-	assert.True(t, os.IsNotExist(statErr))
+	assert.NoError(t, statErr)
 }
 
 func Test_Router_DeleteSource_UnknownName(t *testing.T) {

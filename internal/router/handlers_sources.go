@@ -108,7 +108,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	}
 	tableId, err := rt.sourceService.Load(req.Context(), savedName, layer, srid)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 
@@ -143,7 +143,7 @@ func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 
 	tableId, err := rt.sourceService.Load(req.Context(), name, layer, srid)
 	if err != nil {
-		WriteError(w, req, err, http.StatusConflict)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 
@@ -171,7 +171,7 @@ func (rt *Router) getSourceMetadata(w http.ResponseWriter, req *http.Request) {
 
 	authName, authCode, err := rt.sourceService.DetectCRS(req.Context(), name, layer)
 	if err != nil {
-		WriteError(w, req, err, http.StatusNotFound)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 
@@ -199,7 +199,7 @@ func (rt *Router) deleteSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 
 	if err := rt.sourceService.Delete(req.Context(), name); err != nil {
-		WriteError(w, req, err, http.StatusNotFound)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

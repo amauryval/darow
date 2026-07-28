@@ -122,3 +122,19 @@ func Test_Adapter_GetGeometryGeoJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, geojson[pkey], `"Point"`)
 }
+
+// NEW-BUG-2: a row with a NULL geometry — a perfectly legal GeoJSON
+// Feature with "geometry": null — must not fail the whole scan. It must
+// come back as the JSON literal "null", not an error and not an empty
+// string (which json.RawMessage can't marshal).
+func Test_Adapter_GetGeometryGeoJSON_NullGeometry(t *testing.T) {
+	a := setupAdapter(t)
+	tableId, _ := createGeoTable(t, a)
+	pkey, err := a.InsertRow(context.Background(), tableId, map[string]any{})
+	require.NoError(t, err)
+
+	geojson, err := a.GetGeometryGeoJSON(context.Background(), tableId, []string{pkey})
+
+	require.NoError(t, err)
+	assert.Equal(t, "null", geojson[pkey])
+}

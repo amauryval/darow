@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"strings"
@@ -145,11 +146,20 @@ func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys 
 
 	result := make(map[string]string, len(pkeys))
 	for rows.Next() {
-		var pkey, geojson string
+		var pkey string
+		var geojson sql.NullString
 		if err := rows.Scan(&pkey, &geojson); err != nil {
 			return nil, err
 		}
-		result[pkey] = geojson
+		// A NULL geometry (a legal, geometry-less Feature) must still
+		// produce valid JSON for the caller to embed as-is (NEW-BUG-2) —
+		// the JSON literal null, not an empty string, which json.RawMessage
+		// can't marshal.
+		if geojson.Valid {
+			result[pkey] = geojson.String
+		} else {
+			result[pkey] = "null"
+		}
 	}
 	return result, rows.Err()
 }

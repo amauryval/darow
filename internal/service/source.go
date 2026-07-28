@@ -227,16 +227,16 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 		}
 	}
 	if found == nil {
-		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
+		return "", &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
 	}
 
 	format, known := lookupSourceFormat(found.Ext)
 	if !known || !format.MultiLayer {
 		if layer != "" {
-			return "", fmt.Errorf("source %q does not support layer selection", name)
+			return "", &ValidationError{fmt.Sprintf("source %q does not support layer selection", name)}
 		}
 		if found.Loaded {
-			return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
+			return "", &ConflictError{fmt.Sprintf("source %q already loaded (table %s)", name, found.TableId)}
 		}
 		path := filepath.Join(s.cfg.WorkDir, found.Name)
 		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "", srid)
@@ -249,7 +249,7 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 	}
 
 	if layer == "" {
-		return "", fmt.Errorf("source %q has multiple layers — specify one", name)
+		return "", &ValidationError{fmt.Sprintf("source %q has multiple layers — specify one", name)}
 	}
 	var foundLayer *SourceLayer
 	for i := range found.Layers {
@@ -259,10 +259,10 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 		}
 	}
 	if foundLayer == nil {
-		return "", fmt.Errorf("unknown layer %q for source %q — call /sources/refresh first", layer, name)
+		return "", &NotFoundError{fmt.Sprintf("unknown layer %q for source %q — call /sources/refresh first", layer, name)}
 	}
 	if foundLayer.Loaded {
-		return "", fmt.Errorf("layer %q of source %q already loaded (table %s)", layer, name, foundLayer.TableId)
+		return "", &ConflictError{fmt.Sprintf("layer %q of source %q already loaded (table %s)", layer, name, foundLayer.TableId)}
 	}
 
 	path := filepath.Join(s.cfg.WorkDir, found.Name)
@@ -291,13 +291,13 @@ func (s *SourceService) sourcePath(name, layer string) (string, error) {
 		}
 	}
 	if found == nil {
-		return "", fmt.Errorf("unknown source %q — call /sources/refresh first", name)
+		return "", &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
 	}
 
 	if format, known := lookupSourceFormat(found.Ext); known && format.MultiLayer && layer != "" {
 		found := slices.ContainsFunc(found.Layers, func(l SourceLayer) bool { return l.Name == layer })
 		if !found {
-			return "", fmt.Errorf("unknown layer %q for source %q — call /sources/refresh first", layer, name)
+			return "", &NotFoundError{fmt.Sprintf("unknown layer %q for source %q — call /sources/refresh first", layer, name)}
 		}
 	}
 
@@ -315,15 +315,17 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 	return s.tableService.DetectCRS(ctx, path, layer)
 }
 
-// Delete removes name from workDir (règle 15 — validated against the
-// cache, never an unvalidated path) and drops its cache entry. If the
-// source (or one of its layers) was already loaded, the associated
-// table(s) are removed too, so no metadata row survives its source file.
-// Explicit replacement is delete-then-upload — Upload still refuses to
-// overwrite an existing file.
+// Delete removes the table(s) loaded from name and drops its cache entry —
+// the source file itself in workDir is never touched, only its loaded
+// table(s) (deleting a user's uploaded file is out of scope; a caller who
+// wants that must remove it from workDir directly). name is validated
+// against the cache (règle 15), never an unvalidated path. The cache entry
+// is only spliced out after every table removal has succeeded, so a
+// failure midway (e.g. one layer's RemoveTable erroring after another's
+// already succeeded) leaves the source visible for a retry instead of
+// silently vanishing from the cache (NEW-BUG-6).
 func (s *SourceService) Delete(ctx context.Context, name string) error {
 	s.mu.Lock()
-
 	index := -1
 	for i := range s.sources {
 		if s.sources[i].Name == name {
@@ -333,28 +335,35 @@ func (s *SourceService) Delete(ctx context.Context, name string) error {
 	}
 	if index == -1 {
 		s.mu.Unlock()
-		return fmt.Errorf("unknown source %q — call /sources/refresh first", name)
+		return &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
 	}
 	found := s.sources[index]
-	path := filepath.Join(s.cfg.WorkDir, name)
-	s.sources = slices.Delete(s.sources, index, index+1)
 	s.mu.Unlock()
-
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing file: %w", err)
-	}
 
 	if found.Loaded && found.TableId != "" {
 		if err := s.tableService.RemoveTable(ctx, found.TableId); err != nil {
 			return err
 		}
+		found.Loaded = false
+		found.TableId = ""
 	}
-	for _, layer := range found.Layers {
+	for i, layer := range found.Layers {
 		if layer.Loaded && layer.TableId != "" {
 			if err := s.tableService.RemoveTable(ctx, layer.TableId); err != nil {
 				return err
 			}
+			found.Layers[i].Loaded = false
+			found.Layers[i].TableId = ""
 		}
 	}
+
+	s.mu.Lock()
+	for i := range s.sources {
+		if s.sources[i].Name == name {
+			s.sources = slices.Delete(s.sources, i, i+1)
+			break
+		}
+	}
+	s.mu.Unlock()
 	return nil
 }

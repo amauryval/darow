@@ -187,3 +187,64 @@ func Test_Adapter_CreateFromQuery(t *testing.T) {
 	assert.Equal(t, "geom", geometryColumn)
 	assert.True(t, indexExists(t, a, "idx_"+derivedMeta.PhysicalName+"_geom"))
 }
+
+// NEW-BUG-3: a derive query that projects only a subset of columns — and
+// so never mentions __pkey, which CreateFromFile generated on the source
+// table — must still succeed. __pkey is generated fresh around the
+// caller's query rather than assumed to already be present in it.
+func Test_Adapter_CreateFromQuery_PartialProjection(t *testing.T) {
+	a := setupAdapter(t)
+	path := writeGeoJSONFixture(t)
+
+	sourceId, err := a.Create(context.Background(), "points", false, "")
+	require.NoError(t, err)
+	sourceMeta, err := a.GetMetadata(context.Background(), sourceId)
+	require.NoError(t, err)
+	_, _, _, err = a.CreateFromFile(context.Background(), sourceMeta.PhysicalName, path, "", 0)
+	require.NoError(t, err)
+
+	derivedId, err := a.Create(context.Background(), "derived", false, "")
+	require.NoError(t, err)
+	derivedMeta, err := a.GetMetadata(context.Background(), derivedId)
+	require.NoError(t, err)
+
+	_, isGeo, err := a.CreateFromQuery(context.Background(),
+		derivedMeta.PhysicalName, "SELECT name FROM "+sourceMeta.PhysicalName,
+	)
+
+	require.NoError(t, err)
+	assert.False(t, isGeo)
+
+	count, err := a.RowsCount(context.Background(), derivedId)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, count)
+}
+
+// NEW-BUG-3: a GROUP BY, which also drops __pkey from its projection, must
+// succeed the same way — each aggregated row gets its own generated pkey.
+func Test_Adapter_CreateFromQuery_GroupBy(t *testing.T) {
+	a := setupAdapter(t)
+	path := writeGeoJSONFixture(t)
+
+	sourceId, err := a.Create(context.Background(), "points", false, "")
+	require.NoError(t, err)
+	sourceMeta, err := a.GetMetadata(context.Background(), sourceId)
+	require.NoError(t, err)
+	_, _, _, err = a.CreateFromFile(context.Background(), sourceMeta.PhysicalName, path, "", 0)
+	require.NoError(t, err)
+
+	derivedId, err := a.Create(context.Background(), "derived", false, "")
+	require.NoError(t, err)
+	derivedMeta, err := a.GetMetadata(context.Background(), derivedId)
+	require.NoError(t, err)
+
+	_, _, err = a.CreateFromQuery(context.Background(),
+		derivedMeta.PhysicalName, "SELECT name, COUNT(*) AS c FROM "+sourceMeta.PhysicalName+" GROUP BY name",
+	)
+
+	require.NoError(t, err)
+
+	count, err := a.RowsCount(context.Background(), derivedId)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, count)
+}

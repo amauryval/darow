@@ -1,14 +1,12 @@
 package router
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-
-	"gogeoserver/internal/service"
 )
 
 // exportTable handles GET /tables/{tableId}/export?format=csv|geojson.
@@ -39,13 +37,19 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 
 	contentType, err := rt.exportService.ContentType(meta, format)
 	if err != nil {
-		code := http.StatusInternalServerError
-		var validationErr *service.ExportValidationError
-		if errors.As(err, &validationErr) {
-			code = http.StatusBadRequest
-		}
-		WriteError(w, req, err, code)
+		WriteError(w, req, err, mapServiceError(err))
 		return
+	}
+
+	// http.Server.WriteTimeout is a hard deadline on the whole response
+	// write, independent of chi's middleware.Timeout (which the route
+	// registration in routes.go already exempts this handler from) — it
+	// would otherwise still truncate a large streamed export after
+	// WriteTimeoutSec regardless (NEW-BUG-7). Clearing it here, once
+	// streaming is about to start, does not affect ReadTimeout or any other
+	// route.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		slog.Warn("could not clear write deadline for export", "error", err)
 	}
 
 	w.Header().Set("Content-Type", contentType)

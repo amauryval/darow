@@ -88,7 +88,7 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 		pkeys, err = rt.rowService.BulkInsertRows(req.Context(), meta.TableId, body.Rows)
 	}
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 
@@ -145,7 +145,7 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 
 	if len(updates) > 0 {
 		if err := rt.rowService.UpdateRow(req.Context(), meta.TableId, []string{pkey}, updates); err != nil {
-			WriteError(w, req, err, http.StatusBadRequest)
+			WriteError(w, req, err, mapServiceError(err))
 			return
 		}
 	}
@@ -153,6 +153,10 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 	row, err := rt.rowService.GetRow(req.Context(), meta.TableId, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
+		return
+	}
+	if row == nil {
+		WriteError(w, req, errRowNotFound, http.StatusNotFound)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})

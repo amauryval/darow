@@ -181,7 +181,7 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
 
 	tableId, err := rt.deriveService.DeriveTable(req.Context(), meta.TableId, body.Query, body.NewTableName)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 
@@ -229,9 +229,21 @@ func (rt *Router) filterRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rows, err := rt.rowService.ListRowsWithFilter(req.Context(), meta.TableId, filter, args, body.Limit)
+	// An omitted or non-positive limit falls back to DefaultRowLimit — same
+	// as GET /rows's paginationParams — instead of the JSON zero value
+	// silently producing LIMIT 0 (NEW-BUG-4). Capped by MaxRowLimit either
+	// way, so a client can't force the whole table into memory.
+	limit := body.Limit
+	if limit <= 0 {
+		limit = rt.apiCfg.DefaultRowLimit
+	}
+	if limit > rt.apiCfg.MaxRowLimit {
+		limit = rt.apiCfg.MaxRowLimit
+	}
+
+	rows, err := rt.rowService.ListRowsWithFilter(req.Context(), meta.TableId, filter, args, limit)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		WriteError(w, req, err, mapServiceError(err))
 		return
 	}
 

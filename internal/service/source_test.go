@@ -425,6 +425,9 @@ func Test_SourceService_DetectCRS_RejectsUnknownSource(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// NEW-BUG-6: Delete removes a loaded source's table but never its file —
+// deleting a user's uploaded file is out of scope. The cache entry is
+// still dropped once the table removal succeeds.
 func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)
@@ -448,7 +451,7 @@ func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 
 	require.NoError(t, err)
 	_, statErr := os.Stat(filepath.Join(dir, "buildings.geojson"))
-	assert.True(t, os.IsNotExist(statErr))
+	assert.NoError(t, statErr)
 	assert.Empty(t, svc.List())
 }
 

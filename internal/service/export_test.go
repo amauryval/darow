@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -114,6 +115,24 @@ func Test_ExportService_Export_GeoJSON(t *testing.T) {
 	assert.Equal(t, "application/geo+json", contentType)
 	assert.Contains(t, buf.String(), `"type":"FeatureCollection"`)
 	assert.Contains(t, buf.String(), `"coordinates":[1,2]`)
+}
+
+// NEW-BUG-2: a NULL geometry — reported by storage as the JSON literal
+// "null", not an error or an empty string (see mvt.go's GetGeometryGeoJSON)
+// — must still produce valid, complete JSON output rather than a body
+// truncated at an unmarshalable empty geometry.
+func Test_ExportService_Export_GeoJSON_NullGeometry(t *testing.T) {
+	rows := &fakeRowLister{pages: []*RowsPage{
+		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
+	}}
+	geometry := fakeGeometryFetcher{geometries: map[string]string{"pk-1": "null"}}
+	svc := NewExportService(rows, geometry, fakeColumnLister{}, 10)
+
+	var buf bytes.Buffer
+	require.NoError(t, svc.Export(context.Background(), &buf, &storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
+
+	assert.Contains(t, buf.String(), `"geometry":null`)
+	assert.True(t, json.Valid(buf.Bytes()))
 }
 
 func Test_ExportService_ContentType_RejectsGeoJSONOnNonGeoTable(t *testing.T) {

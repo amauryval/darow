@@ -6,12 +6,40 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"gogeoserver/internal/service"
 )
 
 var (
 	errNoRowsProvided = errors.New("no rows provided")
 	errRowNotFound    = errors.New("row not found")
 )
+
+// mapServiceError maps a service error to an HTTP status by its type,
+// defaulting to 500 so an unclassified internal failure (a storage/DuckDB
+// error, whose message may leak physicalName or other internals) is never
+// mistaken for a client mistake — the inverse of the blanket 4xx every
+// handler used before NEW-SEC-1. Mirrors the errors.As dispatch exportTable
+// already used for service.ExportValidationError.
+func mapServiceError(err error) int {
+	var validationErr *service.ExportValidationError
+	if errors.As(err, &validationErr) {
+		return http.StatusBadRequest
+	}
+	var svcValidationErr *service.ValidationError
+	if errors.As(err, &svcValidationErr) {
+		return http.StatusBadRequest
+	}
+	var notFoundErr *service.NotFoundError
+	if errors.As(err, &notFoundErr) {
+		return http.StatusNotFound
+	}
+	var conflictErr *service.ConflictError
+	if errors.As(err, &conflictErr) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
 
 // ErrorResponse is the JSON body written by WriteError.
 type ErrorResponse struct {

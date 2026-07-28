@@ -10,6 +10,38 @@ import (
 	"gogeoserver/internal/storage"
 )
 
+// describeColumns runs DESCRIBE on target — a table name or a full SELECT
+// query — and returns each result column's name and type, in projection
+// order. DESCRIBE resolves aliases, wildcards (SELECT *), and computed
+// expressions exactly as DuckDB will when materializing the query, so
+// callers never have to parse the query themselves to know its shape.
+func (a *Adapter) describeColumns(ctx context.Context, target string) ([][2]string, error) {
+	rows, err := a.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, target))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	scanDest := make([]any, len(cols))
+	values := make([]any, len(cols))
+	for i := range scanDest {
+		scanDest[i] = &values[i]
+	}
+
+	var out [][2]string
+	for rows.Next() {
+		if err := rows.Scan(scanDest...); err != nil {
+			return nil, err
+		}
+		out = append(out, [2]string{fmt.Sprintf("%v", values[0]), fmt.Sprintf("%v", values[1])})
+	}
+	return out, rows.Err()
+}
+
 // findGeometryColumn inspects physicalName's schema and returns the name of
 // its geometry column, if any. The column name varies by source format
 // (often "geom", sometimes "wkb_geometry"), so it is never assumed fixed.
@@ -18,35 +50,16 @@ import (
 // assumes a single geometry column throughout, so silently picking the
 // first one would only be partially correct.
 func (a *Adapter) findGeometryColumn(ctx context.Context, physicalName string) (string, error) {
-	rows, err := a.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, physicalName))
+	columns, err := a.describeColumns(ctx, physicalName)
 	if err != nil {
 		return "", err
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return "", err
-	}
-	scanDest := make([]any, len(cols))
-	values := make([]any, len(cols))
-	for i := range scanDest {
-		scanDest[i] = &values[i]
 	}
 
 	var geometryColumns []string
-	for rows.Next() {
-		if err := rows.Scan(scanDest...); err != nil {
-			return "", err
+	for _, col := range columns {
+		if strings.Contains(strings.ToUpper(col[1]), "GEOMETRY") {
+			geometryColumns = append(geometryColumns, col[0])
 		}
-		colName := fmt.Sprintf("%v", values[0])
-		colType := fmt.Sprintf("%v", values[1])
-		if strings.Contains(strings.ToUpper(colType), "GEOMETRY") {
-			geometryColumns = append(geometryColumns, colName)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
 	}
 
 	switch len(geometryColumns) {
@@ -218,9 +231,19 @@ func (a *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 
 // CreateFromQuery materializes physicalName from a caller-provided SELECT
 // query — the query itself must already be restricted to SELECT by the
-// caller (règle 4). A derived table is always materialized, never a view
-// (règle 13), and is a frozen snapshot: no sync with its source in either
-// direction.
+// caller (règle 4). __pkey is always freshly generated here, wrapping the
+// caller's query exactly like CreateFromFile generates one around an
+// imported file (NEW-BUG-3): the caller's SELECT is free to project any
+// columns — including a partial projection, a GROUP BY, or a join —
+// without having to know about __pkey itself. A query that already
+// projects a __pkey column (e.g. a plain "SELECT * FROM t" over an
+// already-imported table, which naturally carries its own __pkey through
+// the wildcard) has that column excluded from the wrapper's own wildcard
+// rather than colliding with the new one — checked via DESCRIBE rather
+// than assumed, since DuckDB's "* EXCLUDE (__pkey)" errors if no such
+// column exists in the source query at all. A derived table is always
+// materialized, never a view (règle 13), and is a frozen snapshot: no sync
+// with its source in either direction.
 func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
@@ -229,7 +252,20 @@ func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery
 		return "", false, err
 	}
 
-	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, sourceQuery)); err != nil {
+	columns, err := a.describeColumns(ctx, sourceQuery)
+	if err != nil {
+		return "", false, fmt.Errorf("inspecting derived query columns: %w", err)
+	}
+	wildcard := "*"
+	for _, col := range columns {
+		if col[0] == "__pkey" {
+			wildcard = "* EXCLUDE (__pkey)"
+			break
+		}
+	}
+
+	wrapped := fmt.Sprintf(`SELECT uuid()::TEXT AS __pkey, %s FROM (%s) __derive_source`, wildcard, sourceQuery)
+	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, wrapped)); err != nil {
 		return "", false, fmt.Errorf("materializing derived table: %w", err)
 	}
 

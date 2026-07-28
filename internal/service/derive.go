@@ -19,10 +19,10 @@ var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
 // state, so it isn't trusted to do that job here.
 func validateSelectOnly(query string) error {
 	if strings.Contains(query, ";") {
-		return fmt.Errorf("query must be a single statement")
+		return &ValidationError{"query must be a single statement"}
 	}
 	if !selectOnlyRe.MatchString(query) {
-		return fmt.Errorf("only SELECT queries are allowed")
+		return &ValidationError{"only SELECT queries are allowed"}
 	}
 	return nil
 }
