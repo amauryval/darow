@@ -68,7 +68,7 @@ func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
 func (rt *Router) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
-	types, err := rt.geoService.GeometryTypes(meta.TableId)
+	types, err := rt.geoService.GeometryTypes(req.Context(), meta.TableId)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -96,7 +96,7 @@ func (rt *Router) filterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pkeys, err := rt.geoService.FilterByBbox(meta.TableId, body.Bbox)
+	pkeys, err := rt.geoService.FilterByBbox(req.Context(), meta.TableId, body.Bbox)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return

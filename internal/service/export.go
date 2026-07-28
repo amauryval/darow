@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -20,14 +21,14 @@ func (e *ExportValidationError) Error() string { return e.msg }
 
 // rowLister is what ExportService needs to fetch a table's rows.
 type rowLister interface {
-	ListRows(tableId string, offset, limit int64) (*RowsPage, error)
+	ListRows(ctx context.Context, tableId string, offset, limit int64) (*RowsPage, error)
 }
 
 // geometryFetcher is what ExportService needs to fetch each row's
 // geometry, exported as GeoJSON — the one export-only exception to
 // "never return the geometry column" (règle 7).
 type geometryFetcher interface {
-	GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error)
+	GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys []string) (map[string]string, error)
 }
 
 // ExportService renders a table's rows as CSV or GeoJSON — export is
@@ -46,8 +47,8 @@ func NewExportService(rows rowLister, geometry geometryFetcher) *ExportService {
 
 // Export renders every row of meta's table in format ("csv" or
 // "geojson"), returning the body and its content type.
-func (s *ExportService) Export(meta *storage.Metadata, format string) (body []byte, contentType string, err error) {
-	page, err := s.rows.ListRows(meta.TableId, 0, meta.RowCount)
+func (s *ExportService) Export(ctx context.Context, meta *storage.Metadata, format string) (body []byte, contentType string, err error) {
+	page, err := s.rows.ListRows(ctx, meta.TableId, 0, meta.RowCount)
 	if err != nil {
 		return nil, "", err
 	}
@@ -59,7 +60,7 @@ func (s *ExportService) Export(meta *storage.Metadata, format string) (body []by
 		if !meta.IsGeo {
 			return nil, "", &ExportValidationError{fmt.Sprintf("table %q has no geometry to export as GeoJSON", meta.TableId)}
 		}
-		body, err := s.exportGeoJSON(meta.TableId, page.Rows)
+		body, err := s.exportGeoJSON(ctx, meta.TableId, page.Rows)
 		return body, "application/geo+json", err
 	default:
 		return nil, "", &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
@@ -99,13 +100,13 @@ func exportCSV(rows []storage.Row) []byte {
 	return buf.Bytes()
 }
 
-func (s *ExportService) exportGeoJSON(tableId string, rows []storage.Row) ([]byte, error) {
+func (s *ExportService) exportGeoJSON(ctx context.Context, tableId string, rows []storage.Row) ([]byte, error) {
 	pkeys := make([]string, len(rows))
 	for i, row := range rows {
 		pkeys[i] = row.Pkey
 	}
 
-	geometries, err := s.geometry.GetGeometryGeoJSON(tableId, pkeys)
+	geometries, err := s.geometry.GetGeometryGeoJSON(ctx, tableId, pkeys)
 	if err != nil {
 		return nil, err
 	}

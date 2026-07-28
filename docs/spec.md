@@ -32,6 +32,8 @@ Ces règles s'appliquent à tout le code produit pour ce projet, quelle que soit
 20. **Les tuiles MVT sont mises en cache**, clé incluant `UpdatedAt` de la table (`GeoService`, section 5.5). Une tuile déjà servie pour la même version de la table ne recalcule jamais `ST_AsMVT`.
 21. **Toute écriture DuckDB (`Exec`, transaction, `CREATE TABLE`) passe par le verrou applicatif unique de `DuckDBAdapter`** (section 4.6). DuckDB n'autorise qu'un seul writer actif à la fois ; des écritures concurrentes non sérialisées échouent ou corrompent l'état.
 22. **Une écriture sur la colonne géométrique (`Update`, `InsertRow`, `BulkInsert`) attend du WKT en entrée et le convertit via `ST_GeomFromText(?)`** — jamais un bind direct comme pour une colonne scalaire. Cohérent avec le WKT déjà utilisé en sortie (règle 7). Une écriture qui touche la colonne géométrique déclenche `RefreshDerived` (règle 9) via `RowService` pour une écriture de rows, ou via `ImportService`/`DeriveService` lors de la création d'une table — jamais directement dans le storage layer.
+23. **`context.Context` est le premier paramètre de toute méthode storage/service qui accède à DuckDB ou à un stockage externe** (PERF-4), reçu de `req.Context()` côté router et propagé sans dérivation jusqu'à l'appel `*Context` de `database/sql`. Un timeout par requête (`api.requestTimeoutSec`, section 2) l'annule si le traitement dépasse la limite. Les méthodes qui ne touchent ni DuckDB ni le disque (ex. `SourceService.List`) n'en ont pas besoin.
+24. **Chaque cache applicatif (métadonnées, schéma de colonnes, tuiles) est une LRU bornée en taille avec expiration** (`hashicorp/golang-lru/v2/expirable`), jamais un cache illimité — TTL et taille max réglables sans recompiler (règle 18, section 2).
 
 ---
 
@@ -83,6 +85,8 @@ sources:
 ```
 
 Format YAML retenu (plus lisible qu'un `.env` pour une structure imbriquée). Chaque valeur a un défaut raisonnable dans le code — le fichier n'est jamais obligatoire pour démarrer en local.
+
+Deux sections supplémentaires suivent le même principe : `api.requestTimeoutSec` (règle 23, timeout par requête HTTP, 0 = désactivé) en plus des limites de pagination déjà présentes dans `APIConfig` ; `cache.{metadata,schema,tile}{TTLSec,MaxItems}` (règle 24) pour la taille/expiration de chacune des trois LRU (`MetadataService`, `SchemaService`, `GeoService` — sections 5.1, 5.3, 5.5).
 
 ### 2.2 Struct Go et chargement
 
@@ -720,6 +724,13 @@ de métadonnées ni de `GeoTableManager`.
 services y accèdent via un port étroit qu'ils déclarent (`metadataGetter`, `metadataRefresher`,
 `metadataStore`...), jamais en cachant indépendamment — l'invalidation reste à un seul endroit.
 
+Toute méthode ci-dessous qui touche le storage layer prend désormais `ctx context.Context` en
+premier paramètre (règle 23), reçu de `req.Context()` côté router ; les extraits de code de cette
+section l'omettent pour rester courts, mais c'est le comportement réel. De même, les caches
+présentés comme `*cache.Cache` sont en réalité des LRU bornées `*expirable.LRU[K, V]`
+(`github.com/hashicorp/golang-lru/v2/expirable`, règle 24), avec `.Get`/`.Add`/`.Remove` à la place
+de `.Get`/`.Set`/`.Delete`.
+
 ### 5.1 `MetadataService` : seul propriétaire du cache de métadonnées
 
 ```go
@@ -874,6 +885,12 @@ Principe de typage de sortie (règle 12) : la sortie JSON de l'API utilise des t
 `Schema`/`AddColumn` ne déclenchent jamais `RefreshDerived` (ajouter une colonne n'affecte ni
 `RowCount` ni `Bbox`) : `SchemaService` n'a donc aucune dépendance vers `MetadataService`, juste
 `storage.TableManager`.
+
+`SchemaService` est aussi le seul propriétaire d'un cache par table du schéma complet
+(`[]ColumnSchema`, PERF-1), invalidé par `AddColumn` — la seule écriture qui change la structure
+d'une table. `Types(ctx, tableId) map[string]string`, dérivé du même cache, est le port
+(`columnTyper`) que `RowService.convertRow` utilise pour convertir les valeurs d'une row sans
+émettre un `DESCRIBE`/`ColumnType` par colonne à chaque lecture.
 
 ### 5.4 `DeriveService` et `ImportService` : créer une table, avec rollback
 
@@ -1030,6 +1047,11 @@ implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance 
 Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source (ou, pour un `.gpkg`, la couche demandée) est déjà chargée, ou si `layer` est absent/inconnu pour un `.gpkg` (voir `SourceService.Load`, 3.2, et 7.1).
 
 ### 6.2 Router (`chi`)
+
+`Setup()` monte `middleware.Timeout(api.requestTimeoutSec)` juste après `Recoverer`, seulement si
+`requestTimeoutSec > 0` (0 désactive le timeout plutôt que d'annuler chaque requête instantanément,
+règle 23) — avant `maxBodyBytes` puisqu'un timeout doit couvrir toute la requête, pas seulement la
+lecture du corps.
 
 ```go
 package router

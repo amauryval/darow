@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -10,8 +11,8 @@ import (
 // findGeometryColumn inspects physicalName's schema and returns the name of
 // its geometry column, if any. The column name varies by source format
 // (often "geom", sometimes "wkb_geometry"), so it is never assumed fixed.
-func (a *Adapter) findGeometryColumn(physicalName string) (string, error) {
-	rows, err := a.Query(fmt.Sprintf(`DESCRIBE %s`, physicalName))
+func (a *Adapter) findGeometryColumn(ctx context.Context, physicalName string) (string, error) {
+	rows, err := a.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, physicalName))
 	if err != nil {
 		return "", err
 	}
@@ -40,7 +41,7 @@ func (a *Adapter) findGeometryColumn(physicalName string) (string, error) {
 	return "", rows.Err()
 }
 
-func (a *Adapter) createSpatialIndex(physicalName, geometryColumn string) error {
+func (a *Adapter) createSpatialIndex(ctx context.Context, physicalName, geometryColumn string) error {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return err
 	}
@@ -48,7 +49,7 @@ func (a *Adapter) createSpatialIndex(physicalName, geometryColumn string) error 
 	if err != nil {
 		return err
 	}
-	_, err = a.Exec(fmt.Sprintf(
+	_, err = a.Exec(ctx, fmt.Sprintf(
 		`CREATE INDEX idx_%s_geom ON %s USING RTREE (%s)`,
 		physicalName, physicalName, quotedGeom,
 	))
@@ -61,7 +62,7 @@ func (a *Adapter) createSpatialIndex(physicalName, geometryColumn string) error 
 // always a materialized table with a generated __pkey. layer selects one
 // layer of a multi-layer source (e.g. GeoPackage); pass "" for formats that
 // hold a single layer.
-func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string, bool, error) {
+func (a *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
 	}
@@ -73,7 +74,7 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string
 		args = append(args, layer)
 	}
 
-	_, err := a.Exec(fmt.Sprintf(query, physicalName), args...)
+	_, err := a.Exec(ctx, fmt.Sprintf(query, physicalName), args...)
 	if err != nil {
 		return "", false, fmt.Errorf("reading source file: %w", err)
 	}
@@ -81,11 +82,11 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string
 	// CREATE TABLE AS SELECT preserves no constraint; this DuckDB build
 	// also rejects ALTER TABLE ADD PRIMARY KEY on an existing table, so a
 	// unique index is the closest equivalent enforcement available here.
-	if _, err := a.Exec(fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
+	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
 		return "", false, err
 	}
 
-	geometryColumn, err := a.findGeometryColumn(physicalName)
+	geometryColumn, err := a.findGeometryColumn(ctx, physicalName)
 	if err != nil {
 		return "", false, err
 	}
@@ -108,11 +109,11 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string
 		`UPDATE %s SET %s = ST_Transform(%s, 'OGC:CRS84', 'EPSG:3857')`,
 		physicalName, quotedGeom, quotedGeom,
 	)
-	if _, err := a.Exec(updateQuery); err != nil {
+	if _, err := a.Exec(ctx, updateQuery); err != nil {
 		return "", false, fmt.Errorf("reprojecting geometry: %w", err)
 	}
 
-	if err := a.createSpatialIndex(physicalName, geometryColumn); err != nil {
+	if err := a.createSpatialIndex(ctx, physicalName, geometryColumn); err != nil {
 		return "", false, err
 	}
 
@@ -122,8 +123,9 @@ func (a *Adapter) CreateFromFile(physicalName, sourcePath, layer string) (string
 // ListLayers returns the layer names sourcePath exposes to ST_Read, via
 // DuckDB's ST_Read_Meta. A single-layer source (GeoJSON, CSV, most
 // Shapefiles) still reports its one layer.
-func (a *Adapter) ListLayers(sourcePath string) ([]string, error) {
+func (a *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, error) {
 	rows, err := a.Query(
+		ctx,
 		`SELECT layer.name FROM (SELECT unnest(layers) AS layer FROM st_read_meta(?))`,
 		sourcePath,
 	)
@@ -148,23 +150,23 @@ func (a *Adapter) ListLayers(sourcePath string) ([]string, error) {
 // caller (règle 4). A derived table is always materialized, never a view
 // (règle 13), and is a frozen snapshot: no sync with its source in either
 // direction.
-func (a *Adapter) CreateFromQuery(physicalName, sourceQuery string) (string, bool, error) {
+func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
 	}
-	if err := a.validateDeriveQuery(sourceQuery); err != nil {
+	if err := a.validateDeriveQuery(ctx, sourceQuery); err != nil {
 		return "", false, err
 	}
 
-	if _, err := a.Exec(fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, sourceQuery)); err != nil {
+	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, sourceQuery)); err != nil {
 		return "", false, fmt.Errorf("materializing derived table: %w", err)
 	}
 
-	if _, err := a.Exec(fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
+	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
 		return "", false, err
 	}
 
-	geometryColumn, err := a.findGeometryColumn(physicalName)
+	geometryColumn, err := a.findGeometryColumn(ctx, physicalName)
 	if err != nil {
 		return "", false, err
 	}
@@ -172,7 +174,7 @@ func (a *Adapter) CreateFromQuery(physicalName, sourceQuery string) (string, boo
 		return "", false, nil
 	}
 
-	if err := a.createSpatialIndex(physicalName, geometryColumn); err != nil {
+	if err := a.createSpatialIndex(ctx, physicalName, geometryColumn); err != nil {
 		return "", false, err
 	}
 	return geometryColumn, true, nil

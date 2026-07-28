@@ -81,40 +81,36 @@ func (a *Adapter) Close() error {
 	return a.db.Close()
 }
 
-// Query runs a read-only query and returns its result set.
-func (a *Adapter) Query(query string, args ...any) (*sql.Rows, error) {
-	return a.db.Query(query, args...)
+// Query runs a read-only query and returns its result set, interrupting it
+// in DuckDB if ctx is cancelled before it completes.
+func (a *Adapter) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return a.db.QueryContext(ctx, query, args...)
 }
 
-// QueryRow runs a read-only query expected to return at most one row.
-func (a *Adapter) QueryRow(query string, args ...any) *sql.Row {
-	return a.db.QueryRow(query, args...)
-}
-
-// QueryRowContext runs a read-only query expected to return at most one
-// row, interrupting it in DuckDB if ctx is cancelled before it completes.
-func (a *Adapter) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+// QueryRow runs a read-only query expected to return at most one row,
+// interrupting it in DuckDB if ctx is cancelled before it completes.
+func (a *Adapter) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
 	return a.db.QueryRowContext(ctx, query, args...)
 }
 
 // Exec runs a write statement, serialized against every other write
 // (règle 21).
-func (a *Adapter) Exec(query string, args ...any) (sql.Result, error) {
+func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
-	return a.db.Exec(query, args...)
+	return a.db.ExecContext(ctx, query, args...)
 }
 
 // Begin starts a transaction. Internal writers that need transactional
 // semantics (BulkInsert) take writeMu themselves around the whole
 // transaction (règle 6, règle 21) rather than through this passthrough.
-func (a *Adapter) Begin() (*sql.Tx, error) {
-	return a.db.Begin()
+func (a *Adapter) Begin(ctx context.Context) (*sql.Tx, error) {
+	return a.db.BeginTx(ctx, nil)
 }
 
 // TableIds lists the tableId of every logical table currently registered.
-func (a *Adapter) TableIds() ([]string, error) {
-	rows, err := a.Query(`SELECT tableId FROM metadata ORDER BY tableId`)
+func (a *Adapter) TableIds(ctx context.Context) ([]string, error) {
+	rows, err := a.Query(ctx, `SELECT tableId FROM metadata ORDER BY tableId`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,9 +128,9 @@ func (a *Adapter) TableIds() ([]string, error) {
 }
 
 // TableExists reports whether tableId is a registered logical table.
-func (a *Adapter) TableExists(tableId string) (bool, error) {
+func (a *Adapter) TableExists(ctx context.Context, tableId string) (bool, error) {
 	var count int
-	err := a.QueryRow(`SELECT COUNT(*) FROM metadata WHERE tableId = ?`, tableId).Scan(&count)
+	err := a.QueryRow(ctx, `SELECT COUNT(*) FROM metadata WHERE tableId = ?`, tableId).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -142,8 +138,8 @@ func (a *Adapter) TableExists(tableId string) (bool, error) {
 }
 
 // GetMetadata fetches the metadata row for tableId.
-func (a *Adapter) GetMetadata(tableId string) (*storage.Metadata, error) {
-	row := a.QueryRow(`
+func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
+	row := a.QueryRow(ctx, `
         SELECT tableId, physicalName, tableName, isGeo, createdAt, updatedAt,
                COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid
         FROM metadata WHERE tableId = ?
@@ -167,11 +163,11 @@ func (a *Adapter) GetMetadata(tableId string) (*storage.Metadata, error) {
 // generated tableId. It does not create the underlying physical table —
 // callers use TableCreator for that, then persist the resolved geometry
 // column via UpdateMetadata.
-func (a *Adapter) Create(tableName string, isGeo bool, geometryColumn string) (string, error) {
+func (a *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
 	tableId := uuid.NewString()
 	physicalName := "t_" + strings.ReplaceAll(tableId, "-", "")
 
-	_, err := a.Exec(`
+	_, err := a.Exec(ctx, `
         INSERT INTO metadata (tableId, physicalName, tableName, isGeo, geometryColumn)
         VALUES (?, ?, ?, ?, ?)
     `, tableId, physicalName, tableName, isGeo, geometryColumn)
@@ -182,8 +178,8 @@ func (a *Adapter) Create(tableName string, isGeo bool, geometryColumn string) (s
 }
 
 // Remove deletes a logical table's metadata and drops its physical table.
-func (a *Adapter) Remove(tableId string) error {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) Remove(ctx context.Context, tableId string) error {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
@@ -191,16 +187,16 @@ func (a *Adapter) Remove(tableId string) error {
 		return err
 	}
 
-	if _, err := a.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
+	if _, err := a.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
 		return err
 	}
-	_, err = a.Exec(`DELETE FROM metadata WHERE tableId = ?`, tableId)
+	_, err = a.Exec(ctx, `DELETE FROM metadata WHERE tableId = ?`, tableId)
 	return err
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata.
 // Supported keys: tableName, isGeo, geometryColumn, srid.
-func (a *Adapter) UpdateMetadata(tableId string, updates map[string]any) error {
+func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil
 	}
@@ -218,14 +214,14 @@ func (a *Adapter) UpdateMetadata(tableId string, updates map[string]any) error {
 	args = append(args, tableId)
 
 	query := fmt.Sprintf(`UPDATE metadata SET %s WHERE tableId = ?`, strings.Join(sets, ", "))
-	_, err := a.Exec(query, args...)
+	_, err := a.Exec(ctx, query, args...)
 	return err
 }
 
 // RefreshDerivedMetadata recomputes rowCount and bbox from the underlying
 // table and bumps updatedAt (règle 9).
-func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string) error {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
@@ -234,7 +230,7 @@ func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
 	}
 
 	var rowCount int64
-	if err := a.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&rowCount); err != nil {
+	if err := a.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&rowCount); err != nil {
 		return err
 	}
 
@@ -258,7 +254,7 @@ func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
                 FROM %s WHERE %s IS NOT NULL
             ) t
         `, quotedGeom, meta.PhysicalName, quotedGeom)
-		if err := a.QueryRow(query).Scan(&minX, &minY, &maxX, &maxY); err != nil {
+		if err := a.QueryRow(ctx, query).Scan(&minX, &minY, &maxX, &maxY); err != nil {
 			return err
 		}
 		if minX.Valid {
@@ -266,7 +262,7 @@ func (a *Adapter) RefreshDerivedMetadata(tableId string) error {
 		}
 	}
 
-	_, err = a.Exec(`
+	_, err = a.Exec(ctx, `
         UPDATE metadata SET rowCount = ?, bbox = ?, updatedAt = ? WHERE tableId = ?
     `, rowCount, bbox, time.Now(), tableId)
 	return err

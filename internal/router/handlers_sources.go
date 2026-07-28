@@ -27,7 +27,7 @@ func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
 // @Success 200 {array} service.Source
 // @Router /sources/refresh [post]
 func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
-	sources, err := rt.sourceService.Refresh()
+	sources, err := rt.sourceService.Refresh(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -63,7 +63,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	sources, err := rt.sourceService.Refresh()
+	sources, err := rt.sourceService.Refresh(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -85,7 +85,7 @@ func (rt *Router) uploadSource(w http.ResponseWriter, req *http.Request) {
 	if uploaded != nil && len(uploaded.Layers) == 1 {
 		layer = uploaded.Layers[0].Name
 	}
-	tableId, err := rt.sourceService.Load(savedName, layer)
+	tableId, err := rt.sourceService.Load(req.Context(), savedName, layer)
 	if err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -112,7 +112,7 @@ func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 
-	tableId, err := rt.sourceService.Load(name, layer)
+	tableId, err := rt.sourceService.Load(req.Context(), name, layer)
 	if err != nil {
 		WriteError(w, req, err, http.StatusConflict)
 		return

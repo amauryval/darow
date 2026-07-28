@@ -1,12 +1,15 @@
 package storage
 
-import "database/sql"
+import (
+	"context"
+	"database/sql"
+)
 
 // SQLWrapper abstracts the underlying SQL engine so storage logic does not
 // depend directly on database/sql or a specific driver.
 type SQLWrapper interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
-	Exec(query string, args ...any) (sql.Result, error)
-	Begin() (*sql.Tx, error)
+	Query(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRow(ctx context.Context, query string, args ...any) *sql.Row
+	Exec(ctx context.Context, query string, args ...any) (sql.Result, error)
+	Begin(ctx context.Context) (*sql.Tx, error)
 }

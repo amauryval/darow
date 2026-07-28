@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -32,8 +33,8 @@ func pkeysToArgs(pkeys []string) []any {
 
 // Columns lists every column of tableId's underlying table, geometry
 // column included.
-func (a *Adapter) Columns(tableId string) ([]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) Columns(ctx context.Context, tableId string) ([]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +42,7 @@ func (a *Adapter) Columns(tableId string) ([]string, error) {
 		return nil, err
 	}
 
-	rows, err := a.Query(fmt.Sprintf(`DESCRIBE %s`, meta.PhysicalName))
+	rows, err := a.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, meta.PhysicalName))
 	if err != nil {
 		return nil, err
 	}
@@ -68,8 +69,8 @@ func (a *Adapter) Columns(tableId string) ([]string, error) {
 }
 
 // ColumnType returns column's DuckDB type name (e.g. "DATE", "TIMESTAMP").
-func (a *Adapter) ColumnType(tableId, column string) (string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) ColumnType(ctx context.Context, tableId, column string) (string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +78,7 @@ func (a *Adapter) ColumnType(tableId, column string) (string, error) {
 		return "", err
 	}
 
-	rows, err := a.Query(fmt.Sprintf(`DESCRIBE %s`, meta.PhysicalName))
+	rows, err := a.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, meta.PhysicalName))
 	if err != nil {
 		return "", err
 	}
@@ -107,8 +108,8 @@ func (a *Adapter) ColumnType(tableId, column string) (string, error) {
 }
 
 // RowsCount returns the total number of rows in tableId's underlying table.
-func (a *Adapter) RowsCount(tableId string) (int64, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) RowsCount(ctx context.Context, tableId string) (int64, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return 0, err
 	}
@@ -117,14 +118,14 @@ func (a *Adapter) RowsCount(tableId string) (int64, error) {
 	}
 
 	var count int64
-	err = a.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&count)
+	err = a.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&count)
 	return count, err
 }
 
 // GetPkeys returns a deterministically ordered page of primary keys
 // (règle 8: DuckDB guarantees no stable order without ORDER BY).
-func (a *Adapter) GetPkeys(tableId string, offset, limit int64) ([]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GetPkeys(ctx context.Context, tableId string, offset, limit int64) ([]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,7 @@ func (a *Adapter) GetPkeys(tableId string, offset, limit int64) ([]string, error
 		return nil, err
 	}
 
-	rows, err := a.Query(fmt.Sprintf(
+	rows, err := a.Query(ctx, fmt.Sprintf(
 		`SELECT __pkey FROM %s ORDER BY __pkey LIMIT ? OFFSET ?`, meta.PhysicalName,
 	), limit, offset)
 	if err != nil {
@@ -183,8 +184,8 @@ func (a *Adapter) scanRows(rows *sql.Rows) ([]storage.Row, error) {
 
 // GetRowsByPkey fetches full rows for the given primary keys, excluding the
 // geometry column (règle 7).
-func (a *Adapter) GetRowsByPkey(tableId string, pKeys []string) ([]storage.Row, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GetRowsByPkey(ctx context.Context, tableId string, pKeys []string) ([]storage.Row, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +206,7 @@ func (a *Adapter) GetRowsByPkey(tableId string, pKeys []string) ([]storage.Row, 
 		`SELECT *%s FROM %s WHERE __pkey IN (%s)`,
 		excl, meta.PhysicalName, placeholders(len(pKeys)),
 	)
-	rows, err := a.Query(query, pkeysToArgs(pKeys)...)
+	rows, err := a.Query(ctx, query, pkeysToArgs(pKeys)...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +217,8 @@ func (a *Adapter) GetRowsByPkey(tableId string, pKeys []string) ([]storage.Row, 
 
 // GetRowsWithFilter fetches rows matching filter, produced exclusively by
 // storage.BuildFilter (règle 5), excluding the geometry column (règle 7).
-func (a *Adapter) GetRowsWithFilter(tableId string, filter string, args []any, limit int) ([]storage.Row, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GetRowsWithFilter(ctx context.Context, tableId string, filter string, args []any, limit int) ([]storage.Row, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +241,7 @@ func (a *Adapter) GetRowsWithFilter(tableId string, filter string, args []any, l
 	}
 
 	query := fmt.Sprintf(`SELECT *%s FROM %s%s LIMIT ?`, excl, meta.PhysicalName, where)
-	rows, err := a.Query(query, append(append([]any{}, args...), limit)...)
+	rows, err := a.Query(ctx, query, append(append([]any{}, args...), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +251,8 @@ func (a *Adapter) GetRowsWithFilter(tableId string, filter string, args []any, l
 }
 
 // GetDistinctValues returns every distinct value found in column.
-func (a *Adapter) GetDistinctValues(tableId, column string) ([]any, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GetDistinctValues(ctx context.Context, tableId, column string) ([]any, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +264,7 @@ func (a *Adapter) GetDistinctValues(tableId, column string) ([]any, error) {
 		return nil, err
 	}
 
-	rows, err := a.Query(fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, quotedCol, meta.PhysicalName))
+	rows, err := a.Query(ctx, fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, quotedCol, meta.PhysicalName))
 	if err != nil {
 		return nil, err
 	}
@@ -281,8 +282,8 @@ func (a *Adapter) GetDistinctValues(tableId, column string) ([]any, error) {
 }
 
 // AddColumn adds colName of type colType to tableId's underlying table.
-func (a *Adapter) AddColumn(tableId, colName, colType string) error {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) AddColumn(ctx context.Context, tableId, colName, colType string) error {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
@@ -297,7 +298,7 @@ func (a *Adapter) AddColumn(tableId, colName, colType string) error {
 		return err
 	}
 
-	_, err = a.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, meta.PhysicalName, quotedCol, colType))
+	_, err = a.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, meta.PhysicalName, quotedCol, colType))
 	return err
 }
 
@@ -306,8 +307,8 @@ func (a *Adapter) AddColumn(tableId, colName, colType string) error {
 // Writing the geometry column expects WKT and converts it via
 // ST_GeomFromText (règle 22) instead of binding it directly like a scalar
 // value.
-func (a *Adapter) Update(tableId string, pkeys []string, updates map[string]any) error {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) Update(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
@@ -338,15 +339,15 @@ func (a *Adapter) Update(tableId string, pkeys []string, updates map[string]any)
 		`UPDATE %s SET %s WHERE __pkey IN (%s)`,
 		meta.PhysicalName, strings.Join(setClauses, ", "), placeholders(len(pkeys)),
 	)
-	if _, err := a.Exec(query, args...); err != nil {
+	if _, err := a.Exec(ctx, query, args...); err != nil {
 		return fmt.Errorf("update failed (invalid WKT si colonne géométrique): %w", err)
 	}
 	return nil
 }
 
 // RemoveRows deletes the given rows from tableId's underlying table.
-func (a *Adapter) RemoveRows(tableId string, pKeys []string) error {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) RemoveRows(ctx context.Context, tableId string, pKeys []string) error {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
@@ -355,13 +356,13 @@ func (a *Adapter) RemoveRows(tableId string, pKeys []string) error {
 	}
 
 	query := fmt.Sprintf(`DELETE FROM %s WHERE __pkey IN (%s)`, meta.PhysicalName, placeholders(len(pKeys)))
-	_, err = a.Exec(query, pkeysToArgs(pKeys)...)
+	_, err = a.Exec(ctx, query, pkeysToArgs(pKeys)...)
 	return err
 }
 
 // InsertRow inserts a single row and returns its generated primary key.
-func (a *Adapter) InsertRow(tableId string, values map[string]any) (string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) InsertRow(ctx context.Context, tableId string, values map[string]any) (string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +375,7 @@ func (a *Adapter) InsertRow(tableId string, values map[string]any) (string, erro
 		return "", err
 	}
 
-	if _, err := a.Exec(query, args...); err != nil {
+	if _, err := a.Exec(ctx, query, args...); err != nil {
 		return "", fmt.Errorf("insert failed (invalid WKT si colonne géométrique): %w", err)
 	}
 	return pkey, nil
@@ -414,8 +415,8 @@ func (a *Adapter) buildInsert(meta *storage.Metadata, values map[string]any) (pk
 
 // BulkInsert inserts every row in a single transaction (règle 6), held
 // under writeMu for its whole duration (règle 21).
-func (a *Adapter) BulkInsert(tableId string, rows []map[string]any) ([]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) BulkInsert(ctx context.Context, tableId string, rows []map[string]any) ([]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +427,7 @@ func (a *Adapter) BulkInsert(tableId string, rows []map[string]any) ([]string, e
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	tx, err := a.db.Begin()
+	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +439,7 @@ func (a *Adapter) BulkInsert(tableId string, rows []map[string]any) ([]string, e
 		if err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return nil, fmt.Errorf("bulk insert failed (invalid WKT si colonne géométrique): %w", err)
 		}
 		pkeys = append(pkeys, pkey)

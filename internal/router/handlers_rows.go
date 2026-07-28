@@ -38,7 +38,7 @@ func (rt *Router) listRows(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	offset, limit := rt.paginationParams(req)
 
-	page, err := rt.rowService.ListRows(meta.TableId, offset, limit)
+	page, err := rt.rowService.ListRows(req.Context(), meta.TableId, offset, limit)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -82,10 +82,10 @@ func (rt *Router) addRows(w http.ResponseWriter, req *http.Request) {
 	var err error
 	if len(body.Rows) == 1 {
 		var pkey string
-		pkey, err = rt.rowService.InsertRow(meta.TableId, body.Rows[0])
+		pkey, err = rt.rowService.InsertRow(req.Context(), meta.TableId, body.Rows[0])
 		pkeys = []string{pkey}
 	} else {
-		pkeys, err = rt.rowService.BulkInsertRows(meta.TableId, body.Rows)
+		pkeys, err = rt.rowService.BulkInsertRows(req.Context(), meta.TableId, body.Rows)
 	}
 	if err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
@@ -109,7 +109,7 @@ func (rt *Router) getRow(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	pkey := chi.URLParam(req, "pkey")
 
-	row, err := rt.rowService.GetRow(meta.TableId, pkey)
+	row, err := rt.rowService.GetRow(req.Context(), meta.TableId, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -144,13 +144,13 @@ func (rt *Router) updateRow(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if len(updates) > 0 {
-		if err := rt.rowService.UpdateRow(meta.TableId, []string{pkey}, updates); err != nil {
+		if err := rt.rowService.UpdateRow(req.Context(), meta.TableId, []string{pkey}, updates); err != nil {
 			WriteError(w, req, err, http.StatusBadRequest)
 			return
 		}
 	}
 
-	row, err := rt.rowService.GetRow(meta.TableId, pkey)
+	row, err := rt.rowService.GetRow(req.Context(), meta.TableId, pkey)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -170,7 +170,7 @@ func (rt *Router) deleteRow(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 	pkey := chi.URLParam(req, "pkey")
 
-	if err := rt.rowService.RemoveRows(meta.TableId, []string{pkey}); err != nil {
+	if err := rt.rowService.RemoveRows(req.Context(), meta.TableId, []string{pkey}); err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}

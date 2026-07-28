@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func writeGeoJSONFixture(t *testing.T) string {
 
 func indexExists(t *testing.T, a *Adapter, indexName string) bool {
 	var count int
-	err := a.QueryRow(`SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name = ?`, indexName).Scan(&count)
+	err := a.QueryRow(context.Background(), `SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name = ?`, indexName).Scan(&count)
 	require.NoError(t, err)
 	return count > 0
 }
@@ -35,19 +36,19 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
 
-	tableId, err := a.Create("points", false, "")
+	tableId, err := a.Create(context.Background(), "points", false, "")
 	require.NoError(t, err)
-	meta, err := a.GetMetadata(tableId)
+	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
+	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
 
 	require.NoError(t, err)
 	assert.True(t, isGeo)
 	assert.Equal(t, "geom", geometryColumn)
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_geom"))
 
-	count, err := a.RowsCount(tableId)
+	count, err := a.RowsCount(context.Background(), tableId)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
@@ -56,12 +57,12 @@ func Test_Adapter_CreateFromFile_ReprojectsWithoutSwappingAxes(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
 
-	tableId, err := a.Create("points", false, "")
+	tableId, err := a.Create(context.Background(), "points", false, "")
 	require.NoError(t, err)
-	meta, err := a.GetMetadata(tableId)
+	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
+	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
 	require.NoError(t, err)
 	require.True(t, isGeo)
 
@@ -75,7 +76,7 @@ func Test_Adapter_CreateFromFile_ReprojectsWithoutSwappingAxes(t *testing.T) {
 	var x, y float64
 	query := fmt.Sprintf(`SELECT ST_X(%s), ST_Y(%s) FROM %s ORDER BY ST_X(%s) LIMIT 1`,
 		geometryColumn, geometryColumn, meta.PhysicalName, geometryColumn)
-	require.NoError(t, a.QueryRow(query).Scan(&x, &y))
+	require.NoError(t, a.QueryRow(context.Background(), query).Scan(&x, &y))
 
 	assert.InDelta(t, 261700, x, 5000)
 	assert.InDelta(t, 6250000, y, 20000)
@@ -85,18 +86,18 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
 
-	tableId, err := a.Create("points", false, "")
+	tableId, err := a.Create(context.Background(), "points", false, "")
 	require.NoError(t, err)
-	meta, err := a.GetMetadata(tableId)
+	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, path, "")
+	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "")
 	require.NoError(t, err)
 	require.True(t, isGeo)
-	require.NoError(t, a.UpdateMetadata(tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
-	require.NoError(t, a.RefreshDerivedMetadata(tableId))
+	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
+	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId))
 
-	updated, err := a.GetMetadata(tableId)
+	updated, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
 	var minX, minY, maxX, maxY float64
@@ -122,7 +123,7 @@ func Test_Adapter_ListLayers_SingleLayerSource(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
 
-	layers, err := a.ListLayers(path)
+	layers, err := a.ListLayers(context.Background(), path)
 
 	require.NoError(t, err)
 	assert.Len(t, layers, 1)
@@ -131,7 +132,7 @@ func Test_Adapter_ListLayers_SingleLayerSource(t *testing.T) {
 func Test_Adapter_ListLayers_MultiLayerGeoPackage(t *testing.T) {
 	a := setupAdapter(t)
 
-	layers, err := a.ListLayers(multiLayerGpkgFixture)
+	layers, err := a.ListLayers(context.Background(), multiLayerGpkgFixture)
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"layer_a", "layer_b"}, layers)
@@ -140,23 +141,23 @@ func Test_Adapter_ListLayers_MultiLayerGeoPackage(t *testing.T) {
 func Test_Adapter_CreateFromFile_SelectsNamedLayer(t *testing.T) {
 	a := setupAdapter(t)
 
-	tableId, err := a.Create("layer_b", false, "")
+	tableId, err := a.Create(context.Background(), "layer_b", false, "")
 	require.NoError(t, err)
-	meta, err := a.GetMetadata(tableId)
+	meta, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromFile(meta.PhysicalName, multiLayerGpkgFixture, "layer_b")
+	geometryColumn, isGeo, err := a.CreateFromFile(context.Background(), meta.PhysicalName, multiLayerGpkgFixture, "layer_b")
 
 	require.NoError(t, err)
 	assert.True(t, isGeo)
 	assert.Equal(t, "geom", geometryColumn)
-	count, err := a.RowsCount(tableId)
+	count, err := a.RowsCount(context.Background(), tableId)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count)
 
 	var name string
 	query := fmt.Sprintf(`SELECT name FROM %s`, meta.PhysicalName)
-	require.NoError(t, a.QueryRow(query).Scan(&name))
+	require.NoError(t, a.QueryRow(context.Background(), query).Scan(&name))
 	assert.Equal(t, "nantes", name)
 }
 
@@ -164,19 +165,19 @@ func Test_Adapter_CreateFromQuery(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
 
-	sourceId, err := a.Create("points", false, "")
+	sourceId, err := a.Create(context.Background(), "points", false, "")
 	require.NoError(t, err)
-	sourceMeta, err := a.GetMetadata(sourceId)
+	sourceMeta, err := a.GetMetadata(context.Background(), sourceId)
 	require.NoError(t, err)
-	_, _, err = a.CreateFromFile(sourceMeta.PhysicalName, path, "")
-	require.NoError(t, err)
-
-	derivedId, err := a.Create("derived", false, "")
-	require.NoError(t, err)
-	derivedMeta, err := a.GetMetadata(derivedId)
+	_, _, err = a.CreateFromFile(context.Background(), sourceMeta.PhysicalName, path, "")
 	require.NoError(t, err)
 
-	geometryColumn, isGeo, err := a.CreateFromQuery(
+	derivedId, err := a.Create(context.Background(), "derived", false, "")
+	require.NoError(t, err)
+	derivedMeta, err := a.GetMetadata(context.Background(), derivedId)
+	require.NoError(t, err)
+
+	geometryColumn, isGeo, err := a.CreateFromQuery(context.Background(),
 		derivedMeta.PhysicalName, "SELECT * FROM "+sourceMeta.PhysicalName,
 	)
 

@@ -12,45 +12,45 @@ import (
 // Declared here, the consumer, so a handler test can satisfy it with a
 // lighter double than the whole MetadataService.
 type metadataAPI interface {
-	GetMetadata(tableId string) (*storage.Metadata, error)
-	ListTables() ([]*storage.Metadata, error)
-	RemoveTable(tableId string) error
+	GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error)
+	ListTables(ctx context.Context) ([]*storage.Metadata, error)
+	RemoveTable(ctx context.Context, tableId string) error
 }
 
 // rowAPI is everything the router calls on *service.RowService.
 type rowAPI interface {
-	ListRows(tableId string, offset, limit int64) (*service.RowsPage, error)
-	GetRow(tableId, pkey string) (*storage.Row, error)
-	InsertRow(tableId string, values map[string]any) (string, error)
-	BulkInsertRows(tableId string, rows []map[string]any) ([]string, error)
-	UpdateRow(tableId string, pkeys []string, updates map[string]any) error
-	RemoveRows(tableId string, pkeys []string) error
+	ListRows(ctx context.Context, tableId string, offset, limit int64) (*service.RowsPage, error)
+	GetRow(ctx context.Context, tableId, pkey string) (*storage.Row, error)
+	InsertRow(ctx context.Context, tableId string, values map[string]any) (string, error)
+	BulkInsertRows(ctx context.Context, tableId string, rows []map[string]any) ([]string, error)
+	UpdateRow(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error
+	RemoveRows(ctx context.Context, tableId string, pkeys []string) error
 }
 
 // schemaAPI is everything the router calls on *service.SchemaService.
 type schemaAPI interface {
-	Schema(tableId string) ([]service.ColumnSchema, error)
-	AddColumn(tableId, colName, colType string) error
+	Schema(ctx context.Context, tableId string) ([]service.ColumnSchema, error)
+	AddColumn(ctx context.Context, tableId, colName, colType string) error
 }
 
 // deriveAPI is everything the router calls on *service.DeriveService.
 type deriveAPI interface {
-	DeriveTable(sourceTableId, query, newTableName string) (string, error)
+	DeriveTable(ctx context.Context, sourceTableId, query, newTableName string) (string, error)
 }
 
 // geoAPI is everything the router calls on *service.GeoService.
 type geoAPI interface {
 	GetTile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error)
-	GeometryTypes(tableId string) ([]string, error)
-	FilterByBbox(tableId string, bbox [4]float64) ([]string, error)
+	GeometryTypes(ctx context.Context, tableId string) ([]string, error)
+	FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error)
 }
 
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
 	List() []service.Source
-	Refresh() ([]service.Source, error)
+	Refresh(ctx context.Context) ([]service.Source, error)
 	Upload(filename string, content io.Reader) (string, error)
-	Load(name, layer string) (string, error)
+	Load(ctx context.Context, name, layer string) (string, error)
 	MaxUploadBytes() int64
 }
 

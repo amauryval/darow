@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,9 +11,9 @@ import (
 func Test_Adapter_ValidateDeriveQuery(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, err := a.Exec(`CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
+	_, err := a.Exec(context.Background(), `CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
 	require.NoError(t, err)
-	_, err = a.Exec(`INSERT INTO metadata (tableId, physicalName, tableName) VALUES ('id-1', 't_a1b2c3', 'widgets')`)
+	_, err = a.Exec(context.Background(), `INSERT INTO metadata (tableId, physicalName, tableName) VALUES ('id-1', 't_a1b2c3', 'widgets')`)
 	require.NoError(t, err)
 
 	cases := []struct {
@@ -61,7 +62,7 @@ func Test_Adapter_ValidateDeriveQuery(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := a.validateDeriveQuery(c.query)
+			err := a.validateDeriveQuery(context.Background(), c.query)
 			if c.wantErr == "" {
 				assert.NoError(t, err)
 				return
@@ -75,7 +76,7 @@ func Test_Adapter_ValidateDeriveQuery(t *testing.T) {
 func Test_Adapter_CreateFromQuery_RejectsUnregisteredTable(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, _, err := a.CreateFromQuery("t_derived", "SELECT * FROM read_csv('/etc/passwd')")
+	_, _, err := a.CreateFromQuery(context.Background(), "t_derived", "SELECT * FROM read_csv('/etc/passwd')")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "table function")

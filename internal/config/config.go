@@ -15,6 +15,7 @@ type Config struct {
 	DuckDB  DuckDBConfig  `yaml:"duckdb"`
 	Sources SourcesConfig `yaml:"sources"`
 	API     APIConfig     `yaml:"api"`
+	Cache   CacheConfig   `yaml:"cache"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -35,11 +36,24 @@ type SourcesConfig struct {
 }
 
 // APIConfig holds settings adjustable without recompiling (règle 18) for
-// row pagination limits and request body size.
+// row pagination limits, request body size, and per-request timeout.
 type APIConfig struct {
-	DefaultRowLimit int   `yaml:"defaultRowLimit"`
-	MaxRowLimit     int   `yaml:"maxRowLimit"`
-	MaxBodyBytes    int64 `yaml:"maxBodyBytes"`
+	DefaultRowLimit   int   `yaml:"defaultRowLimit"`
+	MaxRowLimit       int   `yaml:"maxRowLimit"`
+	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
+	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
+}
+
+// CacheConfig holds TTL and max item count for every in-memory cache
+// (règle 18, PERF-5): metadata reads, cached column types, and rendered
+// MVT tiles. Each is a size-bounded LRU with expiration, never unbounded.
+type CacheConfig struct {
+	MetadataTTLSec   int `yaml:"metadataTTLSec"`
+	MetadataMaxItems int `yaml:"metadataMaxItems"`
+	SchemaTTLSec     int `yaml:"schemaTTLSec"`
+	SchemaMaxItems   int `yaml:"schemaMaxItems"`
+	TileTTLSec       int `yaml:"tileTTLSec"`
+	TileMaxItems     int `yaml:"tileMaxItems"`
 }
 
 func defaultConfig() Config {
@@ -52,9 +66,18 @@ func defaultConfig() Config {
 			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg"},
 		},
 		API: APIConfig{
-			DefaultRowLimit: 100,
-			MaxRowLimit:     1000,
-			MaxBodyBytes:    10 * 1024 * 1024,
+			DefaultRowLimit:   100,
+			MaxRowLimit:       1000,
+			MaxBodyBytes:      10 * 1024 * 1024,
+			RequestTimeoutSec: 30,
+		},
+		Cache: CacheConfig{
+			MetadataTTLSec:   300,
+			MetadataMaxItems: 1000,
+			SchemaTTLSec:     300,
+			SchemaMaxItems:   1000,
+			TileTTLSec:       300,
+			TileMaxItems:     5000,
 		},
 	}
 }

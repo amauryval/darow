@@ -14,7 +14,7 @@ import (
 // @Success 200 {array} metadataDTO
 // @Router /tables [get]
 func (rt *Router) listTables(w http.ResponseWriter, req *http.Request) {
-	tables, err := rt.metadataService.ListTables()
+	tables, err := rt.metadataService.ListTables(req.Context())
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -52,7 +52,7 @@ func (rt *Router) getTableMetadata(w http.ResponseWriter, req *http.Request) {
 func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
-	if err := rt.metadataService.RemoveTable(meta.TableId); err != nil {
+	if err := rt.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
@@ -70,7 +70,7 @@ func (rt *Router) deleteTable(w http.ResponseWriter, req *http.Request) {
 func (rt *Router) getSchema(w http.ResponseWriter, req *http.Request) {
 	meta := tableMetadataFromContext(req)
 
-	schema, err := rt.schemaService.Schema(meta.TableId)
+	schema, err := rt.schemaService.Schema(req.Context(), meta.TableId)
 	if err != nil {
 		WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -105,7 +105,7 @@ func (rt *Router) addColumn(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := rt.schemaService.AddColumn(meta.TableId, body.Name, body.Type); err != nil {
+	if err := rt.schemaService.AddColumn(req.Context(), meta.TableId, body.Name, body.Type); err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
@@ -136,7 +136,7 @@ func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	tableId, err := rt.deriveService.DeriveTable(meta.TableId, body.Query, body.NewTableName)
+	tableId, err := rt.deriveService.DeriveTable(req.Context(), meta.TableId, body.Query, body.NewTableName)
 	if err != nil {
 		WriteError(w, req, err, http.StatusBadRequest)
 		return

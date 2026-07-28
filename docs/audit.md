@@ -402,15 +402,15 @@ construisent plus de service réel.
 
 ### Étape 5 — Performance *(≈ 2 j)*
 
-1. **PERF-1** : `SchemaService.Types(tableId) map[string]string` caché et invalidé avec les
+1. [FAIT] **PERF-1** : `SchemaService.Types(tableId) map[string]string` caché et invalidé avec les
    métadonnées ; `convertRow` ne fait plus d'I/O.
-2. **PERF-4** : propager `context.Context` sur **toutes** les méthodes storage et service (à faire
+2. [FAIT] **PERF-4** : propager `context.Context` sur **toutes** les méthodes storage et service (à faire
    dans le même mouvement que l'étape 4 pour ne casser les signatures qu'une fois) ; timeout par
    requête via middleware.
 3. **PERF-2** : export en streaming, borné et paginé.
-4. **PERF-3** : pool de connexions DuckDB avec `LOAD spatial` au hook de connexion ; `writeMu`
+4. **PERF-3** : [NE PAS FAIRE] pool de connexions DuckDB avec `LOAD spatial` au hook de connexion ; `writeMu`
    conservé pour les écritures uniquement. Valider sous `-race` et sous charge.
-5. **PERF-5** : TTL et **taille max** des caches en config (règle 18) ; cache de tuiles borné (LRU).
+5. [FAIT] **PERF-5** : TTL et **taille max** des caches en config (règle 18) ; cache de tuiles borné (LRU).
 
 ### Étape 6 — Exploitation *(≈ 1 j)*
 
@@ -418,8 +418,8 @@ construisent plus de service réel.
 2. `/healthz` (process) et `/readyz` (ping DuckDB).
 3. `log/slog` structuré + identifiant de requête (`middleware.RequestID`) ; supprimer les
    `log.Fatalf` hors bootstrap.
-4. Métriques Prometheus (latence, tuiles servies, hit-ratio des caches).
-5. **HTTP-2** : `ETag` sur les tuiles dérivé de `UpdatedAt`, `max-age` court.
+4. [NE PAS FAIRE] Métriques Prometheus (latence, tuiles servies, hit-ratio des caches).
+5. **HTTP-2** : [NE PAS FAIRE] `ETag` sur les tuiles dérivé de `UpdatedAt`, `max-age` court.
 
 ### Étape 7 — Fondations d'évolutivité *(≈ 2–3 j)*
 

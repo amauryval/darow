@@ -1,9 +1,10 @@
 package service
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"gogeoserver/internal/storage"
 )
@@ -11,47 +12,44 @@ import (
 // MetadataService is the single owner of the metadata cache (règle 11):
 // every other service reaches metadata reads/writes through it — via its
 // own narrow port — rather than caching independently, so invalidation
-// stays in one place.
+// stays in one place. The cache is a size-bounded LRU with expiration
+// (PERF-5), never unbounded.
 type MetadataService struct {
 	storage storage.MetadataManager
-	cache   *cache.Cache
+	cache   *expirable.LRU[string, *storage.Metadata]
 }
 
 // NewMetadataService builds a MetadataService backed by storage, using c
 // to cache metadata reads.
-func NewMetadataService(s storage.MetadataManager, c *cache.Cache) *MetadataService {
+func NewMetadataService(s storage.MetadataManager, c *expirable.LRU[string, *storage.Metadata]) *MetadataService {
 	return &MetadataService{storage: s, cache: c}
 }
 
-func metadataCacheKey(tableId string) string {
-	return "metadata_" + tableId
-}
-
 // GetMetadata returns tableId's metadata, from cache when present.
-func (s *MetadataService) GetMetadata(tableId string) (*storage.Metadata, error) {
-	if val, ok := s.cache.Get(metadataCacheKey(tableId)); ok {
-		return val.(*storage.Metadata), nil
+func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
+	if meta, ok := s.cache.Get(tableId); ok {
+		return meta, nil
 	}
 
-	meta, err := s.storage.GetMetadata(tableId)
+	meta, err := s.storage.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
 
-	s.cache.Set(metadataCacheKey(tableId), meta, cache.DefaultExpiration)
+	s.cache.Add(tableId, meta)
 	return meta, nil
 }
 
 // ListTables returns metadata for every registered table.
-func (s *MetadataService) ListTables() ([]*storage.Metadata, error) {
-	ids, err := s.storage.TableIds()
+func (s *MetadataService) ListTables(ctx context.Context) ([]*storage.Metadata, error) {
+	ids, err := s.storage.TableIds(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	tables := make([]*storage.Metadata, 0, len(ids))
 	for _, id := range ids {
-		meta, err := s.GetMetadata(id)
+		meta, err := s.GetMetadata(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -64,18 +62,18 @@ func (s *MetadataService) ListTables() ([]*storage.Metadata, error) {
 // metadata (règle 11): UpdateMetadata, RefreshDerived, RemoveTable,
 // Rollback.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
-	s.cache.Delete(metadataCacheKey(tableId))
+	s.cache.Remove(tableId)
 }
 
 // Create registers a new logical table's metadata row, used by
 // DeriveService/ImportService before materializing its physical table.
-func (s *MetadataService) Create(tableName string, isGeo bool, geometryColumn string) (string, error) {
-	return s.storage.Create(tableName, isGeo, geometryColumn)
+func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
+	return s.storage.Create(ctx, tableName, isGeo, geometryColumn)
 }
 
 // UpdateMetadata patches tableId's metadata and invalidates the cache.
-func (s *MetadataService) UpdateMetadata(tableId string, updates map[string]any) error {
-	if err := s.storage.UpdateMetadata(tableId, updates); err != nil {
+func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error {
+	if err := s.storage.UpdateMetadata(ctx, tableId, updates); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)
@@ -83,8 +81,8 @@ func (s *MetadataService) UpdateMetadata(tableId string, updates map[string]any)
 }
 
 // RemoveTable deletes tableId's metadata and underlying physical table.
-func (s *MetadataService) RemoveTable(tableId string) error {
-	if err := s.storage.Remove(tableId); err != nil {
+func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error {
+	if err := s.storage.Remove(ctx, tableId); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)
@@ -95,8 +93,8 @@ func (s *MetadataService) RemoveTable(tableId string) error {
 // UpdatedAt — règle 9) and invalidates the cache. Called by RowService and
 // ImportService/DeriveService after any write that changes row count or
 // touches the geometry column.
-func (s *MetadataService) RefreshDerived(tableId string) error {
-	if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
+func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string) error {
+	if err := s.storage.RefreshDerivedMetadata(ctx, tableId); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)
@@ -108,8 +106,8 @@ func (s *MetadataService) RefreshDerived(tableId string) error {
 // failure partway through DeriveService/ImportService's table creation,
 // so a failed creation never leaves a metadata row with no matching
 // physical table.
-func (s *MetadataService) Rollback(tableId string, cause error) error {
-	if err := s.RemoveTable(tableId); err != nil {
+func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause error) error {
+	if err := s.RemoveTable(ctx, tableId); err != nil {
 		return fmt.Errorf("%w (cleanup also failed: %v)", cause, err)
 	}
 	return cause
@@ -117,14 +115,14 @@ func (s *MetadataService) Rollback(tableId string, cause error) error {
 
 // LoadedSourceNames maps each already-loaded source file name to its
 // tableId, used by SourceService.Refresh to mark sources as loaded.
-func (s *MetadataService) LoadedSourceNames() (map[string]string, error) {
-	ids, err := s.storage.TableIds()
+func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
+	ids, err := s.storage.TableIds(ctx)
 	if err != nil {
 		return nil, err
 	}
 	names := make(map[string]string, len(ids))
 	for _, id := range ids {
-		meta, err := s.GetMetadata(id)
+		meta, err := s.GetMetadata(ctx, id)
 		if err != nil {
 			return nil, err
 		}

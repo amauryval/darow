@@ -11,7 +11,7 @@ import (
 // validated before interpolation (règle 1); zoom/x/y are bound parameters.
 // Stops early if ctx is cancelled.
 func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]byte, error) {
-	meta, err := a.GetMetadata(tableId)
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +48,14 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int) ([]b
     `, quotedGeom, meta.PhysicalName, quotedGeom)
 
 	var mvt []byte
-	err = a.QueryRowContext(ctx, query, zoom, x, y).Scan(&mvt)
+	err = a.QueryRow(ctx, query, zoom, x, y).Scan(&mvt)
 	return mvt, err
 }
 
 // FilterByBbox returns the primary keys of rows whose geometry intersects
 // bbox ([minX, minY, maxX, maxY]).
-func (a *Adapter) FilterByBbox(tableId string, bbox [4]float64) ([]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) FilterByBbox(ctx context.Context, tableId string, bbox [4]float64) ([]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (a *Adapter) FilterByBbox(tableId string, bbox [4]float64) ([]string, error
         ORDER BY __pkey
     `, meta.PhysicalName, quotedGeom)
 
-	rows, err := a.Query(query, bbox[0], bbox[1], bbox[2], bbox[3])
+	rows, err := a.Query(ctx, query, bbox[0], bbox[1], bbox[2], bbox[3])
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +92,8 @@ func (a *Adapter) FilterByBbox(tableId string, bbox [4]float64) ([]string, error
 
 // GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
 // fragment, keyed by pkey. Used only by table export.
-func (a *Adapter) GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, tableId string, pkeys []string) (map[string]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (a *Adapter) GetGeometryGeoJSON(tableId string, pkeys []string) (map[string
 		`SELECT __pkey, CAST(ST_AsGeoJSON(%s) AS VARCHAR) FROM %s WHERE __pkey IN (%s)`,
 		quotedGeom, meta.PhysicalName, placeholders(len(pkeys)),
 	)
-	rows, err := a.Query(query, pkeysToArgs(pkeys)...)
+	rows, err := a.Query(ctx, query, pkeysToArgs(pkeys)...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,8 +128,8 @@ func (a *Adapter) GetGeometryGeoJSON(tableId string, pkeys []string) (map[string
 
 // GeometryTypes runs a lightweight distinct scan over the geometry column;
 // not cached (règle 10), since a geometry column can mix types.
-func (a *Adapter) GeometryTypes(tableId string) ([]string, error) {
-	meta, err := a.GetMetadata(tableId)
+func (a *Adapter) GeometryTypes(ctx context.Context, tableId string) ([]string, error) {
+	meta, err := a.GetMetadata(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func (a *Adapter) GeometryTypes(tableId string) ([]string, error) {
 		`SELECT DISTINCT ST_GeometryType(%s) FROM %s WHERE %s IS NOT NULL`,
 		quotedGeom, meta.PhysicalName, quotedGeom,
 	)
-	rows, err := a.Query(query)
+	rows, err := a.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}

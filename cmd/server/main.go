@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"io/fs"
 	"log"
@@ -16,11 +17,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/router"
 	"gogeoserver/internal/service"
+	"gogeoserver/internal/storage"
 	"gogeoserver/internal/storage/duckdb"
 	"gogeoserver/internal/webui"
 )
@@ -51,16 +53,20 @@ func main() {
 		log.Fatalf("sources workDir: %v", err)
 	}
 
-	metadataService := service.NewMetadataService(storageAdapter, cache.New(5*time.Minute, 10*time.Minute))
-	rowService := service.NewRowService(storageAdapter, metadataService)
-	schemaService := service.NewSchemaService(storageAdapter)
+	metadataCache := expirable.NewLRU[string, *storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
+	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
+	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
+
+	metadataService := service.NewMetadataService(storageAdapter, metadataCache)
+	schemaService := service.NewSchemaService(storageAdapter, schemaCache)
+	rowService := service.NewRowService(storageAdapter, metadataService, schemaService)
 	deriveService := service.NewDeriveService(metadataService, storageAdapter)
 	importService := service.NewImportService(metadataService, storageAdapter)
-	geoService := service.NewGeoService(storageAdapter, metadataService, cache.New(5*time.Minute, 10*time.Minute))
+	geoService := service.NewGeoService(storageAdapter, metadataService, tileCache)
 	sourceService := service.NewSourceService(cfg.Sources, importService)
 	exportService := service.NewExportService(rowService, geoService)
 
-	if _, err := sourceService.Refresh(); err != nil {
+	if _, err := sourceService.Refresh(context.Background()); err != nil {
 		log.Fatalf("initial source scan: %v", err)
 	}
 

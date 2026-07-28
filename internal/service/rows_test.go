@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
@@ -14,8 +16,11 @@ import (
 
 func setupRowService(t *testing.T) (*RowService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	metadata := NewMetadataService(m, cache.New(5*time.Minute, 10*time.Minute))
-	svc := NewRowService(m, metadata)
+	metadataCache := expirable.NewLRU[string, *storage.Metadata](1000, nil, 5*time.Minute)
+	metadata := NewMetadataService(m, metadataCache)
+	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
+	schema := NewSchemaService(m, schemaCache)
+	svc := NewRowService(m, metadata, schema)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
 }
@@ -44,14 +49,15 @@ func Test_ConvertValue(t *testing.T) {
 func Test_RowService_ListRows(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetPkeys", "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
-	m.On("GetRowsByPkey", "id-1", []string{"pk-1"}).Return([]storage.Row{
+	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
+	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
 	}, nil).Once()
-	m.On("ColumnType", "id-1", "createdAt").Return("DATE", nil).Once()
-	m.On("RowsCount", "id-1").Return(int64(1), nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+	m.On("RowsCount", mock.Anything, "id-1").Return(int64(1), nil).Once()
 
-	page, err := svc.ListRows("id-1", 0, 10)
+	page, err := svc.ListRows(context.Background(), "id-1", 0, 10)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), page.Total)
@@ -62,9 +68,9 @@ func Test_RowService_ListRows(t *testing.T) {
 func Test_RowService_GetRow_NotFound(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetRowsByPkey", "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
+	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
-	row, err := svc.GetRow("id-1", "missing")
+	row, err := svc.GetRow(context.Background(), "id-1", "missing")
 
 	require.NoError(t, err)
 	assert.Nil(t, row)
@@ -86,13 +92,13 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			svc, m := setupRowService(t)
 
 			updates := map[string]any{c.column: "value"}
-			m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}, nil).Once()
-			m.On("Update", "id-1", []string{"pk-1"}, updates).Return(nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-1").Return(&storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}, nil).Once()
+			m.On("Update", mock.Anything, "id-1", []string{"pk-1"}, updates).Return(nil).Once()
 			if c.wantRefresh {
-				m.On("RefreshDerivedMetadata", "id-1").Return(nil).Once()
+				m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
 			}
 
-			err := svc.UpdateRow("id-1", []string{"pk-1"}, updates)
+			err := svc.UpdateRow(context.Background(), "id-1", []string{"pk-1"}, updates)
 			require.NoError(t, err)
 		})
 	}

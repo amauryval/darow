@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -48,9 +49,9 @@ type SourceLayer struct {
 // *TableService: this is SourceService's actual dependency, not
 // TableService's whole method set.
 type tableImporter interface {
-	LoadedSourceNames() (map[string]string, error)
-	ListLayers(path string) ([]string, error)
-	ImportFromFile(name, path, ext, layer string) (string, error)
+	LoadedSourceNames(ctx context.Context) (map[string]string, error)
+	ListLayers(ctx context.Context, path string) ([]string, error)
+	ImportFromFile(ctx context.Context, name, path, ext, layer string) (string, error)
 }
 
 // SourceService scans workDir for loadable files and imports them into
@@ -83,13 +84,13 @@ func (s *SourceService) MaxUploadBytes() int64 {
 // Refresh rescans workDir and replaces the in-memory cache. Files beyond
 // MaxSizeBytes or with a non-whitelisted extension are silently excluded,
 // not reported as an error.
-func (s *SourceService) Refresh() ([]Source, error) {
+func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 	entries, err := os.ReadDir(s.cfg.WorkDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading workDir: %w", err)
 	}
 
-	loaded, err := s.tableService.LoadedSourceNames()
+	loaded, err := s.tableService.LoadedSourceNames(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +119,7 @@ func (s *SourceService) Refresh() ([]Source, error) {
 			ModTime:   info.ModTime(),
 		}
 		if ext == gpkgExt {
-			source.Layers = s.listLoadedLayers(entry.Name(), loaded)
+			source.Layers = s.listLoadedLayers(ctx, entry.Name(), loaded)
 		} else {
 			source.TableId, source.Loaded = loaded[entry.Name()]
 		}
@@ -136,9 +137,9 @@ func (s *SourceService) Refresh() ([]Source, error) {
 // a multi-layer source's loaded state is tracked per layer. If the file's
 // layers can't be read (e.g. corrupt), it is still listed as a source, just
 // without layer info, rather than failing the whole Refresh.
-func (s *SourceService) listLoadedLayers(name string, loaded map[string]string) []SourceLayer {
+func (s *SourceService) listLoadedLayers(ctx context.Context, name string, loaded map[string]string) []SourceLayer {
 	path := filepath.Join(s.cfg.WorkDir, name)
-	layerNames, err := s.tableService.ListLayers(path)
+	layerNames, err := s.tableService.ListLayers(ctx, path)
 	if err != nil {
 		return nil
 	}
@@ -216,7 +217,7 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 // SourceService doc) — the on-success update of the cached entry below is
 // what lets an immediate second Load, with no Refresh in between, see the
 // source as loaded instead of importing it again.
-func (s *SourceService) Load(name, layer string) (string, error) {
+func (s *SourceService) Load(ctx context.Context, name, layer string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -239,7 +240,7 @@ func (s *SourceService) Load(name, layer string) (string, error) {
 			return "", fmt.Errorf("source %q already loaded (table %s)", name, found.TableId)
 		}
 		path := filepath.Join(s.cfg.WorkDir, found.Name)
-		tableId, err := s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
+		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "")
 		if err != nil {
 			return "", err
 		}
@@ -267,7 +268,7 @@ func (s *SourceService) Load(name, layer string) (string, error) {
 
 	path := filepath.Join(s.cfg.WorkDir, found.Name)
 	tableName := found.Name + layerSeparator + layer
-	tableId, err := s.tableService.ImportFromFile(tableName, path, found.Ext, layer)
+	tableId, err := s.tableService.ImportFromFile(ctx, tableName, path, found.Ext, layer)
 	if err != nil {
 		return "", err
 	}

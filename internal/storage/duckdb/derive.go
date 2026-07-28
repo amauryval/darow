@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -17,8 +18,8 @@ type parsedQuery struct {
 
 // registeredPhysicalNames lists every physicalName currently registered in
 // metadata — the only tables a derive query is allowed to reference.
-func (a *Adapter) registeredPhysicalNames() (map[string]bool, error) {
-	rows, err := a.Query(`SELECT physicalName FROM metadata`)
+func (a *Adapter) registeredPhysicalNames(ctx context.Context) (map[string]bool, error) {
+	rows, err := a.Query(ctx, `SELECT physicalName FROM metadata`)
 	if err != nil {
 		return nil, err
 	}
@@ -40,9 +41,9 @@ func (a *Adapter) registeredPhysicalNames() (map[string]bool, error) {
 // isn't a single SELECT over already-registered tables. json_serialize_sql
 // itself rejects any non-SELECT statement, so this also enforces règle 4
 // with the engine's own grammar rather than a regex approximation of it.
-func (a *Adapter) validateDeriveQuery(query string) error {
+func (a *Adapter) validateDeriveQuery(ctx context.Context, query string) error {
 	var raw string
-	if err := a.QueryRow(`SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
+	if err := a.QueryRow(ctx, `SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
 		return fmt.Errorf("parsing query: %w", err)
 	}
 
@@ -57,7 +58,7 @@ func (a *Adapter) validateDeriveQuery(query string) error {
 		return fmt.Errorf("query must be a single statement")
 	}
 
-	allowed, err := a.registeredPhysicalNames()
+	allowed, err := a.registeredPhysicalNames(ctx)
 	if err != nil {
 		return err
 	}

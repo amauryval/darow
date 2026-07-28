@@ -15,3 +15,12 @@ api:
   defaultRowLimit: 100
   maxRowLimit: 1000
   maxBodyBytes: 10485760 # 10 Mo
+  requestTimeoutSec: 30
+
+cache:
+  metadataTTLSec: 300
+  metadataMaxItems: 1000
+  schemaTTLSec: 300
+  schemaMaxItems: 1000
+  tileTTLSec: 300
+  tileMaxItems: 5000

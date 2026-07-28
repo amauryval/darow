@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,14 +15,15 @@ import (
 
 func setupGeoService(t *testing.T) (*GeoService, *mocks.Storage, *MetadataService) {
 	metadataSvc, m := setupMetadataService(t)
-	geoSvc := NewGeoService(m, metadataSvc, cache.New(5*time.Minute, 10*time.Minute))
+	tileCache := expirable.NewLRU[string, []byte](1000, nil, 5*time.Minute)
+	geoSvc := NewGeoService(m, metadataSvc, tileCache)
 	return geoSvc, m, metadataSvc
 }
 
 func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
 	geoSvc, m, _ := setupGeoService(t)
 
-	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
+	m.On("GetMetadata", context.Background(), "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
 	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("mvt-data"), nil).Once()
 
 	tile, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
@@ -37,7 +38,7 @@ func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
 func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	geoSvc, m, metadataSvc := setupGeoService(t)
 
-	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
+	m.On("GetMetadata", context.Background(), "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, nil).Once()
 	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("old"), nil).Once()
 
 	tile, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
@@ -48,7 +49,7 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	// mandatory metadata cache invalidation (règle 11).
 	metadataSvc.invalidateMetadataCache("id-1")
 
-	m.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, nil).Once()
+	m.On("GetMetadata", context.Background(), "id-1").Return(&storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, nil).Once()
 	m.On("Tile", context.Background(), "id-1", 1, 2, 3).Return([]byte("new"), nil).Once()
 
 	tile2, err := geoSvc.GetTile(context.Background(), "id-1", 1, 2, 3)
@@ -59,9 +60,9 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 func Test_GeoService_FilterByBbox(t *testing.T) {
 	geoSvc, m, _ := setupGeoService(t)
 
-	m.On("FilterByBbox", "id-1", [4]float64{0, 0, 1, 1}).Return([]string{"pk-1"}, nil).Once()
+	m.On("FilterByBbox", context.Background(), "id-1", [4]float64{0, 0, 1, 1}).Return([]string{"pk-1"}, nil).Once()
 
-	pkeys, err := geoSvc.FilterByBbox("id-1", [4]float64{0, 0, 1, 1})
+	pkeys, err := geoSvc.FilterByBbox(context.Background(), "id-1", [4]float64{0, 0, 1, 1})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pk-1"}, pkeys)
@@ -70,9 +71,9 @@ func Test_GeoService_FilterByBbox(t *testing.T) {
 func Test_GeoService_GeometryTypes(t *testing.T) {
 	geoSvc, m, _ := setupGeoService(t)
 
-	m.On("GeometryTypes", "id-1").Return([]string{"POINT", "POLYGON"}, nil).Once()
+	m.On("GeometryTypes", context.Background(), "id-1").Return([]string{"POINT", "POLYGON"}, nil).Once()
 
-	types, err := geoSvc.GeometryTypes("id-1")
+	types, err := geoSvc.GeometryTypes(context.Background(), "id-1")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT", "POLYGON"}, types)

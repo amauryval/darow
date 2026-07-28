@@ -30,7 +30,7 @@ func (rt *Router) exportTable(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	body, contentType, err := rt.exportService.Export(meta, format)
+	body, contentType, err := rt.exportService.Export(req.Context(), meta, format)
 	if err != nil {
 		code := http.StatusInternalServerError
 		var validationErr *service.ExportValidationError

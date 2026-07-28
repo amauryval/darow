@@ -3,6 +3,7 @@ package router
 import (
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -50,6 +51,9 @@ func (rt *Router) Setup() http.Handler {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	if rt.apiCfg.RequestTimeoutSec > 0 {
+		r.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
+	}
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)

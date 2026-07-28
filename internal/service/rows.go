@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"time"
 
 	"gogeoserver/internal/storage"
@@ -35,8 +36,15 @@ func convertValue(colType string, value any) any {
 // metadata (to check which column is geometry) and refresh derived fields
 // after a write (règle 9).
 type metadataRefresher interface {
-	GetMetadata(tableId string) (*storage.Metadata, error)
-	RefreshDerived(tableId string) error
+	GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error)
+	RefreshDerived(ctx context.Context, tableId string) error
+}
+
+// columnTyper is what RowService needs from SchemaService: the cached
+// column-name-to-type map (PERF-1), so converting a row's values never
+// issues one DESCRIBE per column.
+type columnTyper interface {
+	Types(ctx context.Context, tableId string) (map[string]string, error)
 }
 
 // RowService provides row CRUD on top of the storage layer, converting
@@ -45,30 +53,33 @@ type metadataRefresher interface {
 type RowService struct {
 	storage  storage.TableManager
 	metadata metadataRefresher
+	schema   columnTyper
 }
 
 // NewRowService builds a RowService backed by storage, using metadata to
-// read table metadata and refresh derived fields after a write.
-func NewRowService(storage storage.TableManager, metadata metadataRefresher) *RowService {
-	return &RowService{storage: storage, metadata: metadata}
+// read table metadata and refresh derived fields after a write, and schema
+// to resolve column types from its cache (PERF-1).
+func NewRowService(storage storage.TableManager, metadata metadataRefresher, schema columnTyper) *RowService {
+	return &RowService{storage: storage, metadata: metadata, schema: schema}
 }
 
-func (s *RowService) convertRow(tableId string, row storage.Row) (storage.Row, error) {
+func (s *RowService) convertRow(ctx context.Context, tableId string, row storage.Row) (storage.Row, error) {
+	types, err := s.schema.Types(ctx, tableId)
+	if err != nil {
+		return storage.Row{}, err
+	}
+
 	converted := storage.Row{Pkey: row.Pkey, Values: make(map[string]any, len(row.Values))}
 	for col, val := range row.Values {
-		colType, err := s.storage.ColumnType(tableId, col)
-		if err != nil {
-			return storage.Row{}, err
-		}
-		converted.Values[col] = convertValue(colType, val)
+		converted.Values[col] = convertValue(types[col], val)
 	}
 	return converted, nil
 }
 
-func (s *RowService) convertRows(tableId string, rows []storage.Row) ([]storage.Row, error) {
+func (s *RowService) convertRows(ctx context.Context, tableId string, rows []storage.Row) ([]storage.Row, error) {
 	converted := make([]storage.Row, 0, len(rows))
 	for _, row := range rows {
-		c, err := s.convertRow(tableId, row)
+		c, err := s.convertRow(ctx, tableId, row)
 		if err != nil {
 			return nil, err
 		}
@@ -80,26 +91,26 @@ func (s *RowService) convertRows(tableId string, rows []storage.Row) ([]storage.
 // ListRows returns a page of rows ordered deterministically by pkey
 // (règle 8), with values converted to native JSON types (règle 12) and the
 // geometry column always excluded (règle 7).
-func (s *RowService) ListRows(tableId string, offset, limit int64) (*RowsPage, error) {
-	pkeys, err := s.storage.GetPkeys(tableId, offset, limit)
+func (s *RowService) ListRows(ctx context.Context, tableId string, offset, limit int64) (*RowsPage, error) {
+	pkeys, err := s.storage.GetPkeys(ctx, tableId, offset, limit)
 	if err != nil {
 		return nil, err
 	}
 
 	var rows []storage.Row
 	if len(pkeys) > 0 {
-		rows, err = s.storage.GetRowsByPkey(tableId, pkeys)
+		rows, err = s.storage.GetRowsByPkey(ctx, tableId, pkeys)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	rows, err = s.convertRows(tableId, rows)
+	rows, err = s.convertRows(ctx, tableId, rows)
 	if err != nil {
 		return nil, err
 	}
 
-	total, err := s.storage.RowsCount(tableId)
+	total, err := s.storage.RowsCount(ctx, tableId)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +119,8 @@ func (s *RowService) ListRows(tableId string, offset, limit int64) (*RowsPage, e
 }
 
 // GetRow fetches a single row by pkey, or nil if it does not exist.
-func (s *RowService) GetRow(tableId, pkey string) (*storage.Row, error) {
-	rows, err := s.storage.GetRowsByPkey(tableId, []string{pkey})
+func (s *RowService) GetRow(ctx context.Context, tableId, pkey string) (*storage.Row, error) {
+	rows, err := s.storage.GetRowsByPkey(ctx, tableId, []string{pkey})
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +128,7 @@ func (s *RowService) GetRow(tableId, pkey string) (*storage.Row, error) {
 		return nil, nil
 	}
 
-	converted, err := s.convertRow(tableId, rows[0])
+	converted, err := s.convertRow(ctx, tableId, rows[0])
 	if err != nil {
 		return nil, err
 	}
@@ -127,12 +138,12 @@ func (s *RowService) GetRow(tableId, pkey string) (*storage.Row, error) {
 // ListRowsWithFilter returns rows matching filter, produced exclusively by
 // storage.BuildFilter (règle 5), with values converted to native JSON
 // types (règle 12).
-func (s *RowService) ListRowsWithFilter(tableId, filter string, args []any, limit int) ([]storage.Row, error) {
-	rows, err := s.storage.GetRowsWithFilter(tableId, filter, args, limit)
+func (s *RowService) ListRowsWithFilter(ctx context.Context, tableId, filter string, args []any, limit int) ([]storage.Row, error) {
+	rows, err := s.storage.GetRowsWithFilter(ctx, tableId, filter, args, limit)
 	if err != nil {
 		return nil, err
 	}
-	return s.convertRows(tableId, rows)
+	return s.convertRows(ctx, tableId, rows)
 }
 
 // UpdateRow updates every column in updates for the given pkeys in a
@@ -142,18 +153,18 @@ func (s *RowService) ListRowsWithFilter(tableId, filter string, args []any, limi
 // UpdatedAt (règle 9) — the signal that invalidates GeoService's tile
 // cache (règle 20) and MetadataService's cache (règle 11). Updating only
 // scalar fields triggers neither.
-func (s *RowService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
-	meta, err := s.metadata.GetMetadata(tableId)
+func (s *RowService) UpdateRow(ctx context.Context, tableId string, pkeys []string, updates map[string]any) error {
+	meta, err := s.metadata.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
 
-	if err := s.storage.Update(tableId, pkeys, updates); err != nil {
+	if err := s.storage.Update(ctx, tableId, pkeys, updates); err != nil {
 		return err
 	}
 
 	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
-		if err := s.metadata.RefreshDerived(tableId); err != nil {
+		if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {
 			return err
 		}
 	}
@@ -162,12 +173,12 @@ func (s *RowService) UpdateRow(tableId string, pkeys []string, updates map[strin
 }
 
 // InsertRow inserts a single row and refreshes derived metadata (règle 9).
-func (s *RowService) InsertRow(tableId string, values map[string]any) (string, error) {
-	pkey, err := s.storage.InsertRow(tableId, values)
+func (s *RowService) InsertRow(ctx context.Context, tableId string, values map[string]any) (string, error) {
+	pkey, err := s.storage.InsertRow(ctx, tableId, values)
 	if err != nil {
 		return "", err
 	}
-	if err := s.metadata.RefreshDerived(tableId); err != nil {
+	if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {
 		return "", err
 	}
 	return pkey, nil
@@ -175,12 +186,12 @@ func (s *RowService) InsertRow(tableId string, values map[string]any) (string, e
 
 // BulkInsertRows inserts every row in a single transaction and refreshes
 // derived metadata (règle 6, règle 9).
-func (s *RowService) BulkInsertRows(tableId string, rows []map[string]any) ([]string, error) {
-	pkeys, err := s.storage.BulkInsert(tableId, rows)
+func (s *RowService) BulkInsertRows(ctx context.Context, tableId string, rows []map[string]any) ([]string, error) {
+	pkeys, err := s.storage.BulkInsert(ctx, tableId, rows)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.metadata.RefreshDerived(tableId); err != nil {
+	if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {
 		return nil, err
 	}
 	return pkeys, nil
@@ -188,9 +199,9 @@ func (s *RowService) BulkInsertRows(tableId string, rows []map[string]any) ([]st
 
 // RemoveRows deletes the given rows and refreshes derived metadata
 // (règle 9).
-func (s *RowService) RemoveRows(tableId string, pkeys []string) error {
-	if err := s.storage.RemoveRows(tableId, pkeys); err != nil {
+func (s *RowService) RemoveRows(ctx context.Context, tableId string, pkeys []string) error {
+	if err := s.storage.RemoveRows(ctx, tableId, pkeys); err != nil {
 		return err
 	}
-	return s.metadata.RefreshDerived(tableId)
+	return s.metadata.RefreshDerived(ctx, tableId)
 }
