@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS metadata (
     geometryColumn TEXT,
     rowCount INTEGER DEFAULT 0,
     bbox TEXT,
-    srid INTEGER DEFAULT 4326
+    srid INTEGER DEFAULT 4326,
+    sourceName TEXT,
+    sourceLayer TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo);
@@ -68,9 +70,9 @@ func New(path string) (*Adapter, error) {
 		return nil, fmt.Errorf("loading spatial extension: %w", err)
 	}
 
-	if _, err := db.Exec(metadataSchema); err != nil {
+	if err := migrateSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("initializing metadata schema: %w", err)
+		return nil, err
 	}
 
 	return &Adapter{db: db}, nil
@@ -147,14 +149,15 @@ func (a *Adapter) TableExists(ctx context.Context, tableId string) (bool, error)
 func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (*storage.Metadata, error) {
 	row := a.QueryRow(ctx, `
         SELECT tableId, physicalName, tableName, isGeo, createdAt, updatedAt,
-               COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid
+               COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid,
+               COALESCE(sourceName, ''), COALESCE(sourceLayer, '')
         FROM metadata WHERE tableId = ?
     `, tableId)
 
 	var m storage.Metadata
 	err := row.Scan(
 		&m.TableId, &m.PhysicalName, &m.TableName, &m.IsGeo, &m.CreatedAt, &m.UpdatedAt,
-		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid,
+		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("table %q not found: %w", tableId, err)
@@ -201,13 +204,17 @@ func (a *Adapter) Remove(ctx context.Context, tableId string) error {
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata.
-// Supported keys: tableName, isGeo, geometryColumn, srid.
+// Supported keys: tableName, isGeo, geometryColumn, srid, sourceName,
+// sourceLayer.
 func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil
 	}
 
-	allowed := map[string]bool{"tableName": true, "isGeo": true, "geometryColumn": true, "srid": true}
+	allowed := map[string]bool{
+		"tableName": true, "isGeo": true, "geometryColumn": true, "srid": true,
+		"sourceName": true, "sourceLayer": true,
+	}
 	sets := make([]string, 0, len(updates))
 	args := make([]any, 0, len(updates)+1)
 	for col, val := range updates {

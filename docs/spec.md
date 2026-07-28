@@ -1036,15 +1036,19 @@ implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance 
 |                   | `/tables/{tableId}/rows/{pkey}`       | GET         | Récupère une ligne par pkey                     | `200: {"row": {...}}`                 |
 |                   | `/tables/{tableId}/rows/{pkey}`       | PATCH       | Met à jour une ligne                            | `200: {"row": {...}}`                 |
 |                   | `/tables/{tableId}/rows/{pkey}`       | DELETE      | Supprime une ligne                              | `204: No Content`                     |
-| **Géo (MVT)**     | `/tables/{tableId}/tiles/{z}/{x}/{y}` | GET         | Récupère une tuile MVT                          | `200: []byte (application/x-protobuf)`|
+|                   | `/tables/{tableId}/filter`            | POST        | Filtre les lignes par conditions de colonnes (`BuildFilter`, règle 5) | `200: {"rows": [...]}` |
+| **Géo (MVT)**     | `/tables/{tableId}/tiles/{z}/{x}/{y}?attrs=` | GET  | Récupère une tuile MVT ; `attrs` (colonnes séparées par `,`) embarque des attributs non-géométrie dans la tuile (GEO-3) | `200: []byte (application/x-protobuf)`|
 |                   | `/tables/{tableId}/geometry-types`    | GET         | Types de géométrie distincts (règle 10)         | `200: {"types": ["POLYGON", ...]}`    |
 | **Géo (Requêtes)**| `/tables/{tableId}/bbox`              | POST        | Filtre les pkeys dans un bbox                   | `200: {"pkeys": ["...", ...]}`        |
 | **Schémas**       | `/tables/{tableId}/schema`            | GET         | Schéma de la table (colonnes + types)            | `200: {"columns": [{"name": "...", "type": "..."}]}` |
 |                   | `/tables/{tableId}/columns`           | POST        | Ajoute une colonne                              | `201: {"name": "...", "type": "..."}` |
+|                   | `/tables/{tableId}/columns/{col}/distinct` | GET   | Valeurs distinctes d'une colonne (non-géométrie) | `200: {"values": [...]}`             |
 | **Dérivation**    | `/tables/{tableId}/derive`            | POST        | Crée une table à partir d'une requête `SELECT`  | `201: {"tableId": "..."}`             |
 | **Export**        | `/tables/{tableId}/export`            | GET         | Exporte la table en GeoJSON/CSV                 | `200: file`                           |
 
 Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source (ou, pour un `.gpkg`, la couche demandée) est déjà chargée, ou si `layer` est absent/inconnu pour un `.gpkg` (voir `SourceService.Load`, 3.2, et 7.1).
+
+`/tables/{tableId}/filter`, `/tables/{tableId}/columns/{col}/distinct` et `?attrs=` sur les tuiles sont une API publique stable, testée et documentée dans Swagger — mais sans consommateur dans `web/` à ce jour (décision `docs/audit2.md` §4.5) : l'UI n'appelle aucun des trois. Toute UI future qui veut un filtre par colonne, une inspection de valeurs distinctes, ou une infobulle carte les consomme directement via `web/src/client/`, sans en faire des endpoints nouveaux.
 
 ### 6.2 Router (`chi`)
 

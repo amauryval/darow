@@ -15,9 +15,10 @@ import (
 // zoom — shrinking to near-zero at high zoom, so it never needs to be
 // switched off past some threshold.
 func tileSimplifyTolerance(zoom int) float64 {
-	const webMercatorCircumference = 40075016.6855785
-	const tilePixels = 256
-	return webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
+    const webMercatorCircumference = 40075016
+    const tilePixels = 256
+    tolerance := webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
+    return math.Max(tolerance, 0.25)
 }
 
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
@@ -77,7 +78,7 @@ func (a *Adapter) Tile(ctx context.Context, tableId string, zoom, x, y int, attr
     `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), meta.PhysicalName, quotedGeom)
 
 	var mvt []byte
-	err = a.QueryRow(ctx, query, zoom, x, y, tileSimplifyTolerance(zoom)).Scan(&mvt)
+	err = a.QueryRow(ctx, query, zoom, x, y, zoom).Scan(&mvt)
 	return mvt, err
 }
 

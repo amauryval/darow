@@ -22,6 +22,14 @@ type Metadata struct {
 	RowCount       int64
 	Bbox           string
 	Srid           int
+	// SourceName is the workDir file a table was imported from, empty for
+	// a table created via /derive. It is independent of TableName — which
+	// PATCH /tables/{id} may rename freely — so SourceService's
+	// loaded/not-loaded tracking survives a rename (NEW-BUG-5).
+	SourceName string
+	// SourceLayer is the layer name for a table imported from one layer of
+	// a multi-layer source (e.g. GeoPackage); empty otherwise.
+	SourceLayer string
 }
 
 // MetadataManager reads and writes table metadata.

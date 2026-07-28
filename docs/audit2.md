@@ -378,7 +378,7 @@ Trois lots, indépendamment livrables, chacun laissant la branche verte.
 ### Lot C — Dette de conception *(≈ 2 j)*
 
 1. Migrations `metadata` (`schema_version` + `ALTER TABLE` ordonnés au démarrage) — préalable au
-   point suivant (§4.4). détail l'implementation de la migration n'est pas utile pour le moment, elle le sera lors d'un v1 de l'application
+   point suivant (§4.4).
 2. **NEW-BUG-5** : colonnes `sourceName`/`sourceLayer` dans `metadata`, alimentées par
    `ImportFromFile` ; `LoadedSourceNames` ne dépend plus de `tableName`. Tests : renommer une table
    chargée ne la détache pas de sa source ; renommer une table en un nom de fichier ne la fait pas
