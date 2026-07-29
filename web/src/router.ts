@@ -7,8 +7,8 @@ export const router = createRouter({
   history: createWebHistory("/ui/"),
   routes: [
     { path: "/", redirect: "/tables" },
-    { path: "/sources", name: "sources", component: SourcesView },
-    { path: "/tables", name: "tables", component: TablesView },
-    { path: "/tables/:tableId", name: "table-detail", component: TableDetailView, props: true },
+    { path: "/sources", name: "sources", component: SourcesView, meta: { title: "Sources" } },
+    { path: "/tables", name: "tables", component: TablesView, meta: { title: "Tables" } },
+    { path: "/tables/:tableId", name: "table-detail", component: TableDetailView, props: true, meta: { title: "Table" } },
   ],
 });

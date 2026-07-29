@@ -1,13 +1,16 @@
-package router
+package handlers
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/require"
 )
 
 func newHandlerRequest(method, target string, body any, params map[string]string) *http.Request {
@@ -41,4 +44,18 @@ func decodeJSON[T any](rec *httptest.ResponseRecorder) T {
 	var v T
 	_ = json.Unmarshal(rec.Body.Bytes(), &v)
 	return v
+}
+
+func multipartFileRequest(t *testing.T, path, fieldName, filename, content string) *http.Request {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(fieldName, filename)
+	require.NoError(t, err)
+	_, err = part.Write([]byte(content))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }

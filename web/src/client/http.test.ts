@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { apiUrl, ApiError, del, get, post } from "./http";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { apiUrl, ApiError, configureApiClient, del, get, getRoot, post } from "./http";
 
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -9,6 +9,22 @@ function jsonResponse(body: unknown, status: number): Response {
 }
 
 describe("http client", () => {
+  afterEach(() => {
+    configureApiClient({});
+  });
+
+  it("resolves with undefined on a 200 response with an empty body", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 200 })));
+
+    await expect(getRoot<void>("/healthz")).resolves.toBeUndefined();
+  });
+
+  it("prefixes every request with the configured base URL", () => {
+    configureApiClient({ baseUrl: "https://geoapi.example.com/" });
+
+    expect(apiUrl("/tables/t1")).toBe("https://geoapi.example.com/api/v1/tables/t1");
+  });
+
   it("resolves with the parsed body on a 2xx response", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ tableId: "t1" }, 200)));
 

@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
 )
@@ -17,14 +18,21 @@ func Test_newExportHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	exportSvc := &service.ExportService{}
 
-	eh := newExportHandler(metadataSvc, exportSvc)
+	eh := NewExportHandler(metadataSvc, exportSvc)
 
-	assert.Same(t, metadataSvc, eh.metadataService)
 	assert.Same(t, exportSvc, eh.exportService)
+
+	meta := storage.Metadata{TableId: "t1"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+	got, ok := eh.ResolveTable(httptest.NewRecorder(), req)
+	assert.True(t, ok)
+	assert.Equal(t, meta, got)
+	metadataSvc.AssertExpectations(t)
 }
 
 // fakeExportDeps satisfies ExportService's unexported rowLister,
-// geometryFetcher, and columnLister ports structurally, so exportTable's
+// geometryFetcher, and columnLister ports structurally, so ExportTable's
 // streaming path can be exercised without a mocking framework.
 type fakeExportDeps struct {
 	schema []service.ColumnSchema
@@ -66,7 +74,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, rows: []storage.Row{{Pkey: "1"}}}
 			exportSvc := service.NewExportService(deps, deps, deps, 100)
-			eh := &exportHandler{tableResolver: tableResolver{metadataService: metadataSvc}, exportService: exportSvc}
+			eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 			meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: c.isGeo}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -79,7 +87,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 			req := newHandlerRequest(http.MethodGet, target, nil, map[string]string{"tableId": "t1"})
 			rec := httptest.NewRecorder()
 
-			eh.exportTable(rec, req)
+			eh.ExportTable(rec, req)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantContent != "" {

@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"context"
@@ -12,15 +12,15 @@ import (
 func Test_newOpsHandler(t *testing.T) {
 	ready := func(context.Context) error { return nil }
 
-	oh := newOpsHandler(ready)
+	oh := NewOpsHandler(ready)
 
 	assert.NoError(t, oh.ready(context.Background()))
 }
 
 func Test_opsHandler_healthz(t *testing.T) {
-	oh := &opsHandler{}
+	oh := &OpsHandler{}
 
-	rec := doHandlerRequest(oh.healthz, http.MethodGet, "/healthz", nil, nil)
+	rec := doHandlerRequest(oh.Healthz, http.MethodGet, "/healthz", nil, nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
@@ -37,9 +37,9 @@ func Test_opsHandler_readyz(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			oh := &opsHandler{ready: func(context.Context) error { return c.readyErr }}
+			oh := &OpsHandler{ready: func(context.Context) error { return c.readyErr }}
 
-			rec := doHandlerRequest(oh.readyz, http.MethodGet, "/readyz", nil, nil)
+			rec := doHandlerRequest(oh.Readyz, http.MethodGet, "/readyz", nil, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 		})

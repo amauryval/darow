@@ -1,4 +1,4 @@
-package router
+package response
 
 import (
 	"encoding/json"

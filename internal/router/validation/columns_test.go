@@ -1,4 +1,4 @@
-package router
+package validation
 
 import (
 	"context"
@@ -11,15 +11,15 @@ import (
 	"gogeoserver/internal/storage"
 )
 
-func Test_newColumnValidator(t *testing.T) {
-	schemaSvc := &mockSchemaAPI{}
+func Test_NewColumnValidator(t *testing.T) {
+	schemaSvc := &mockSchemaGetter{}
 
-	cv := newColumnValidator(schemaSvc)
+	cv := NewColumnValidator(schemaSvc)
 
 	assert.Same(t, schemaSvc, cv.schemaService)
 }
 
-func Test_columnValidator_validateColumns(t *testing.T) {
+func Test_ColumnValidator_ValidateColumns(t *testing.T) {
 	cases := []struct {
 		name      string
 		requested []string
@@ -35,8 +35,8 @@ func Test_columnValidator_validateColumns(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			schemaSvc := &mockSchemaAPI{}
-			cv := columnValidator{schemaService: schemaSvc}
+			schemaSvc := &mockSchemaGetter{}
+			cv := ColumnValidator{schemaService: schemaSvc}
 
 			meta := storage.Metadata{TableId: "t1", GeometryColumn: "geom"}
 			if len(c.requested) > 0 {
@@ -44,7 +44,7 @@ func Test_columnValidator_validateColumns(t *testing.T) {
 					Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}, {Name: "geom", Type: "GEOMETRY"}}, c.schemaErr).Once()
 			}
 
-			err := cv.validateColumns(context.Background(), meta, c.requested)
+			err := cv.ValidateColumns(context.Background(), meta, c.requested)
 
 			if c.wantErr {
 				assert.Error(t, err)

@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"fmt"
@@ -8,24 +8,26 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"gogeoserver/internal/router/response"
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 )
 
-// exportHandler serves table export, streaming rows in CSV or GeoJSON.
-type exportHandler struct {
-	tableResolver
+// ExportHandler serves table export, streaming rows in CSV or GeoJSON.
+type ExportHandler struct {
+	validation.TableResolver
 	exportService *service.ExportService
 }
 
-// newExportHandler builds an exportHandler from the service ports it needs.
-func newExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService) *exportHandler {
-	return &exportHandler{
-		tableResolver: newTableResolver(metadataSvc),
+// NewExportHandler builds an ExportHandler from the service ports it needs.
+func NewExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService) *ExportHandler {
+	return &ExportHandler{
+		TableResolver: validation.NewTableResolver(metadataSvc),
 		exportService: exportSvc,
 	}
 }
 
-// exportTable handles GET /tables/{tableId}/export?format=csv|geojson.
+// ExportTable handles GET /tables/{tableId}/export?format=csv|geojson.
 // format defaults to "geojson" for geo tables and "csv" otherwise.
 // ExportService streams rows in bounded batches (PERF-2) directly to the
 // response, so the content type and headers must be validated and set
@@ -38,10 +40,10 @@ func newExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService)
 // @Param tableId path string true "Table ID"
 // @Param format query string false "csv or geojson"
 // @Success 200 {file} byte
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/export [get]
-func (eh *exportHandler) exportTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := eh.resolveTable(w, req)
+func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := eh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -56,7 +58,7 @@ func (eh *exportHandler) exportTable(w http.ResponseWriter, req *http.Request) {
 
 	contentType, err := eh.exportService.ContentType(meta, format)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 

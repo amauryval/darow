@@ -12,6 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@lucide/vue": "^1.27.0",
     "maplibre-gl": "^4.7.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
@@ -20,6 +21,7 @@
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-vue": "^5.2.1",
+    "daisyui": "^5.7.7",
     "eslint": "^10.8.0",
     "eslint-plugin-vue": "^10.10.0",
     "globals": "^15.15.0",

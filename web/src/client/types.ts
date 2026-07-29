@@ -55,6 +55,15 @@ export interface SchemaResponse {
   columns: ColumnSchema[];
 }
 
+// Matches storage.FilterCondition — column and operator are validated
+// server-side against the table's real schema and a fixed operator
+// whitelist, so no enum is enforced client-side.
+export interface FilterCondition {
+  column: string;
+  operator: string;
+  value: RowValue;
+}
+
 export interface ErrorResponse {
   error: string;
   message: string;

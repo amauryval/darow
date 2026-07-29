@@ -3,6 +3,8 @@ package router
 import (
 	"fmt"
 	"net/http"
+
+	"gogeoserver/internal/router/response"
 )
 
 // maxBodyBytes caps the request body so a handler that decodes it into
@@ -20,7 +22,7 @@ func maxBodyBytes(max int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.ContentLength > max {
-				WriteError(w, req, fmt.Errorf("request body of %d bytes exceeds the %d MB limit", req.ContentLength, max/(1024*1024)), http.StatusRequestEntityTooLarge)
+				response.WriteError(w, req, fmt.Errorf("request body of %d bytes exceeds the %d MB limit", req.ContentLength, max/(1024*1024)), http.StatusRequestEntityTooLarge)
 				return
 			}
 			req.Body = http.MaxBytesReader(w, req.Body, max)

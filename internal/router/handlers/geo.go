@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"encoding/json"
@@ -10,22 +10,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"gogeoserver/internal/router/response"
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/storage"
 )
 
-// geoHandler serves geo-specific endpoints: MVT tiles, geometry types, and
+// GeoHandler serves geo-specific endpoints: MVT tiles, geometry types, and
 // bbox filtering.
-type geoHandler struct {
-	tableResolver
-	columnValidator
+type GeoHandler struct {
+	validation.TableResolver
+	validation.ColumnValidator
 	geoService geoAPI
 }
 
-// newGeoHandler builds a geoHandler from the service ports it needs.
-func newGeoHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI) *geoHandler {
-	return &geoHandler{
-		tableResolver:   newTableResolver(metadataSvc),
-		columnValidator: newColumnValidator(schemaSvc),
+// NewGeoHandler builds a GeoHandler from the service ports it needs.
+func NewGeoHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI) *GeoHandler {
+	return &GeoHandler{
+		TableResolver:   validation.NewTableResolver(metadataSvc),
+		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		geoService:      geoSvc,
 	}
 }
@@ -51,7 +53,7 @@ func parseTileAttrs(req *http.Request) []string {
 	return strings.Split(raw, ",")
 }
 
-// getTile handles GET /tables/{tableId}/tiles/{z}/{x}/{y}.
+// GetTile handles GET /tables/{tableId}/tiles/{z}/{x}/{y}.
 //
 // @Summary Get an MVT tile
 // @Tags geo
@@ -63,21 +65,21 @@ func parseTileAttrs(req *http.Request) []string {
 // @Param attrs query string false "Comma-separated non-geometry columns to embed in the tile"
 // @Success 200 {file} byte
 // @Router /api/v1/tables/{tableId}/tiles/{z}/{x}/{y} [get]
-func (gh *geoHandler) getTile(w http.ResponseWriter, req *http.Request) {
-	meta, ok := gh.resolveTable(w, req)
+func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 
 	z, x, y, err := parseTileCoords(req)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	attrs := parseTileAttrs(req)
-	if err := gh.validateColumns(req.Context(), meta, attrs); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+	if err := gh.ValidateColumns(req.Context(), meta, attrs); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
@@ -96,7 +98,7 @@ func (gh *geoHandler) getTile(w http.ResponseWriter, req *http.Request) {
 
 	mvt, err := gh.geoService.GetTile(req.Context(), meta, z, x, y, attrs)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -114,7 +116,7 @@ func tileETag(meta storage.Metadata, z, x, y int, attrs []string) string {
 	return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","))
 }
 
-// getGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed
+// GetGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed
 // on demand, never cached (règle 10) — a geometry column can mix types, and
 // this isn't a stored metadata field.
 //
@@ -124,21 +126,21 @@ func tileETag(meta storage.Metadata, z, x, y int, attrs []string) string {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/geometry-types [get]
-func (gh *geoHandler) getGeometryTypes(w http.ResponseWriter, req *http.Request) {
-	meta, ok := gh.resolveTable(w, req)
+func (gh *GeoHandler) GetGeometryTypes(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 
 	types, err := gh.geoService.GeometryTypes(req.Context(), meta)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"types": types})
+	response.WriteJSON(w, http.StatusOK, map[string][]string{"types": types})
 }
 
-// filterByBbox handles POST /tables/{tableId}/bbox.
+// FilterByBbox handles POST /tables/{tableId}/bbox.
 //
 // @Summary Filter row pkeys by bounding box
 // @Tags geo
@@ -147,8 +149,8 @@ func (gh *geoHandler) getGeometryTypes(w http.ResponseWriter, req *http.Request)
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string][]string
 // @Router /api/v1/tables/{tableId}/bbox [post]
-func (gh *geoHandler) filterByBbox(w http.ResponseWriter, req *http.Request) {
-	meta, ok := gh.resolveTable(w, req)
+func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -157,14 +159,14 @@ func (gh *geoHandler) filterByBbox(w http.ResponseWriter, req *http.Request) {
 		Bbox [4]float64 `json:"bbox"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	pkeys, err := gh.geoService.FilterByBbox(req.Context(), meta, body.Bbox)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"pkeys": pkeys})
+	response.WriteJSON(w, http.StatusOK, map[string][]string{"pkeys": pkeys})
 }

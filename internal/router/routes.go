@@ -13,19 +13,20 @@ import (
 	_ "gogeoserver/docs"
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/core"
+	"gogeoserver/internal/router/handlers"
 )
 
 // Router wires the HTTP layer to the service layer. Each family of
 // endpoints (tables, rows, geo, sources, export, ops) is served by its own
-// handler struct, holding only the service ports (see ports.go) and config
-// it actually needs — never the concrete service types.
+// handler struct, holding only the service ports it actually needs — never
+// the concrete service types.
 type Router struct {
-	tables   *tablesHandler
-	rows     *rowsHandler
-	geo      *geoHandler
-	sources  *sourcesHandler
-	export   *exportHandler
-	ops      *opsHandler
+	tables   *handlers.TablesHandler
+	rows     *handlers.RowsHandler
+	geo      *handlers.GeoHandler
+	sources  *handlers.SourcesHandler
+	export   *handlers.ExportHandler
+	ops      *handlers.OpsHandler
 	apiCfg   config.APIConfig
 	uiAssets fs.FS
 }
@@ -38,12 +39,12 @@ func NewRouter(
 	svcs *core.Services, apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
 ) *Router {
 	return &Router{
-		tables:   newTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
-		rows:     newRowsHandler(svcs.Metadata, svcs.Row, apiCfg),
-		geo:      newGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
-		sources:  newSourcesHandler(svcs.Source),
-		export:   newExportHandler(svcs.Metadata, svcs.Export),
-		ops:      newOpsHandler(ready),
+		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
+		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Row, apiCfg),
+		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
+		sources:  handlers.NewSourcesHandler(svcs.Source),
+		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
+		ops:      handlers.NewOpsHandler(ready),
 		apiCfg:   apiCfg,
 		uiAssets: uiAssets,
 	}
@@ -58,8 +59,8 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
-	r.Get("/healthz", rt.ops.healthz)
-	r.Get("/readyz", rt.ops.readyz)
+	r.Get("/healthz", rt.ops.Healthz)
+	r.Get("/readyz", rt.ops.Readyz)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -81,55 +82,55 @@ func (rt *Router) Setup() http.Handler {
 			}
 
 			v1.Route("/sources", func(sub chi.Router) {
-				sub.Get("/", rt.sources.listSources)
-				sub.Post("/refresh", rt.sources.refreshSources)
+				sub.Get("/", rt.sources.ListSources)
+				sub.Post("/refresh", rt.sources.RefreshSources)
 				// Overrides the global body cap: an upload is a whole source file
 				// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
 				// covers multipart framing (boundary, headers) around the file part
 				// itself, so a file right at the limit isn't cut off by framing
 				// overhead before SourceService.Upload's own oversize check runs.
-				sub.With(maxBodyBytes(rt.sources.sourceService.MaxUploadBytes()+64*1024)).Post("/upload", rt.sources.uploadSource)
-				sub.Post("/{name}/load", rt.sources.loadSource)
-				sub.Get("/{name}/metadata", rt.sources.getSourceMetadata)
-				sub.Delete("/{name}", rt.sources.deleteSource)
+				sub.With(maxBodyBytes(rt.sources.MaxUploadBytes()+64*1024)).Post("/upload", rt.sources.UploadSource)
+				sub.Post("/{name}/load", rt.sources.LoadSource)
+				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
+				sub.Delete("/{name}", rt.sources.DeleteSource)
 			})
 
 			v1.Route("/tables", func(sub chi.Router) {
-				sub.Get("/", rt.tables.listTables)
+				sub.Get("/", rt.tables.ListTables)
 
 				sub.Route("/{tableId}", func(sub chi.Router) {
-					sub.Get("/", rt.tables.getTableMetadata)
-					sub.Patch("/", rt.tables.renameTable)
-					sub.Delete("/", rt.tables.deleteTable)
+					sub.Get("/", rt.tables.GetTableMetadata)
+					sub.Patch("/", rt.tables.RenameTable)
+					sub.Delete("/", rt.tables.DeleteTable)
 
-					sub.Get("/schema", rt.tables.getSchema)
-					sub.Post("/columns", rt.tables.addColumn)
-					sub.Post("/derive", rt.tables.deriveTable)
-					sub.Post("/filter", rt.tables.filterRows)
-					sub.Get("/columns/{col}/distinct", rt.tables.getDistinctValues)
+					sub.Get("/schema", rt.tables.GetSchema)
+					sub.Post("/columns", rt.tables.AddColumn)
+					sub.Post("/derive", rt.tables.DeriveTable)
+					sub.Post("/filter", rt.tables.FilterRows)
+					sub.Get("/columns/{col}/distinct", rt.tables.GetDistinctValues)
 
 					sub.Route("/rows", func(sub chi.Router) {
-						sub.Get("/", rt.rows.listRows)
-						sub.Post("/", rt.rows.addRows)
+						sub.Get("/", rt.rows.ListRows)
+						sub.Post("/", rt.rows.AddRows)
 						sub.Route("/{pkey}", func(sub chi.Router) {
-							sub.Get("/", rt.rows.getRow)
-							sub.Patch("/", rt.rows.updateRow)
-							sub.Delete("/", rt.rows.deleteRow)
+							sub.Get("/", rt.rows.GetRow)
+							sub.Patch("/", rt.rows.UpdateRow)
+							sub.Delete("/", rt.rows.DeleteRow)
 						})
 					})
 
-					sub.Get("/tiles/{z}/{x}/{y}", rt.geo.getTile)
-					sub.Get("/geometry-types", rt.geo.getGeometryTypes)
-					sub.Post("/bbox", rt.geo.filterByBbox)
+					sub.Get("/tiles/{z}/{x}/{y}", rt.geo.GetTile)
+					sub.Get("/geometry-types", rt.geo.GetGeometryTypes)
+					sub.Post("/bbox", rt.geo.FilterByBbox)
 				})
 			})
 		})
 
-		// exportTable streams a table in bounded batches (PERF-2) and can
+		// ExportTable streams a table in bounded batches (PERF-2) and can
 		// legitimately run past any normal request's time budget on a large
 		// table — middleware.Timeout would otherwise cancel it mid-stream,
 		// truncating an already-200'd response (NEW-BUG-7).
-		v1.Get("/tables/{tableId}/export", rt.export.exportTable)
+		v1.Get("/tables/{tableId}/export", rt.export.ExportTable)
 	})
 
 	return r

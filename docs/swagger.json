@@ -85,7 +85,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -113,7 +113,7 @@
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -162,7 +162,7 @@
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -203,7 +203,7 @@
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -225,7 +225,7 @@
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/router.metadataDTO"
+                                "$ref": "#/definitions/handlers.metadataDTO"
                             }
                         }
                     }
@@ -254,13 +254,13 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/router.metadataDTO"
+                            "$ref": "#/definitions/handlers.metadataDTO"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -287,7 +287,7 @@
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -316,13 +316,13 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/router.metadataDTO"
+                            "$ref": "#/definitions/handlers.metadataDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -399,7 +399,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -441,7 +441,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -481,7 +481,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -522,7 +522,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -560,7 +560,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -676,7 +676,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -718,7 +718,7 @@
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -788,7 +788,7 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -904,7 +904,7 @@
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -912,21 +912,7 @@
         }
     },
     "definitions": {
-        "router.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "router.metadataDTO": {
+        "handlers.metadataDTO": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -957,6 +943,20 @@
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
                     "type": "string"
                 }
             }

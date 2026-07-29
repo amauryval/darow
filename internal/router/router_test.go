@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +16,7 @@ import (
 
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/core"
+	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/storage"
 	"gogeoserver/internal/storage/mocks"
 )
@@ -63,20 +63,10 @@ func doRequest(handler http.Handler, method, path string, contentLength int64) *
 	return rec
 }
 
-func multipartFileRequest(t *testing.T, path, fieldName, filename, content string) *http.Request {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile(fieldName, filename)
-	require.NoError(t, err)
-	_, err = part.Write([]byte(content))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	req := httptest.NewRequest(http.MethodPost, path, &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	return req
-}
-
+// Test_NewRouter checks Router's own fields; each handler family's
+// constructor already verifies its own port wiring in package handlers, and
+// Test_Router_Setup below exercises the full request path through every
+// handler.
 func Test_NewRouter(t *testing.T) {
 	deps := setupRouterDeps(t)
 	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000, MaxBodyBytes: 10 * 1024 * 1024}
@@ -84,26 +74,12 @@ func Test_NewRouter(t *testing.T) {
 
 	rt := deps.newRouter(apiCfg, ready)
 
-	assert.Same(t, deps.svcs.Metadata, rt.tables.metadataService)
-	assert.Same(t, deps.svcs.Schema, rt.tables.schemaService)
-	assert.Same(t, deps.svcs.Derive, rt.tables.deriveService)
-	assert.Same(t, deps.svcs.Row, rt.tables.rowService)
-	assert.Equal(t, apiCfg, rt.tables.apiCfg)
-
-	assert.Same(t, deps.svcs.Metadata, rt.rows.metadataService)
-	assert.Same(t, deps.svcs.Row, rt.rows.rowService)
-	assert.Equal(t, apiCfg, rt.rows.apiCfg)
-
-	assert.Same(t, deps.svcs.Metadata, rt.geo.metadataService)
-	assert.Same(t, deps.svcs.Schema, rt.geo.schemaService)
-	assert.Same(t, deps.svcs.Geo, rt.geo.geoService)
-
-	assert.Same(t, deps.svcs.Source, rt.sources.sourceService)
-
-	assert.Same(t, deps.svcs.Metadata, rt.export.metadataService)
-	assert.Same(t, deps.svcs.Export, rt.export.exportService)
-
-	assert.NoError(t, rt.ops.ready(context.Background()))
+	assert.NotNil(t, rt.tables)
+	assert.NotNil(t, rt.rows)
+	assert.NotNil(t, rt.geo)
+	assert.NotNil(t, rt.sources)
+	assert.NotNil(t, rt.export)
+	assert.NotNil(t, rt.ops)
 	assert.Equal(t, apiCfg, rt.apiCfg)
 	assert.Equal(t, fs.FS(deps.uiAssets), rt.uiAssets)
 }
@@ -123,6 +99,13 @@ func Test_Router_Setup(t *testing.T) {
 			apiCfg:     config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
 			method:     http.MethodGet,
 			path:       "/healthz",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "wires readyz to the ready probe",
+			apiCfg:     config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
+			method:     http.MethodGet,
+			path:       "/readyz",
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -173,7 +156,7 @@ func Test_Router_Setup(t *testing.T) {
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantErrorContains != "" {
-				var body ErrorResponse
+				var body response.ErrorResponse
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 				assert.Contains(t, body.Error, c.wantErrorContains)
 			}

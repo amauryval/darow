@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"errors"
@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"gogeoserver/internal/config"
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
 )
@@ -20,7 +21,7 @@ func Test_newTablesHandler(t *testing.T) {
 	rowSvc := &mockRowAPI{}
 	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}
 
-	th := newTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, apiCfg)
+	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, apiCfg)
 
 	assert.Same(t, metadataSvc, th.metadataService)
 	assert.Same(t, schemaSvc, th.schemaService)
@@ -43,7 +44,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &tablesHandler{tableResolver: tableResolver{metadataService: metadataSvc}}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
 			if c.listErr != nil {
@@ -51,7 +52,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 			}
 			metadataSvc.On("ListTables", mock.Anything).Return(tables, c.listErr).Once()
 
-			rec := doHandlerRequest(th.listTables, http.MethodGet, "/api/v1/tables", nil, nil)
+			rec := doHandlerRequest(th.ListTables, http.MethodGet, "/api/v1/tables", nil, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantStatus == http.StatusOK {
@@ -75,11 +76,11 @@ func Test_tablesHandler_getTableMetadata(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &tablesHandler{tableResolver: tableResolver{metadataService: metadataSvc}}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc)}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 
-			rec := doHandlerRequest(th.getTableMetadata, http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.GetTableMetadata, http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -104,7 +105,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &tablesHandler{tableResolver: tableResolver{metadataService: metadataSvc}}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil && c.body.(map[string]string)["tableName"] != "" {
@@ -114,7 +115,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 				}
 			}
 
-			rec := doHandlerRequest(th.renameTable, http.MethodPatch, "/api/v1/tables/t1", c.body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.RenameTable, http.MethodPatch, "/api/v1/tables/t1", c.body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -137,14 +138,14 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &tablesHandler{tableResolver: tableResolver{metadataService: metadataSvc}}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				metadataSvc.On("RemoveTable", mock.Anything, "t1").Return(c.removeErr).Once()
 			}
 
-			rec := doHandlerRequest(th.deleteTable, http.MethodDelete, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.DeleteTable, http.MethodDelete, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -168,9 +169,10 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &tablesHandler{
-				tableResolver:   tableResolver{metadataService: metadataSvc},
-				columnValidator: columnValidator{schemaService: schemaSvc},
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -179,7 +181,7 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, c.schemaErr).Once()
 			}
 
-			rec := doHandlerRequest(th.getSchema, http.MethodGet, "/api/v1/tables/t1/schema", nil, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.GetSchema, http.MethodGet, "/api/v1/tables/t1/schema", nil, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -204,9 +206,10 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &tablesHandler{
-				tableResolver:   tableResolver{metadataService: metadataSvc},
-				columnValidator: columnValidator{schemaService: schemaSvc},
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -216,7 +219,7 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 			}
 
 			body := map[string]string{"name": "age", "type": "INTEGER"}
-			rec := doHandlerRequest(th.addColumn, http.MethodPost, "/api/v1/tables/t1/columns", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.AddColumn, http.MethodPost, "/api/v1/tables/t1/columns", body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -251,7 +254,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			deriveSvc := &mockDeriveAPI{}
-			th := &tablesHandler{tableResolver: tableResolver{metadataService: metadataSvc}, deriveService: deriveSvc}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -259,7 +262,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 			}
 
 			body := map[string]string{"query": "SELECT 1", "newTableName": "derived"}
-			rec := doHandlerRequest(th.deriveTable, http.MethodPost, "/api/v1/tables/t1/derive", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/tables/t1/derive", body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {
@@ -293,9 +296,10 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			rowSvc := &mockRowAPI{}
-			th := &tablesHandler{
-				tableResolver:   tableResolver{metadataService: metadataSvc},
-				columnValidator: columnValidator{schemaService: schemaSvc},
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
 				rowService:      rowSvc,
 				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
@@ -314,7 +318,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				"conditions": []storage.FilterCondition{{Column: "status", Operator: "=", Value: "ok"}},
 				"limit":      c.bodyLimit,
 			}
-			rec := doHandlerRequest(th.filterRows, http.MethodPost, "/api/v1/tables/t1/filter", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.FilterRows, http.MethodPost, "/api/v1/tables/t1/filter", body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -343,9 +347,9 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			rowSvc := &mockRowAPI{}
-			th := &tablesHandler{
-				tableResolver:   tableResolver{metadataService: metadataSvc},
-				columnValidator: columnValidator{schemaService: schemaSvc},
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
 			}
 
@@ -363,7 +367,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				rowSvc.On("GetDistinctValues", mock.Anything, meta, col).Return([]any{"a", "b"}, c.distinctErr).Once()
 			}
 
-			rec := doHandlerRequest(th.getDistinctValues, http.MethodGet, "/api/v1/tables/t1/columns/"+col+"/distinct", nil,
+			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, "/api/v1/tables/t1/columns/"+col+"/distinct", nil,
 				map[string]string{"tableId": "t1", "col": col})
 
 			assert.Equal(t, c.wantStatus, rec.Code)

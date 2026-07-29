@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"net/http"
@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"gogeoserver/internal/config"
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
 )
@@ -18,11 +19,18 @@ func Test_newRowsHandler(t *testing.T) {
 	rowSvc := &mockRowAPI{}
 	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}
 
-	rh := newRowsHandler(metadataSvc, rowSvc, apiCfg)
+	rh := NewRowsHandler(metadataSvc, rowSvc, apiCfg)
 
-	assert.Same(t, metadataSvc, rh.metadataService)
 	assert.Same(t, rowSvc, rh.rowService)
 	assert.Equal(t, apiCfg, rh.apiCfg)
+
+	meta := storage.Metadata{TableId: "t1"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+	got, ok := rh.ResolveTable(httptest.NewRecorder(), req)
+	assert.True(t, ok)
+	assert.Equal(t, meta, got)
+	metadataSvc.AssertExpectations(t)
 }
 
 func Test_rowsHandler_paginationParams(t *testing.T) {
@@ -40,7 +48,7 @@ func Test_rowsHandler_paginationParams(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rh := &rowsHandler{apiCfg: config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}}
+			rh := &RowsHandler{apiCfg: config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil)
 
 			offset, limit := rh.paginationParams(req)
@@ -67,8 +75,8 @@ func Test_rowsHandler_listRows(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &rowsHandler{
-				tableResolver: tableResolver{metadataService: metadataSvc},
+			rh := &RowsHandler{
+				TableResolver: validation.NewTableResolver(metadataSvc),
 				rowService:    rowSvc,
 				apiCfg:        config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
@@ -80,7 +88,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 					Return(&service.RowsPage{Rows: []storage.Row{{Pkey: "1"}}, Total: 1, Limit: 100}, c.listErr).Once()
 			}
 
-			rec := doHandlerRequest(rh.listRows, http.MethodGet, "/api/v1/tables/t1/rows", nil, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(rh.ListRows, http.MethodGet, "/api/v1/tables/t1/rows", nil, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -108,7 +116,7 @@ func Test_rowsHandler_addRows(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &rowsHandler{tableResolver: tableResolver{metadataService: metadataSvc}, rowService: rowSvc}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			rowsBody := c.body.(map[string]any)["rows"].([]map[string]any)
@@ -119,7 +127,7 @@ func Test_rowsHandler_addRows(t *testing.T) {
 				rowSvc.On("BulkInsertRows", mock.Anything, meta, rowsBody).Return([]string{"pk-1", "pk-2"}, c.insertErr).Once()
 			}
 
-			rec := doHandlerRequest(rh.addRows, http.MethodPost, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(rh.AddRows, http.MethodPost, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -146,7 +154,7 @@ func Test_rowsHandler_getRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &rowsHandler{tableResolver: tableResolver{metadataService: metadataSvc}, rowService: rowSvc}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -154,7 +162,7 @@ func Test_rowsHandler_getRow(t *testing.T) {
 				rowSvc.On("GetRow", mock.Anything, meta, "1").Return(c.row, c.getErr).Once()
 			}
 
-			rec := doHandlerRequest(rh.getRow, http.MethodGet, "/api/v1/tables/t1/rows/1", nil, map[string]string{"tableId": "t1", "pkey": "1"})
+			rec := doHandlerRequest(rh.GetRow, http.MethodGet, "/api/v1/tables/t1/rows/1", nil, map[string]string{"tableId": "t1", "pkey": "1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -182,7 +190,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &rowsHandler{tableResolver: tableResolver{metadataService: metadataSvc}, rowService: rowSvc}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			updates := map[string]any{"name": "b"}
@@ -194,7 +202,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 				rowSvc.On("GetRow", mock.Anything, meta, "1").Return(c.row, c.getErr).Once()
 			}
 
-			rec := doHandlerRequest(rh.updateRow, http.MethodPatch, "/api/v1/tables/t1/rows/1", updates, map[string]string{"tableId": "t1", "pkey": "1"})
+			rec := doHandlerRequest(rh.UpdateRow, http.MethodPatch, "/api/v1/tables/t1/rows/1", updates, map[string]string{"tableId": "t1", "pkey": "1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -219,7 +227,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &rowsHandler{tableResolver: tableResolver{metadataService: metadataSvc}, rowService: rowSvc}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -227,7 +235,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 				rowSvc.On("RemoveRows", mock.Anything, meta, []string{"1"}).Return(c.removeErr).Once()
 			}
 
-			rec := doHandlerRequest(rh.deleteRow, http.MethodDelete, "/api/v1/tables/t1/rows/1", nil, map[string]string{"tableId": "t1", "pkey": "1"})
+			rec := doHandlerRequest(rh.DeleteRow, http.MethodDelete, "/api/v1/tables/t1/rows/1", nil, map[string]string{"tableId": "t1", "pkey": "1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)

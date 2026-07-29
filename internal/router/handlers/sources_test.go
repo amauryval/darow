@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"net/http"
@@ -14,7 +14,7 @@ import (
 func Test_newSourcesHandler(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
 
-	sh := newSourcesHandler(sourceSvc)
+	sh := NewSourcesHandler(sourceSvc)
 
 	assert.Same(t, sourceSvc, sh.sourceService)
 }
@@ -49,11 +49,11 @@ func Test_parseSrid(t *testing.T) {
 
 func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &sourcesHandler{sourceService: sourceSvc}
+	sh := &SourcesHandler{sourceService: sourceSvc}
 
 	sourceSvc.On("List").Return([]service.Source{{Name: "a.geojson"}}).Once()
 
-	rec := doHandlerRequest(sh.listSources, http.MethodGet, "/api/v1/sources", nil, nil)
+	rec := doHandlerRequest(sh.ListSources, http.MethodGet, "/api/v1/sources", nil, nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Len(t, decodeJSON[[]service.Source](rec), 1)
@@ -73,11 +73,11 @@ func Test_sourcesHandler_refreshSources(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &sourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc}
 
 			sourceSvc.On("Refresh", mock.Anything).Return([]service.Source{{Name: "a.geojson"}}, c.refreshErr).Once()
 
-			rec := doHandlerRequest(sh.refreshSources, http.MethodPost, "/api/v1/sources/refresh", nil, nil)
+			rec := doHandlerRequest(sh.RefreshSources, http.MethodPost, "/api/v1/sources/refresh", nil, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			sourceSvc.AssertExpectations(t)
@@ -126,7 +126,7 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &sourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc}
 
 			sourceSvc.On("Upload", "a.geojson", mock.Anything).Return("a.geojson", c.uploadErr).Once()
 			if c.uploadErr == nil {
@@ -138,7 +138,7 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 
 			req := multipartFileRequest(t, "/api/v1/sources/upload", "file", "a.geojson", "{}")
 			rec := httptest.NewRecorder()
-			sh.uploadSource(rec, req)
+			sh.UploadSource(rec, req)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			sourceSvc.AssertExpectations(t)
@@ -159,11 +159,11 @@ func Test_sourcesHandler_loadSource(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &sourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc}
 
 			sourceSvc.On("Load", mock.Anything, "a.geojson", "", 0).Return("t1", c.loadErr).Once()
 
-			rec := doHandlerRequest(sh.loadSource, http.MethodPost, "/api/v1/sources/a.geojson/load", nil, map[string]string{"name": "a.geojson"})
+			rec := doHandlerRequest(sh.LoadSource, http.MethodPost, "/api/v1/sources/a.geojson/load", nil, map[string]string{"name": "a.geojson"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			sourceSvc.AssertExpectations(t)
@@ -186,11 +186,11 @@ func Test_sourcesHandler_getSourceMetadata(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &sourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc}
 
 			sourceSvc.On("DetectCRS", mock.Anything, "a.geojson", "").Return("EPSG", c.authCode, c.detectErr).Once()
 
-			rec := doHandlerRequest(sh.getSourceMetadata, http.MethodGet, "/api/v1/sources/a.geojson/metadata", nil, map[string]string{"name": "a.geojson"})
+			rec := doHandlerRequest(sh.GetSourceMetadata, http.MethodGet, "/api/v1/sources/a.geojson/metadata", nil, map[string]string{"name": "a.geojson"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			sourceSvc.AssertExpectations(t)
@@ -211,11 +211,11 @@ func Test_sourcesHandler_deleteSource(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &sourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc}
 
 			sourceSvc.On("Delete", mock.Anything, "a.geojson").Return(c.deleteErr).Once()
 
-			rec := doHandlerRequest(sh.deleteSource, http.MethodDelete, "/api/v1/sources/a.geojson", nil, map[string]string{"name": "a.geojson"})
+			rec := doHandlerRequest(sh.DeleteSource, http.MethodDelete, "/api/v1/sources/a.geojson", nil, map[string]string{"name": "a.geojson"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			sourceSvc.AssertExpectations(t)

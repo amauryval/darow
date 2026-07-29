@@ -1,6 +1,7 @@
-package router
+package handlers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"gogeoserver/internal/router/validation"
+	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
 )
 
@@ -17,11 +20,21 @@ func Test_newGeoHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	gh := newGeoHandler(metadataSvc, schemaSvc, geoSvc)
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc)
 
-	assert.Same(t, metadataSvc, gh.metadataService)
-	assert.Same(t, schemaSvc, gh.schemaService)
 	assert.Same(t, geoSvc, gh.geoService)
+
+	meta := storage.Metadata{TableId: "t1"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+	got, ok := gh.ResolveTable(httptest.NewRecorder(), req)
+	assert.True(t, ok)
+	assert.Equal(t, meta, got)
+	metadataSvc.AssertExpectations(t)
+
+	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status"}}, nil).Once()
+	assert.NoError(t, gh.ValidateColumns(context.Background(), meta, []string{"status"}))
+	schemaSvc.AssertExpectations(t)
 }
 
 func Test_parseTileCoords(t *testing.T) {
@@ -111,9 +124,9 @@ func Test_geoHandler_getTile(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &geoHandler{
-				tableResolver:   tableResolver{metadataService: metadataSvc},
-				columnValidator: columnValidator{schemaService: schemaSvc},
+			gh := &GeoHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				geoService:      geoSvc,
 			}
 
@@ -132,7 +145,7 @@ func Test_geoHandler_getTile(t *testing.T) {
 				target += "?attrs=" + c.attrs
 			}
 
-			rec := doHandlerRequest(gh.getTile, http.MethodGet, target, nil, params)
+			rec := doHandlerRequest(gh.GetTile, http.MethodGet, target, nil, params)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -144,9 +157,9 @@ func Test_geoHandler_getTile_NotModifiedWhenETagMatches(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
-	gh := &geoHandler{
-		tableResolver:   tableResolver{metadataService: metadataSvc},
-		columnValidator: columnValidator{schemaService: schemaSvc},
+	gh := &GeoHandler{
+		TableResolver:   validation.NewTableResolver(metadataSvc),
+		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		geoService:      geoSvc,
 	}
 
@@ -158,7 +171,7 @@ func Test_geoHandler_getTile_NotModifiedWhenETagMatches(t *testing.T) {
 	req.Header.Set("If-None-Match", tileETag(meta, 1, 2, 3, nil))
 	rec := httptest.NewRecorder()
 
-	gh.getTile(rec, req)
+	gh.GetTile(rec, req)
 
 	assert.Equal(t, http.StatusNotModified, rec.Code)
 	metadataSvc.AssertExpectations(t)
@@ -181,7 +194,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &geoHandler{tableResolver: tableResolver{metadataService: metadataSvc}, geoService: geoSvc}
+			gh := &GeoHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -189,7 +202,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 				geoSvc.On("GeometryTypes", mock.Anything, meta).Return([]string{"POLYGON"}, c.typesErr).Once()
 			}
 
-			rec := doHandlerRequest(gh.getGeometryTypes, http.MethodGet, "/api/v1/tables/t1/geometry-types", nil, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(gh.GetGeometryTypes, http.MethodGet, "/api/v1/tables/t1/geometry-types", nil, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
@@ -214,7 +227,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &geoHandler{tableResolver: tableResolver{metadataService: metadataSvc}, geoService: geoSvc}
+			gh := &GeoHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			bbox := [4]float64{1, 2, 3, 4}
@@ -224,7 +237,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 			}
 
 			body := map[string]any{"bbox": bbox}
-			rec := doHandlerRequest(gh.filterByBbox, http.MethodPost, "/api/v1/tables/t1/bbox", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(gh.FilterByBbox, http.MethodPost, "/api/v1/tables/t1/bbox", body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)

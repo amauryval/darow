@@ -1,15 +1,6 @@
 basePath: /
 definitions:
-  router.ErrorResponse:
-    properties:
-      code:
-        type: integer
-      error:
-        type: string
-      message:
-        type: string
-    type: object
-  router.metadataDTO:
+  handlers.metadataDTO:
     properties:
       bbox:
         type: string
@@ -30,6 +21,15 @@ definitions:
       tableName:
         type: string
       updatedAt:
+        type: string
+    type: object
+  response.ErrorResponse:
+    properties:
+      code:
+        type: integer
+      error:
+        type: string
+      message:
         type: string
     type: object
   service.Source:
@@ -95,7 +95,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a source file
       tags:
       - sources
@@ -127,7 +127,7 @@ paths:
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Load a source file into a new table
       tags:
       - sources
@@ -154,7 +154,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Preview a source's detected CRS
       tags:
       - sources
@@ -193,7 +193,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Upload a file and load it into a new table
       tags:
       - sources
@@ -207,7 +207,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/router.metadataDTO'
+              $ref: '#/definitions/handlers.metadataDTO'
             type: array
       summary: List tables
       tags:
@@ -227,7 +227,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a table
       tags:
       - tables
@@ -244,11 +244,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/router.metadataDTO'
+            $ref: '#/definitions/handlers.metadataDTO'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get table metadata
       tags:
       - tables
@@ -267,11 +267,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/router.metadataDTO'
+            $ref: '#/definitions/handlers.metadataDTO'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Rename a table
       tags:
       - tables
@@ -321,7 +321,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add a column
       tags:
       - tables
@@ -349,7 +349,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List a column's distinct values
       tags:
       - tables
@@ -375,7 +375,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Derive a table from a SELECT query
       tags:
       - tables
@@ -402,7 +402,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Export a table
       tags:
       - tables
@@ -427,7 +427,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Filter rows by column conditions
       tags:
       - tables
@@ -503,7 +503,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add one or more rows
       tags:
       - rows
@@ -549,7 +549,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get a row by pkey
       tags:
       - rows
@@ -578,7 +578,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Update a row
       tags:
       - rows
@@ -654,7 +654,7 @@ paths:
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Readiness probe
       tags:
       - ops

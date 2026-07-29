@@ -11,7 +11,7 @@ import (
 	"gogeoserver/internal/storage/mocks"
 )
 
-func Test_Bootstrap(t *testing.T) {
+func Test_Setup(t *testing.T) {
 	cases := []struct {
 		name       string
 		duckdbPath string
@@ -41,7 +41,7 @@ func Test_Bootstrap(t *testing.T) {
 				},
 			}
 
-			svcs, err := Bootstrap(cfg)
+			svcs, err := Setup(cfg)
 
 			if c.wantErr {
 				require.Error(t, err)
@@ -83,7 +83,7 @@ func Test_Services_Close(t *testing.T) {
 					},
 				}
 				var err error
-				svcs, err = Bootstrap(cfg)
+				svcs, err = Setup(cfg)
 				require.NoError(t, err)
 			} else {
 				svcs = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}, &mocks.Storage{})
@@ -118,7 +118,7 @@ func Test_Services_Ping(t *testing.T) {
 					},
 				}
 				var err error
-				svcs, err = Bootstrap(cfg)
+				svcs, err = Setup(cfg)
 				require.NoError(t, err)
 				t.Cleanup(func() { svcs.Close() })
 			} else {

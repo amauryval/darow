@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"encoding/json"
@@ -8,25 +8,27 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"gogeoserver/internal/config"
+	"gogeoserver/internal/router/response"
+	"gogeoserver/internal/router/validation"
 )
 
-// rowsHandler serves row-level CRUD endpoints under /tables/{tableId}/rows.
-type rowsHandler struct {
-	tableResolver
+// RowsHandler serves row-level CRUD endpoints under /tables/{tableId}/rows.
+type RowsHandler struct {
+	validation.TableResolver
 	rowService rowAPI
 	apiCfg     config.APIConfig
 }
 
-// newRowsHandler builds a rowsHandler from the service ports it needs.
-func newRowsHandler(metadataSvc metadataAPI, rowSvc rowAPI, apiCfg config.APIConfig) *rowsHandler {
-	return &rowsHandler{
-		tableResolver: newTableResolver(metadataSvc),
+// NewRowsHandler builds a RowsHandler from the service ports it needs.
+func NewRowsHandler(metadataSvc metadataAPI, rowSvc rowAPI, apiCfg config.APIConfig) *RowsHandler {
+	return &RowsHandler{
+		TableResolver: validation.NewTableResolver(metadataSvc),
 		rowService:    rowSvc,
 		apiCfg:        apiCfg,
 	}
 }
 
-func (rh *rowsHandler) paginationParams(req *http.Request) (offset, limit int64) {
+func (rh *RowsHandler) paginationParams(req *http.Request) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
@@ -42,7 +44,7 @@ func (rh *rowsHandler) paginationParams(req *http.Request) (offset, limit int64)
 	return offset, limit
 }
 
-// listRows handles GET /tables/{tableId}/rows.
+// ListRows handles GET /tables/{tableId}/rows.
 //
 // @Summary List rows
 // @Tags rows
@@ -52,8 +54,8 @@ func (rh *rowsHandler) paginationParams(req *http.Request) (offset, limit int64)
 // @Param limit query int false "Pagination limit"
 // @Success 200 {object} map[string]any
 // @Router /api/v1/tables/{tableId}/rows [get]
-func (rh *rowsHandler) listRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rh.resolveTable(w, req)
+func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -61,7 +63,7 @@ func (rh *rowsHandler) listRows(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rh.rowService.ListRows(req.Context(), meta, offset, limit)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -69,12 +71,12 @@ func (rh *rowsHandler) listRows(w http.ResponseWriter, req *http.Request) {
 	for _, row := range page.Rows {
 		rows = append(rows, rowToJSON(row))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	response.WriteJSON(w, http.StatusOK, map[string]any{
 		"rows": rows, "total": page.Total, "limit": page.Limit, "offset": page.Offset,
 	})
 }
 
-// addRows handles POST /tables/{tableId}/rows.
+// AddRows handles POST /tables/{tableId}/rows.
 //
 // @Summary Add one or more rows
 // @Tags rows
@@ -82,10 +84,10 @@ func (rh *rowsHandler) listRows(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 201 {object} map[string][]string
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows [post]
-func (rh *rowsHandler) addRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rh.resolveTable(w, req)
+func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -94,11 +96,11 @@ func (rh *rowsHandler) addRows(w http.ResponseWriter, req *http.Request) {
 		Rows []map[string]any `json:"rows"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 	if len(body.Rows) == 0 {
-		WriteError(w, req, errNoRowsProvided, http.StatusBadRequest)
+		response.WriteError(w, req, errNoRowsProvided, http.StatusBadRequest)
 		return
 	}
 
@@ -112,14 +114,14 @@ func (rh *rowsHandler) addRows(w http.ResponseWriter, req *http.Request) {
 		pkeys, err = rh.rowService.BulkInsertRows(req.Context(), meta, body.Rows)
 	}
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string][]string{"pkeys": pkeys})
+	response.WriteJSON(w, http.StatusCreated, map[string][]string{"pkeys": pkeys})
 }
 
-// getRow handles GET /tables/{tableId}/rows/{pkey}.
+// GetRow handles GET /tables/{tableId}/rows/{pkey}.
 //
 // @Summary Get a row by pkey
 // @Tags rows
@@ -127,10 +129,10 @@ func (rh *rowsHandler) addRows(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
 // @Success 200 {object} map[string]any
-// @Failure 404 {object} ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [get]
-func (rh *rowsHandler) getRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rh.resolveTable(w, req)
+func (rh *RowsHandler) GetRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -138,18 +140,18 @@ func (rh *rowsHandler) getRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	if row == nil {
-		WriteError(w, req, errRowNotFound, http.StatusNotFound)
+		response.WriteError(w, req, errRowNotFound, http.StatusNotFound)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
 }
 
-// updateRow handles PATCH /tables/{tableId}/rows/{pkey}.
+// UpdateRow handles PATCH /tables/{tableId}/rows/{pkey}.
 //
 // @Summary Update a row
 // @Tags rows
@@ -158,10 +160,10 @@ func (rh *rowsHandler) getRow(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
 // @Success 200 {object} map[string]any
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [patch]
-func (rh *rowsHandler) updateRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rh.resolveTable(w, req)
+func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -169,30 +171,30 @@ func (rh *rowsHandler) updateRow(w http.ResponseWriter, req *http.Request) {
 
 	var updates map[string]any
 	if err := json.NewDecoder(req.Body).Decode(&updates); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	if len(updates) > 0 {
 		if err := rh.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates); err != nil {
-			WriteError(w, req, err, mapServiceError(err))
+			response.WriteError(w, req, err, response.MapServiceError(err))
 			return
 		}
 	}
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	if row == nil {
-		WriteError(w, req, errRowNotFound, http.StatusNotFound)
+		response.WriteError(w, req, errRowNotFound, http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
 }
 
-// deleteRow handles DELETE /tables/{tableId}/rows/{pkey}.
+// DeleteRow handles DELETE /tables/{tableId}/rows/{pkey}.
 //
 // @Summary Delete a row
 // @Tags rows
@@ -200,15 +202,15 @@ func (rh *rowsHandler) updateRow(w http.ResponseWriter, req *http.Request) {
 // @Param pkey path string true "Row primary key"
 // @Success 204
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [delete]
-func (rh *rowsHandler) deleteRow(w http.ResponseWriter, req *http.Request) {
-	meta, ok := rh.resolveTable(w, req)
+func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 	pkey := chi.URLParam(req, "pkey")
 
 	if err := rh.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

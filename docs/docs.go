@@ -92,7 +92,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -120,7 +120,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -169,7 +169,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -210,7 +210,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -232,7 +232,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/router.metadataDTO"
+                                "$ref": "#/definitions/handlers.metadataDTO"
                             }
                         }
                     }
@@ -261,13 +261,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/router.metadataDTO"
+                            "$ref": "#/definitions/handlers.metadataDTO"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -294,7 +294,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -323,13 +323,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/router.metadataDTO"
+                            "$ref": "#/definitions/handlers.metadataDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -406,7 +406,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -448,7 +448,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -488,7 +488,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -529,7 +529,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -567,7 +567,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -683,7 +683,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -725,7 +725,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -795,7 +795,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -911,7 +911,7 @@ const docTemplate = `{
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -919,21 +919,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "router.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "router.metadataDTO": {
+        "handlers.metadataDTO": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -964,6 +950,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
                     "type": "string"
                 }
             }

@@ -44,7 +44,7 @@ func main() {
 		cfg.Sources.WorkDir = workDirFlag
 	}
 
-	svcs, err := core.Bootstrap(*cfg)
+	svcs, err := core.Setup(cfg)
 	if err != nil {
 		log.Fatalf("bootstrap: %v", err)
 	}

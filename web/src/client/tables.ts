@@ -1,5 +1,5 @@
 import { apiUrl, del, get, patch, post } from "./http";
-import type { Metadata, Row, RowsPage, SchemaResponse } from "./types";
+import type { FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse } from "./types";
 
 export function listTables(): Promise<Metadata[]> {
   return get("/tables");
@@ -38,6 +38,12 @@ export function getRow(tableId: string, pkey: string): Promise<{ row: Row }> {
   return get(`/tables/${tableId}/rows/${pkey}`);
 }
 
+// Inserts one or more rows in a single request; returns the new rows'
+// primary keys in insertion order.
+export function addRows(tableId: string, rows: Array<Record<string, unknown>>): Promise<{ pkeys: string[] }> {
+  return post(`/tables/${tableId}/rows`, { rows });
+}
+
 export function updateRow(tableId: string, pkey: string, updates: Record<string, unknown>): Promise<{ row: Row }> {
   return patch(`/tables/${tableId}/rows/${pkey}`, updates);
 }
@@ -52,4 +58,15 @@ export function deriveTable(tableId: string, query: string, newTableName: string
 
 export function exportUrl(tableId: string, format: "csv" | "geojson"): string {
   return apiUrl(`/tables/${tableId}/export?format=${format}`);
+}
+
+// Filters rows by column conditions, ANDed together — a server-validated
+// alternative to building a derive() SELECT by hand. An omitted or
+// non-positive limit falls back to the server's default row limit.
+export function filterRows(tableId: string, conditions: FilterCondition[], limit?: number): Promise<{ rows: Row[] }> {
+  return post(`/tables/${tableId}/filter`, { conditions, limit });
+}
+
+export function getDistinctValues(tableId: string, col: string): Promise<{ values: RowValue[] }> {
+  return get(`/tables/${tableId}/columns/${encodeURIComponent(col)}/distinct`);
 }

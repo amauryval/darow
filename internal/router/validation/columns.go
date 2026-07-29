@@ -1,29 +1,35 @@
-package router
+package validation
 
 import (
 	"context"
 	"fmt"
 	"slices"
 
+	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
 )
 
-// columnValidator checks client-supplied column names against a table's
+// SchemaGetter is the port ColumnValidator needs to look up a table's schema.
+type SchemaGetter interface {
+	Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error)
+}
+
+// ColumnValidator checks client-supplied column names against a table's
 // real schema. Embedded by every handler family that takes column names
 // from the client: /filter, /columns/{col}/distinct, tile attrs.
-type columnValidator struct {
-	schemaService schemaAPI
+type ColumnValidator struct {
+	schemaService SchemaGetter
 }
 
-// newColumnValidator builds a columnValidator backed by the given schemaAPI port.
-func newColumnValidator(schemaSvc schemaAPI) columnValidator {
-	return columnValidator{schemaService: schemaSvc}
+// NewColumnValidator builds a ColumnValidator backed by the given SchemaGetter port.
+func NewColumnValidator(schemaSvc SchemaGetter) ColumnValidator {
+	return ColumnValidator{schemaService: schemaSvc}
 }
 
-// validateColumns checks that every name in requested is a real column of
+// ValidateColumns checks that every name in requested is a real column of
 // meta's table, excluding the geometry column (règle 7 — never surface
 // geometry through a generic column-name path).
-func (cv columnValidator) validateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
+func (cv ColumnValidator) ValidateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
 	if len(requested) == 0 {
 		return nil
 	}

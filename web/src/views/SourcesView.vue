@@ -4,15 +4,20 @@ import { RouterLink, useRouter } from "vue-router";
 import { deleteSource, getSourceMetadata, listSources, loadSource, refreshSources, uploadSource } from "../client/sources";
 import type { Source } from "../client/types";
 import { errorMessage } from "../client/http";
+import { UploadCloud } from "@lucide/vue";
+import Badge from "../components/Badge.vue";
+import ConfirmButton from "../components/ConfirmButton.vue";
+import { useToast } from "../composables/useToast";
 
 const router = useRouter();
+const toast = useToast();
 
 const sources = ref<Source[]>([]);
 const loading = ref(false);
-const error = ref<string | null>(null);
 const loadingName = ref<string | null>(null);
 const deletingName = ref<string | null>(null);
 const uploading = ref(false);
+const dragging = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 // EPSG-editing state for the row/layer currently being loaded: null when
@@ -33,11 +38,10 @@ function isValidEpsg(value: string): boolean {
 
 async function load() {
   loading.value = true;
-  error.value = null;
   try {
     sources.value = (await listSources()) ?? [];
   } catch (e) {
-    error.value = errorMessage(e, "Impossible de charger les sources");
+    toast.error(errorMessage(e, "Impossible de charger les sources"));
   } finally {
     loading.value = false;
   }
@@ -45,11 +49,10 @@ async function load() {
 
 async function refresh() {
   loading.value = true;
-  error.value = null;
   try {
     sources.value = (await refreshSources()) ?? [];
   } catch (e) {
-    error.value = errorMessage(e, "Impossible de rafraîchir les sources");
+    toast.error(errorMessage(e, "Impossible de rafraîchir les sources"));
   } finally {
     loading.value = false;
   }
@@ -60,14 +63,13 @@ async function startLoad(source: Source, layerName?: string) {
   epsgEditingKey.value = key;
   epsgInput.value = "";
   epsgDetecting.value = true;
-  error.value = null;
   try {
     const crs = await getSourceMetadata(source.name, layerName);
     if (epsgEditingKey.value === key) {
       epsgInput.value = crs.srid ? String(crs.srid) : "";
     }
   } catch (e) {
-    error.value = errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`);
+    toast.error(errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`));
   } finally {
     epsgDetecting.value = false;
   }
@@ -81,7 +83,6 @@ function cancelLoad() {
 async function confirmLoad(source: Source, layerName?: string) {
   const key = layerName ? layerKey(source, layerName) : source.name;
   loadingName.value = key;
-  error.value = null;
   try {
     await loadSource(source.name, layerName, Number(epsgInput.value));
     epsgEditingKey.value = null;
@@ -90,22 +91,22 @@ async function confirmLoad(source: Source, layerName?: string) {
     // read inside Refresh) — Load() itself never touches that cache, so a
     // plain re-fetch of the stale cache would still show "Non chargée".
     await refresh();
+    toast.success(`${key} chargé.`);
   } catch (e) {
-    error.value = errorMessage(e, `Impossible de charger ${key}`);
+    toast.error(errorMessage(e, `Impossible de charger ${key}`));
   } finally {
     loadingName.value = null;
   }
 }
 
 async function onDelete(name: string) {
-  if (!confirm(`Supprimer le fichier "${name}" ? La table associée sera aussi supprimée si elle existe.`)) return;
   deletingName.value = name;
-  error.value = null;
   try {
     await deleteSource(name);
     await refresh();
+    toast.success(`${name} supprimé.`);
   } catch (e) {
-    error.value = errorMessage(e, `Impossible de supprimer ${name}`);
+    toast.error(errorMessage(e, `Impossible de supprimer ${name}`));
   } finally {
     deletingName.value = null;
   }
@@ -115,27 +116,38 @@ function triggerUpload() {
   fileInput.value?.click();
 }
 
-async function onFileSelected(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-
+async function handleUpload(file: File) {
   uploading.value = true;
-  error.value = null;
   try {
     const result = await uploadSource(file);
     if ("tableId" in result) {
+      toast.success(`${file.name} chargé.`);
       router.push(`/tables/${result.tableId}`);
     } else {
       // Multi-layer GeoPackage: no layer was auto-selected — show it in the
       // list so the user can load a specific layer.
       await refresh();
+      toast.success(`${file.name} ajouté — choisissez une couche à charger.`);
     }
   } catch (e) {
-    error.value = errorMessage(e, `Impossible de charger ${file.name}`);
+    toast.error(errorMessage(e, `Impossible de charger ${file.name}`));
   } finally {
     uploading.value = false;
-    if (fileInput.value) fileInput.value.value = "";
   }
+}
+
+async function onFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (fileInput.value) fileInput.value.value = "";
+  if (!file) return;
+  await handleUpload(file);
+}
+
+async function onDrop(event: DragEvent) {
+  dragging.value = false;
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+  await handleUpload(file);
 }
 
 function formatSize(bytes: number): string {
@@ -154,28 +166,33 @@ onMounted(load);
         <h1 class="text-lg font-semibold text-slate-900">Sources</h1>
         <p class="text-sm text-slate-500">Fichiers détectés dans le répertoire de travail du serveur.</p>
       </div>
-      <div class="flex gap-2">
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          :disabled="loading"
-          @click="refresh"
-        >
-          Rafraîchir
-        </button>
-        <input ref="fileInput" type="file" class="hidden" @change="onFileSelected" />
-        <button
-          class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          :disabled="uploading"
-          @click="triggerUpload"
-        >
-          {{ uploading ? "Envoi..." : "Ajouter un fichier" }}
-        </button>
-      </div>
+      <button
+        class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        :disabled="loading"
+        @click="refresh"
+      >
+        Rafraîchir
+      </button>
     </div>
 
-    <p v-if="error" class="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-      {{ error }}
-    </p>
+    <div
+      class="mb-6 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors"
+      :class="dragging ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'"
+      @dragover.prevent="dragging = true"
+      @dragleave.prevent="dragging = false"
+      @drop.prevent="onDrop"
+    >
+      <UploadCloud :size="32" class="text-slate-400" />
+      <p class="text-sm text-slate-600">Glissez un fichier ici, ou</p>
+      <input ref="fileInput" type="file" class="hidden" @change="onFileSelected" />
+      <button
+        class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        :disabled="uploading"
+        @click="triggerUpload"
+      >
+        {{ uploading ? "Envoi…" : "Parcourir" }}
+      </button>
+    </div>
 
     <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <table class="w-full text-sm">
@@ -193,15 +210,7 @@ onMounted(load);
               <td class="px-4 py-2.5 font-medium text-slate-800">{{ source.name }}</td>
               <td class="px-4 py-2.5 text-slate-500">{{ formatSize(source.sizeBytes) }}</td>
               <td class="px-4 py-2.5">
-                <span
-                  v-if="source.loaded"
-                  class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                >
-                  Chargée
-                </span>
-                <span v-else class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                  Non chargée
-                </span>
+                <Badge :tone="source.loaded ? 'emerald' : 'slate'">{{ source.loaded ? "Chargée" : "Non chargée" }}</Badge>
               </td>
               <td class="px-4 py-2.5 text-right">
                 <RouterLink
@@ -241,13 +250,11 @@ onMounted(load);
                   >
                     Charger
                   </button>
-                  <button
-                    class="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                    :disabled="deletingName === source.name"
-                    @click="onDelete(source.name)"
-                  >
-                    {{ deletingName === source.name ? "Suppression..." : "Supprimer" }}
-                  </button>
+                  <ConfirmButton
+                    label="Supprimer"
+                    :busy="deletingName === source.name"
+                    @confirm="onDelete(source.name)"
+                  />
                 </div>
               </td>
             </tr>
@@ -258,28 +265,18 @@ onMounted(load);
                   {{ source.layers.length }} couches — {{ formatSize(source.sizeBytes) }}
                 </td>
                 <td class="px-4 py-2.5 text-right">
-                  <button
-                    class="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                    :disabled="deletingName === source.name"
-                    @click="onDelete(source.name)"
-                  >
-                    {{ deletingName === source.name ? "Suppression..." : "Supprimer le fichier" }}
-                  </button>
+                  <ConfirmButton
+                    label="Supprimer le fichier"
+                    :busy="deletingName === source.name"
+                    @confirm="onDelete(source.name)"
+                  />
                 </td>
               </tr>
               <tr v-for="layer in source.layers" :key="layerKey(source, layer.name)">
                 <td class="px-4 py-2.5 pl-8 text-slate-700">{{ layer.name }}</td>
                 <td class="px-4 py-2.5"></td>
                 <td class="px-4 py-2.5">
-                  <span
-                    v-if="layer.loaded"
-                    class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                  >
-                    Chargée
-                  </span>
-                  <span v-else class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                    Non chargée
-                  </span>
+                  <Badge :tone="layer.loaded ? 'emerald' : 'slate'">{{ layer.loaded ? "Chargée" : "Non chargée" }}</Badge>
                 </td>
                 <td class="px-4 py-2.5 text-right">
                   <RouterLink

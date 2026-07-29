@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"encoding/json"
@@ -8,31 +8,37 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"gogeoserver/internal/config"
+	"gogeoserver/internal/router/response"
+	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/storage"
 )
 
-// tablesHandler serves table-level endpoints: metadata, schema, columns,
+// TablesHandler serves table-level endpoints: metadata, schema, columns,
 // derive, filter, and distinct-value lookups.
-type tablesHandler struct {
-	tableResolver
-	columnValidator
-	deriveService deriveAPI
-	rowService    rowAPI // filterRows only
-	apiCfg        config.APIConfig
+type TablesHandler struct {
+	validation.TableResolver
+	validation.ColumnValidator
+	metadataService metadataAPI
+	schemaService   schemaAPI
+	deriveService   deriveAPI
+	rowService      rowAPI
+	apiCfg          config.APIConfig
 }
 
-// newTablesHandler builds a tablesHandler from the service ports it needs.
-func newTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, apiCfg config.APIConfig) *tablesHandler {
-	return &tablesHandler{
-		tableResolver:   newTableResolver(metadataSvc),
-		columnValidator: newColumnValidator(schemaSvc),
+// NewTablesHandler builds a TablesHandler from the service ports it needs.
+func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, apiCfg config.APIConfig) *TablesHandler {
+	return &TablesHandler{
+		TableResolver:   validation.NewTableResolver(metadataSvc),
+		ColumnValidator: validation.NewColumnValidator(schemaSvc),
+		metadataService: metadataSvc,
+		schemaService:   schemaSvc,
 		deriveService:   deriveSvc,
 		rowService:      rowSvc,
 		apiCfg:          apiCfg,
 	}
 }
 
-// listTables handles GET /tables.
+// ListTables handles GET /tables.
 //
 // @Summary List tables
 // @Description Liste toutes les tables avec leurs métadonnées
@@ -40,10 +46,10 @@ func newTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 // @Produce json
 // @Success 200 {array} metadataDTO
 // @Router /api/v1/tables [get]
-func (th *tablesHandler) listTables(w http.ResponseWriter, req *http.Request) {
+func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
 	tables, err := th.metadataService.ListTables(req.Context())
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -51,27 +57,27 @@ func (th *tablesHandler) listTables(w http.ResponseWriter, req *http.Request) {
 	for _, t := range tables {
 		dtos = append(dtos, toMetadataDTO(t))
 	}
-	writeJSON(w, http.StatusOK, dtos)
+	response.WriteJSON(w, http.StatusOK, dtos)
 }
 
-// getTableMetadata handles GET /tables/{tableId}.
+// GetTableMetadata handles GET /tables/{tableId}.
 //
 // @Summary Get table metadata
 // @Tags tables
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} metadataDTO
-// @Failure 404 {object} ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId} [get]
-func (th *tablesHandler) getTableMetadata(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) GetTableMetadata(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, toMetadataDTO(meta))
+	response.WriteJSON(w, http.StatusOK, toMetadataDTO(meta))
 }
 
-// renameTable handles PATCH /tables/{tableId}.
+// RenameTable handles PATCH /tables/{tableId}.
 //
 // @Summary Rename a table
 // @Tags tables
@@ -79,10 +85,10 @@ func (th *tablesHandler) getTableMetadata(w http.ResponseWriter, req *http.Reque
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} metadataDTO
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId} [patch]
-func (th *tablesHandler) renameTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -91,50 +97,50 @@ func (th *tablesHandler) renameTable(w http.ResponseWriter, req *http.Request) {
 		TableName string `json:"tableName"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 	if body.TableName == "" {
-		WriteError(w, req, fmt.Errorf("tableName is required"), http.StatusBadRequest)
+		response.WriteError(w, req, fmt.Errorf("tableName is required"), http.StatusBadRequest)
 		return
 	}
 
 	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, map[string]any{"tableName": body.TableName}); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	updated, err := th.metadataService.GetMetadata(req.Context(), meta.TableId)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, toMetadataDTO(updated))
+	response.WriteJSON(w, http.StatusOK, toMetadataDTO(updated))
 }
 
-// deleteTable handles DELETE /tables/{tableId}.
+// DeleteTable handles DELETE /tables/{tableId}.
 //
 // @Summary Delete a table
 // @Description Supprime une table et ses données
 // @Tags tables
 // @Param tableId path string true "Table ID"
 // @Success 204
-// @Failure 404 {object} ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId} [delete]
-func (th *tablesHandler) deleteTable(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 
 	if err := th.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// getSchema handles GET /tables/{tableId}/schema.
+// GetSchema handles GET /tables/{tableId}/schema.
 //
 // @Summary Get table schema
 // @Tags tables
@@ -142,15 +148,15 @@ func (th *tablesHandler) deleteTable(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string]any
 // @Router /api/v1/tables/{tableId}/schema [get]
-func (th *tablesHandler) getSchema(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) GetSchema(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -158,10 +164,10 @@ func (th *tablesHandler) getSchema(w http.ResponseWriter, req *http.Request) {
 	for _, col := range schema {
 		columns = append(columns, map[string]string{"name": col.Name, "type": col.Type})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"columns": columns})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"columns": columns})
 }
 
-// addColumn handles POST /tables/{tableId}/columns.
+// AddColumn handles POST /tables/{tableId}/columns.
 //
 // @Summary Add a column
 // @Tags tables
@@ -169,10 +175,10 @@ func (th *tablesHandler) getSchema(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 201 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/columns [post]
-func (th *tablesHandler) addColumn(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -182,19 +188,19 @@ func (th *tablesHandler) addColumn(w http.ResponseWriter, req *http.Request) {
 		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	if err := th.schemaService.AddColumn(req.Context(), meta, body.Name, body.Type); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
 }
 
-// deriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
+// DeriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
 // anything that isn't a SELECT (règle 4).
 //
 // @Summary Derive a table from a SELECT query
@@ -203,10 +209,10 @@ func (th *tablesHandler) addColumn(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/derive [post]
-func (th *tablesHandler) deriveTable(w http.ResponseWriter, req *http.Request) {
-	if _, ok := th.resolveTable(w, req); !ok {
+func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
+	if _, ok := th.ResolveTable(w, req); !ok {
 		return
 	}
 
@@ -215,21 +221,21 @@ func (th *tablesHandler) deriveTable(w http.ResponseWriter, req *http.Request) {
 		NewTableName string `json:"newTableName"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	tableId, err := th.deriveService.DeriveTable(req.Context(), body.Query, body.NewTableName)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	writeJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// filterRows handles POST /tables/{tableId}/filter, built exclusively on
+// FilterRows handles POST /tables/{tableId}/filter, built exclusively on
 // storage.BuildFilter (règle 5) — the whitelist of columns it validates
 // each condition against comes from the table's real schema.
 //
@@ -239,10 +245,10 @@ func (th *tablesHandler) deriveTable(w http.ResponseWriter, req *http.Request) {
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Success 200 {object} map[string]any
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/filter [post]
-func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
@@ -252,13 +258,13 @@ func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
 		Limit      int                       `json:"limit"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 	validColumns := make([]string, len(schema))
@@ -268,7 +274,7 @@ func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
 
 	filter, args, err := storage.BuildFilter(body.Conditions, validColumns)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
@@ -286,7 +292,7 @@ func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -294,10 +300,10 @@ func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
 	for i, row := range rows {
 		out[i] = rowToJSON(row)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rows": out})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"rows": out})
 }
 
-// getDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct.
+// GetDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct.
 // col is validated against the table's real, non-geometry columns (règle 7
 // — never surface geometry through a generic column-name path).
 //
@@ -307,24 +313,24 @@ func (th *tablesHandler) filterRows(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Param col path string true "Column name"
 // @Success 200 {object} map[string]any
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/columns/{col}/distinct [get]
-func (th *tablesHandler) getDistinctValues(w http.ResponseWriter, req *http.Request) {
-	meta, ok := th.resolveTable(w, req)
+func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
 	if !ok {
 		return
 	}
 	col := chi.URLParam(req, "col")
 
-	if err := th.validateColumns(req.Context(), meta, []string{col}); err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+	if err := th.ValidateColumns(req.Context(), meta, []string{col}); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col)
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"values": values})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values})
 }

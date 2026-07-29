@@ -93,11 +93,11 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 	}
 }
 
-// Bootstrap opens the DuckDB adapter at cfg.DuckDB.Path, ensures
+// Setup opens the DuckDB adapter at cfg.DuckDB.Path, ensures
 // cfg.Sources.WorkDir exists, wires every service via NewServices, and
 // scans workDir for sources. The caller must defer svcs.Close() to release
 // the storage connection, including on a crash or shutdown signal.
-func Bootstrap(cfg config.Config) (*Services, error) {
+func Setup(cfg config.Config) (*Services, error) {
 	adapter, err := duckdb.New(cfg.DuckDB.Path)
 	if err != nil {
 		return nil, fmt.Errorf("duckdb: %w", err)

@@ -1,25 +1,27 @@
-package router
+package validation
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
 	"gogeoserver/internal/storage"
 )
 
-func Test_newTableResolver(t *testing.T) {
-	metadataSvc := &mockMetadataAPI{}
+func Test_NewTableResolver(t *testing.T) {
+	metadataSvc := &mockMetadataGetter{}
 
-	tr := newTableResolver(metadataSvc)
+	tr := NewTableResolver(metadataSvc)
 
 	assert.Same(t, metadataSvc, tr.metadataService)
 }
 
-func Test_tableResolver_resolveTable(t *testing.T) {
+func Test_TableResolver_ResolveTable(t *testing.T) {
 	cases := []struct {
 		name       string
 		lookupErr  error
@@ -32,16 +34,19 @@ func Test_tableResolver_resolveTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			metadataSvc := &mockMetadataAPI{}
-			tr := tableResolver{metadataService: metadataSvc}
+			metadataSvc := &mockMetadataGetter{}
+			tr := TableResolver{metadataService: metadataSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 
-			req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("tableId", "t1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 			rec := httptest.NewRecorder()
 
-			got, ok := tr.resolveTable(rec, req)
+			got, ok := tr.ResolveTable(rec, req)
 
 			assert.Equal(t, c.wantOK, ok)
 			if c.wantOK {

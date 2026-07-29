@@ -109,27 +109,27 @@ func defaultConfig() Config {
 // result. A missing file is not an error; a malformed file, an invalid
 // environment variable, or a value that fails validation is rejected
 // explicitly rather than silently ignored.
-func Load(path string) (*Config, error) {
+func Load(path string) (Config, error) {
 	cfg := defaultConfig()
 
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("reading config: %w", err)
+		return cfg, fmt.Errorf("reading config: %w", err)
 	}
 	if err == nil {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return nil, fmt.Errorf("parsing config: %w", err)
+			return cfg, fmt.Errorf("parsing config: %w", err)
 		}
 	}
 
 	if err := applyEnvOverrides(&cfg); err != nil {
-		return nil, fmt.Errorf("environment override: %w", err)
+		return cfg, fmt.Errorf("environment override: %w", err)
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return cfg, fmt.Errorf("invalid config: %w", err)
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 // applyEnvOverrides overrides cfg's fields from GEOAPI_* environment

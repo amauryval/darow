@@ -7,8 +7,25 @@ import type { ErrorResponse } from "./types";
 // through fetch (tables.ts's exportUrl, geo.ts's tileUrl).
 const API_BASE = "/api/v1";
 
+// Defaults to "" (paths resolve relative to the page's own origin), which
+// is what the admin UI needs since it's served by the same GeoAPI instance
+// it talks to. Any other caller — a different web app, a different
+// framework — points the client at a remote GeoAPI by calling this once
+// at startup.
+let baseUrl = "";
+
+export function configureApiClient(options: { baseUrl?: string }): void {
+  baseUrl = options.baseUrl?.replace(/\/+$/, "") ?? "";
+}
+
 export function apiUrl(path: string): string {
-  return `${API_BASE}${path}`;
+  return `${baseUrl}${API_BASE}${path}`;
+}
+
+// rootUrl builds a URL outside the /api/v1 prefix — only /healthz and
+// /readyz live there (see ops.ts).
+function rootUrl(path: string): string {
+  return `${baseUrl}${path}`;
 }
 
 export class ApiError extends Error {
@@ -40,11 +57,20 @@ async function handle<T>(res: Response): Promise<T> {
   if (res.status === 204) {
     return undefined as T;
   }
-  return res.json() as Promise<T>;
+  // /healthz and /readyz answer 200 with no body at all — text() first
+  // avoids res.json() throwing on the empty string.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export function get<T>(path: string): Promise<T> {
   return fetch(apiUrl(path)).then((res) => handle<T>(res));
+}
+
+// getRoot is get's counterpart for the handful of routes outside
+// /api/v1 (ops.ts's healthz/readyz).
+export function getRoot<T>(path: string): Promise<T> {
+  return fetch(rootUrl(path)).then((res) => handle<T>(res));
 }
 
 export function post<T>(path: string, body?: unknown): Promise<T> {

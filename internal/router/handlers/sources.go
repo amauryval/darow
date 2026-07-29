@@ -1,4 +1,4 @@
-package router
+package handlers
 
 import (
 	"net/http"
@@ -6,18 +6,25 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/service"
 )
 
-// sourcesHandler serves workDir source-file endpoints: listing, refreshing,
+// SourcesHandler serves workDir source-file endpoints: listing, refreshing,
 // uploading, loading, previewing CRS, and deleting.
-type sourcesHandler struct {
+type SourcesHandler struct {
 	sourceService sourceAPI
 }
 
-// newSourcesHandler builds a sourcesHandler from the service port it needs.
-func newSourcesHandler(sourceSvc sourceAPI) *sourcesHandler {
-	return &sourcesHandler{sourceService: sourceSvc}
+// NewSourcesHandler builds a SourcesHandler from the service port it needs.
+func NewSourcesHandler(sourceSvc sourceAPI) *SourcesHandler {
+	return &SourcesHandler{sourceService: sourceSvc}
+}
+
+// MaxUploadBytes reports the upload size cap so routes.go can size the
+// /sources/upload route's body-size middleware.
+func (sh *SourcesHandler) MaxUploadBytes() int64 {
+	return sh.sourceService.MaxUploadBytes()
 }
 
 // parseSrid reads an optional "srid" query param, 0 (auto-detect) if
@@ -30,34 +37,34 @@ func parseSrid(req *http.Request) (int, error) {
 	return strconv.Atoi(raw)
 }
 
-// listSources handles GET /sources.
+// ListSources handles GET /sources.
 //
 // @Summary List cached sources
 // @Tags sources
 // @Produce json
 // @Success 200 {array} service.Source
 // @Router /api/v1/sources [get]
-func (sh *sourcesHandler) listSources(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, http.StatusOK, sh.sourceService.List())
+func (sh *SourcesHandler) ListSources(w http.ResponseWriter, req *http.Request) {
+	response.WriteJSON(w, http.StatusOK, sh.sourceService.List())
 }
 
-// refreshSources handles POST /sources/refresh.
+// RefreshSources handles POST /sources/refresh.
 //
 // @Summary Rescan workDir
 // @Tags sources
 // @Produce json
 // @Success 200 {array} service.Source
 // @Router /api/v1/sources/refresh [post]
-func (sh *sourcesHandler) refreshSources(w http.ResponseWriter, req *http.Request) {
+func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Request) {
 	sources, err := sh.sourceService.Refresh(req.Context())
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, sources)
+	response.WriteJSON(w, http.StatusOK, sources)
 }
 
-// uploadSource handles POST /sources/upload (multipart/form-data, field
+// UploadSource handles POST /sources/upload (multipart/form-data, field
 // "file"). Not part of docs/spec.md's original endpoint table (section 6.1
 // only lists refresh/load) — added as an explicit extension. Writes the
 // file into workDir via SourceService.Upload, then immediately loads it
@@ -73,31 +80,31 @@ func (sh *sourcesHandler) refreshSources(w http.ResponseWriter, req *http.Reques
 // @Produce json
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
 // @Success 201 {object} map[string]string
-// @Failure 400 {object} ErrorResponse
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
-func (sh *sourcesHandler) uploadSource(w http.ResponseWriter, req *http.Request) {
+func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
 	srid, err := parseSrid(req)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	file, header, err := req.FormFile("file")
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	savedName, err := sh.sourceService.Upload(header.Filename, file)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	sources, err := sh.sourceService.Refresh(req.Context())
 	if err != nil {
-		WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -109,7 +116,7 @@ func (sh *sourcesHandler) uploadSource(w http.ResponseWriter, req *http.Request)
 		}
 	}
 	if uploaded != nil && len(uploaded.Layers) > 1 {
-		writeJSON(w, http.StatusCreated, uploaded)
+		response.WriteJSON(w, http.StatusCreated, uploaded)
 		return
 	}
 
@@ -119,15 +126,15 @@ func (sh *sourcesHandler) uploadSource(w http.ResponseWriter, req *http.Request)
 	}
 	tableId, err := sh.sourceService.Load(req.Context(), savedName, layer, srid)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	writeJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// loadSource handles POST /sources/{name}/load. name is validated against
+// LoadSource handles POST /sources/{name}/load. name is validated against
 // the cache by SourceService.Load itself (règle 15) — this handler does no
 // path validation of its own. layer selects one layer of a multi-layer
 // (.gpkg) source; required for those, rejected otherwise. An optional
@@ -141,28 +148,28 @@ func (sh *sourcesHandler) uploadSource(w http.ResponseWriter, req *http.Request)
 // @Param layer query string false "Layer name (required for multi-layer sources)"
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
 // @Success 201 {object} map[string]string
-// @Failure 409 {object} ErrorResponse
+// @Failure 409 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
-func (sh *sourcesHandler) loadSource(w http.ResponseWriter, req *http.Request) {
+func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 	srid, err := parseSrid(req)
 	if err != nil {
-		WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
 	tableId, err := sh.sourceService.Load(req.Context(), name, layer, srid)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	writeJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// getSourceMetadata handles GET /sources/{name}/metadata — a preview of a
+// GetSourceMetadata handles GET /sources/{name}/metadata — a preview of a
 // not-yet-loaded source's detected CRS, so a client can show it to the
 // user before Load (GEO-1's "editable EPSG" flow). layer selects one layer
 // of a multi-layer source. srid is null if the source declares no CRS
@@ -174,15 +181,15 @@ func (sh *sourcesHandler) loadSource(w http.ResponseWriter, req *http.Request) {
 // @Param name path string true "Source file name"
 // @Param layer query string false "Layer name (for multi-layer sources)"
 // @Success 200 {object} map[string]any
-// @Failure 404 {object} ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/metadata [get]
-func (sh *sourcesHandler) getSourceMetadata(w http.ResponseWriter, req *http.Request) {
+func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 
 	authName, authCode, err := sh.sourceService.DetectCRS(req.Context(), name, layer)
 	if err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -192,10 +199,10 @@ func (sh *sourcesHandler) getSourceMetadata(w http.ResponseWriter, req *http.Req
 	} else {
 		body["srid"] = nil
 	}
-	writeJSON(w, http.StatusOK, body)
+	response.WriteJSON(w, http.StatusOK, body)
 }
 
-// deleteSource handles DELETE /sources/{name}. name is validated against
+// DeleteSource handles DELETE /sources/{name}. name is validated against
 // the cache by SourceService.Delete itself (règle 15). If the source (or
 // one of its layers) was loaded, its table(s) are removed too — explicit
 // replacement is delete then re-upload.
@@ -204,13 +211,13 @@ func (sh *sourcesHandler) getSourceMetadata(w http.ResponseWriter, req *http.Req
 // @Tags sources
 // @Param name path string true "Source file name"
 // @Success 204
-// @Failure 404 {object} ErrorResponse
+// @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name} [delete]
-func (sh *sourcesHandler) deleteSource(w http.ResponseWriter, req *http.Request) {
+func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 
 	if err := sh.sourceService.Delete(req.Context(), name); err != nil {
-		WriteError(w, req, err, mapServiceError(err))
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
