@@ -1,5 +1,21 @@
 basePath: /
 definitions:
+  handlers.collectionDTO:
+    properties:
+      extent:
+        $ref: '#/definitions/handlers.extentDTO'
+      id:
+        type: string
+      itemType:
+        type: string
+      title:
+        type: string
+    type: object
+  handlers.extentDTO:
+    properties:
+      spatial:
+        $ref: '#/definitions/handlers.spatialExtentDTO'
+    type: object
   handlers.metadataDTO:
     properties:
       bbox:
@@ -23,6 +39,18 @@ definitions:
       updatedAt:
         type: string
     type: object
+  handlers.spatialExtentDTO:
+    properties:
+      bbox:
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+      crs:
+        type: string
+    type: object
   response.ErrorResponse:
     properties:
       code:
@@ -39,6 +67,149 @@ info:
   title: GeoAPI
   version: "1.0"
 paths:
+  /api/v1/ogc/:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: OGC API - Features landing page
+      tags:
+      - features
+  /api/v1/ogc/collections:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List OGC API - Features collections
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.collectionDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}/items:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)
+        in: query
+        name: bbox
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      - description: Simplify tolerance override
+        in: query
+        name: simplify
+        type: string
+      - description: Coordinate precision grid size override
+        in: query
+        name: precision
+        type: string
+      - description: Max features returned
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: List features of an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}/items/{featureId}:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Feature (row) primary key
+        in: path
+        name: featureId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get a single feature of an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/conformance:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+      summary: Declared OGC API - Features conformance classes
+      tags:
+      - features
   /api/v1/sources:
     get:
       parameters:

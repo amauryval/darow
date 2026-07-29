@@ -39,6 +39,7 @@ func RunSuite(t *testing.T, newStorage NewStorage) {
 	t.Run("Schema_AddColumn", func(t *testing.T) { testSchemaAddColumn(t, newStorage) })
 	t.Run("Geo_TileAndBboxAndTypes", func(t *testing.T) { testGeoTileAndBboxAndTypes(t, newStorage) })
 	t.Run("Geo_GetGeometryGeoJSON", func(t *testing.T) { testGeoGetGeometryGeoJSON(t, newStorage) })
+	t.Run("Geo_GetFeatures", func(t *testing.T) { testGeoGetFeatures(t, newStorage) })
 	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newStorage) })
 	t.Run("Create_FromQuery", func(t *testing.T) { testCreateFromQuery(t, newStorage) })
 	t.Run("Create_FromFile_DetectsAndReprojectsFromNonWGS84CRS", func(t *testing.T) { testCreateFromFileDetectsNonWGS84CRS(t, newStorage) })
@@ -336,6 +337,33 @@ func testGeoGetGeometryGeoJSON(t *testing.T, newStorage NewStorage) {
 	for _, pkey := range pkeys {
 		assert.Contains(t, geojson[pkey], `"Point"`)
 	}
+}
+
+func testGeoGetFeatures(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	tableId, pkeys := newGeoTable(t, s)
+
+	all, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	for _, f := range all {
+		assert.Contains(t, f.GeoJSON, `"Point"`)
+	}
+
+	one, err := s.GetFeatures(ctx, tableId, pkeys[:1], nil, nil, storage.GeoQuery{}, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, one, 1)
+	assert.Equal(t, pkeys[0], one[0].Pkey)
+
+	firstPage, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, firstPage, 1)
+	secondPage, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, secondPage, 1)
+	assert.NotEqual(t, firstPage[0].Pkey, secondPage[0].Pkey, "offset must skip the first page's row")
+	assert.ElementsMatch(t, all, append(firstPage, secondPage...))
 }
 
 func testCreateListLayers(t *testing.T, newStorage NewStorage) {

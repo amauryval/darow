@@ -3,10 +3,12 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import maplibregl, { Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { getGeometryTypes, tileUrl } from "../client/geo";
+import { getItems, type OgcFeature } from "../client/features";
 
 const props = defineProps<{
   tableId: string;
   bbox?: string;
+  wfsEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{ selectionChange: [pkeys: string[]] }>();
@@ -15,7 +17,15 @@ const container = ref<HTMLDivElement | null>(null);
 let map: Map | null = null;
 const sourceId = `table-${props.tableId}`;
 const sourceLayer = "layer";
+const wfsSourceId = `wfs-${props.tableId}`;
+const WFS_VIEWPORT_LIMIT = 100_000;
 const selectedPkeys = new Set<string>();
+let mvtLayerIds: string[] = [];
+let mvtInteractiveLayerIds: string[] = [];
+let onMvtMouseEnter: (() => void) | null = null;
+let onMvtMouseLeave: (() => void) | null = null;
+let onMvtClick: ((e: maplibregl.MapMouseEvent) => void) | null = null;
+let onWfsMoveEnd: (() => void) | null = null;
 
 // Metadata.bbox is reported as "minX,minY,maxX,maxY" in EPSG:4326 (the
 // server reprojects it from the geometry column's storage SRID) so it
@@ -47,7 +57,7 @@ function selectedCase(selectedValue: unknown, baseValue: unknown): maplibregl.Ex
 // Only fill/polygon layers register a dedicated hit target for click —
 // the "-line" outline stroke is a few px wide and would make clicking a
 // polygon's interior miss, so inspection always targets fill/circle first.
-async function addTableLayer(m: Map): Promise<string[]> {
+async function addMvtLayer(m: Map) {
   const bounds = props.bbox ? parseBbox(props.bbox) : null;
   m.addSource(sourceId, {
     type: "vector",
@@ -61,7 +71,8 @@ async function addTableLayer(m: Map): Promise<string[]> {
 
   const { types } = await getGeometryTypes(props.tableId).catch(() => ({ types: [] as string[] }));
   const { hasPolygon, hasLine, hasPoint } = classifyGeometryTypes(types);
-  const interactiveLayerIds: string[] = [];
+  mvtLayerIds = [];
+  mvtInteractiveLayerIds = [];
 
   if (hasPolygon) {
     const id = `${sourceId}-fill`;
@@ -72,16 +83,19 @@ async function addTableLayer(m: Map): Promise<string[]> {
       "source-layer": sourceLayer,
       paint: { "fill-color": selectedCase("#f59e0b", "#6366f1"), "fill-opacity": selectedCase(0.55, 0.35) },
     });
-    interactiveLayerIds.push(id);
+    mvtLayerIds.push(id);
+    mvtInteractiveLayerIds.push(id);
   }
   if (hasPolygon || hasLine) {
+    const id = `${sourceId}-line`;
     m.addLayer({
-      id: `${sourceId}-line`,
+      id,
       type: "line",
       source: sourceId,
       "source-layer": sourceLayer,
       paint: { "line-color": selectedCase("#b45309", "#4338ca"), "line-width": selectedCase(3, 1.5) },
     });
+    mvtLayerIds.push(id);
   }
   if (hasPoint) {
     const id = `${sourceId}-point`;
@@ -97,9 +111,36 @@ async function addTableLayer(m: Map): Promise<string[]> {
         "circle-stroke-width": 1,
       },
     });
-    interactiveLayerIds.push(id);
+    mvtLayerIds.push(id);
+    mvtInteractiveLayerIds.push(id);
   }
-  return interactiveLayerIds;
+
+  if (mvtInteractiveLayerIds.length > 0) {
+    onMvtMouseEnter = () => (m.getCanvas().style.cursor = "pointer");
+    onMvtMouseLeave = () => (m.getCanvas().style.cursor = "");
+    onMvtClick = (e) => toggleFeature(m, e.point, mvtInteractiveLayerIds);
+    m.on("mouseenter", mvtInteractiveLayerIds, onMvtMouseEnter);
+    m.on("mouseleave", mvtInteractiveLayerIds, onMvtMouseLeave);
+    m.on("click", mvtInteractiveLayerIds, onMvtClick);
+  }
+}
+
+function removeMvtLayer(m: Map) {
+  if (mvtInteractiveLayerIds.length > 0 && onMvtMouseEnter && onMvtMouseLeave && onMvtClick) {
+    m.off("mouseenter", mvtInteractiveLayerIds, onMvtMouseEnter);
+    m.off("mouseleave", mvtInteractiveLayerIds, onMvtMouseLeave);
+    m.off("click", mvtInteractiveLayerIds, onMvtClick);
+  }
+  for (const id of mvtLayerIds) {
+    if (m.getLayer(id)) m.removeLayer(id);
+  }
+  if (m.getSource(sourceId)) m.removeSource(sourceId);
+  mvtLayerIds = [];
+  mvtInteractiveLayerIds = [];
+  onMvtMouseEnter = null;
+  onMvtMouseLeave = null;
+  onMvtClick = null;
+  selectedPkeys.clear();
 }
 
 function setFeatureSelected(m: Map, pkey: string, isSelected: boolean) {
@@ -138,6 +179,70 @@ function clearSelection() {
   emit("selectionChange", []);
 }
 
+function addWfsLayer(m: Map) {
+  m.addSource(wfsSourceId, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  m.addLayer({
+    id: `${wfsSourceId}-fill`,
+    type: "fill",
+    source: wfsSourceId,
+    filter: ["==", ["geometry-type"], "Polygon"],
+    paint: { "fill-color": "#16a34a", "fill-opacity": 0.25 },
+  });
+  m.addLayer({
+    id: `${wfsSourceId}-line`,
+    type: "line",
+    source: wfsSourceId,
+    filter: ["in", ["geometry-type"], ["literal", ["Polygon", "LineString"]]],
+    paint: { "line-color": "#15803d", "line-width": 2, "line-dasharray": [2, 1] },
+  });
+  m.addLayer({
+    id: `${wfsSourceId}-point`,
+    type: "circle",
+    source: wfsSourceId,
+    filter: ["==", ["geometry-type"], "Point"],
+    paint: { "circle-color": "#16a34a", "circle-radius": 5, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 },
+  });
+}
+
+function removeWfsLayer(m: Map) {
+  if (onWfsMoveEnd) {
+    m.off("moveend", onWfsMoveEnd);
+    onWfsMoveEnd = null;
+  }
+  for (const id of [`${wfsSourceId}-fill`, `${wfsSourceId}-line`, `${wfsSourceId}-point`]) {
+    if (m.getLayer(id)) m.removeLayer(id);
+  }
+  if (m.getSource(wfsSourceId)) m.removeSource(wfsSourceId);
+}
+
+let wfsRequestId = 0;
+
+async function refreshWfsData(m: Map) {
+  const source = m.getSource<maplibregl.GeoJSONSource>(wfsSourceId);
+  if (!source) return;
+
+  const requestId = ++wfsRequestId;
+  const viewBounds = m.getBounds();
+  const bbox: [number, number, number, number] = [
+    viewBounds.getWest(),
+    viewBounds.getSouth(),
+    viewBounds.getEast(),
+    viewBounds.getNorth(),
+  ];
+  const collection = await getItems(props.tableId, { bbox, limit: WFS_VIEWPORT_LIMIT }).catch(() => null);
+  if (!collection || requestId !== wfsRequestId) return;
+
+  const features = collection.features.filter((f): f is OgcFeature & { geometry: GeoJSON.Geometry } => f.geometry !== null);
+  source.setData({ type: "FeatureCollection", features });
+}
+
+function enableWfsLayer(m: Map) {
+  addWfsLayer(m);
+  refreshWfsData(m);
+  onWfsMoveEnd = () => refreshWfsData(m);
+  m.on("moveend", onWfsMoveEnd);
+}
+
 defineExpose({ deselect, clearSelection });
 
 onMounted(() => {
@@ -163,18 +268,17 @@ onMounted(() => {
 
   map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-  map.on("load", () => {
+  map.on("load", async () => {
     if (!map) return;
-    addTableLayer(map).then((layerIds) => {
-      if (!map || layerIds.length === 0) return;
-      const m = map;
-      m.on("mouseenter", layerIds, () => (m.getCanvas().style.cursor = "pointer"));
-      m.on("mouseleave", layerIds, () => (m.getCanvas().style.cursor = ""));
-      m.on("click", layerIds, (e) => toggleFeature(m, e.point, layerIds));
-    });
+
+    if (props.wfsEnabled) {
+      enableWfsLayer(map);
+    } else {
+      await addMvtLayer(map);
+    }
 
     const bounds = props.bbox ? parseBbox(props.bbox) : null;
-    if (bounds) {
+    if (bounds && map) {
       map.fitBounds(bounds, { padding: 32, animate: false });
     }
   });
@@ -191,6 +295,23 @@ watch(
     const bounds = bbox ? parseBbox(bbox) : null;
     if (bounds && map) {
       map.fitBounds(bounds, { padding: 32, animate: false });
+    }
+  },
+);
+
+// MVT and WFS are mutually exclusive on the map — switching modes tears
+// down the previous mode's source/layers entirely rather than layering
+// both, so there is only ever one rendering of the table at a time.
+watch(
+  () => props.wfsEnabled,
+  (enabled) => {
+    if (!map) return;
+    if (enabled) {
+      removeMvtLayer(map);
+      enableWfsLayer(map);
+    } else {
+      removeWfsLayer(map);
+      addMvtLayer(map);
     }
   },
 );

@@ -24,6 +24,7 @@ type Router struct {
 	tables   *handlers.TablesHandler
 	rows     *handlers.RowsHandler
 	geo      *handlers.GeoHandler
+	features *handlers.FeaturesHandler
 	sources  *handlers.SourcesHandler
 	export   *handlers.ExportHandler
 	ops      *handlers.OpsHandler
@@ -42,6 +43,7 @@ func NewRouter(
 		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
 		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, apiCfg),
 		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
+		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
 		ops:      handlers.NewOpsHandler(ready),
@@ -123,6 +125,21 @@ func (rt *Router) Setup() http.Handler {
 					sub.Get("/tiles/{z}/{x}/{y}", rt.geo.GetTile)
 					sub.Get("/geometry-types", rt.geo.GetGeometryTypes)
 					sub.Post("/bbox", rt.geo.FilterByBbox)
+				})
+			})
+
+			v1.Route("/ogc", func(sub chi.Router) {
+				sub.Get("/", rt.features.LandingPage)
+				sub.Get("/conformance", rt.features.Conformance)
+				sub.Route("/collections", func(sub chi.Router) {
+					sub.Get("/", rt.features.ListCollections)
+					sub.Route("/{tableId}", func(sub chi.Router) {
+						sub.Get("/", rt.features.GetCollection)
+						sub.Route("/items", func(sub chi.Router) {
+							sub.Get("/", rt.features.GetItems)
+							sub.Get("/{featureId}", rt.features.GetItem)
+						})
+					})
 				})
 			})
 		})

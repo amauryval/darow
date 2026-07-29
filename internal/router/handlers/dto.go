@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"gogeoserver/internal/storage"
@@ -33,6 +35,47 @@ func toMetadataDTO(m storage.Metadata) metadataDTO {
 		Bbox:           m.Bbox,
 		Srid:           m.Srid,
 	}
+}
+
+// collectionDTO is an OGC API - Features collection — one per geo table.
+type collectionDTO struct {
+	Id       string    `json:"id"`
+	Title    string    `json:"title"`
+	ItemType string    `json:"itemType"`
+	Extent   extentDTO `json:"extent"`
+}
+
+type extentDTO struct {
+	Spatial spatialExtentDTO `json:"spatial"`
+}
+
+type spatialExtentDTO struct {
+	Bbox [][4]float64 `json:"bbox"`
+	Crs  string       `json:"crs"`
+}
+
+// toCollectionDTO maps m's Bbox string ("minX,minY,maxX,maxY" in EPSG:4326)
+// to OGC's spatial-extent shape; a missing/malformed Bbox yields an empty
+// bbox list rather than an error, since extent is informational.
+func toCollectionDTO(m storage.Metadata) collectionDTO {
+	dto := collectionDTO{Id: m.TableId, Title: m.TableName, ItemType: "feature", Extent: extentDTO{
+		Spatial: spatialExtentDTO{Crs: ogcCRS84},
+	}}
+
+	parts := strings.Split(m.Bbox, ",")
+	if len(parts) != 4 {
+		return dto
+	}
+	var bbox [4]float64
+	for i, part := range parts {
+		v, err := strconv.ParseFloat(part, 64)
+		if err != nil {
+			return dto
+		}
+		bbox[i] = v
+	}
+	dto.Extent.Spatial.Bbox = [][4]float64{bbox}
+	return dto
 }
 
 // rowToJSON flattens row under the reserved "pkey" key alongside its other

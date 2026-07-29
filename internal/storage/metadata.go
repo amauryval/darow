@@ -127,4 +127,14 @@ type GeoTableManager interface {
 	// fragment, keyed by pkey. Used only by table export (règle 7 excepts
 	// export from the "never return the geometry column" rule).
 	GetGeometryGeoJSON(ctx context.Context, meta Metadata, pkeys []string) (map[string]string, error)
+
+	// GetFeatures returns up to limit GeoFeatures, skipping offset matches
+	// first (OGC API - Features paging). pkeys, if non-nil, restricts to
+	// those primary keys (used to fetch a single feature); bbox, if
+	// non-nil, additionally restricts to intersecting geometries; q adds a
+	// filter clause and/or a simplify tolerance; attrs selects which
+	// non-geometry columns populate GeoFeature.Values (nil/empty means
+	// every column). This is GetGeometryGeoJSON's sibling exception to
+	// règle 7, for OGC API - Features.
+	GetFeatures(ctx context.Context, meta Metadata, pkeys []string, bbox *[4]float64, attrs []string, q GeoQuery, limit, offset int) ([]GeoFeature, error)
 }

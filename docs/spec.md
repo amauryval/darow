@@ -504,14 +504,40 @@ type TableWriter interface {
 }
 
 type GeoTableManager interface {
-    Tile(tableId string, zoom, x, y int) ([]byte, error)
+    Tile(tableId string, zoom, x, y int, attrs []string) ([]byte, error)
     FilterByBbox(tableId string, bbox [4]float64) ([]string, error)
     // Computed on demand, never cached — voir règle 10.
     GeometryTypes(tableId string) ([]string, error)
+    // GetGeometryGeoJSON : exception à la règle 7, réservée à l'export.
+    GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error)
+    // GetFeatures : seconde exception délibérée à la règle 7 — un item OGC
+    // API - Features se définit par la présence de sa géométrie. pkeys/bbox,
+    // non-nil, restreignent le résultat ; q ajoute filtre/tolérance ; attrs
+    // sélectionne les colonnes non-géométriques renvoyées (vide = toutes).
+    // GeoQuery n'existe que pour GetFeatures — le tuilage MVT (Tile) n'a
+    // volontairement ni filtre ni tolérance pilotables : ce n'est utile
+    // qu'en tant qu'exigence de conformité OGC API - Features, pas pour la
+    // carte MVT de l'UI, qui n'expose aucun contrôle pour ça.
+    GetFeatures(tableId string, pkeys []string, bbox *[4]float64, attrs []string, q GeoQuery, limit int) ([]GeoFeature, error)
+}
+
+// GeoQuery n'est consommé que par GetFeatures (OGC API - Features).
+type GeoQuery struct {
+    Filter    string // clause BuildFilter, "" = pas de filtre
+    Args      []any
+    Tolerance *float64 // nil : pas de simplification
+    Precision *float64 // nil : pas de réduction de précision (ST_ReducePrecision)
+}
+
+// GeoFeature est l'équivalent de Row côté géométrie, produit par GetFeatures.
+type GeoFeature struct {
+    Pkey    string
+    GeoJSON string
+    Values  map[string]any
 }
 ```
 
-`GeoTableManager` se limite aux opérations géospatiales (`Tile`, `FilterByBbox`, `GeometryTypes`) ; l'état `isGeo`/`geometryColumn` vit dans `MetadataReader`, source unique de vérité.
+`GeoTableManager` se limite aux opérations géospatiales (`Tile`, `FilterByBbox`, `GeometryTypes`, `GetGeometryGeoJSON`, `GetFeatures`) ; l'état `isGeo`/`geometryColumn` vit dans `MetadataReader`, source unique de vérité.
 
 ### 4.5 Construction sécurisée des filtres
 
@@ -975,6 +1001,11 @@ func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
 
 `RefreshDerived` (5.1) doit mettre à jour `UpdatedAt` en plus de `RowCount`/`Bbox` — c'est ce qui fait fonctionner l'invalidation de `GetTile` sans code d'invalidation dédié.
 
+`GeoService.GetFeatures` (OGC API - Features, 6.1.1), à l'inverse de `GetTile`, n'est jamais mis en
+cache (règle 10) : filtre, bbox, tolérance et attrs forment un espace de clés non borné, contrairement
+au z/x/y borné d'une tuile — même raisonnement que pour `FilterByBbox`/`GeometryTypes`/
+`GetGeometryGeoJSON`, déjà non mis en cache.
+
 ### 5.6 `ExportService` : export = domaine, pas transport
 
 L'export CSV/GeoJSON (`GET /tables/{tableId}/export`) est de la logique métier, pas un détail de
@@ -1040,6 +1071,12 @@ implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance 
 | **Géo (MVT)**     | `/tables/{tableId}/tiles/{z}/{x}/{y}?attrs=` | GET  | Récupère une tuile MVT ; `attrs` (colonnes séparées par `,`) embarque des attributs non-géométrie dans la tuile (GEO-3) | `200: []byte (application/x-protobuf)`|
 |                   | `/tables/{tableId}/geometry-types`    | GET         | Types de géométrie distincts (règle 10)         | `200: {"types": ["POLYGON", ...]}`    |
 | **Géo (Requêtes)**| `/tables/{tableId}/bbox`              | POST        | Filtre les pkeys dans un bbox                   | `200: {"pkeys": ["...", ...]}`        |
+| **Géo (OGC API - Features)** | `/ogc/`                    | GET         | Landing page (liens self/conformance/data)      | `200: {"title": "...", "links": [...]}` |
+|                   | `/ogc/conformance`                    | GET         | Classes de conformance déclarées (Core + GeoJSON) | `200: {"conformsTo": [...]}`        |
+|                   | `/ogc/collections`                    | GET         | Une collection par table géo (`isGeo=true`)     | `200: {"collections": [...]}`         |
+|                   | `/ogc/collections/{tableId}`          | GET         | Description d'une collection (`404` si non géo) | `200: {"id": "...", "extent": {...}}` |
+|                   | `/ogc/collections/{tableId}/items?bbox=&filter=&simplify=&limit=&offset=` | GET | `FeatureCollection` GeoJSON — `filter`/`simplify` sont des extensions de conformité au standard (6.1.1), sans consommateur dans l'UI | `200: {"type": "FeatureCollection", "features": [...]}` |
+|                   | `/ogc/collections/{tableId}/items/{featureId}` | GET  | Une `Feature` GeoJSON, résolution complète (pas de filtre/simplify) | `200: {"type": "Feature", ...}` ; `404` si absente |
 | **Schémas**       | `/tables/{tableId}/schema`            | GET         | Schéma de la table (colonnes + types)            | `200: {"columns": [{"name": "...", "type": "..."}]}` |
 |                   | `/tables/{tableId}/columns`           | POST        | Ajoute une colonne                              | `201: {"name": "...", "type": "..."}` |
 |                   | `/tables/{tableId}/columns/{col}/distinct` | GET   | Valeurs distinctes d'une colonne (non-géométrie) | `200: {"values": [...]}`             |
@@ -1049,6 +1086,24 @@ implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance 
 Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source (ou, pour un `.gpkg`, la couche demandée) est déjà chargée, ou si `layer` est absent/inconnu pour un `.gpkg` (voir `SourceService.Load`, 3.2, et 7.1).
 
 `/tables/{tableId}/filter`, `/tables/{tableId}/columns/{col}/distinct` et `?attrs=` sur les tuiles sont une API publique stable, testée et documentée dans Swagger — mais sans consommateur dans `web/` à ce jour (décision `docs/audit2.md` §4.5) : l'UI n'appelle aucun des trois. Toute UI future qui veut un filtre par colonne, une inspection de valeurs distinctes, ou une infobulle carte les consomme directement via `web/src/client/`, sans en faire des endpoints nouveaux.
+
+#### 6.1.1 OGC API - Features (Core)
+
+`/ogc/...` implémente OGC API - Features — le successeur JSON/REST de WFS, pas le WFS 2.0.0
+XML/GML historique, cohérent avec le style tout-JSON du reste de l'API. `collectionId` dans l'URL
+*est* `tableId` : déjà un identifiant serveur stable et opaque (UUID), exactement ce qu'exige OGC.
+Une table non géo (`isGeo=false`) renvoie `404` sur toute route `/ogc/collections/{tableId}/...`.
+
+- Classes de conformance déclarées : Core + GeoJSON uniquement (pas `oas30`, pas de CQL2).
+- `filter`/`simplify` sont des extensions spécifiques à cette API, au-delà de Core — CQL2 complet
+  ne correspond pas au modèle colonne/opérateur whitelisté qu'impose la règle 5, mais un client OGC
+  conforme peut s'y attendre. Ils réutilisent `GeoQuery`/`BuildFilter`. C'est une exigence de
+  conformité au standard, pas un besoin produit : l'UI n'expose aucun contrôle filtre/simplification,
+  ni ici ni sur les tuiles MVT (`Tile` n'accepte d'ailleurs pas de `GeoQuery` — seul `GetFeatures` en
+  a besoin).
+- `datetime` n'est pas supporté : aucune notion de colonne temporelle n'existe dans ce modèle.
+- `GetFeatures` (4.4, 5.5) est le seul point d'entrée storage à accepter un `GeoQuery` — seconde
+  exception délibérée à la règle 7, au même titre qu'`GetGeometryGeoJSON`.
 
 ### 6.2 Router (`chi`)
 

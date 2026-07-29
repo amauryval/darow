@@ -49,6 +49,14 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 	return mvt, nil
 }
 
+// GetFeatures returns up to limit GeoFeatures matching pkeys/bbox/q after
+// skipping offset matches, computed on demand and never cached (règle 10) —
+// filter, bbox, tolerance, and attrs together form an unbounded key space,
+// unlike a tile's bounded z/x/y.
+func (g *GeoService) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	return g.storage.GetFeatures(ctx, meta, pkeys, bbox, attrs, q, limit, offset)
+}
+
 // FilterByBbox returns the pkeys of rows whose geometry intersects bbox.
 func (g *GeoService) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
 	return g.storage.FilterByBbox(ctx, meta, bbox)

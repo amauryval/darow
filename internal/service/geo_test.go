@@ -82,6 +82,20 @@ func Test_GeoService_FilterByBbox(t *testing.T) {
 	assert.Equal(t, []string{"pk-1"}, pkeys)
 }
 
+func Test_GeoService_GetFeatures_ProxiesToStorage(t *testing.T) {
+	geoSvc, m := setupGeoService(t)
+	bbox := [4]float64{0, 0, 1, 1}
+	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+	features := []storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}
+
+	m.On("GetFeatures", context.Background(), "id-1", []string{"pk-1"}, &bbox, []string{"name"}, q, 10, 5).Return(features, nil).Once()
+
+	got, err := geoSvc.GetFeatures(context.Background(), storage.Metadata{TableId: "id-1"}, []string{"pk-1"}, &bbox, []string{"name"}, q, 10, 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, features, got)
+}
+
 func Test_GeoService_GeometryTypes(t *testing.T) {
 	geoSvc, m := setupGeoService(t)
 

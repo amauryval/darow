@@ -49,6 +49,7 @@ type geoAPI interface {
 	GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error)
 	GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error)
 	FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error)
+	GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 }
 
 // sourceAPI is everything the router calls on *service.SourceService.

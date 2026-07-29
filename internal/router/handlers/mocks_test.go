@@ -138,6 +138,12 @@ func (m *mockGeoAPI) FilterByBbox(ctx context.Context, meta storage.Metadata, bb
 	return pkeys, args.Error(1)
 }
 
+func (m *mockGeoAPI) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, pkeys, bbox, attrs, q, limit, offset)
+	features, _ := args.Get(0).([]storage.GeoFeature)
+	return features, args.Error(1)
+}
+
 type mockSourceAPI struct{ mock.Mock }
 
 var _ sourceAPI = (*mockSourceAPI)(nil)

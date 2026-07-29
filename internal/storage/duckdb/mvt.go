@@ -123,8 +123,10 @@ func (a *Adapter) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata,
 		return nil, err
 	}
 
+	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
+	// column is stored reprojected to EPSG:3857.
 	query := fmt.Sprintf(
-		`SELECT __pkey, CAST(ST_AsGeoJSON(%s) AS VARCHAR) FROM %s WHERE __pkey IN (%s)`,
+		`SELECT __pkey, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) FROM %s WHERE __pkey IN (%s)`,
 		quotedGeom, meta.PhysicalName, placeholders(len(pkeys)),
 	)
 	rows, err := a.Query(ctx, query, pkeysToArgs(pkeys)...)

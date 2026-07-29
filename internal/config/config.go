@@ -53,13 +53,16 @@ type SourcesConfig struct {
 // request body size, per-request timeout, and the page size ExportService
 // streams at (PERF-2).
 type APIConfig struct {
-	DefaultRowLimit   int   `yaml:"defaultRowLimit"`
-	MaxRowLimit       int   `yaml:"maxRowLimit"`
-	DefaultListLimit  int   `yaml:"defaultListLimit"`
-	MaxListLimit      int   `yaml:"maxListLimit"`
-	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
-	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
-	ExportBatchSize   int64 `yaml:"exportBatchSize"`
+	DefaultRowLimit      int     `yaml:"defaultRowLimit"`
+	MaxRowLimit          int     `yaml:"maxRowLimit"`
+	DefaultListLimit     int     `yaml:"defaultListLimit"`
+	MaxListLimit         int     `yaml:"maxListLimit"`
+	MaxBodyBytes         int64   `yaml:"maxBodyBytes"`
+	RequestTimeoutSec    int     `yaml:"requestTimeoutSec"`
+	ExportBatchSize      int64   `yaml:"exportBatchSize"`
+	DefaultFeaturesLimit int     `yaml:"defaultFeaturesLimit"`
+	MaxSimplifyTolerance float64 `yaml:"maxSimplifyTolerance"`
+	MaxPrecision         float64 `yaml:"maxPrecision"`
 }
 
 // CacheConfig holds TTL and max item count for every in-memory cache
@@ -90,13 +93,16 @@ func defaultConfig() Config {
 			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg"},
 		},
 		API: APIConfig{
-			DefaultRowLimit:   100,
-			MaxRowLimit:       1000,
-			DefaultListLimit:  50,
-			MaxListLimit:      500,
-			MaxBodyBytes:      10 * 1024 * 1024,
-			RequestTimeoutSec: 30,
-			ExportBatchSize:   1000,
+			DefaultRowLimit:      100,
+			MaxRowLimit:          1000,
+			DefaultListLimit:     50,
+			MaxListLimit:         500,
+			MaxBodyBytes:         10 * 1024 * 1024,
+			RequestTimeoutSec:    30,
+			ExportBatchSize:      1000,
+			DefaultFeaturesLimit: 100,
+			MaxSimplifyTolerance: 10000,
+			MaxPrecision:         1000,
 		},
 		Cache: CacheConfig{
 			MetadataTTLSec:   300,
@@ -168,6 +174,9 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt64(&cfg.API.MaxBodyBytes, envPrefix+"API_MAX_BODY_BYTES"))
 	check(envInt(&cfg.API.RequestTimeoutSec, envPrefix+"API_REQUEST_TIMEOUT_SEC"))
 	check(envInt64(&cfg.API.ExportBatchSize, envPrefix+"API_EXPORT_BATCH_SIZE"))
+	check(envInt(&cfg.API.DefaultFeaturesLimit, envPrefix+"API_DEFAULT_FEATURES_LIMIT"))
+	check(envFloat64(&cfg.API.MaxSimplifyTolerance, envPrefix+"API_MAX_SIMPLIFY_TOLERANCE"))
+	check(envFloat64(&cfg.API.MaxPrecision, envPrefix+"API_MAX_PRECISION"))
 
 	check(envInt(&cfg.Cache.MetadataTTLSec, envPrefix+"CACHE_METADATA_TTL_SEC"))
 	check(envInt(&cfg.Cache.MetadataMaxItems, envPrefix+"CACHE_METADATA_MAX_ITEMS"))
@@ -217,6 +226,19 @@ func envInt64(dst *int64, key string) error {
 	return nil
 }
 
+func envFloat64(dst *float64, key string) error {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+	*dst = n
+	return nil
+}
+
 // validate rejects a Config that would otherwise fail confusingly at
 // runtime (a zero row limit, a negative timeout, an extension missing its
 // leading dot) explicitly at load time, collecting every violation rather
@@ -253,6 +275,9 @@ func (cfg Config) validate() error {
 	check(cfg.API.MaxBodyBytes > 0, "api.maxBodyBytes must be positive")
 	check(cfg.API.RequestTimeoutSec >= 0, "api.requestTimeoutSec must not be negative")
 	check(cfg.API.ExportBatchSize > 0, "api.exportBatchSize must be positive")
+	check(cfg.API.DefaultFeaturesLimit > 0, "api.defaultFeaturesLimit must be positive")
+	check(cfg.API.MaxSimplifyTolerance > 0, "api.maxSimplifyTolerance must be positive")
+	check(cfg.API.MaxPrecision > 0, "api.maxPrecision must be positive")
 
 	check(cfg.Cache.MetadataTTLSec >= 0, "cache.metadataTTLSec must not be negative")
 	check(cfg.Cache.MetadataMaxItems > 0, "cache.metadataMaxItems must be positive")

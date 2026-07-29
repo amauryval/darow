@@ -152,6 +152,12 @@ func (m *Storage) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y in
 	return tile, callArgs.Error(1)
 }
 
+func (m *Storage) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	callArgs := m.Called(ctx, meta.TableId, pkeys, bbox, attrs, q, limit, offset)
+	features, _ := callArgs.Get(0).([]storage.GeoFeature)
+	return features, callArgs.Error(1)
+}
+
 func (m *Storage) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
 	callArgs := m.Called(ctx, meta.TableId, bbox)
 	pkeys, _ := callArgs.Get(0).([]string)
