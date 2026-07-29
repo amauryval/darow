@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,7 @@ func RunSuite(t *testing.T, newStorage NewStorage) {
 	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newStorage) })
 	t.Run("Rows_BulkInsert", func(t *testing.T) { testRowsBulkInsert(t, newStorage) })
 	t.Run("Rows_GetPkeysPagination", func(t *testing.T) { testRowsGetPkeysPagination(t, newStorage) })
+	t.Run("Rows_GetPkeysSort", func(t *testing.T) { testRowsGetPkeysSort(t, newStorage) })
 	t.Run("Rows_GetDistinctValues", func(t *testing.T) { testRowsGetDistinctValues(t, newStorage) })
 	t.Run("Rows_GetRowsWithFilter", func(t *testing.T) { testRowsGetRowsWithFilter(t, newStorage) })
 	t.Run("Schema_AddColumn", func(t *testing.T) { testSchemaAddColumn(t, newStorage) })
@@ -98,7 +100,7 @@ func newGeoTable(t *testing.T, s storage.Storage) (meta storage.Metadata, pkeys 
 	meta, err = s.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
-	pkeys, err = s.GetPkeys(ctx, meta, 0, 10)
+	pkeys, err = s.GetPkeys(ctx, meta, nil, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, pkeys, 2)
 	return meta, pkeys
@@ -110,7 +112,7 @@ func testMetadataCreateAndRead(t *testing.T, newStorage NewStorage) {
 
 	meta, pkeys := newGeoTable(t, s)
 
-	ids, err := s.TableIds(ctx)
+	ids, err := s.TableIds(ctx, nil)
 	require.NoError(t, err)
 	assert.Contains(t, ids, meta.TableId)
 
@@ -210,16 +212,41 @@ func testRowsGetPkeysPagination(t *testing.T, newStorage NewStorage) {
 	})
 	require.NoError(t, err)
 
-	all, err := s.GetPkeys(ctx, meta, 0, 100)
+	all, err := s.GetPkeys(ctx, meta, nil, 0, 100)
 	require.NoError(t, err)
 	require.Len(t, all, 5)
 	for i := 1; i < len(all); i++ {
 		assert.LessOrEqual(t, all[i-1], all[i], "GetPkeys must order deterministically")
 	}
 
-	page, err := s.GetPkeys(ctx, meta, 2, 2)
+	page, err := s.GetPkeys(ctx, meta, nil, 2, 2)
 	require.NoError(t, err)
 	assert.Equal(t, all[2:4], page)
+}
+
+func testRowsGetPkeysSort(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	meta, existing := newGeoTable(t, s)
+
+	pkeys, err := s.GetPkeys(ctx, meta, []storage.SortField{{Column: "name", Desc: true}}, 0, 100)
+	require.NoError(t, err)
+	require.Len(t, pkeys, len(existing))
+
+	rows, err := s.GetRowsByPkey(ctx, meta, pkeys)
+	require.NoError(t, err)
+	byPkey := make(map[string]string, len(rows))
+	for _, r := range rows {
+		byPkey[r.Pkey] = r.Values["name"].(string)
+	}
+	names := make([]string, len(pkeys))
+	for i, pk := range pkeys {
+		names[i] = byPkey[pk]
+	}
+	assert.True(t, sort.IsSorted(sort.Reverse(sort.StringSlice(names))), "expected names sorted descending, got %v", names)
+
+	_, err = s.GetPkeys(ctx, meta, []storage.SortField{{Column: "no-such-column"}}, 0, 10)
+	assert.Error(t, err)
 }
 
 func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"gogeoserver/internal/config"
+	"gogeoserver/internal/storage"
 )
 
 // layerSeparator joins a source file name and layer name into the composite
@@ -149,15 +151,73 @@ func (s *SourceService) listLoadedLayers(ctx context.Context, name string, loade
 	return layers
 }
 
-// List returns a copy of the cache from the last Refresh — it never
-// rescans the disk itself, so an implicit scan per request doesn't defeat
-// the intent of an explicit refresh or cost an os.ReadDir per call. A copy,
-// not the live internal slice, so a caller can never mutate cache state
-// out from under Load.
-func (s *SourceService) List() []Source {
+// sourceSortFields maps a sort field's public name to a comparator over two
+// Sources — an allowlist, mirroring metadataSortColumns/rowsOrderBy's role
+// for the SQL-backed listings, since Source has no query to validate an
+// arbitrary column against.
+var sourceSortFields = map[string]func(a, b Source) int{
+	"name":      func(a, b Source) int { return cmp.Compare(a.Name, b.Name) },
+	"sizeBytes": func(a, b Source) int { return cmp.Compare(a.SizeBytes, b.SizeBytes) },
+	"modTime":   func(a, b Source) int { return a.ModTime.Compare(b.ModTime) },
+	"loaded":    func(a, b Source) int { return cmp.Compare(boolToInt(a.Loaded), boolToInt(b.Loaded)) },
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// sortSources sorts sources in place by sort (multi-column, each field
+// validated against sourceSortFields), stable so equal keys keep their
+// existing relative order.
+func sortSources(sources []Source, sort []storage.SortField) error {
+	comparators := make([]func(a, b Source) int, len(sort))
+	for i, f := range sort {
+		cmpFn, ok := sourceSortFields[f.Column]
+		if !ok {
+			return &ValidationError{fmt.Sprintf("invalid sort column: %q", f.Column)}
+		}
+		if f.Desc {
+			inner := cmpFn
+			cmpFn = func(a, b Source) int { return -inner(a, b) }
+		}
+		comparators[i] = cmpFn
+	}
+
+	slices.SortStableFunc(sources, func(a, b Source) int {
+		for _, cmpFn := range comparators {
+			if c := cmpFn(a, b); c != 0 {
+				return c
+			}
+		}
+		return 0
+	})
+	return nil
+}
+
+// List returns one page (offset/limit over the top-level sources, a
+// multi-layer source counting as one item regardless of its layer count)
+// of the cache from the last Refresh, ordered by sort or by scan order when
+// empty, plus the total count — it never rescans the disk itself, so an
+// implicit scan per request doesn't defeat the intent of an explicit
+// refresh or cost an os.ReadDir per call. Sorts a copy, not the live
+// internal slice, so a caller can never mutate cache state out from under
+// Load.
+func (s *SourceService) List(sort []storage.SortField, offset, limit int) ([]Source, int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return cloneSources(s.sources)
+	sources := cloneSources(s.sources)
+	s.mu.Unlock()
+
+	if err := sortSources(sources, sort); err != nil {
+		return nil, 0, err
+	}
+
+	total := len(sources)
+	start := min(max(offset, 0), total)
+	end := min(max(start+limit, start), total)
+	return sources[start:end], total, nil
 }
 
 func cloneSources(sources []Source) []Source {

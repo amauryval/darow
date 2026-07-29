@@ -49,11 +49,14 @@ type SourcesConfig struct {
 }
 
 // APIConfig holds settings adjustable without recompiling (règle 18) for
-// row pagination limits, request body size, per-request timeout, and the
-// page size ExportService streams at (PERF-2).
+// row pagination limits, list pagination limits (GET /tables, GET /sources),
+// request body size, per-request timeout, and the page size ExportService
+// streams at (PERF-2).
 type APIConfig struct {
 	DefaultRowLimit   int   `yaml:"defaultRowLimit"`
 	MaxRowLimit       int   `yaml:"maxRowLimit"`
+	DefaultListLimit  int   `yaml:"defaultListLimit"`
+	MaxListLimit      int   `yaml:"maxListLimit"`
 	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
 	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
 	ExportBatchSize   int64 `yaml:"exportBatchSize"`
@@ -89,6 +92,8 @@ func defaultConfig() Config {
 		API: APIConfig{
 			DefaultRowLimit:   100,
 			MaxRowLimit:       1000,
+			DefaultListLimit:  50,
+			MaxListLimit:      500,
 			MaxBodyBytes:      10 * 1024 * 1024,
 			RequestTimeoutSec: 30,
 			ExportBatchSize:   1000,
@@ -158,6 +163,8 @@ func applyEnvOverrides(cfg *Config) error {
 
 	check(envInt(&cfg.API.DefaultRowLimit, envPrefix+"API_DEFAULT_ROW_LIMIT"))
 	check(envInt(&cfg.API.MaxRowLimit, envPrefix+"API_MAX_ROW_LIMIT"))
+	check(envInt(&cfg.API.DefaultListLimit, envPrefix+"API_DEFAULT_LIST_LIMIT"))
+	check(envInt(&cfg.API.MaxListLimit, envPrefix+"API_MAX_LIST_LIMIT"))
 	check(envInt64(&cfg.API.MaxBodyBytes, envPrefix+"API_MAX_BODY_BYTES"))
 	check(envInt(&cfg.API.RequestTimeoutSec, envPrefix+"API_REQUEST_TIMEOUT_SEC"))
 	check(envInt64(&cfg.API.ExportBatchSize, envPrefix+"API_EXPORT_BATCH_SIZE"))
@@ -241,6 +248,8 @@ func (cfg Config) validate() error {
 
 	check(cfg.API.DefaultRowLimit > 0, "api.defaultRowLimit must be positive")
 	check(cfg.API.MaxRowLimit >= cfg.API.DefaultRowLimit, "api.maxRowLimit must be >= api.defaultRowLimit")
+	check(cfg.API.DefaultListLimit > 0, "api.defaultListLimit must be positive")
+	check(cfg.API.MaxListLimit >= cfg.API.DefaultListLimit, "api.maxListLimit must be >= api.defaultListLimit")
 	check(cfg.API.MaxBodyBytes > 0, "api.maxBodyBytes must be positive")
 	check(cfg.API.RequestTimeoutSec >= 0, "api.requestTimeoutSec must not be negative")
 	check(cfg.API.ExportBatchSize > 0, "api.exportBatchSize must be positive")

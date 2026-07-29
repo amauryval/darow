@@ -42,22 +42,29 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (stor
 	return meta, nil
 }
 
-// ListTables returns metadata for every registered table.
-func (s *MetadataService) ListTables(ctx context.Context) ([]storage.Metadata, error) {
-	ids, err := s.storage.TableIds(ctx)
+// ListTables returns one page of metadata (offset/limit over TableIds'
+// deterministic order — sort when given, else ORDER BY tableId) plus the
+// total number of registered tables.
+func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
+	ids, err := s.storage.TableIds(ctx, sort)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	tables := make([]storage.Metadata, 0, len(ids))
-	for _, id := range ids {
+	total := int64(len(ids))
+	start := min(max(offset, 0), total)
+	end := min(max(start+limit, start), total)
+	page := ids[start:end]
+
+	tables := make([]storage.Metadata, 0, len(page))
+	for _, id := range page {
 		meta, err := s.GetMetadata(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		tables = append(tables, meta)
 	}
-	return tables, nil
+	return tables, total, nil
 }
 
 // invalidateMetadataCache must be called after any write that changes
@@ -124,7 +131,7 @@ func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause er
 // (NEW-BUG-5). A table with no SourceName (e.g. created via /derive) is
 // not a loaded source and is excluded.
 func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
-	ids, err := s.storage.TableIds(ctx)
+	ids, err := s.storage.TableIds(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

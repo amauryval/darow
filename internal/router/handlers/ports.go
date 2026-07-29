@@ -13,7 +13,7 @@ import (
 // lighter double than the whole MetadataService.
 type metadataAPI interface {
 	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
-	ListTables(ctx context.Context) ([]storage.Metadata, error)
+	ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error)
 	RemoveTable(ctx context.Context, tableId string) error
 	UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error
 }
@@ -22,8 +22,9 @@ type metadataAPI interface {
 // method takes the caller's already-resolved storage.Metadata (§4.2) —
 // each handler resolves it via resolveTable — rather than a tableId.
 type rowAPI interface {
-	ListRows(ctx context.Context, meta storage.Metadata, offset, limit int64) (*service.RowsPage, error)
+	ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*service.RowsPage, error)
 	GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error)
+	GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error)
 	InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error)
 	BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error)
 	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error
@@ -52,7 +53,7 @@ type geoAPI interface {
 
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
-	List() []service.Source
+	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
 	Refresh(ctx context.Context) ([]service.Source, error)
 	Upload(filename string, content io.Reader) (string, error)
 	Load(ctx context.Context, name, layer string, srid int) (string, error)

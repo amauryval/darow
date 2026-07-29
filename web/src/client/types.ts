@@ -32,6 +32,20 @@ export interface SourceCRS {
   authName: string;
 }
 
+export interface TablesPage {
+  tables: Metadata[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SourcesPage {
+  sources: Source[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export type RowValue = string | number | boolean | null;
 
 export interface Row {

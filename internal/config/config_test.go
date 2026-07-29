@@ -26,6 +26,7 @@ func Test_Load(t *testing.T) {
 		wantPort         int
 		wantWorkDir      string
 		wantDefaultRows  int
+		wantDefaultList  int
 		wantMaxBodyBytes int64
 	}{
 		{
@@ -34,6 +35,7 @@ func Test_Load(t *testing.T) {
 			wantPort:         8080,
 			wantWorkDir:      "./data/sources",
 			wantDefaultRows:  100,
+			wantDefaultList:  50,
 			wantMaxBodyBytes: 10 * 1024 * 1024,
 		},
 		{
@@ -77,6 +79,9 @@ server: [this is not
 			if c.wantDefaultRows != 0 {
 				assert.Equal(t, c.wantDefaultRows, cfg.API.DefaultRowLimit)
 			}
+			if c.wantDefaultList != 0 {
+				assert.Equal(t, c.wantDefaultList, cfg.API.DefaultListLimit)
+			}
 			if c.wantMaxBodyBytes != 0 {
 				assert.Equal(t, c.wantMaxBodyBytes, cfg.API.MaxBodyBytes)
 			}
@@ -118,6 +123,7 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
 		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
 		{"maxRowLimit below defaultRowLimit", "api:\n  defaultRowLimit: 100\n  maxRowLimit: 10\n"},
+		{"maxListLimit below defaultListLimit", "api:\n  defaultListLimit: 100\n  maxListLimit: 10\n"},
 		{"zero exportBatchSize", "api:\n  exportBatchSize: 0\n"},
 	}
 

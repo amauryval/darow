@@ -32,34 +32,6 @@ definitions:
       message:
         type: string
     type: object
-  service.Source:
-    properties:
-      ext:
-        type: string
-      layers:
-        items:
-          $ref: '#/definitions/service.SourceLayer'
-        type: array
-      loaded:
-        type: boolean
-      modTime:
-        type: string
-      name:
-        type: string
-      sizeBytes:
-        type: integer
-      tableId:
-        type: string
-    type: object
-  service.SourceLayer:
-    properties:
-      loaded:
-        type: boolean
-      name:
-        type: string
-      tableId:
-        type: string
-    type: object
 info:
   contact: {}
   description: Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT,
@@ -69,15 +41,31 @@ info:
 paths:
   /api/v1/sources:
     get:
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. name,-sizeBytes
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/service.Source'
-            type: array
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List cached sources
       tags:
       - sources
@@ -160,15 +148,31 @@ paths:
       - sources
   /api/v1/sources/refresh:
     post:
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. name,-sizeBytes
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/service.Source'
-            type: array
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Rescan workDir
       tags:
       - sources
@@ -199,16 +203,32 @@ paths:
       - sources
   /api/v1/tables:
     get:
-      description: Liste toutes les tables avec leurs métadonnées
+      description: Liste les tables avec leurs métadonnées, paginées
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. tableName,-updatedAt
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/handlers.metadataDTO'
-            type: array
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List tables
       tags:
       - tables
@@ -469,6 +489,10 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: Comma-separated sort columns, e.g. name,-createdAt
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
@@ -477,6 +501,10 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List rows
       tags:
       - rows
@@ -580,6 +608,31 @@ paths:
           schema:
             $ref: '#/definitions/response.ErrorResponse'
       summary: Update a row
+      tags:
+      - rows
+  /api/v1/tables/{tableId}/rows/batch:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get multiple rows by pkey in one request
       tags:
       - rows
   /api/v1/tables/{tableId}/schema:

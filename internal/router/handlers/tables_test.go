@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,21 +45,55 @@ func Test_tablesHandler_listTables(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				metadataService: metadataSvc,
+				apiCfg:          config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500},
+			}
 
 			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
 			if c.listErr != nil {
 				tables = nil
 			}
-			metadataSvc.On("ListTables", mock.Anything).Return(tables, c.listErr).Once()
+			metadataSvc.On("ListTables", mock.Anything, mock.Anything, int64(0), int64(50)).Return(tables, int64(c.wantLen), c.listErr).Once()
 
 			rec := doHandlerRequest(th.ListTables, http.MethodGet, "/api/v1/tables", nil, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantStatus == http.StatusOK {
-				assert.Len(t, decodeJSON[[]metadataDTO](rec), c.wantLen)
+				body := decodeJSON[map[string]any](rec)
+				assert.Len(t, body["tables"], c.wantLen)
+				assert.EqualValues(t, c.wantLen, body["total"])
 			}
 			metadataSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_tablesHandler_listPaginationParams(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		wantOffset int64
+		wantLimit  int64
+	}{
+		{name: "defaults when absent", query: "", wantOffset: 0, wantLimit: 50},
+		{name: "parses explicit offset/limit", query: "offset=10&limit=20", wantOffset: 10, wantLimit: 20},
+		{name: "negative offset falls back to zero", query: "offset=-1", wantOffset: 0, wantLimit: 50},
+		{name: "non-positive limit falls back to default", query: "limit=0", wantOffset: 0, wantLimit: 50},
+		{name: "limit is capped at MaxListLimit", query: "limit=9999", wantOffset: 0, wantLimit: 500},
+	}
+
+	th := &TablesHandler{apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/?"+c.query, nil)
+
+			offset, limit := th.listPaginationParams(req)
+
+			assert.Equal(t, c.wantOffset, offset)
+			assert.Equal(t, c.wantLimit, limit)
 		})
 	}
 }

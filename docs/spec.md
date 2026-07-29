@@ -1025,11 +1025,11 @@ implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance 
 
 | **Domaine**       | **Endpoint**                          | **Méthode** | **Description**                                | **Réponse**                          |
 |-------------------|----------------------------------------|-------------|-------------------------------------------------|---------------------------------------|
-| **Metadata**      | `/tables`                             | GET         | Liste toutes les tables (avec métadonnées)      | `200: [{"tableId": "...", ...}]`      |
+| **Metadata**      | `/tables`                             | GET         | Liste les tables avec leurs métadonnées (pagination) | `200: {"tables": [{"tableId": "...", ...}], "total": 10, "limit": 50, "offset": 0}` |
 |                   | `/tables/{tableId}`                   | GET         | Métadonnées d'une table                         | `200: {"tableId": "...", ...}`        |
 |                   | `/tables/{tableId}`                   | DELETE      | Supprime une table + ses données                | `204: No Content`                     |
-| **Sources**       | `/sources`                            | GET         | Liste les fichiers de `workDir` en cache (chargés ou non) | `200: [{"name": "...", "loaded": true, ...}]` |
-|                   | `/sources/refresh`                    | POST        | Rescanne `workDir`, met à jour le cache         | `200: [{"name": "...", ...}]`         |
+| **Sources**       | `/sources`                            | GET         | Liste les fichiers de `workDir` en cache, chargés ou non (pagination) | `200: {"sources": [{"name": "...", "loaded": true, ...}], "total": 5, "limit": 50, "offset": 0}` |
+|                   | `/sources/refresh`                    | POST        | Rescanne `workDir`, met à jour le cache (pagination) | `200: {"sources": [{"name": "...", ...}], "total": 5, "limit": 50, "offset": 0}` |
 |                   | `/sources/{name}/load?layer=`         | POST        | Charge la source (ou une couche `.gpkg`) dans une nouvelle table | `201: {"tableId": "..."}` |
 | **Données**       | `/tables/{tableId}/rows`              | GET         | Liste les lignes (pagination)                   | `200: {"rows": [...], "total": 100, "limit": 100, "offset": 0}` |
 |                   | `/tables/{tableId}/rows`              | POST        | Ajoute une ou plusieurs lignes                  | `201: {"pkeys": ["...", ...]}`        |

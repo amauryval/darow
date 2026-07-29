@@ -74,7 +74,7 @@ func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y in
     `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), meta.PhysicalName, quotedGeom)
 
 	var mvt []byte
-	err = a.QueryRow(ctx, query, zoom, x, y, zoom).Scan(&mvt)
+	err = a.QueryRow(ctx, query, zoom, x, y, tileSimplifyTolerance(zoom)).Scan(&mvt)
 	return mvt, err
 }
 

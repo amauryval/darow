@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -38,18 +39,43 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 	}
 }
 
+// listPaginationParams reads offset/limit query params, same shape as
+// RowsHandler.paginationParams but capped by DefaultListLimit/MaxListLimit —
+// tables/sources are metadata records, not data rows, so they get their own,
+// smaller limits (règle 18).
+func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit int64) {
+	offset = 0
+	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
+		offset = v
+	}
+	limit = int64(th.apiCfg.DefaultListLimit)
+	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > int64(th.apiCfg.MaxListLimit) {
+		limit = int64(th.apiCfg.MaxListLimit)
+	}
+	return offset, limit
+}
+
 // ListTables handles GET /tables.
 //
 // @Summary List tables
-// @Description Liste toutes les tables avec leurs métadonnées
+// @Description Liste les tables avec leurs métadonnées, paginées
 // @Tags tables
 // @Produce json
-// @Success 200 {array} metadataDTO
+// @Param offset query int false "Pagination offset"
+// @Param limit query int false "Pagination limit"
+// @Param sort query string false "Comma-separated sort columns, e.g. tableName,-updatedAt"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables [get]
 func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
-	tables, err := th.metadataService.ListTables(req.Context())
+	offset, limit := th.listPaginationParams(req)
+	sort := storage.ParseSort(req.URL.Query().Get("sort"))
+	tables, total, err := th.metadataService.ListTables(req.Context(), sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -57,7 +83,7 @@ func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
 	for _, t := range tables {
 		dtos = append(dtos, toMetadataDTO(t))
 	}
-	response.WriteJSON(w, http.StatusOK, dtos)
+	response.WriteJSON(w, http.StatusOK, map[string]any{"tables": dtos, "total": total, "limit": limit, "offset": offset})
 }
 
 // GetTableMetadata handles GET /tables/{tableId}.

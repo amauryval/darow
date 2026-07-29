@@ -134,7 +134,7 @@ func Test_Adapter_TableIds_And_TableExists(t *testing.T) {
 	a := setupAdapter(t)
 	meta := createScalarTable(t, a)
 
-	ids, err := a.TableIds(context.Background())
+	ids, err := a.TableIds(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Contains(t, ids, meta.TableId)
 

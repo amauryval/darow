@@ -29,7 +29,7 @@ func Test_ImportService_LoadedSourceNames(t *testing.T) {
 	// Keyed on SourceName, not TableName — a table with no SourceName
 	// (e.g. from /derive) is excluded, and a table renamed away from its
 	// source file's name still resolves by its SourceName (NEW-BUG-5).
-	m.On("TableIds", mock.Anything).Return([]string{"id-1", "id-2", "id-3"}, nil).Once()
+	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1", "id-2", "id-3"}, nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "renamed table", SourceName: "buildings.geojson"}, nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", TableName: "roads.geojson", SourceName: "roads.geojson"}, nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-3").Return(storage.Metadata{TableId: "id-3", TableName: "derived"}, nil).Once()

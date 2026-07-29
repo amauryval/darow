@@ -41,8 +41,8 @@ func (m *Storage) Begin(ctx context.Context) (*sql.Tx, error) {
 	return tx, callArgs.Error(1)
 }
 
-func (m *Storage) TableIds(ctx context.Context) ([]string, error) {
-	callArgs := m.Called(ctx)
+func (m *Storage) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
+	callArgs := m.Called(ctx, sort)
 	ids, _ := callArgs.Get(0).([]string)
 	return ids, callArgs.Error(1)
 }
@@ -99,8 +99,8 @@ func (m *Storage) RowsCount(ctx context.Context, meta storage.Metadata) (int64, 
 	return count, callArgs.Error(1)
 }
 
-func (m *Storage) GetPkeys(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, offset, limit)
+func (m *Storage) GetPkeys(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) ([]string, error) {
+	callArgs := m.Called(ctx, meta.TableId, sort, offset, limit)
 	pkeys, _ := callArgs.Get(0).([]string)
 	return pkeys, callArgs.Error(1)
 }

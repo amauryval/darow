@@ -40,9 +40,9 @@ func NewRouter(
 ) *Router {
 	return &Router{
 		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
-		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Row, apiCfg),
+		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, apiCfg),
 		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
-		sources:  handlers.NewSourcesHandler(svcs.Source),
+		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
 		ops:      handlers.NewOpsHandler(ready),
 		apiCfg:   apiCfg,
@@ -112,6 +112,7 @@ func (rt *Router) Setup() http.Handler {
 					sub.Route("/rows", func(sub chi.Router) {
 						sub.Get("/", rt.rows.ListRows)
 						sub.Post("/", rt.rows.AddRows)
+						sub.Post("/batch", rt.rows.GetRowsByPkey)
 						sub.Route("/{pkey}", func(sub chi.Router) {
 							sub.Get("/", rt.rows.GetRow)
 							sub.Patch("/", rt.rows.UpdateRow)

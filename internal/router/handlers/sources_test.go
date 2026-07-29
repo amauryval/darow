@@ -8,15 +8,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"gogeoserver/internal/config"
 	"gogeoserver/internal/service"
 )
 
 func Test_newSourcesHandler(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
+	apiCfg := config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}
 
-	sh := NewSourcesHandler(sourceSvc)
+	sh := NewSourcesHandler(sourceSvc, apiCfg)
 
 	assert.Same(t, sourceSvc, sh.sourceService)
+	assert.Equal(t, apiCfg, sh.apiCfg)
 }
 
 func Test_parseSrid(t *testing.T) {
@@ -49,14 +52,28 @@ func Test_parseSrid(t *testing.T) {
 
 func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &SourcesHandler{sourceService: sourceSvc}
+	sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
 
-	sourceSvc.On("List").Return([]service.Source{{Name: "a.geojson"}}).Once()
+	sourceSvc.On("List", mock.Anything, 0, 50).Return([]service.Source{{Name: "a.geojson"}}, 1, nil).Once()
 
 	rec := doHandlerRequest(sh.ListSources, http.MethodGet, "/api/v1/sources", nil, nil)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Len(t, decodeJSON[[]service.Source](rec), 1)
+	body := decodeJSON[map[string]any](rec)
+	assert.Len(t, body["sources"], 1)
+	assert.EqualValues(t, 1, body["total"])
+	sourceSvc.AssertExpectations(t)
+}
+
+func Test_sourcesHandler_listSources_InvalidSort(t *testing.T) {
+	sourceSvc := &mockSourceAPI{}
+	sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
+
+	sourceSvc.On("List", mock.Anything, 0, 50).Return(nil, 0, &service.ValidationError{}).Once()
+
+	rec := doHandlerRequest(sh.ListSources, http.MethodGet, "/api/v1/sources?sort=bogus", nil, nil)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	sourceSvc.AssertExpectations(t)
 }
 
@@ -65,17 +82,21 @@ func Test_sourcesHandler_refreshSources(t *testing.T) {
 		name       string
 		refreshErr error
 		wantStatus int
+		wantListed bool
 	}{
-		{name: "returns the refreshed list", wantStatus: http.StatusOK},
+		{name: "returns the refreshed list", wantStatus: http.StatusOK, wantListed: true},
 		{name: "scan failure returns 500", refreshErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &SourcesHandler{sourceService: sourceSvc}
+			sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
 
 			sourceSvc.On("Refresh", mock.Anything).Return([]service.Source{{Name: "a.geojson"}}, c.refreshErr).Once()
+			if c.wantListed {
+				sourceSvc.On("List", mock.Anything, 0, 50).Return([]service.Source{{Name: "a.geojson"}}, 1, nil).Once()
+			}
 
 			rec := doHandlerRequest(sh.RefreshSources, http.MethodPost, "/api/v1/sources/refresh", nil, nil)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"gogeoserver/internal/service"
+	"gogeoserver/internal/storage"
 )
 
 // WriteJSON writes v as a JSON response with the given status code, always
@@ -66,6 +67,10 @@ func MapServiceError(err error) int {
 	}
 	var svcValidationErr *service.ValidationError
 	if errors.As(err, &svcValidationErr) {
+		return http.StatusBadRequest
+	}
+	var invalidSortErr *storage.InvalidSortError
+	if errors.As(err, &invalidSortErr) {
 		return http.StatusBadRequest
 	}
 	var notFoundErr *service.NotFoundError

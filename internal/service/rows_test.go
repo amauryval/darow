@@ -49,7 +49,7 @@ func Test_ConvertValue(t *testing.T) {
 func Test_RowService_ListRows(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
+	m.On("GetPkeys", mock.Anything, "id-1", mock.Anything, int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
 	}, nil).Once()
@@ -57,12 +57,26 @@ func Test_RowService_ListRows(t *testing.T) {
 	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(1), nil).Once()
 
-	page, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
+	page, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, nil, 0, 10)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), page.Total)
 	require.Len(t, page.Rows, 1)
 	assert.Equal(t, "2024-01-01", page.Rows[0].Values["createdAt"])
+}
+
+// ListRows must forward sort unchanged to storage.GetPkeys, which is where
+// the actual ORDER BY validation/building happens.
+func Test_RowService_ListRows_ForwardsSort(t *testing.T) {
+	svc, m := setupRowService(t)
+	sort := []storage.SortField{{Column: "name", Desc: true}}
+
+	m.On("GetPkeys", mock.Anything, "id-1", sort, int64(0), int64(10)).Return([]string{}, nil).Once()
+	m.On("RowsCount", mock.Anything, "id-1").Return(int64(0), nil).Once()
+
+	_, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, sort, 0, 10)
+
+	require.NoError(t, err)
 }
 
 // §4.2: ListRowsPage, used by export's page-by-page streaming, must never
@@ -71,7 +85,7 @@ func Test_RowService_ListRows(t *testing.T) {
 func Test_RowService_ListRowsPage(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
+	m.On("GetPkeys", mock.Anything, "id-1", mock.Anything, int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"name": "a"}},
 	}, nil).Once()
@@ -90,12 +104,30 @@ func Test_RowService_ListRowsPage(t *testing.T) {
 func Test_RowService_ListRowsPage_EmptyPage(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetPkeys", mock.Anything, "id-1", int64(0), int64(10)).Return([]string{}, nil).Once()
+	m.On("GetPkeys", mock.Anything, "id-1", mock.Anything, int64(0), int64(10)).Return([]string{}, nil).Once()
 
 	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	assert.Empty(t, rows)
+}
+
+func Test_RowService_GetRowsByPkey(t *testing.T) {
+	svc, m := setupRowService(t)
+
+	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1", "pk-2"}).Return([]storage.Row{
+		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{Pkey: "pk-2", Values: map[string]any{"createdAt": time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)}},
+	}, nil).Once()
+	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
+	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+
+	rows, err := svc.GetRowsByPkey(context.Background(), storage.Metadata{TableId: "id-1"}, []string{"pk-1", "pk-2"})
+
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "2024-01-01", rows[0].Values["createdAt"])
+	assert.Equal(t, "2024-02-01", rows[1].Values["createdAt"])
 }
 
 func Test_RowService_GetRow_NotFound(t *testing.T) {

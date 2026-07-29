@@ -50,7 +50,7 @@ func Test_New_InitializesSchemaIdempotently(t *testing.T) {
 	_, err := New(":memory:")
 	require.NoError(t, err)
 
-	ids, err := a.TableIds(context.Background())
+	ids, err := a.TableIds(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, ids)
 }
@@ -64,6 +64,12 @@ func Test_New_CreatesMissingParentDirectory(t *testing.T) {
 
 	_, err = os.Stat(dbPath)
 	assert.NoError(t, err)
+}
+
+func Test_New_AllowsPooledConcurrentConnections(t *testing.T) {
+	a := setupAdapter(t)
+
+	assert.Equal(t, 4, a.db.Stats().MaxOpenConnections)
 }
 
 func Test_Adapter_CreateAndGetMetadata(t *testing.T) {
@@ -136,10 +142,43 @@ func Test_Adapter_GetPkeys_OrderedDeterministically(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	pkeys, err := a.GetPkeys(context.Background(), meta, 0, 100)
+	pkeys, err := a.GetPkeys(context.Background(), meta, nil, 0, 100)
 	require.NoError(t, err)
 	assert.Len(t, pkeys, 5)
 	assert.True(t, sortedAscending(pkeys))
+}
+
+func Test_Adapter_GetPkeys_MultiColumnSort(t *testing.T) {
+	a := setupAdapter(t)
+	meta := createScalarTable(t, a)
+
+	pkA, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "a"})
+	require.NoError(t, err)
+	pkB, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "b"})
+	require.NoError(t, err)
+
+	pkeys, err := a.GetPkeys(context.Background(), meta, []storage.SortField{{Column: "name", Desc: true}}, 0, 100)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pkB, pkA}, pkeys)
+
+	_, err = a.GetPkeys(context.Background(), meta, []storage.SortField{{Column: "no such column"}}, 0, 100)
+	assert.Error(t, err)
+}
+
+func Test_Adapter_TableIds_Sort(t *testing.T) {
+	a := setupAdapter(t)
+
+	id1, err := a.Create(context.Background(), "b-table", false, "")
+	require.NoError(t, err)
+	id2, err := a.Create(context.Background(), "a-table", false, "")
+	require.NoError(t, err)
+
+	ids, err := a.TableIds(context.Background(), []storage.SortField{{Column: "tableName"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{id2, id1}, ids)
+
+	_, err = a.TableIds(context.Background(), []storage.SortField{{Column: "bogus"}})
+	assert.Error(t, err)
 }
 
 func sortedAscending(s []string) bool {

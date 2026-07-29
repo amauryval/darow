@@ -44,9 +44,9 @@ CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
 var _ storage.Storage = (*Adapter)(nil)
 
 // Adapter implements storage.Storage on top of DuckDB. It serializes every
-// write through writeMu (règle 21): DuckDB allows only one active writer,
-// and MaxOpenConns is pinned to 1 so the spatial extension, loaded once at
-// startup, stays available on every query without reloading per connection.
+// write through writeMu (règle 21): DuckDB allows only one active writer per
+// process, though concurrent writes without conflicts and concurrent reads
+// are both safe across the pooled connections opened against db.
 type Adapter struct {
 	db      *sql.DB
 	writeMu sync.Mutex
@@ -68,7 +68,7 @@ func New(path string) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening duckdb: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(4)
 
 	if _, err := db.Exec("INSTALL spatial; LOAD spatial;"); err != nil {
 		db.Close()
@@ -121,9 +121,49 @@ func (a *Adapter) Begin(ctx context.Context) (*sql.Tx, error) {
 	return a.db.BeginTx(ctx, nil)
 }
 
-// TableIds lists the tableId of every logical table currently registered.
-func (a *Adapter) TableIds(ctx context.Context) ([]string, error) {
-	rows, err := a.Query(ctx, `SELECT tableId FROM metadata ORDER BY tableId`)
+// metadataSortColumns maps a sort field's public name to its SQL column —
+// an allowlist, so a sort request can never interpolate an arbitrary
+// identifier into the ORDER BY.
+var metadataSortColumns = map[string]string{
+	"tableId":     "tableId",
+	"tableName":   "tableName",
+	"isGeo":       "isGeo",
+	"createdAt":   "createdAt",
+	"updatedAt":   "updatedAt",
+	"rowCount":    "rowCount",
+	"srid":        "srid",
+	"sourceName":  "sourceName",
+	"sourceLayer": "sourceLayer",
+}
+
+// metadataOrderBy builds an ORDER BY clause from sort, validating each
+// field against metadataSortColumns, with tableId always appended last as a
+// deterministic tiebreaker (règle 8).
+func metadataOrderBy(sort []storage.SortField) (string, error) {
+	clauses := make([]string, 0, len(sort)+1)
+	for _, f := range sort {
+		col, ok := metadataSortColumns[f.Column]
+		if !ok {
+			return "", storage.NewInvalidSortError(fmt.Sprintf("invalid sort column: %q", f.Column))
+		}
+		if f.Desc {
+			col += " DESC"
+		}
+		clauses = append(clauses, col)
+	}
+	clauses = append(clauses, "tableId")
+	return strings.Join(clauses, ", "), nil
+}
+
+// TableIds lists the tableId of every logical table currently registered,
+// ordered by sort or by tableId when sort is empty.
+func (a *Adapter) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
+	orderBy, err := metadataOrderBy(sort)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := a.Query(ctx, fmt.Sprintf(`SELECT tableId FROM metadata ORDER BY %s`, orderBy))
 	if err != nil {
 		return nil, err
 	}

@@ -16,10 +16,11 @@ import (
 
 func Test_newRowsHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
+	schemaSvc := &mockSchemaAPI{}
 	rowSvc := &mockRowAPI{}
 	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}
 
-	rh := NewRowsHandler(metadataSvc, rowSvc, apiCfg)
+	rh := NewRowsHandler(metadataSvc, schemaSvc, rowSvc, apiCfg)
 
 	assert.Same(t, rowSvc, rh.rowService)
 	assert.Equal(t, apiCfg, rh.apiCfg)
@@ -84,7 +85,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
-				rowSvc.On("ListRows", mock.Anything, meta, int64(0), int64(100)).
+				rowSvc.On("ListRows", mock.Anything, meta, mock.Anything, int64(0), int64(100)).
 					Return(&service.RowsPage{Rows: []storage.Row{{Pkey: "1"}}, Total: 1, Limit: 100}, c.listErr).Once()
 			}
 
@@ -92,6 +93,52 @@ func Test_rowsHandler_listRows(t *testing.T) {
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
+			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_rowsHandler_listRows_Sort(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		schemaErr  error
+		wantStatus int
+		wantSort   []storage.SortField
+	}{
+		{name: "no sort skips schema validation", query: "", wantStatus: http.StatusOK},
+		{name: "valid sort forwards to rowService", query: "sort=name,-createdAt", wantStatus: http.StatusOK, wantSort: []storage.SortField{{Column: "name"}, {Column: "createdAt", Desc: true}}},
+		{name: "unknown column returns 400", query: "sort=bogus", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			rowSvc := &mockRowAPI{}
+			rh := &RowsHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				rowService:      rowSvc,
+				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			if c.query != "" {
+				schema := []service.ColumnSchema{{Name: "name"}, {Name: "createdAt"}}
+				schemaSvc.On("Schema", mock.Anything, meta).Return(schema, c.schemaErr).Once()
+			}
+			if c.wantStatus == http.StatusOK {
+				rowSvc.On("ListRows", mock.Anything, meta, c.wantSort, int64(0), int64(100)).
+					Return(&service.RowsPage{}, nil).Once()
+			}
+
+			rec := doHandlerRequest(rh.ListRows, http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
 			rowSvc.AssertExpectations(t)
 		})
 	}
@@ -163,6 +210,43 @@ func Test_rowsHandler_getRow(t *testing.T) {
 			}
 
 			rec := doHandlerRequest(rh.GetRow, http.MethodGet, "/api/v1/tables/t1/rows/1", nil, map[string]string{"tableId": "t1", "pkey": "1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_rowsHandler_getRowsByPkey(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       any
+		lookupErr  error
+		rows       []storage.Row
+		getErr     error
+		wantStatus int
+	}{
+		{name: "returns the rows", body: map[string]any{"pkeys": []string{"1", "2"}}, rows: []storage.Row{{Pkey: "1"}, {Pkey: "2"}}, wantStatus: http.StatusOK},
+		{name: "empty pkeys short-circuits without a storage call", body: map[string]any{"pkeys": []string{}}, wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", body: map[string]any{"pkeys": []string{"1"}}, lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "storage failure returns 500", body: map[string]any{"pkeys": []string{"1"}}, getErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			rowSvc := &mockRowAPI{}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+
+			meta := storage.Metadata{TableId: "t1"}
+			pkeys := c.body.(map[string]any)["pkeys"].([]string)
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil && len(pkeys) > 0 {
+				rowSvc.On("GetRowsByPkey", mock.Anything, meta, pkeys).Return(c.rows, c.getErr).Once()
+			}
+
+			rec := doHandlerRequest(rh.GetRowsByPkey, http.MethodPost, "/api/v1/tables/t1/rows/batch", c.body, map[string]string{"tableId": "t1"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)

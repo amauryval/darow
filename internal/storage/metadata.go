@@ -40,7 +40,10 @@ type MetadataManager interface {
 
 // MetadataReader exposes read-only access to table metadata.
 type MetadataReader interface {
-	TableIds(ctx context.Context) ([]string, error)
+	// TableIds lists every registered tableId, ordered by sort (multi-column,
+	// each field validated against a fixed allowlist of metadata columns) or
+	// by tableId when sort is empty.
+	TableIds(ctx context.Context, sort []SortField) ([]string, error)
 	TableExists(ctx context.Context, tableId string) (bool, error)
 	GetMetadata(ctx context.Context, tableId string) (Metadata, error)
 }
@@ -80,7 +83,11 @@ type TableReader interface {
 	Columns(ctx context.Context, meta Metadata) ([]string, error)
 	ColumnType(ctx context.Context, meta Metadata, column string) (string, error)
 	RowsCount(ctx context.Context, meta Metadata) (int64, error)
-	GetPkeys(ctx context.Context, meta Metadata, offset, limit int64) ([]string, error)
+	// GetPkeys returns a page of primary keys ordered by sort (multi-column,
+	// each column quoted via QuoteIdentifier — dynamic per-table schema) with
+	// __pkey always appended last as a deterministic tiebreaker (règle 8), or
+	// by __pkey alone when sort is empty.
+	GetPkeys(ctx context.Context, meta Metadata, sort []SortField, offset, limit int64) ([]string, error)
 	GetRowsByPkey(ctx context.Context, meta Metadata, pKeys []string) ([]Row, error)
 	GetRowsWithFilter(ctx context.Context, meta Metadata, filter string, args []any, limit int) ([]Row, error)
 	GetDistinctValues(ctx context.Context, meta Metadata, column string) ([]any, error)

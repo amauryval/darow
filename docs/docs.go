@@ -24,14 +24,38 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "List cached sources",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/service.Source"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -46,14 +70,38 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "Rescan workDir",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/service.Source"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -218,7 +266,7 @@ const docTemplate = `{
         },
         "/api/v1/tables": {
             "get": {
-                "description": "Liste toutes les tables avec leurs métadonnées",
+                "description": "Liste les tables avec leurs métadonnées, paginées",
                 "produces": [
                     "application/json"
                 ],
@@ -226,14 +274,38 @@ const docTemplate = `{
                     "tables"
                 ],
                 "summary": "List tables",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. tableName,-updatedAt",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/handlers.metadataDTO"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -635,6 +707,12 @@ const docTemplate = `{
                         "description": "Pagination limit",
                         "name": "limit",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-createdAt",
+                        "name": "sort",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -643,6 +721,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -678,6 +762,44 @@ const docTemplate = `{
                                     "type": "string"
                                 }
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/rows/batch": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rows"
+                ],
+                "summary": "Get multiple rows by pkey in one request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -964,49 +1086,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "service.Source": {
-            "type": "object",
-            "properties": {
-                "ext": {
-                    "type": "string"
-                },
-                "layers": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/service.SourceLayer"
-                    }
-                },
-                "loaded": {
-                    "type": "boolean"
-                },
-                "modTime": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "sizeBytes": {
-                    "type": "integer"
-                },
-                "tableId": {
-                    "type": "string"
-                }
-            }
-        },
-        "service.SourceLayer": {
-            "type": "object",
-            "properties": {
-                "loaded": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tableId": {
                     "type": "string"
                 }
             }

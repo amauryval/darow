@@ -110,15 +110,40 @@ func (a *Adapter) RowsCount(ctx context.Context, meta storage.Metadata) (int64, 
 	return count, err
 }
 
-// GetPkeys returns a deterministically ordered page of primary keys
-// (règle 8: DuckDB guarantees no stable order without ORDER BY).
-func (a *Adapter) GetPkeys(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]string, error) {
+// rowsOrderBy builds an ORDER BY clause from sort, quoting each column via
+// QuoteIdentifier (dynamic per-table schema, unlike metadata's fixed
+// allowlist) with __pkey always appended last as a deterministic tiebreaker
+// (règle 8).
+func rowsOrderBy(sort []storage.SortField) (string, error) {
+	clauses := make([]string, 0, len(sort)+1)
+	for _, f := range sort {
+		quoted, err := storage.QuoteIdentifier(f.Column)
+		if err != nil {
+			return "", storage.NewInvalidSortError(err.Error())
+		}
+		if f.Desc {
+			quoted += " DESC"
+		}
+		clauses = append(clauses, quoted)
+	}
+	clauses = append(clauses, "__pkey")
+	return strings.Join(clauses, ", "), nil
+}
+
+// GetPkeys returns a deterministically ordered page of primary keys, sorted
+// by sort or by __pkey alone when empty (règle 8: DuckDB guarantees no
+// stable order without ORDER BY).
+func (a *Adapter) GetPkeys(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) ([]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return nil, err
+	}
+	orderBy, err := rowsOrderBy(sort)
+	if err != nil {
 		return nil, err
 	}
 
 	rows, err := a.Query(ctx, fmt.Sprintf(
-		`SELECT __pkey FROM %s ORDER BY __pkey LIMIT ? OFFSET ?`, meta.PhysicalName,
+		`SELECT __pkey FROM %s ORDER BY %s LIMIT ? OFFSET ?`, meta.PhysicalName, orderBy,
 	), limit, offset)
 	if err != nil {
 		return nil, err

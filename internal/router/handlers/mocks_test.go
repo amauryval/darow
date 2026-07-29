@@ -20,10 +20,11 @@ func (m *mockMetadataAPI) GetMetadata(ctx context.Context, tableId string) (stor
 	return meta, args.Error(1)
 }
 
-func (m *mockMetadataAPI) ListTables(ctx context.Context) ([]storage.Metadata, error) {
-	args := m.Called(ctx)
+func (m *mockMetadataAPI) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
+	args := m.Called(ctx, sort, offset, limit)
 	tables, _ := args.Get(0).([]storage.Metadata)
-	return tables, args.Error(1)
+	total, _ := args.Get(1).(int64)
+	return tables, total, args.Error(2)
 }
 
 func (m *mockMetadataAPI) RemoveTable(ctx context.Context, tableId string) error {
@@ -40,8 +41,8 @@ type mockRowAPI struct{ mock.Mock }
 
 var _ rowAPI = (*mockRowAPI)(nil)
 
-func (m *mockRowAPI) ListRows(ctx context.Context, meta storage.Metadata, offset, limit int64) (*service.RowsPage, error) {
-	args := m.Called(ctx, meta, offset, limit)
+func (m *mockRowAPI) ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*service.RowsPage, error) {
+	args := m.Called(ctx, meta, sort, offset, limit)
 	page, _ := args.Get(0).(*service.RowsPage)
 	return page, args.Error(1)
 }
@@ -50,6 +51,12 @@ func (m *mockRowAPI) GetRow(ctx context.Context, meta storage.Metadata, pkey str
 	args := m.Called(ctx, meta, pkey)
 	row, _ := args.Get(0).(*storage.Row)
 	return row, args.Error(1)
+}
+
+func (m *mockRowAPI) GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error) {
+	args := m.Called(ctx, meta, pkeys)
+	rows, _ := args.Get(0).([]storage.Row)
+	return rows, args.Error(1)
 }
 
 func (m *mockRowAPI) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
@@ -135,10 +142,11 @@ type mockSourceAPI struct{ mock.Mock }
 
 var _ sourceAPI = (*mockSourceAPI)(nil)
 
-func (m *mockSourceAPI) List() []service.Source {
-	args := m.Called()
+func (m *mockSourceAPI) List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error) {
+	args := m.Called(sort, offset, limit)
 	sources, _ := args.Get(0).([]service.Source)
-	return sources
+	total, _ := args.Get(1).(int)
+	return sources, total, args.Error(2)
 }
 
 func (m *mockSourceAPI) Refresh(ctx context.Context) ([]service.Source, error) {

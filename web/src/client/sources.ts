@@ -1,12 +1,14 @@
 import { del, get, post, postForm } from "./http";
-import type { Source, SourceCRS } from "./types";
+import type { Source, SourceCRS, SourcesPage } from "./types";
 
-export function listSources(): Promise<Source[]> {
-  return get("/sources");
+export function listSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
+  const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+  return get(`/sources?offset=${offset}&limit=${limit}${sortParam}`);
 }
 
-export function refreshSources(): Promise<Source[]> {
-  return post("/sources/refresh");
+export function refreshSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
+  const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+  return post(`/sources/refresh?offset=${offset}&limit=${limit}${sortParam}`);
 }
 
 // layer is required for a multi-layer (.gpkg) source — omit it otherwise.

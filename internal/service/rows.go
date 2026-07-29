@@ -89,11 +89,11 @@ func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, row
 	return converted, nil
 }
 
-// ListRows returns a page of rows ordered deterministically by pkey
-// (règle 8), with values converted to native JSON types (règle 12) and the
-// geometry column always excluded (règle 7).
-func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, offset, limit int64) (*RowsPage, error) {
-	pkeys, err := s.storage.GetPkeys(ctx, meta, offset, limit)
+// ListRows returns a page of rows ordered by sort, or deterministically by
+// pkey when empty (règle 8), with values converted to native JSON types
+// (règle 12) and the geometry column always excluded (règle 7).
+func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
+	pkeys, err := s.storage.GetPkeys(ctx, meta, sort, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, offset
 // came back short (the last page) and has no use for a running total that
 // would otherwise mean one extra COUNT(*) per page.
 func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
-	pkeys, err := s.storage.GetPkeys(ctx, meta, offset, limit)
+	pkeys, err := s.storage.GetPkeys(ctx, meta, nil, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +133,17 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, of
 		return nil, nil
 	}
 
+	rows, err := s.storage.GetRowsByPkey(ctx, meta, pkeys)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertRows(ctx, meta, rows)
+}
+
+// GetRowsByPkey fetches full rows for the given primary keys (order not
+// guaranteed to match pkeys), with values converted to native JSON types
+// (règle 12) and the geometry column excluded (règle 7).
+func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error) {
 	rows, err := s.storage.GetRowsByPkey(ctx, meta, pkeys)
 	if err != nil {
 		return nil, err

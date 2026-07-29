@@ -10,21 +10,24 @@ import (
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/router/validation"
+	"gogeoserver/internal/storage"
 )
 
 // RowsHandler serves row-level CRUD endpoints under /tables/{tableId}/rows.
 type RowsHandler struct {
 	validation.TableResolver
+	validation.ColumnValidator
 	rowService rowAPI
 	apiCfg     config.APIConfig
 }
 
 // NewRowsHandler builds a RowsHandler from the service ports it needs.
-func NewRowsHandler(metadataSvc metadataAPI, rowSvc rowAPI, apiCfg config.APIConfig) *RowsHandler {
+func NewRowsHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, rowSvc rowAPI, apiCfg config.APIConfig) *RowsHandler {
 	return &RowsHandler{
-		TableResolver: validation.NewTableResolver(metadataSvc),
-		rowService:    rowSvc,
-		apiCfg:        apiCfg,
+		TableResolver:   validation.NewTableResolver(metadataSvc),
+		ColumnValidator: validation.NewColumnValidator(schemaSvc),
+		rowService:      rowSvc,
+		apiCfg:          apiCfg,
 	}
 }
 
@@ -52,7 +55,9 @@ func (rh *RowsHandler) paginationParams(req *http.Request) (offset, limit int64)
 // @Param tableId path string true "Table ID"
 // @Param offset query int false "Pagination offset"
 // @Param limit query int false "Pagination limit"
+// @Param sort query string false "Comma-separated sort columns, e.g. name,-createdAt"
 // @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows [get]
 func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 	meta, ok := rh.ResolveTable(w, req)
@@ -61,7 +66,17 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 	}
 	offset, limit := rh.paginationParams(req)
 
-	page, err := rh.rowService.ListRows(req.Context(), meta, offset, limit)
+	sort := storage.ParseSort(req.URL.Query().Get("sort"))
+	sortColumns := make([]string, len(sort))
+	for i, f := range sort {
+		sortColumns[i] = f.Column
+	}
+	if err := rh.ValidateColumns(req.Context(), meta, sortColumns); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	page, err := rh.rowService.ListRows(req.Context(), meta, sort, offset, limit)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
@@ -149,6 +164,47 @@ func (rh *RowsHandler) GetRow(w http.ResponseWriter, req *http.Request) {
 	}
 
 	response.WriteJSON(w, http.StatusOK, map[string]any{"row": rowToJSON(*row)})
+}
+
+// GetRowsByPkey handles POST /tables/{tableId}/rows/batch.
+//
+// @Summary Get multiple rows by pkey in one request
+// @Tags rows
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/rows/batch [post]
+func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Pkeys []string `json:"pkeys"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+	if len(body.Pkeys) == 0 {
+		response.WriteJSON(w, http.StatusOK, map[string]any{"rows": []map[string]any{}})
+		return
+	}
+
+	rows, err := rh.rowService.GetRowsByPkey(req.Context(), meta, body.Pkeys)
+	if err != nil {
+		response.WriteError(w, req, err, http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]map[string]any, len(rows))
+	for i, row := range rows {
+		out[i] = rowToJSON(row)
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{"rows": out})
 }
 
 // UpdateRow handles PATCH /tables/{tableId}/rows/{pkey}.

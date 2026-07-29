@@ -6,19 +6,41 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"gogeoserver/internal/config"
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/service"
+	"gogeoserver/internal/storage"
 )
 
 // SourcesHandler serves workDir source-file endpoints: listing, refreshing,
 // uploading, loading, previewing CRS, and deleting.
 type SourcesHandler struct {
 	sourceService sourceAPI
+	apiCfg        config.APIConfig
 }
 
 // NewSourcesHandler builds a SourcesHandler from the service port it needs.
-func NewSourcesHandler(sourceSvc sourceAPI) *SourcesHandler {
-	return &SourcesHandler{sourceService: sourceSvc}
+func NewSourcesHandler(sourceSvc sourceAPI, apiCfg config.APIConfig) *SourcesHandler {
+	return &SourcesHandler{sourceService: sourceSvc, apiCfg: apiCfg}
+}
+
+// paginationParams reads offset/limit query params, capped by
+// DefaultListLimit/MaxListLimit — same shape as TablesHandler's, kept as its
+// own method rather than shared, since coupling the two handlers together
+// for ~10 lines isn't worth it.
+func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int) {
+	offset = 0
+	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
+		offset = v
+	}
+	limit = sh.apiCfg.DefaultListLimit
+	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > sh.apiCfg.MaxListLimit {
+		limit = sh.apiCfg.MaxListLimit
+	}
+	return offset, limit
 }
 
 // MaxUploadBytes reports the upload size cap so routes.go can size the
@@ -42,26 +64,49 @@ func parseSrid(req *http.Request) (int, error) {
 // @Summary List cached sources
 // @Tags sources
 // @Produce json
-// @Success 200 {array} service.Source
+// @Param offset query int false "Pagination offset"
+// @Param limit query int false "Pagination limit"
+// @Param sort query string false "Comma-separated sort columns, e.g. name,-sizeBytes"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/sources [get]
 func (sh *SourcesHandler) ListSources(w http.ResponseWriter, req *http.Request) {
-	response.WriteJSON(w, http.StatusOK, sh.sourceService.List())
+	offset, limit := sh.paginationParams(req)
+	sort := storage.ParseSort(req.URL.Query().Get("sort"))
+	sources, total, err := sh.sourceService.List(sort, offset, limit)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
 }
 
-// RefreshSources handles POST /sources/refresh.
+// RefreshSources handles POST /sources/refresh. The rescanned list is
+// returned through the same paginated envelope as ListSources, offset/limit
+// applying to the freshly rescanned cache.
 //
 // @Summary Rescan workDir
 // @Tags sources
 // @Produce json
-// @Success 200 {array} service.Source
+// @Param offset query int false "Pagination offset"
+// @Param limit query int false "Pagination limit"
+// @Param sort query string false "Comma-separated sort columns, e.g. name,-sizeBytes"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/sources/refresh [post]
 func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Request) {
-	sources, err := sh.sourceService.Refresh(req.Context())
-	if err != nil {
+	if _, err := sh.sourceService.Refresh(req.Context()); err != nil {
 		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	response.WriteJSON(w, http.StatusOK, sources)
+	offset, limit := sh.paginationParams(req)
+	sort := storage.ParseSort(req.URL.Query().Get("sort"))
+	sources, total, err := sh.sourceService.List(sort, offset, limit)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
 }
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field

@@ -1,8 +1,9 @@
 import { apiUrl, del, get, patch, post } from "./http";
-import type { FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse } from "./types";
+import type { FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse, TablesPage } from "./types";
 
-export function listTables(): Promise<Metadata[]> {
-  return get("/tables");
+export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
+  const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+  return get(`/tables?offset=${offset}&limit=${limit}${sortParam}`);
 }
 
 export function getTable(tableId: string): Promise<Metadata> {
@@ -30,12 +31,20 @@ export interface ColumnDTO {
   type: string;
 }
 
-export function listRows(tableId: string, offset: number, limit: number): Promise<RowsPage> {
-  return get(`/tables/${tableId}/rows?offset=${offset}&limit=${limit}`);
+export function listRows(tableId: string, offset: number, limit: number, sort?: string): Promise<RowsPage> {
+  const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+  return get(`/tables/${tableId}/rows?offset=${offset}&limit=${limit}${sortParam}`);
 }
 
 export function getRow(tableId: string, pkey: string): Promise<{ row: Row }> {
   return get(`/tables/${tableId}/rows/${pkey}`);
+}
+
+// Fetches several rows by pkey in a single request — used to hydrate only
+// the current page of an arbitrary pkey list (e.g. the map's selected
+// features) instead of one GetRow call per row.
+export function getRowsByPkey(tableId: string, pkeys: string[]): Promise<{ rows: Row[] }> {
+  return post(`/tables/${tableId}/rows/batch`, { pkeys });
 }
 
 // Inserts one or more rows in a single request; returns the new rows'

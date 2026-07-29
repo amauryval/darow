@@ -4,8 +4,7 @@
 
 GeoAPI — a Go cartographic server backed by DuckDB (spatial extension). Serves sources, tables,
 rows, MVT tiles, and SQL-derived tables over a REST API, plus a Vue3 admin UI embedded in the
-binary. `docs/spec.md` is the authoritative backend architecture/implementation spec — any task
-that contradicts it should flag the conflict rather than silently resolve it.
+binary.
 
 ## Repo map
 
@@ -35,15 +34,16 @@ that contradicts it should flag the conflict rather than silently resolve it.
 -   Before any Go change, follow the `go-implementation` / `go-testing` skills.
 -   Never launch dev processes (`go run`, `mise run run-dev`, `mise run ui-dev`, `npm run dev`) on
     your own initiative — ask the user to run them, or confirm first.
+-   Before any Vue3 changes, follow the `vue3-implementation` skill.
 -   Never verify UI changes yourself via a browser or browser-automation tool — build/type-check
     (`mise run ui-build`) and let the user verify visually.
+-   Prefer shared
+    composables/components, except where a piece is genuinely substantial 
 -   UI style: simple, uncluttered, professional — Tailwind utility classes, neutral palette, no
-    component-library dependency. Prefer duplication across the three views over shared
-    composables/components, except where a piece is genuinely substantial (e.g. `MapView.vue`).
+    component-library dependency. Shared pieces are pulled out once they're genuinely substantial
 -   Git commands that change state (`commit`, `push`, `checkout`, `merge`, `rebase`, `reset`,
     `stash`, `worktree add/remove`, `branch -D`, ...) are forbidden unless explicitly requested.
 -   Every new/changed struct, interface, method, or handler ships with its test in the same change
-    (see `docs/spec.md` règle 17) — no deferred tests. This applies to Go only: `web/src/client/`
     changes do not need accompanying vitest tests unless explicitly asked for.
 -   Any SQL identifier (table/column) interpolated into a query must go through
     `storage.ValidateIdentifier` first; values are always bound parameters, never interpolated.
