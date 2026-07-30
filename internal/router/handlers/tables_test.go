@@ -135,7 +135,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 		{name: "renames the table", body: map[string]string{"tableName": "new"}, wantStatus: http.StatusOK},
 		{name: "missing tableName is rejected", body: map[string]string{"tableName": ""}, wantStatus: http.StatusBadRequest},
 		{name: "unknown table returns 404", body: map[string]string{"tableName": "new"}, lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
-		{name: "update failure returns 400", body: map[string]string{"tableName": "new"}, updateErr: assert.AnError, wantStatus: http.StatusBadRequest},
+		{name: "unclassified update failure returns 500", body: map[string]string{"tableName": "new"}, updateErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
 	for _, c := range cases {
@@ -236,7 +236,8 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 	}{
 		{name: "adds the column", wantStatus: http.StatusCreated},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
-		{name: "add failure returns 400", addErr: assert.AnError, wantStatus: http.StatusBadRequest},
+		{name: "unclassified add failure returns 500", addErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		{name: "validation error returns 400", addErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, c := range cases {
@@ -277,9 +278,9 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 		{name: "unknown source table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
-			// NEW-SEC-1: an internal storage failure (e.g. a raw DuckDB
-			// "Binder Error" mentioning physicalName) must not leak past a
-			// 500 as request-validation detail.
+			// An internal storage failure (e.g. a raw DuckDB "Binder Error"
+			// mentioning physicalName) must not leak past a 500 as
+			// request-validation detail.
 			name:            "storage failure returns 500 without leaking detail",
 			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
 			wantStatus:      http.StatusInternalServerError,

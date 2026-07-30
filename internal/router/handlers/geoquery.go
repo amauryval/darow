@@ -14,7 +14,7 @@ import (
 // parseGeoQuery decodes GetItems' "filter" (JSON-encoded
 // []storage.FilterCondition), "simplify" (tolerance override), and
 // "precision" (coordinate precision override) query params into a
-// storage.GeoQuery via storage.BuildFilter (règle 5).
+// storage.GeoQuery via storage.BuildFilter.
 func parseGeoQuery(req *http.Request, validColumns []string, maxTolerance, maxPrecision float64) (storage.GeoQuery, error) {
 	var conditions []storage.FilterCondition
 	if raw := req.URL.Query().Get("filter"); raw != "" {
@@ -79,7 +79,7 @@ func parseBboxParam(req *http.Request) (*[4]float64, error) {
 
 // validColumnsExcludingGeometry returns every non-geometry column of meta's
 // schema — the whitelist storage.BuildFilter validates a filter's columns
-// against (règle 5).
+// against.
 func validColumnsExcludingGeometry(schema []service.ColumnSchema, geometryColumn string) []string {
 	cols := make([]string, 0, len(schema))
 	for _, col := range schema {

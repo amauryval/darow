@@ -67,7 +67,7 @@ func Test_MetadataService_ListTables(t *testing.T) {
 	assert.EqualValues(t, 2, total)
 }
 
-// NEW-BUG-5: renaming a table loaded from a source (tableName only, via
+// Renaming a table loaded from a source (tableName only, via
 // PATCH /tables/{id} → UpdateMetadata) must not detach it from that
 // source — LoadedSourceNames keys on SourceName, which a rename never
 // touches, not on TableName.

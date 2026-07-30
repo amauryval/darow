@@ -86,7 +86,7 @@ func (fh *FeaturesHandler) Conformance(w http.ResponseWriter, req *http.Request)
 func (fh *FeaturesHandler) ListCollections(w http.ResponseWriter, req *http.Request) {
 	tables, _, err := fh.metadataService.ListTables(req.Context(), nil, 0, int64(fh.apiCfg.MaxListLimit))
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -148,7 +148,7 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := fh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), fh.apiCfg.MaxSimplifyTolerance, fh.apiCfg.MaxPrecision)
@@ -212,9 +212,9 @@ func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Requ
 }
 
 // featuresPaginationParams reads offset/limit query params, same shape as
-// RowsHandler.paginationParams but defaulting to DefaultFeaturesLimit — no
-// upper bound, unlike rows/list pagination, since a client-supplied bbox
-// is what should scope a features request, not a server-side ceiling.
+// RowsHandler.paginationParams, capped at MaxFeaturesLimit — a bbox is
+// optional, so it can't be relied on alone to bound how many features a
+// request materializes.
 func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
@@ -224,6 +224,9 @@ func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request) (offset, 
 	limit = int64(fh.apiCfg.DefaultFeaturesLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
+	}
+	if limit > int64(fh.apiCfg.MaxFeaturesLimit) {
+		limit = int64(fh.apiCfg.MaxFeaturesLimit)
 	}
 	return offset, limit
 }

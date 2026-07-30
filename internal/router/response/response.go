@@ -57,8 +57,7 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 // MapServiceError maps a service error to an HTTP status by its type,
 // defaulting to 500 so an unclassified internal failure (a storage/DuckDB
 // error, whose message may leak physicalName or other internals) is never
-// mistaken for a client mistake — the inverse of the blanket 4xx every
-// handler used before NEW-SEC-1. Mirrors the errors.As dispatch ExportTable
+// mistaken for a client mistake. Mirrors the errors.As dispatch ExportTable
 // already used for service.ExportValidationError.
 func MapServiceError(err error) int {
 	var validationErr *service.ExportValidationError

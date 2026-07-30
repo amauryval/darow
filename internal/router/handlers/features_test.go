@@ -24,7 +24,7 @@ func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI,
 		metadataService: metadataSvc,
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
-		apiCfg:          config.APIConfig{DefaultFeaturesLimit: 100, MaxSimplifyTolerance: 100, MaxPrecision: 100},
+		apiCfg:          config.APIConfig{DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000, MaxSimplifyTolerance: 100, MaxPrecision: 100},
 	}
 	return fh, metadataSvc, schemaSvc, geoSvc
 }

@@ -115,7 +115,7 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // file into workDir via SourceService.Upload, then immediately loads it
 // into a table exactly like POST /sources/{name}/load would, so the
 // caller gets a queryable table back in one round trip. An optional
-// ?srid= pins the source CRS explicitly for that auto-load (GEO-1); a
+// ?srid= pins the source CRS explicitly for that auto-load; a
 // multi-layer upload stays unresolved regardless — srid is supplied
 // per-layer on the follow-up Load call instead.
 //
@@ -180,10 +180,10 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 }
 
 // LoadSource handles POST /sources/{name}/load. name is validated against
-// the cache by SourceService.Load itself (règle 15) — this handler does no
+// the cache by SourceService.Load itself — this handler does no
 // path validation of its own. layer selects one layer of a multi-layer
 // (.gpkg) source; required for those, rejected otherwise. An optional
-// ?srid= pins the source CRS explicitly (GEO-1), overriding auto-detection
+// ?srid= pins the source CRS explicitly, overriding auto-detection
 // — required if the source declares no CRS DetectCRS can resolve.
 //
 // @Summary Load a source file into a new table
@@ -216,7 +216,7 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 
 // GetSourceMetadata handles GET /sources/{name}/metadata — a preview of a
 // not-yet-loaded source's detected CRS, so a client can show it to the
-// user before Load (GEO-1's "editable EPSG" flow). layer selects one layer
+// user before Load and let them override it. layer selects one layer
 // of a multi-layer source. srid is null if the source declares no CRS
 // DetectCRS can resolve — Load then requires an explicit ?srid=.
 //
@@ -248,7 +248,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 }
 
 // DeleteSource handles DELETE /sources/{name}. name is validated against
-// the cache by SourceService.Delete itself (règle 15). If the source (or
+// the cache by SourceService.Delete itself. If the source (or
 // one of its layers) was loaded, its table(s) are removed too — explicit
 // replacement is delete then re-upload.
 //

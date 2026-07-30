@@ -16,28 +16,27 @@ type ColumnSchema struct {
 
 // SchemaService exposes a table's structure — column names and types —
 // distinct from RowService's row data. Adding a column never affects
-// derived metadata (règle 9's trigger list doesn't include it), so it
-// needs no dependency on MetadataService. It is the single owner of its
-// own column schema cache (PERF-1), a size-bounded LRU with expiration
-// (PERF-5), invalidated by AddColumn — the only write that can change a
-// table's structure.
+// derived metadata, so it needs no dependency on MetadataService. It is
+// the single owner of its own column schema cache, a size-bounded LRU
+// with expiration, invalidated by AddColumn — the only write that can
+// change a table's structure.
 type SchemaService struct {
 	storage tableResolver
 	cache   *expirable.LRU[string, []ColumnSchema]
 }
 
 // NewSchemaService builds a SchemaService backed by storage, using c to
-// cache each table's column schema (PERF-1).
+// cache each table's column schema.
 func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSchema]) *SchemaService {
 	return &SchemaService{storage: storage, cache: c}
 }
 
 // Schema returns the name and type of every column of meta's underlying
 // table, geometry column included (this describes structure, not row
-// data, so règle 7 does not apply), from cache when present (PERF-1): one
-// DESCRIBE-driven population, not one per column, per cache miss. meta is
-// the caller's already-resolved metadata (§4.2); only its TableId is used
-// as the cache key.
+// data, so the geometry-exclusion rule doesn't apply), from cache when
+// present: one DESCRIBE-driven population, not one per column, per cache
+// miss. meta is the caller's already-resolved metadata; only its TableId
+// is used as the cache key.
 func (s *SchemaService) Schema(ctx context.Context, meta catalog.Metadata) ([]ColumnSchema, error) {
 	if schema, ok := s.cache.Get(meta.TableId); ok {
 		return schema, nil
@@ -63,7 +62,7 @@ func (s *SchemaService) Schema(ctx context.Context, meta catalog.Metadata) ([]Co
 
 // Types returns meta's column-name-to-DuckDB-type map, from the same
 // cache as Schema, so converting row values (RowService.convertRow) never
-// issues one DESCRIBE call per column (PERF-1).
+// issues one DESCRIBE call per column.
 func (s *SchemaService) Types(ctx context.Context, meta catalog.Metadata) (map[string]string, error) {
 	schema, err := s.Schema(ctx, meta)
 	if err != nil {
@@ -78,7 +77,7 @@ func (s *SchemaService) Types(ctx context.Context, meta catalog.Metadata) (map[s
 }
 
 // AddColumn adds colName of type colType to meta's underlying table and
-// invalidates its cached schema (PERF-1).
+// invalidates its cached schema.
 func (s *SchemaService) AddColumn(ctx context.Context, meta catalog.Metadata, colName, colType string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {

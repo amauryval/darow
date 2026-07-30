@@ -32,11 +32,11 @@ func tileSimplifyTolerance(zoom int) float64 {
 }
 
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
-// validated before interpolation (règle 1); zoom/x/y and the source CRS
+// validated before interpolation; zoom/x/y and the source CRS
 // string are bound parameters. attrs embeds extra non-geometry columns in
-// each feature (GEO-3) — the caller must have already validated them
+// each feature — the caller must have already validated them
 // against the table's real columns. q.Filter/q.Args, if set, must already be
-// a storage.BuildFilter clause (règle 5), narrowing which rows the tile
+// a storage.BuildFilter clause, narrowing which rows the tile
 // renders. Stops early if ctx is cancelled.
 func (g *geoRepository) Tile(ctx context.Context, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
 	quotedGeom := g.t.QuotedGeometryColumn
@@ -69,7 +69,7 @@ func (g *geoRepository) Tile(ctx context.Context, zoom, x, y int, attrs []string
 	// safe filter that can only drop otherwise-broken features, never a
 	// valid one. The geometry is simplified to the tile's MVT extent
 	// resolution before clipping, so a low zoom over detailed polygons
-	// doesn't process full-resolution vertices for nothing (GEO-3).
+	// doesn't process full-resolution vertices for nothing.
 	query := fmt.Sprintf(`
         WITH tile AS (
             SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
@@ -92,12 +92,15 @@ func (g *geoRepository) Tile(ctx context.Context, zoom, x, y int, attrs []string
 }
 
 // PkeysInBbox returns a page of up to limit primary keys of rows whose
-// geometry intersects bbox ([minX, minY, maxX, maxY]), skipping offset
+// geometry intersects bbox ([minX, minY, maxX, maxY], lon/lat in
+// OGC:CRS84 — the same CRS Metadata.Bbox is reported in), skipping offset
 // matches first, ordered by pkey so paging is deterministic across calls.
+// The geometry column is stored reprojected to EPSG:3857, so the envelope
+// is transformed before comparing, the same way Features' bbox path is.
 func (g *geoRepository) PkeysInBbox(ctx context.Context, bbox [4]float64, offset, limit int) ([]string, error) {
 	query := fmt.Sprintf(`
         SELECT __pkey FROM %s
-        WHERE ST_Intersects(%s, ST_MakeEnvelope(?, ?, ?, ?))
+        WHERE ST_Intersects(%s, ST_Transform(ST_MakeEnvelope(?, ?, ?, ?), 'OGC:CRS84', 'EPSG:3857'))
         ORDER BY __pkey
         LIMIT ? OFFSET ?
     `, g.t.PhysicalName, g.t.QuotedGeometryColumn)
@@ -120,9 +123,9 @@ func (g *geoRepository) PkeysInBbox(ctx context.Context, bbox [4]float64, offset
 }
 
 // Extent computes the bounding box of every row matching q.Filter/q.Args,
-// reprojected to OGC:CRS84 lon/lat like Metadata.Bbox (règle 7) — empty if
+// reprojected to OGC:CRS84 lon/lat like Metadata.Bbox — empty if
 // no row matches. q.Filter/q.Args must already be a storage.BuildFilter
-// clause (règle 5).
+// clause.
 func (g *geoRepository) Extent(ctx context.Context, q storage.GeoQuery) (string, error) {
 	where := g.t.QuotedGeometryColumn + " IS NOT NULL"
 	args := []any{}
@@ -174,7 +177,7 @@ func (g *geoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[
 			return nil, err
 		}
 		// A NULL geometry (a legal, geometry-less Feature) must still
-		// produce valid JSON for the caller to embed as-is (NEW-BUG-2) —
+		// produce valid JSON for the caller to embed as-is —
 		// the JSON literal null, not an empty string, which json.RawMessage
 		// can't marshal.
 		if geojson.Valid {
@@ -187,7 +190,7 @@ func (g *geoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[
 }
 
 // Types runs a lightweight distinct scan over the geometry column; not
-// cached (règle 10), since a geometry column can mix types.
+// cached, since a geometry column can mix types.
 func (g *geoRepository) Types(ctx context.Context) ([]string, error) {
 	query := fmt.Sprintf(
 		`SELECT DISTINCT ST_GeometryType(%s) FROM %s WHERE %s IS NOT NULL`,
@@ -212,9 +215,10 @@ func (g *geoRepository) Types(ctx context.Context) ([]string, error) {
 
 // Features returns up to q.Limit GeoFeatures after skipping q.Offset
 // matches (OGC API - Features paging), each row's geometry emitted as a
-// GeoJSON fragment (a deliberate exception to règle 7). q.Pkeys and
+// GeoJSON fragment — a deliberate exception to never returning the
+// geometry column. q.Pkeys and
 // q.Bbox, when non-nil, narrow the result further; q.Query.Filter must
-// already be a storage.BuildFilter clause (règle 5), q.Query.Tolerance, if
+// already be a storage.BuildFilter clause, q.Query.Tolerance, if
 // set, simplifies the geometry before it's serialized, and
 // q.Query.Precision, if set, additionally snaps its coordinates to a
 // grid. q.Attrs selects which non-geometry columns populate each
@@ -223,7 +227,7 @@ func (g *geoRepository) Types(ctx context.Context) ([]string, error) {
 func (g *geoRepository) Features(ctx context.Context, q contract.FeatureQuery) ([]storage.GeoFeature, error) {
 	quotedGeom := g.t.QuotedGeometryColumn
 
-	attrSelect, err := AttrProjection(g.t, q.Attrs)
+	attrSelect, err := FeatureAttrProjection(g.t, q.Attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -248,9 +252,9 @@ func (g *geoRepository) Features(ctx context.Context, q contract.FeatureQuery) (
 	if q.Bbox != nil {
 		// bbox arrives as OGC API - Features' bbox param, lon/lat in
 		// OGC:CRS84 (the same CRS Metadata.Bbox is reported in), but the
-		// geometry column is stored reprojected to EPSG:3857 (règle 7 of
-		// docs/spec.md), so the envelope must be transformed before
-		// comparing — otherwise degree-scale coordinates never intersect
+		// geometry column is stored reprojected to EPSG:3857, so the
+		// envelope must be transformed before comparing — otherwise
+		// degree-scale coordinates never intersect
 		// meter-scale ones and the query silently returns nothing.
 		whereClauses = append(whereClauses, fmt.Sprintf(
 			"ST_Intersects(%s, ST_Transform(ST_MakeEnvelope(?, ?, ?, ?), 'OGC:CRS84', 'EPSG:3857'))", quotedGeom,
@@ -289,13 +293,13 @@ func (g *geoRepository) Features(ctx context.Context, q contract.FeatureQuery) (
 // envelope comes from ST_TileEnvelope (the same function Tile uses), so a
 // GeoJSON tile and its MVT counterpart always agree on boundaries, and no
 // lon/lat-per-tile math needs to live anywhere else. Since the geometry
-// column is stored in EPSG:3857 (règle 7) — the same CRS ST_TileEnvelope
+// column is stored in EPSG:3857 — the same CRS ST_TileEnvelope
 // works in — the intersects test needs no reprojection, unlike Features'
 // bbox path.
 func (g *geoRepository) FeaturesInTile(ctx context.Context, zoom, x, y int, q contract.FeatureQuery) ([]storage.GeoFeature, error) {
 	quotedGeom := g.t.QuotedGeometryColumn
 
-	attrSelect, err := AttrProjection(g.t, q.Attrs)
+	attrSelect, err := FeatureAttrProjection(g.t, q.Attrs)
 	if err != nil {
 		return nil, err
 	}

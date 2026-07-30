@@ -7,9 +7,9 @@ import (
 	"gogeoserver/internal/storage"
 )
 
-// Placeholders returns n comma-separated "?" placeholders, for an IN (...)
+// placeholders returns n comma-separated "?" placeholders, for an IN (...)
 // clause built from n bound values.
-func Placeholders(n int) string {
+func placeholders(n int) string {
 	ph := make([]string, n)
 	for i := range ph {
 		ph[i] = "?"
@@ -17,8 +17,8 @@ func Placeholders(n int) string {
 	return strings.Join(ph, ", ")
 }
 
-// PkeysToArgs converts pkeys to []any for binding into a query.
-func PkeysToArgs(pkeys []string) []any {
+// pkeysToArgs converts pkeys to []any for binding into a query.
+func pkeysToArgs(pkeys []string) []any {
 	args := make([]any, len(pkeys))
 	for i, p := range pkeys {
 		args[i] = p
@@ -27,13 +27,18 @@ func PkeysToArgs(pkeys []string) []any {
 }
 
 // PkeyInClause returns the "__pkey IN (?, ?, ...)" fragment repeated across
-// every pkey-scoped operation (ByPkey, Update, Delete), plus its bound args.
+// every pkey-scoped operation (ByPkey, Update, Delete, GeoJSONByPkey), plus
+// its bound args. An empty pkeys returns "FALSE" instead of "IN ()" — a SQL
+// syntax error in DuckDB — so every caller gets a safe no-op for free.
 func PkeyInClause(pkeys []string) (clause string, args []any) {
-	return fmt.Sprintf("__pkey IN (%s)", Placeholders(len(pkeys))), PkeysToArgs(pkeys)
+	if len(pkeys) == 0 {
+		return "FALSE", nil
+	}
+	return fmt.Sprintf("__pkey IN (%s)", placeholders(len(pkeys))), pkeysToArgs(pkeys)
 }
 
 // AttrProjection builds a SELECT projection over t: every column except
-// the geometry one (règle 7) when attrs is empty, or exactly the
+// the geometry one when attrs is empty, or exactly the
 // requested, validated columns otherwise.
 func AttrProjection(t Table, attrs []string) (string, error) {
 	if len(attrs) == 0 {
@@ -54,10 +59,23 @@ func AttrProjection(t Table, attrs []string) (string, error) {
 	return strings.Join(quoted, ", "), nil
 }
 
+// FeatureAttrProjection is AttrProjection for a query that already selects
+// __pkey explicitly (Features, FeaturesInTile): it excludes __pkey from
+// the "every column" case too, so an empty attrs never selects it twice.
+func FeatureAttrProjection(t Table, attrs []string) (string, error) {
+	if len(attrs) == 0 {
+		if t.QuotedGeometryColumn == "" {
+			return "* EXCLUDE (__pkey)", nil
+		}
+		return "* EXCLUDE (__pkey, " + t.QuotedGeometryColumn + ")", nil
+	}
+	return AttrProjection(t, attrs)
+}
+
 // OrderBy builds an ORDER BY clause from sort, quoting each column via
 // storage.QuoteIdentifier (dynamic per-table schema, unlike the
 // catalogue's fixed allowlist), with __pkey always appended last as a
-// deterministic tiebreaker (règle 8).
+// deterministic tiebreaker.
 func OrderBy(sort []storage.SortField) (string, error) {
 	clauses := make([]string, 0, len(sort)+1)
 	for _, f := range sort {

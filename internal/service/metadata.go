@@ -10,11 +10,11 @@ import (
 	"gogeoserver/internal/storage/catalog"
 )
 
-// MetadataService is the single owner of the metadata cache (règle 11):
+// MetadataService is the single owner of the metadata cache:
 // every other service reaches metadata reads/writes through it — via its
 // own narrow port — rather than caching independently, so invalidation
-// stays in one place. The cache is a size-bounded LRU with expiration
-// (PERF-5), never unbounded.
+// stays in one place. The cache is a size-bounded LRU with expiration,
+// never unbounded.
 type MetadataService struct {
 	storage catalog.MetadataManager
 	cache   *expirable.LRU[string, catalog.Metadata]
@@ -27,7 +27,7 @@ func NewMetadataService(s catalog.MetadataManager, c *expirable.LRU[string, cata
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
-// is a value type (§4.1), so every caller already gets its own copy with no
+// is a value type, so every caller already gets its own copy with no
 // extra step.
 func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error) {
 	if meta, ok := s.cache.Get(tableId); ok {
@@ -51,7 +51,7 @@ func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortFie
 }
 
 // invalidateMetadataCache must be called after any write that changes
-// metadata (règle 11): UpdateMetadata, RefreshDerived, RemoveTable,
+// metadata: UpdateMetadata, RefreshDerived, RemoveTable,
 // Rollback.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
 	s.cache.Remove(tableId)
@@ -110,8 +110,8 @@ func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause er
 // SourceService.Refresh to mark sources as loaded. Keyed on
 // SourceName/SourceLayer, not TableName — which PATCH /tables/{id} may
 // rename freely — so renaming a table never detaches it from its source,
-// nor lets an unrelated table masquerade as one by coincidence of name
-// (NEW-BUG-5). A table with no SourceName (e.g. created via /derive) is
+// nor lets an unrelated table masquerade as one by coincidence of name.
+// A table with no SourceName (e.g. created via /derive) is
 // not a loaded source and is excluded.
 func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
 	bySource, err := s.storage.BySource(ctx)

@@ -21,7 +21,7 @@ type Querier interface {
 }
 
 // TxRunner runs fn inside a single transaction. The DuckDB adapter's
-// implementation holds writeMu for fn's whole duration (règle 21), so a
+// implementation holds writeMu for fn's whole duration, so a
 // cascade never interleaves with an unrelated write. Shared verbatim with
 // duckdb/data (both need only *sql.Tx's Exec side), so *duckdb.Adapter's
 // single WithTx method satisfies both.
@@ -49,7 +49,7 @@ type Deleter interface {
 // Catalog is the catalogue aggregate: the metadata repository plus the
 // registry of any repository rattached to tableId. Register attaches a
 // repository to the cascade once, at its construction — deleting a table
-// then never risks forgetting one of its dependents (audit §1.2/§1.3).
+// then never risks forgetting one of its dependents.
 type Catalog struct {
 	*Repository
 	tx       TxRunner

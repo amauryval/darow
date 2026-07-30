@@ -103,3 +103,17 @@ func Test_Repository_BySource(t *testing.T) {
 		assert.NotEqual(t, derivedId, bySource[key])
 	}
 }
+
+func Test_Repository_PhysicalNames(t *testing.T) {
+	r := newTestRepository(t)
+	ctx := context.Background()
+
+	tableId, err := r.Create(ctx, "widgets", false, "")
+	require.NoError(t, err)
+	meta, err := r.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	names, err := r.PhysicalNames(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{meta.PhysicalName: true}, names)
+}

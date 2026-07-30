@@ -11,24 +11,15 @@ import (
 	"gogeoserver/internal/storage/duckdb/data"
 )
 
-// describeColumns runs DESCRIBE on target — a table name or a full SELECT
-// query — and returns each result column's name and type, in projection
-// order. DESCRIBE resolves aliases, wildcards (SELECT *), and computed
-// expressions exactly as DuckDB will when materializing the query, so
-// callers never have to parse the query themselves to know its shape.
-func (a *Adapter) describeColumns(ctx context.Context, target string) ([][2]string, error) {
-	return data.DescribeColumns(ctx, a, target)
-}
-
 // findGeometryColumn inspects physicalName's schema and returns the name of
 // its geometry column, if any. The column name varies by source format
 // (often "geom", sometimes "wkb_geometry"), so it is never assumed fixed.
-// A table with more than one GEOMETRY column is rejected outright (GEO-2,
-// docs/audit.md §5): the rest of the domain (Tile, FilterByBbox, row reads)
-// assumes a single geometry column throughout, so silently picking the
-// first one would only be partially correct.
+// A table with more than one GEOMETRY column is rejected outright: the
+// rest of the domain (Tile, FilterByBbox, row reads) assumes a single
+// geometry column throughout, so silently picking the first one would
+// only be partially correct.
 func (a *Adapter) findGeometryColumn(ctx context.Context, physicalName string) (string, error) {
-	columns, err := a.describeColumns(ctx, physicalName)
+	columns, err := data.DescribeColumns(ctx, a, physicalName)
 	if err != nil {
 		return "", err
 	}
@@ -118,7 +109,9 @@ func (a *Adapter) createPkeyIndex(ctx context.Context, physicalName string) erro
 // has no in-place ORDER BY, so the table is rebuilt from scratch — every
 // index that existed on physicalName is gone afterward and must be
 // recreated by the caller. A table with no non-NULL geometry is left
-// untouched, since ST_Hilbert has no reference extent to sort against.
+// untouched, since ST_Hilbert has no reference extent to sort against. The
+// rebuild runs in a single transaction, so a concurrent read never
+// observes physicalName mid-rebuild (dropped but not yet renamed back).
 func (a *Adapter) clusterByHilbert(ctx context.Context, physicalName, geometryColumn string) error {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return err
@@ -143,27 +136,29 @@ func (a *Adapter) clusterByHilbert(ctx context.Context, physicalName, geometryCo
 		`CREATE TABLE %s AS SELECT * FROM %s ORDER BY ST_Hilbert(%s, (SELECT ST_Extent(ST_Extent_Agg(%s))::BOX_2D FROM %s))`,
 		tmpName, physicalName, quotedGeom, quotedGeom, physicalName,
 	)
-	if _, err := a.Exec(ctx, createTmp); err != nil {
-		return fmt.Errorf("clustering rows by Hilbert curve: %w", err)
-	}
-	if _, err := a.Exec(ctx, fmt.Sprintf(`DROP TABLE %s`, physicalName)); err != nil {
-		return err
-	}
-	if _, err := a.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, tmpName, physicalName)); err != nil {
-		return err
-	}
-	return nil
+	return a.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, createTmp); err != nil {
+			return fmt.Errorf("clustering rows by Hilbert curve: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE %s`, physicalName)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, tmpName, physicalName)); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // CreateFromFile materializes physicalName from a source file readable by
 // ST_Read (GeoJSON, Shapefile, CSV, GeoPackage). ST_Read only reads the
-// file — it never backs CRUD operations (règle 13) — so the result is
+// file — it never backs CRUD operations — so the result is
 // always a materialized table with a generated __pkey. layer selects one
 // layer of a multi-layer source (e.g. GeoPackage); pass "" for formats that
 // hold a single layer. sridOverride pins the source CRS explicitly (always
 // interpreted as EPSG:<code>); pass 0 to detect it from the file via
 // DetectCRS. If a geo table's CRS can be neither detected nor overridden,
-// CreateFromFile fails rather than guessing (GEO-1, docs/audit.md §5).
+// CreateFromFile fails rather than guessing.
 func (a *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, 0, err
@@ -266,9 +261,9 @@ func (a *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 
 // CreateFromQuery materializes physicalName from a caller-provided SELECT
 // query — the query itself must already be restricted to SELECT by the
-// caller (règle 4). __pkey is always freshly generated here, wrapping the
+// caller. __pkey is always freshly generated here, wrapping the
 // caller's query exactly like CreateFromFile generates one around an
-// imported file (NEW-BUG-3): the caller's SELECT is free to project any
+// imported file: the caller's SELECT is free to project any
 // columns — including a partial projection, a GROUP BY, or a join —
 // without having to know about __pkey itself. A query that already
 // projects a __pkey column (e.g. a plain "SELECT * FROM t" over an
@@ -277,7 +272,7 @@ func (a *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 // rather than colliding with the new one — checked via DESCRIBE rather
 // than assumed, since DuckDB's "* EXCLUDE (__pkey)" errors if no such
 // column exists in the source query at all. A derived table is always
-// materialized, never a view (règle 13), and is a frozen snapshot: no sync
+// materialized, never a view, and is a frozen snapshot: no sync
 // with its source in either direction.
 func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
@@ -287,7 +282,7 @@ func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery
 		return "", false, err
 	}
 
-	columns, err := a.describeColumns(ctx, sourceQuery)
+	columns, err := data.DescribeColumns(ctx, a, sourceQuery)
 	if err != nil {
 		return "", false, fmt.Errorf("inspecting derived query columns: %w", err)
 	}

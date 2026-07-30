@@ -18,7 +18,7 @@ import (
 
 // setupGeoService wires m.Table(...) to always resolve tableRepo, and
 // tableRepo.Geo() to always resolve geoRepo as geospatial — the shape
-// every GeoService method now depends on (§4.2's "resolve once"). Tests
+// every GeoService method now depends on, resolved once per request. Tests
 // configure geoRepo's own expectations for the storage calls they care
 // about.
 func setupGeoService(t *testing.T) (svc *GeoService, geoRepo *mocks.GeoRepository) {
@@ -36,7 +36,7 @@ func setupGeoService(t *testing.T) (svc *GeoService, geoRepo *mocks.GeoRepositor
 // A scalar table's TableRepository.Geo reports ok=false; every GeoService
 // method must reject it with a typed NotFoundError (mapped to 404 by
 // response.MapServiceError) instead of reaching into a GeoRepository that
-// isn't meaningful for it (audit §3.12).
+// isn't meaningful for it.
 func Test_GeoService_RejectsNonGeoTable(t *testing.T) {
 	m := &mocks.Storage{}
 	tableRepo := &mocks.TableRepository{}
@@ -109,10 +109,10 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("old"), tile)
 
-	// Simulates a write bumping UpdatedAt (RefreshDerivedMetadata, règle 9)
-	// — GetTile's cache key includes UpdatedAt, so a caller passing the
+	// Simulates a write bumping UpdatedAt via RefreshDerivedMetadata —
+	// GetTile's cache key includes UpdatedAt, so a caller passing the
 	// refreshed metadata bypasses the stale cache entry with no separate
-	// invalidation mechanism (règle 20).
+	// invalidation mechanism.
 	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("new"), nil).Once()
 
 	tile2, err := geoSvc.GetTile(context.Background(), catalog.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, 1, 2, 3, nil, storage.GeoQuery{})

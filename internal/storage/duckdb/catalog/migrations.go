@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // schemaMigrations are ALTER statements applied in order, once each,
@@ -57,7 +58,7 @@ func Migrate(db *sql.DB) error {
 	}
 
 	for i := version; i < len(schemaMigrations); i++ {
-		if _, err := db.Exec(schemaMigrations[i]); err != nil {
+		if err := execMigration(db, schemaMigrations[i]); err != nil {
 			return fmt.Errorf("applying migration %d: %w", i+1, err)
 		}
 	}
@@ -67,4 +68,22 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// execMigration runs stmt, tolerating a duplicate-column error on an ADD
+// COLUMN statement: a database created after that column was added but
+// before schema_version tracking existed has no recorded version, so
+// Migrate assumes 0 and replays every migration — the column is already
+// there, and this is the one migration shape in schemaMigrations that
+// isn't otherwise idempotent (unlike DROP INDEX IF EXISTS, CREATE INDEX IF
+// NOT EXISTS, or re-setting a column to the type it already has).
+func execMigration(db *sql.DB, stmt string) error {
+	_, err := db.Exec(stmt)
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(strings.ToUpper(stmt), "ADD COLUMN") && strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return nil
+	}
+	return err
 }

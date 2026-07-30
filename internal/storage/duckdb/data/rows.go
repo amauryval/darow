@@ -23,7 +23,7 @@ type rowRepository struct {
 var _ contract.RowRepository = (*rowRepository)(nil)
 
 // Pkeys returns a deterministically ordered page of primary keys, sorted
-// by sort or by __pkey alone when empty (règle 8: DuckDB guarantees no
+// by sort or by __pkey alone when empty (DuckDB guarantees no
 // stable order without ORDER BY).
 func (r *rowRepository) Pkeys(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]string, error) {
 	orderBy, err := OrderBy(sort)
@@ -50,8 +50,33 @@ func (r *rowRepository) Pkeys(ctx context.Context, sort []storage.SortField, off
 	return pkeys, rows.Err()
 }
 
+// Page returns up to limit rows starting at offset, ordered by sort or by
+// __pkey alone when empty, excluding the geometry column
+// — a single query, unlike Pkeys followed by ByPkey.
+func (r *rowRepository) Page(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Row, error) {
+	orderBy, err := OrderBy(sort)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := AttrProjection(r.t, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	query := fmt.Sprintf(
+		`SELECT %s FROM %s ORDER BY %s LIMIT ? OFFSET ?`, projection, r.t.PhysicalName, orderBy,
+	)
+	rows, err := r.conn.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return ScanRows(rows)
+}
+
 // ByPkey fetches full rows for the given primary keys, excluding the
-// geometry column (règle 7).
+// geometry column.
 func (r *rowRepository) ByPkey(ctx context.Context, pkeys []string) ([]storage.Row, error) {
 	if len(pkeys) == 0 {
 		return []storage.Row{}, nil
@@ -73,7 +98,10 @@ func (r *rowRepository) ByPkey(ctx context.Context, pkeys []string) ([]storage.R
 }
 
 // Filtered fetches rows matching q, produced exclusively by
-// storage.BuildFilter (règle 5), excluding the geometry column (règle 7).
+// storage.BuildFilter, excluding the geometry column.
+// Ordered by __pkey, like every other paginated read, so two identical
+// calls never return rows in a different order (DuckDB guarantees none
+// without ORDER BY).
 func (r *rowRepository) Filtered(ctx context.Context, q contract.RowQuery, limit int) ([]storage.Row, error) {
 	projection, err := AttrProjection(r.t, nil)
 	if err != nil {
@@ -85,7 +113,7 @@ func (r *rowRepository) Filtered(ctx context.Context, q contract.RowQuery, limit
 		where = " WHERE " + q.Filter
 	}
 
-	query := fmt.Sprintf(`SELECT %s FROM %s%s LIMIT ?`, projection, r.t.PhysicalName, where)
+	query := fmt.Sprintf(`SELECT %s FROM %s%s ORDER BY __pkey LIMIT ?`, projection, r.t.PhysicalName, where)
 	rows, err := r.conn.Query(ctx, query, append(append([]any{}, q.Args...), limit)...)
 	if err != nil {
 		return nil, err
@@ -140,7 +168,7 @@ func newPkey() string {
 }
 
 // buildInsert builds the INSERT statement and args for a single row,
-// converting the geometry column's WKT value via ST_GeomFromText (règle 22)
+// converting the geometry column's WKT value via ST_GeomFromText
 // instead of binding it directly like a scalar value.
 func buildInsert(t Table, values map[string]any) (pkey, query string, args []any, writesGeometry bool, err error) {
 	pkey = newPkey()
@@ -188,8 +216,8 @@ func (r *rowRepository) Insert(ctx context.Context, values map[string]any) (stri
 	return pkey, nil
 }
 
-// InsertMany inserts every row in a single transaction (règle 6), held
-// under writeMu for its whole duration (règle 21) by the adapter's
+// InsertMany inserts every row in a single transaction, held
+// under writeMu for its whole duration by the adapter's
 // WithTx.
 func (r *rowRepository) InsertMany(ctx context.Context, rows []map[string]any) ([]string, error) {
 	pkeys := make([]string, 0, len(rows))

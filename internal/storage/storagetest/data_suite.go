@@ -331,12 +331,12 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newData NewData) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
 
-	// Fixture points are reprojected to Web Mercator meters at load time
-	// (CreateFromFile), so the bbox here is in that same space, not raw
-	// lon/lat — roughly 111km per degree at the equator. pkeys aren't in
+	// bbox is lon/lat in OGC:CRS84 (transformed internally to the stored
+	// EPSG:3857 geometry). Fixture points are (1,1) and (10,10), so a 5x5
+	// degree box near the origin covers only the first. pkeys aren't in
 	// file order (Pkeys sorts by pkey), so identify the matched row by
 	// its "name" property rather than assuming which pkey it is.
-	inBbox, err := geo.PkeysInBbox(ctx, [4]float64{0, 0, 200000, 200000}, 0, 10)
+	inBbox, err := geo.PkeysInBbox(ctx, [4]float64{0, 0, 5, 5}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, inBbox, 1)
 	assert.Contains(t, pkeys, inBbox[0])
@@ -345,7 +345,7 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newData NewData) {
 	require.Len(t, matched, 1)
 	assert.Equal(t, "a", matched[0].Values["name"])
 
-	outsideBbox, err := geo.PkeysInBbox(ctx, [4]float64{5000000, 5000000, 6000000, 6000000}, 0, 10)
+	outsideBbox, err := geo.PkeysInBbox(ctx, [4]float64{50, 50, 60, 60}, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, outsideBbox)
 
@@ -366,7 +366,7 @@ func testGeoFilterByBboxPagination(t *testing.T, newData NewData) {
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
-	bothPoints := [4]float64{-2000000, -2000000, 2000000, 2000000}
+	bothPoints := [4]float64{-20, -20, 20, 20}
 
 	page1, err := geo.PkeysInBbox(ctx, bothPoints, 0, 1)
 	require.NoError(t, err)

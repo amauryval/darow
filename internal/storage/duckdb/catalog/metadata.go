@@ -53,7 +53,7 @@ var metadataSortColumns = map[string]string{
 
 // metadataOrderBy builds an ORDER BY clause from sort, validating each
 // field against metadataSortColumns, with tableId always appended last as a
-// deterministic tiebreaker (règle 8).
+// deterministic tiebreaker.
 func metadataOrderBy(sort []storage.SortField) (string, error) {
 	clauses := make([]string, 0, len(sort)+1)
 	for _, f := range sort {
@@ -103,6 +103,26 @@ func (r *Repository) TableExists(ctx context.Context, tableId string) (bool, err
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// PhysicalNames lists every physicalName currently registered — the only
+// tables a /derive query is allowed to reference.
+func (r *Repository) PhysicalNames(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.conn.Query(ctx, `SELECT physicalName FROM metadata`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	names := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names[name] = true
+	}
+	return names, rows.Err()
 }
 
 // GetMetadata fetches the metadata row for tableId.

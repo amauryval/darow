@@ -97,3 +97,46 @@ func Test_Migrate_ReopeningDoesNotReapplyMigrations(t *testing.T) {
 	db = openTestDB(t, path)
 	assert.NoError(t, Migrate(db))
 }
+
+// Test_Migrate_TableUpToDateButMissingSchemaVersion reproduces a database
+// created by a version of the code after sourceName/sourceLayer/rowCount
+// BIGINT existed but before schema_version tracking did: Migrate has no
+// recorded version to trust, assumes 0, and replays every migration —
+// including ADD COLUMN sourceName/sourceLayer, which would otherwise fail
+// with "column already exists" and leave the server refusing to start.
+func Test_Migrate_TableUpToDateButMissingSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "uptodate-no-version.db")
+
+	oldDB := openTestDB(t, path)
+	_, err := oldDB.Exec(`
+        CREATE TABLE metadata (
+            tableId TEXT PRIMARY KEY,
+            physicalName TEXT NOT NULL UNIQUE,
+            tableName TEXT NOT NULL,
+            isGeo BOOLEAN DEFAULT FALSE,
+            createdAt TIMESTAMP DEFAULT NOW(),
+            updatedAt TIMESTAMP DEFAULT NOW(),
+            geometryColumn TEXT,
+            rowCount BIGINT DEFAULT 0,
+            bbox TEXT,
+            srid INTEGER DEFAULT 4326,
+            sourceName TEXT,
+            sourceLayer TEXT
+        )
+    `)
+	require.NoError(t, err)
+	_, err = oldDB.Exec(`INSERT INTO metadata (tableId, physicalName, tableName) VALUES ('id-1', 't_1', 'widgets')`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	db := openTestDB(t, path)
+	require.NoError(t, Migrate(db))
+
+	var version int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	assert.Equal(t, len(schemaMigrations), version)
+
+	var tableName string
+	require.NoError(t, db.QueryRow(`SELECT tableName FROM metadata WHERE tableId = 'id-1'`).Scan(&tableName))
+	assert.Equal(t, "widgets", tableName)
+}

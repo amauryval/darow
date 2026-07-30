@@ -227,10 +227,10 @@ func Test_Adapter_CreateFromQuery(t *testing.T) {
 	assert.True(t, indexExists(t, a, "idx_"+derivedMeta.PhysicalName+"_geom"))
 }
 
-// NEW-BUG-3: a derive query that projects only a subset of columns — and
-// so never mentions __pkey, which CreateFromFile generated on the source
-// table — must still succeed. __pkey is generated fresh around the
-// caller's query rather than assumed to already be present in it.
+// A derive query that projects only a subset of columns — and so never
+// mentions __pkey, which CreateFromFile generated on the source table —
+// must still succeed. __pkey is generated fresh around the caller's query
+// rather than assumed to already be present in it.
 func Test_Adapter_CreateFromQuery_PartialProjection(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)
@@ -261,8 +261,8 @@ func Test_Adapter_CreateFromQuery_PartialProjection(t *testing.T) {
 	assert.EqualValues(t, 2, count)
 }
 
-// NEW-BUG-3: a GROUP BY, which also drops __pkey from its projection, must
-// succeed the same way — each aggregated row gets its own generated pkey.
+// A GROUP BY, which also drops __pkey from its projection, must succeed
+// the same way — each aggregated row gets its own generated pkey.
 func Test_Adapter_CreateFromQuery_GroupBy(t *testing.T) {
 	a := setupAdapter(t)
 	path := writeGeoJSONFixture(t)

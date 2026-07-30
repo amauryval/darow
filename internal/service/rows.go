@@ -18,7 +18,7 @@ type RowsPage struct {
 }
 
 // convertValue converts a driver-scanned value to a native JSON type
-// according to colType (règle 12): dates and timestamps become ISO 8601
+// according to colType: dates and timestamps become ISO 8601
 // strings rather than a reproduction of the driver's Go type.
 func convertValue(colType string, value any) any {
 	t, ok := value.(time.Time)
@@ -35,30 +35,30 @@ func convertValue(colType string, value any) any {
 }
 
 // metadataRefresher is what RowService needs from MetadataService: refresh
-// derived fields after a write (règle 9).
+// derived fields after a write.
 type metadataRefresher interface {
 	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
 }
 
 // tableResolver is what RowService/SchemaService/GeoService need from
 // storage: resolve an already-fetched Metadata into a TableRepository once
-// per request (§4.2's "resolve once", règle 1's validation-at-construction),
-// rather than passing Metadata to each individual storage call.
+// per request, validating its identifiers at construction, rather than
+// passing Metadata to each individual storage call.
 type tableResolver interface {
 	Table(meta catalog.Metadata) (data.TableRepository, error)
 }
 
 // columnTyper is what RowService needs from SchemaService: the cached
-// column-name-to-type map (PERF-1), so converting a row's values never
+// column-name-to-type map, so converting a row's values never
 // issues one DESCRIBE per column.
 type columnTyper interface {
 	Types(ctx context.Context, meta catalog.Metadata) (map[string]string, error)
 }
 
 // RowService provides row CRUD on top of the storage layer, converting
-// values to native JSON types (règle 12) and excluding the geometry
-// column from reads (règle 7). Every method takes the caller's
-// already-resolved catalog.Metadata (§4.2) rather than a tableId, so it
+// values to native JSON types and excluding the geometry
+// column from reads. Every method takes the caller's
+// already-resolved catalog.Metadata rather than a tableId, so it
 // never re-fetches metadata the router's tableMiddleware already read
 // once for the request.
 type RowService struct {
@@ -69,7 +69,7 @@ type RowService struct {
 
 // NewRowService builds a RowService backed by storage, using metadata to
 // refresh derived fields after a write, and schema to resolve column types
-// from its cache (PERF-1).
+// from its cache.
 func NewRowService(storage tableResolver, metadata metadataRefresher, schema columnTyper) *RowService {
 	return &RowService{storage: storage, metadata: metadata, schema: schema}
 }
@@ -82,7 +82,7 @@ func convertRow(types map[string]string, row storage.Row) storage.Row {
 	return converted
 }
 
-// convertRows resolves meta's column types once (PERF-1) rather than once
+// convertRows resolves meta's column types once rather than once
 // per row, then converts every row's values to native JSON types.
 func (s *RowService) convertRows(ctx context.Context, meta catalog.Metadata, rows []storage.Row) ([]storage.Row, error) {
 	if len(rows) == 0 {
@@ -102,25 +102,17 @@ func (s *RowService) convertRows(ctx context.Context, meta catalog.Metadata, row
 }
 
 // ListRows returns a page of rows ordered by sort, or deterministically by
-// pkey when empty (règle 8), with values converted to native JSON types
-// (règle 12) and the geometry column always excluded (règle 7).
+// pkey when empty, with values converted to native JSON types
+// and the geometry column always excluded.
 func (s *RowService) ListRows(ctx context.Context, meta catalog.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
 	}
 
-	pkeys, err := repo.Rows().Pkeys(ctx, sort, offset, limit)
+	rows, err := repo.Rows().Page(ctx, sort, offset, limit)
 	if err != nil {
 		return nil, err
-	}
-
-	var rows []storage.Row
-	if len(pkeys) > 0 {
-		rows, err = repo.Rows().ByPkey(ctx, pkeys)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	rows, err = s.convertRows(ctx, meta, rows)
@@ -138,7 +130,7 @@ func (s *RowService) ListRows(ctx context.Context, meta catalog.Metadata, sort [
 
 // ListRowsPage returns up to limit rows starting at offset, without the
 // total row count ListRows computes for UI pagination — used by export's
-// page-by-page streaming (§4.2), which only needs to know whether a page
+// page-by-page streaming, which only needs to know whether a page
 // came back short (the last page) and has no use for a running total that
 // would otherwise mean one extra COUNT(*) per page.
 func (s *RowService) ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error) {
@@ -147,15 +139,7 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta catalog.Metadata, of
 		return nil, err
 	}
 
-	pkeys, err := repo.Rows().Pkeys(ctx, nil, offset, limit)
-	if err != nil {
-		return nil, err
-	}
-	if len(pkeys) == 0 {
-		return nil, nil
-	}
-
-	rows, err := repo.Rows().ByPkey(ctx, pkeys)
+	rows, err := repo.Rows().Page(ctx, nil, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +148,7 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta catalog.Metadata, of
 
 // GetRowsByPkey fetches full rows for the given primary keys (order not
 // guaranteed to match pkeys), with values converted to native JSON types
-// (règle 12) and the geometry column excluded (règle 7).
+// and the geometry column excluded.
 func (s *RowService) GetRowsByPkey(ctx context.Context, meta catalog.Metadata, pkeys []string) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -199,8 +183,8 @@ func (s *RowService) GetRow(ctx context.Context, meta catalog.Metadata, pkey str
 }
 
 // ListRowsWithFilter returns rows matching filter, produced exclusively by
-// storage.BuildFilter (règle 5), with values converted to native JSON
-// types (règle 12).
+// storage.BuildFilter, with values converted to native JSON
+// types.
 func (s *RowService) ListRowsWithFilter(ctx context.Context, meta catalog.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -214,8 +198,8 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta catalog.Metada
 }
 
 // GetDistinctValues returns a page of up to limit of column's distinct
-// values, skipping offset matches first (règle 18), converted to native
-// JSON types (règle 12) the same way row reads are.
+// values, skipping offset matches first, converted to native
+// JSON types the same way row reads are.
 func (s *RowService) GetDistinctValues(ctx context.Context, meta catalog.Metadata, column string, offset, limit int) ([]any, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -239,12 +223,11 @@ func (s *RowService) GetDistinctValues(ctx context.Context, meta catalog.Metadat
 }
 
 // UpdateRow updates every column in updates for the given pkeys in a
-// single storage call, so a multi-column update is atomic (règle 9,
-// spec §5.1: either every column changes or none does). Writing the
-// geometry column triggers RefreshDerived, which recomputes bbox and bumps
-// UpdatedAt (règle 9) — the signal that invalidates GeoService's tile
-// cache (règle 20) and MetadataService's cache (règle 11). Updating only
-// scalar fields triggers neither.
+// single storage call, so a multi-column update is atomic: either every
+// column changes or none does. Writing the geometry column triggers
+// RefreshDerived, which recomputes bbox and bumps UpdatedAt — the signal
+// that invalidates GeoService's tile cache and MetadataService's cache.
+// Updating only scalar fields triggers neither.
 func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys []string, updates map[string]any) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -263,7 +246,7 @@ func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys
 	return nil
 }
 
-// InsertRow inserts a single row and refreshes derived metadata (règle 9),
+// InsertRow inserts a single row and refreshes derived metadata,
 // recomputing bbox only if values sets the geometry column.
 func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, values map[string]any) (string, error) {
 	repo, err := s.storage.Table(meta)
@@ -282,7 +265,7 @@ func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, value
 }
 
 // BulkInsertRows inserts every row in a single transaction and refreshes
-// derived metadata (règle 6, règle 9), recomputing bbox only if at least
+// derived metadata, recomputing bbox only if at least
 // one row sets the geometry column.
 func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, rows []map[string]any) ([]string, error) {
 	repo, err := s.storage.Table(meta)
@@ -306,8 +289,8 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, 
 	return pkeys, nil
 }
 
-// RemoveRows deletes the given rows and refreshes derived metadata
-// (règle 9). A removed geo row can always have sat on the bbox's boundary,
+// RemoveRows deletes the given rows and refreshes derived metadata.
+// A removed geo row can always have sat on the bbox's boundary,
 // so bbox is recomputed whenever the table is geo.
 func (s *RowService) RemoveRows(ctx context.Context, meta catalog.Metadata, pkeys []string) error {
 	repo, err := s.storage.Table(meta)

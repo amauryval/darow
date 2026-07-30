@@ -63,12 +63,15 @@ func newScalarTestTable(t *testing.T, conn dbConn) catalog.Metadata {
 	return catalog.Metadata{TableId: "id-scalar", PhysicalName: "t_scalar"}
 }
 
+// newGeoTestTable's points are stored in EPSG:3857 meters, like
+// a real table populated via CreateFromFile: point "1" sits at roughly
+// (0.9°, 0.9°) once reprojected to OGC:CRS84, point "2" at (18°, 17.9°).
 func newGeoTestTable(t *testing.T, conn dbConn) catalog.Metadata {
 	_, err := conn.db.Exec(`CREATE TABLE t_geo (__pkey TEXT PRIMARY KEY, name TEXT, geom GEOMETRY)`)
 	require.NoError(t, err)
 	_, err = conn.db.Exec(`INSERT INTO t_geo VALUES
-        ('1', 'a', ST_GeomFromText('POINT(1 1)')),
-        ('2', 'b', ST_GeomFromText('POINT(10 10)'))`)
+        ('1', 'a', ST_GeomFromText('POINT(100000 100000)')),
+        ('2', 'b', ST_GeomFromText('POINT(2000000 2000000)'))`)
 	require.NoError(t, err)
 	return catalog.Metadata{TableId: "id-geo", PhysicalName: "t_geo", IsGeo: true, GeometryColumn: "geom"}
 }
@@ -141,6 +144,17 @@ func Test_RowRepository_PkeysByPkeyFilteredDistinct(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1", "2"}, pkeys)
 
+	page, err := rows.Page(ctx, nil, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "1", page[0].Pkey)
+	assert.Equal(t, "a", page[0].Values["name"])
+
+	page, err = rows.Page(ctx, []storage.SortField{{Column: "name", Desc: true}}, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, "2", page[0].Pkey, "descending sort by name puts 'b' first")
+
 	got, err := rows.ByPkey(ctx, []string{"1"})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -182,8 +196,10 @@ func Test_RowRepository_InsertUpdateDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 
-	// An empty pkeys must no-op rather than build "IN ()" (audit §3.10).
+	// An empty pkeys must no-op rather than build "IN ()", a SQL syntax
+	// error in DuckDB.
 	require.NoError(t, rows.Delete(ctx, nil))
+	require.NoError(t, rows.Update(ctx, nil, map[string]any{"name": "unreachable"}))
 }
 
 func Test_RowRepository_InsertMany(t *testing.T) {
@@ -214,6 +230,8 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
 
+	// bbox is lon/lat in OGC:CRS84 — a 5x5 degree box near (0,0) covers
+	// point "1" (~0.9°, 0.9°) but not point "2" (~18°, 17.9°).
 	inBbox, err := geo.PkeysInBbox(ctx, [4]float64{0, 0, 5, 5}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1"}, inBbox)
@@ -237,6 +255,12 @@ func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"})
 	require.NoError(t, err)
 	assert.Contains(t, geojson["1"], `"Point"`)
+
+	// An empty pkeys must no-op rather than build "IN ()", a SQL syntax
+	// error in DuckDB.
+	empty, err := geo.GeoJSONByPkey(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 }
 
 func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {

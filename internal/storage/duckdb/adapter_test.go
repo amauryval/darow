@@ -15,7 +15,7 @@ import (
 )
 
 func setupAdapter(t *testing.T) *Adapter {
-	a, err := New(":memory:")
+	a, err := New(":memory:", 4)
 	require.NoError(t, err)
 	t.Cleanup(func() { a.Close() })
 	return a
@@ -48,7 +48,7 @@ func createGeoTable(t *testing.T, a *Adapter) (meta catalog.Metadata, geomCol st
 func Test_New_InitializesSchemaIdempotently(t *testing.T) {
 	a := setupAdapter(t)
 
-	_, err := New(":memory:")
+	_, err := New(":memory:", 4)
 	require.NoError(t, err)
 
 	ids, err := a.TableIds(context.Background(), nil)
@@ -59,7 +59,7 @@ func Test_New_InitializesSchemaIdempotently(t *testing.T) {
 func Test_New_CreatesMissingParentDirectory(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "nested", "sub", "geo.db")
 
-	a, err := New(dbPath)
+	a, err := New(dbPath, 4)
 	require.NoError(t, err)
 	t.Cleanup(func() { a.Close() })
 
@@ -235,7 +235,7 @@ func Test_Adapter_Ping(t *testing.T) {
 }
 
 func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
-	a, err := New(":memory:")
+	a, err := New(":memory:", 4)
 	require.NoError(t, err)
 	require.NoError(t, a.Close())
 

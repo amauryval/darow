@@ -55,7 +55,7 @@ type tableImporter interface {
 
 // SourceService scans workDir for loadable files and imports them into
 // tables on demand. name is only ever accepted from the last Refresh/List
-// cache (règle 15) — never a path built freely from the HTTP request, to
+// cache — never a path built freely from the HTTP request, to
 // eliminate any directory traversal risk. mu is held for the whole
 // duration of Load's check-then-import, not just around the cache lookup,
 // so two concurrent Load calls for the same source can't both pass the
@@ -235,7 +235,7 @@ func cloneSources(sources []Source) []Source {
 // same extension whitelist and size limit as Refresh, and rejected outright
 // if a file with that name already exists — callers wanting to replace a
 // source must remove it first, never silently overwritten. filename is
-// sanitized to its base name to eliminate directory traversal (règle 15).
+// sanitized to its base name to eliminate directory traversal.
 // Returns the sanitized name actually written, for chaining into Load.
 func (s *SourceService) Upload(filename string, content io.Reader) (string, error) {
 	filename = filepath.Base(filename)
@@ -267,10 +267,10 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 }
 
 // Load imports the source named name, which must match an entry in the
-// current cache (règle 15). For a multi-layer (.gpkg) source, layer must
+// current cache. For a multi-layer (.gpkg) source, layer must
 // name one of that source's cached layers — the file itself is never
 // loaded as a whole. For any other source, layer must be empty. srid pins
-// the source CRS explicitly (GEO-1); pass 0 to detect it from the file.
+// the source CRS explicitly; pass 0 to detect it from the file.
 // Returns the newly created tableId. Held under mu for its whole duration
 // (see SourceService doc) — the on-success update of the cached entry
 // below is what lets an immediate second Load, with no Refresh in
@@ -337,8 +337,8 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 }
 
 // sourcePath resolves name (and, for a multi-layer source, layer) against
-// the cache exactly like Load does (règle 15 — name is never turned into a
-// path without this check), without mutating any loaded state.
+// the cache exactly like Load does — name is never turned into a path
+// without this check — without mutating any loaded state.
 func (s *SourceService) sourcePath(name, layer string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,7 +366,7 @@ func (s *SourceService) sourcePath(name, layer string) (string, error) {
 
 // DetectCRS reports the authority/code of a source's declared CRS (0 if
 // undetectable), so a caller can preview it before Load — the "editable
-// EPSG" flow (GEO-1). layer selects one layer of a multi-layer source.
+// EPSG" flow. layer selects one layer of a multi-layer source.
 func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error) {
 	path, err := s.sourcePath(name, layer)
 	if err != nil {
@@ -379,11 +379,11 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 // the source file itself in workDir is never touched, only its loaded
 // table(s) (deleting a user's uploaded file is out of scope; a caller who
 // wants that must remove it from workDir directly). name is validated
-// against the cache (règle 15), never an unvalidated path. The cache entry
+// against the cache, never an unvalidated path. The cache entry
 // is only spliced out after every table removal has succeeded, so a
 // failure midway (e.g. one layer's RemoveTable erroring after another's
 // already succeeded) leaves the source visible for a retry instead of
-// silently vanishing from the cache (NEW-BUG-6). found is read under mu and
+// silently vanishing from the cache. found is read under mu and
 // never mutated outside it: it is about to be deleted from the cache
 // wholesale, so updating its Loaded/TableId fields on the way out would only
 // race a concurrent List against the live entry's shared Layers slice for no

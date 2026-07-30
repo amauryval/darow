@@ -23,6 +23,12 @@ func (m *RowRepository) Pkeys(ctx context.Context, sort []storage.SortField, off
 	return pkeys, callArgs.Error(1)
 }
 
+func (m *RowRepository) Page(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Row, error) {
+	callArgs := m.Called(ctx, sort, offset, limit)
+	rows, _ := callArgs.Get(0).([]storage.Row)
+	return rows, callArgs.Error(1)
+}
+
 func (m *RowRepository) ByPkey(ctx context.Context, pkeys []string) ([]storage.Row, error) {
 	callArgs := m.Called(ctx, pkeys)
 	rows, _ := callArgs.Get(0).([]storage.Row)

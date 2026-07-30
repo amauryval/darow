@@ -36,9 +36,13 @@ type ServerConfig struct {
 	ShutdownTimeoutSec int `yaml:"shutdownTimeoutSec"`
 }
 
-// DuckDBConfig holds the DuckDB database file path.
+// DuckDBConfig holds the DuckDB database file path and connection pool
+// size — the tuning parameter most likely to need adjusting by whoever
+// operates the server, since DuckDB serializes writes but allows
+// concurrent pooled reads.
 type DuckDBConfig struct {
-	Path string `yaml:"path"`
+	Path         string `yaml:"path"`
+	MaxOpenConns int    `yaml:"maxOpenConns"`
 }
 
 // SourcesConfig holds settings for scanning and loading files from workDir.
@@ -48,10 +52,10 @@ type SourcesConfig struct {
 	AllowedExtensions []string `yaml:"allowedExtensions"`
 }
 
-// APIConfig holds settings adjustable without recompiling (règle 18) for
+// APIConfig holds settings adjustable without recompiling for
 // row pagination limits, list pagination limits (GET /tables, GET /sources),
 // request body size, per-request timeout, and the page size ExportService
-// streams at (PERF-2).
+// streams at.
 type APIConfig struct {
 	DefaultRowLimit      int     `yaml:"defaultRowLimit"`
 	MaxRowLimit          int     `yaml:"maxRowLimit"`
@@ -61,13 +65,15 @@ type APIConfig struct {
 	RequestTimeoutSec    int     `yaml:"requestTimeoutSec"`
 	ExportBatchSize      int64   `yaml:"exportBatchSize"`
 	DefaultFeaturesLimit int     `yaml:"defaultFeaturesLimit"`
+	MaxFeaturesLimit     int     `yaml:"maxFeaturesLimit"`
 	MaxSimplifyTolerance float64 `yaml:"maxSimplifyTolerance"`
 	MaxPrecision         float64 `yaml:"maxPrecision"`
+	TileCacheMaxAgeSec   int     `yaml:"tileCacheMaxAgeSec"`
 }
 
-// CacheConfig holds TTL and max item count for every in-memory cache
-// (règle 18, PERF-5): metadata reads, cached column types, and rendered
-// MVT tiles. Each is a size-bounded LRU with expiration, never unbounded.
+// CacheConfig holds TTL and max item count for every in-memory cache:
+// metadata reads, cached column types, and rendered MVT tiles. Each is a
+// size-bounded LRU with expiration, never unbounded.
 type CacheConfig struct {
 	MetadataTTLSec   int `yaml:"metadataTTLSec"`
 	MetadataMaxItems int `yaml:"metadataMaxItems"`
@@ -86,7 +92,7 @@ func defaultConfig() Config {
 			IdleTimeoutSec:     60,
 			ShutdownTimeoutSec: 10,
 		},
-		DuckDB: DuckDBConfig{Path: "./data/geo.db"},
+		DuckDB: DuckDBConfig{Path: "./data/geo.db", MaxOpenConns: 4},
 		Sources: SourcesConfig{
 			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
@@ -101,8 +107,10 @@ func defaultConfig() Config {
 			RequestTimeoutSec:    30,
 			ExportBatchSize:      1000,
 			DefaultFeaturesLimit: 100,
+			MaxFeaturesLimit:     10000,
 			MaxSimplifyTolerance: 10000,
 			MaxPrecision:         1000,
+			TileCacheMaxAgeSec:   60,
 		},
 		Cache: CacheConfig{
 			MetadataTTLSec:   300,
@@ -162,6 +170,7 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.Server.ShutdownTimeoutSec, envPrefix+"SERVER_SHUTDOWN_TIMEOUT_SEC"))
 
 	envString(&cfg.DuckDB.Path, envPrefix+"DUCKDB_PATH")
+	check(envInt(&cfg.DuckDB.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
 
 	envString(&cfg.Sources.WorkDir, envPrefix+"SOURCES_WORKDIR")
 	check(envInt64(&cfg.Sources.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
@@ -175,8 +184,10 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.API.RequestTimeoutSec, envPrefix+"API_REQUEST_TIMEOUT_SEC"))
 	check(envInt64(&cfg.API.ExportBatchSize, envPrefix+"API_EXPORT_BATCH_SIZE"))
 	check(envInt(&cfg.API.DefaultFeaturesLimit, envPrefix+"API_DEFAULT_FEATURES_LIMIT"))
+	check(envInt(&cfg.API.MaxFeaturesLimit, envPrefix+"API_MAX_FEATURES_LIMIT"))
 	check(envFloat64(&cfg.API.MaxSimplifyTolerance, envPrefix+"API_MAX_SIMPLIFY_TOLERANCE"))
 	check(envFloat64(&cfg.API.MaxPrecision, envPrefix+"API_MAX_PRECISION"))
+	check(envInt(&cfg.API.TileCacheMaxAgeSec, envPrefix+"API_TILE_CACHE_MAX_AGE_SEC"))
 
 	check(envInt(&cfg.Cache.MetadataTTLSec, envPrefix+"CACHE_METADATA_TTL_SEC"))
 	check(envInt(&cfg.Cache.MetadataMaxItems, envPrefix+"CACHE_METADATA_MAX_ITEMS"))
@@ -258,6 +269,7 @@ func (cfg Config) validate() error {
 	check(cfg.Server.ShutdownTimeoutSec >= 0, "server.shutdownTimeoutSec must not be negative")
 
 	check(cfg.DuckDB.Path != "", "duckdb.path must not be empty")
+	check(cfg.DuckDB.MaxOpenConns > 0, "duckdb.maxOpenConns must be positive")
 
 	check(cfg.Sources.WorkDir != "", "sources.workDir must not be empty")
 	check(cfg.Sources.MaxSizeBytes > 0, "sources.maxSizeBytes must be positive")
@@ -276,8 +288,10 @@ func (cfg Config) validate() error {
 	check(cfg.API.RequestTimeoutSec >= 0, "api.requestTimeoutSec must not be negative")
 	check(cfg.API.ExportBatchSize > 0, "api.exportBatchSize must be positive")
 	check(cfg.API.DefaultFeaturesLimit > 0, "api.defaultFeaturesLimit must be positive")
+	check(cfg.API.MaxFeaturesLimit >= cfg.API.DefaultFeaturesLimit, "api.maxFeaturesLimit must be >= api.defaultFeaturesLimit")
 	check(cfg.API.MaxSimplifyTolerance > 0, "api.maxSimplifyTolerance must be positive")
 	check(cfg.API.MaxPrecision > 0, "api.maxPrecision must be positive")
+	check(cfg.API.TileCacheMaxAgeSec >= 0, "api.tileCacheMaxAgeSec must not be negative")
 
 	check(cfg.Cache.MetadataTTLSec >= 0, "cache.metadataTTLSec must not be negative")
 	check(cfg.Cache.MetadataMaxItems > 0, "cache.metadataMaxItems must be positive")

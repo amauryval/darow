@@ -14,7 +14,7 @@ var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
 // validateSelectOnly is a cheap fail-fast on the query's shape, rejecting
 // anything before it ever reaches storage. It is intentionally not the
 // authoritative check: storage.CreateFromQuery validates the query's full
-// structure with DuckDB's own parser (règle 4) — a regex/keyword blacklist
+// structure with DuckDB's own parser — a regex/keyword blacklist
 // can never enumerate every table function that reads files or system
 // state, so it isn't trusted to do that job here.
 func validateSelectOnly(query string) error {
@@ -45,7 +45,7 @@ type queryMaterializer interface {
 }
 
 // DeriveService materializes new tables from caller-provided SELECT
-// queries (règle 4).
+// queries.
 type DeriveService struct {
 	metadata metadataStore
 	storage  queryMaterializer
@@ -58,8 +58,8 @@ func NewDeriveService(metadata metadataStore, storage queryMaterializer) *Derive
 }
 
 // DeriveTable materializes a new table from a caller-provided SELECT query
-// (règle 4: anything else is rejected before reaching Exec). The derived
-// table is a frozen snapshot, never a view (règle 13) and never synced
+// (anything else is rejected before reaching Exec). The derived
+// table is a frozen snapshot, never a view and never synced
 // with its source.
 func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {

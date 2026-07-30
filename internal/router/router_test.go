@@ -179,7 +179,7 @@ func Test_Router_Setup(t *testing.T) {
 		deps.storage.On("Table", catalog.Metadata{TableId: "id-2", TableName: "gadgets"}).Return(tableRepo, nil)
 		tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{}, nil).Once()
 		tableRepo.On("Rows").Return(rowRepo)
-		rowRepo.On("Pkeys", mock.Anything, []storage.SortField(nil), int64(0), int64(1000)).Return([]string{}, nil).Once()
+		rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(1000)).Return([]storage.Row{}, nil).Once()
 
 		apiCfg := config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30}
 		handler := deps.newRouter(apiCfg, func(context.Context) error { return nil }).Setup()

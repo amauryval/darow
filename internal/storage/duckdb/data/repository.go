@@ -21,8 +21,7 @@ var _ contract.TableRepository = (*tableRepository)(nil)
 
 // Open resolves meta into a contract.TableRepository backed by conn
 // (reads and single-statement writes) and tx (multi-row writes) — the
-// single validation point every operation on the table then relies on
-// (règle 1).
+// single validation point every operation on the table then relies on.
 func Open(conn Querier, tx TxRunner, meta catalog.Metadata) (contract.TableRepository, error) {
 	t, err := Resolve(meta)
 	if err != nil {

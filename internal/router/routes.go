@@ -33,7 +33,7 @@ type Router struct {
 }
 
 // NewRouter builds a Router serving every service in svcs, honoring
-// apiCfg's row pagination limits (règle 18). uiAssets is the admin UI's
+// apiCfg's row pagination limits. uiAssets is the admin UI's
 // built static files, served under /ui. ready backs /readyz — it should
 // ping the underlying storage connection.
 func NewRouter(
@@ -75,9 +75,8 @@ func (rt *Router) Setup() http.Handler {
 	r.Route("/api/v1", func(v1 chi.Router) {
 		// middleware.Timeout is scoped to this Group rather than applied at
 		// the very top of Setup, so it never wraps exportTable below — that
-		// route is registered outside the Group precisely to escape it
-		// (NEW-BUG-7). Everything else keeps the same bounded-request budget
-		// as before.
+		// route is registered outside the Group precisely to escape it.
+		// Everything else keeps the same bounded-request budget as before.
 		v1.Group(func(v1 chi.Router) {
 			if rt.apiCfg.RequestTimeoutSec > 0 {
 				v1.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
@@ -146,10 +145,10 @@ func (rt *Router) Setup() http.Handler {
 			})
 		})
 
-		// ExportTable streams a table in bounded batches (PERF-2) and can
+		// ExportTable streams a table in bounded batches and can
 		// legitimately run past any normal request's time budget on a large
 		// table — middleware.Timeout would otherwise cancel it mid-stream,
-		// truncating an already-200'd response (NEW-BUG-7).
+		// truncating an already-200'd response.
 		v1.Get("/tables/{tableId}/export", rt.export.ExportTable)
 	})
 

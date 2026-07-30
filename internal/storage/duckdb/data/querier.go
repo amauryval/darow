@@ -16,7 +16,7 @@ type Querier interface {
 }
 
 // TxRunner runs fn inside a single transaction. The DuckDB adapter's
-// implementation holds writeMu for fn's whole duration (règle 21), so a
+// implementation holds writeMu for fn's whole duration, so a
 // multi-row write (InsertMany) never interleaves with an unrelated write.
 // Shared verbatim with duckdb/catalog (both need only *sql.Tx's Exec
 // side), so *duckdb.Adapter's single WithTx method satisfies both.

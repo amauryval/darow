@@ -16,31 +16,12 @@ type parsedQuery struct {
 	Statements   []any  `json:"statements"`
 }
 
-// registeredPhysicalNames lists every physicalName currently registered in
-// metadata — the only tables a derive query is allowed to reference.
-func (a *Adapter) registeredPhysicalNames(ctx context.Context) (map[string]bool, error) {
-	rows, err := a.Query(ctx, `SELECT physicalName FROM metadata`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	names := map[string]bool{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names[name] = true
-	}
-	return names, rows.Err()
-}
-
 // validateDeriveQuery parses query with DuckDB's own SQL parser
 // (json_serialize_sql) and walks the resulting AST, rejecting anything that
 // isn't a single SELECT over already-registered tables. json_serialize_sql
-// itself rejects any non-SELECT statement, so this also enforces règle 4
-// with the engine's own grammar rather than a regex approximation of it.
+// itself rejects any non-SELECT statement, so this also enforces the
+// SELECT-only rule with the engine's own grammar rather than a regex
+// approximation of it.
 func (a *Adapter) validateDeriveQuery(ctx context.Context, query string) error {
 	var raw string
 	if err := a.QueryRow(ctx, `SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
@@ -58,7 +39,7 @@ func (a *Adapter) validateDeriveQuery(ctx context.Context, query string) error {
 		return fmt.Errorf("query must be a single statement")
 	}
 
-	allowed, err := a.registeredPhysicalNames(ctx)
+	allowed, err := a.catalog.PhysicalNames(ctx)
 	if err != nil {
 		return err
 	}
@@ -94,7 +75,7 @@ func collectCTENames(node any, into map[string]bool) {
 }
 
 // validateSelectNode walks every node of a parsed SELECT statement,
-// rejecting table functions (règle 4: no arbitrary DuckDB function may back
+// rejecting table functions (no arbitrary DuckDB function may back
 // a derived table — that includes file/system readers like read_csv or
 // duckdb_settings) and any base table not in allowed.
 func validateSelectNode(node any, allowed map[string]bool) error {

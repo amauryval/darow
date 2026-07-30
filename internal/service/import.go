@@ -74,7 +74,7 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 	// sourceName/sourceLayer are independent of tableName, which
 	// PATCH /tables/{id} may rename freely — LoadedSourceNames keys on
 	// these instead, so renaming a table doesn't detach it from its
-	// source (NEW-BUG-5). name is the bare file name for a single-layer
+	// source. name is the bare file name for a single-layer
 	// source, but the composite "file::layer" tableName for a multi-layer
 	// one — sourceName strips the layer suffix back off in that case.
 	sourceName := name

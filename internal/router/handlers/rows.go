@@ -78,7 +78,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rh.rowService.ListRows(req.Context(), meta, sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -155,7 +155,7 @@ func (rh *RowsHandler) GetRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	if row == nil {
@@ -196,7 +196,7 @@ func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
 
 	rows, err := rh.rowService.GetRowsByPkey(req.Context(), meta, body.Pkeys)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -240,7 +240,7 @@ func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	if row == nil {
@@ -266,7 +266,7 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 	pkey := chi.URLParam(req, "pkey")
 
 	if err := rh.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -29,7 +29,7 @@ func NewExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService)
 
 // ExportTable handles GET /tables/{tableId}/export?format=csv|geojson.
 // format defaults to "geojson" for geo tables and "csv" otherwise.
-// ExportService streams rows in bounded batches (PERF-2) directly to the
+// ExportService streams rows in bounded batches directly to the
 // response, so the content type and headers must be validated and set
 // before any streaming starts — once it starts, the status code can no
 // longer change.
@@ -66,7 +66,7 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 	// write, independent of chi's middleware.Timeout (which the route
 	// registration in routes.go already exempts this handler from) — it
 	// would otherwise still truncate a large streamed export after
-	// WriteTimeoutSec regardless (NEW-BUG-7). Clearing it here, once
+	// WriteTimeoutSec regardless. Clearing it here, once
 	// streaming is about to start, does not affect ReadTimeout or any other
 	// route.
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {

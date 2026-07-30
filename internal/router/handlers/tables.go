@@ -43,7 +43,7 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 // listPaginationParams reads offset/limit query params, same shape as
 // RowsHandler.paginationParams but capped by DefaultListLimit/MaxListLimit —
 // tables/sources are metadata records, not data rows, so they get their own,
-// smaller limits (règle 18).
+// smaller limits.
 func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
@@ -152,13 +152,13 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, catalog.MetadataPatch{TableName: &body.TableName}); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
 	updated, err := th.metadataService.GetMetadata(req.Context(), meta.TableId)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toMetadataDTO(updated))
@@ -180,7 +180,7 @@ func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := th.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -202,7 +202,7 @@ func (th *TablesHandler) GetSchema(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -239,7 +239,7 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := th.schemaService.AddColumn(req.Context(), meta, body.Name, body.Type); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -247,7 +247,7 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 }
 
 // DeriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
-// anything that isn't a SELECT (règle 4).
+// anything that isn't a SELECT.
 //
 // @Summary Derive a table from a SELECT query
 // @Tags tables
@@ -282,7 +282,7 @@ func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 }
 
 // FilterRows handles POST /tables/{tableId}/filter, built exclusively on
-// storage.BuildFilter (règle 5) — the whitelist of columns it validates
+// storage.BuildFilter — the whitelist of columns it validates
 // each condition against comes from the table's real schema.
 //
 // @Summary Filter rows by column conditions
@@ -310,7 +310,7 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	validColumns := make([]string, len(schema))
@@ -326,7 +326,7 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 
 	// An omitted or non-positive limit falls back to DefaultRowLimit — same
 	// as GET /rows's paginationParams — instead of the JSON zero value
-	// silently producing LIMIT 0 (NEW-BUG-4). Capped by MaxRowLimit either
+	// silently producing LIMIT 0. Capped by MaxRowLimit either
 	// way, so a client can't force the whole table into memory.
 	limit := body.Limit
 	if limit <= 0 {
@@ -350,10 +350,10 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 }
 
 // GetDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct.
-// col is validated against the table's real, non-geometry columns (règle 7
-// — never surface geometry through a generic column-name path). Paginated
-// like ListRows (règle 18): a high-cardinality column (an identifier, a
-// date) never returns unbounded values in one response.
+// col is validated against the table's real, non-geometry columns — never
+// surface geometry through a generic column-name path. Paginated like
+// ListRows: a high-cardinality column (an identifier, a date) never
+// returns unbounded values in one response.
 //
 // @Summary List a column's distinct values
 // @Tags tables

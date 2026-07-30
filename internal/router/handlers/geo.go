@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"slices"
 	"strconv"
@@ -92,7 +93,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	// Only the "filter" param applies to an MVT tile — simplify/precision
@@ -104,15 +105,15 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Complements GeoService's application cache (règle 20): spares even
+	// Complements GeoService's application cache: spares even
 	// the round trip for a client/CDN that already has the tile. The ETag
-	// is derived from UpdatedAt (HTTP-2), so it changes as soon as the next
+	// is derived from UpdatedAt, so it changes as soon as the next
 	// write lands; max-age stays short since nothing invalidates a CDN's
 	// copy in between. The filter clause/args are folded in too, since they
 	// change a tile's content for the same table version.
 	etag := tileETag(meta, z, x, y, attrs, q)
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "public, max-age=60")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", gh.apiCfg.TileCacheMaxAgeSec))
 	if req.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -173,7 +174,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), gh.apiCfg.MaxSimplifyTolerance, gh.apiCfg.MaxPrecision)
@@ -185,6 +186,9 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 	limit := gh.apiCfg.DefaultFeaturesLimit
 	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
 		limit = v
+	}
+	if limit > gh.apiCfg.MaxFeaturesLimit {
+		limit = gh.apiCfg.MaxFeaturesLimit
 	}
 	offset := 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
@@ -201,18 +205,24 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 }
 
 // tileETag derives an ETag for a tile from its table's UpdatedAt: any write
-// that touches the table's rows bumps UpdatedAt (règle 9), which changes
+// that touches the table's rows bumps UpdatedAt, which changes
 // the ETag for every tile of that table. attrs and q.Filter/q.Args are
 // folded in too, since they change the tile's content for the same table
-// version (GEO-3).
+// version. The material is hashed rather than interpolated
+// directly: q.Args comes from a client-supplied "?filter=" and could
+// contain a double quote, which would otherwise produce a malformed
+// ETag header (RFC 9110 §8.8.3).
 func tileETag(meta catalog.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
 	sorted := slices.Clone(attrs)
 	slices.Sort(sorted)
-	return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s-%s-%v"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","), q.Filter, q.Args)
+	material := fmt.Sprintf("%s-%d-%d-%d-%d-%s-%s-%v", meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","), q.Filter, q.Args)
+	sum := fnv.New64a()
+	sum.Write([]byte(material))
+	return fmt.Sprintf(`"%x"`, sum.Sum64())
 }
 
 // GetGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed
-// on demand, never cached (règle 10) — a geometry column can mix types, and
+// on demand, never cached — a geometry column can mix types, and
 // this isn't a stored metadata field.
 //
 // @Summary List distinct geometry types present in a table
@@ -253,7 +263,7 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), gh.apiCfg.MaxSimplifyTolerance, gh.apiCfg.MaxPrecision)
@@ -270,11 +280,13 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 	response.WriteJSON(w, http.StatusOK, map[string]string{"bbox": bbox})
 }
 
-// FilterByBbox handles POST /tables/{tableId}/bbox. Paginated like ListRows
-// (règle 18): a world-spanning bbox on a large table never materializes
-// every intersecting pkey in one response.
+// FilterByBbox handles POST /tables/{tableId}/bbox. bbox is lon/lat in
+// OGC:CRS84, the same CRS Metadata.Bbox is reported in. Paginated like
+// ListRows: a world-spanning bbox on a large table never
+// materializes every intersecting pkey in one response.
 //
 // @Summary Filter row pkeys by bounding box
+// @Description bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)
 // @Tags geo
 // @Accept json
 // @Produce json

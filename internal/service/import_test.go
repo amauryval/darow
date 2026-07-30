@@ -28,7 +28,7 @@ func Test_ImportService_LoadedSourceNames(t *testing.T) {
 
 	// Keyed on SourceName, not TableName — a table with no SourceName
 	// (e.g. from /derive) is excluded, and a table renamed away from its
-	// source file's name still resolves by its SourceName (NEW-BUG-5).
+	// source file's name still resolves by its SourceName.
 	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
 		{SourceName: "buildings.geojson"}: "id-1",
 		{SourceName: "roads.geojson"}:     "id-2",

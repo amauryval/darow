@@ -8,7 +8,7 @@ package data
 import "gogeoserver/internal/storage"
 
 // RowQuery narrows a RowRepository.Filtered call: Filter/Args must already
-// be a storage.BuildFilter clause (règle 5).
+// be a storage.BuildFilter clause.
 type RowQuery struct {
 	Filter string
 	Args   []any

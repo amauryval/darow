@@ -17,7 +17,7 @@ import (
 
 // setupRowService wires m.Table(...) to always resolve tableRepo, and
 // tableRepo.Rows() to always resolve rowRepo — the shape every RowService
-// method now depends on (§4.2's "resolve once"). Tests configure rowRepo's
+// method now depends on, resolved once per request. Tests configure rowRepo's
 // own expectations for the storage calls they care about; m is still
 // needed directly for RefreshDerivedMetadata (via MetadataService) and
 // ColumnsWithTypes (via SchemaService).
@@ -62,8 +62,7 @@ func Test_RowService_ListRows(t *testing.T) {
 	svc, _, rowRepo, tableRepo := setupRowService(t)
 	meta := catalog.Metadata{TableId: "id-1"}
 
-	rowRepo.On("Pkeys", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
-	rowRepo.On("ByPkey", mock.Anything, []string{"pk-1"}).Return([]storage.Row{
+	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
@@ -77,13 +76,13 @@ func Test_RowService_ListRows(t *testing.T) {
 	assert.Equal(t, "2024-01-01", page.Rows[0].Values["createdAt"])
 }
 
-// ListRows must forward sort unchanged to Rows().Pkeys, which is where the
+// ListRows must forward sort unchanged to Rows().Page, which is where the
 // actual ORDER BY validation/building happens.
 func Test_RowService_ListRows_ForwardsSort(t *testing.T) {
 	svc, _, rowRepo, tableRepo := setupRowService(t)
 	sort := []storage.SortField{{Column: "name", Desc: true}}
 
-	rowRepo.On("Pkeys", mock.Anything, sort, int64(0), int64(10)).Return([]string{}, nil).Once()
+	rowRepo.On("Page", mock.Anything, sort, int64(0), int64(10)).Return([]storage.Row{}, nil).Once()
 	tableRepo.On("Count", mock.Anything).Return(int64(0), nil).Once()
 
 	_, err := svc.ListRows(context.Background(), catalog.Metadata{TableId: "id-1"}, sort, 0, 10)
@@ -94,8 +93,7 @@ func Test_RowService_ListRows_ForwardsSort(t *testing.T) {
 func Test_RowService_ListRowsPage(t *testing.T) {
 	svc, _, rowRepo, tableRepo := setupRowService(t)
 
-	rowRepo.On("Pkeys", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]string{"pk-1"}, nil).Once()
-	rowRepo.On("ByPkey", mock.Anything, []string{"pk-1"}).Return([]storage.Row{
+	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"name": "a"}},
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "name", Type: "VARCHAR"}}, nil).Once()
@@ -107,12 +105,12 @@ func Test_RowService_ListRowsPage(t *testing.T) {
 	assert.Equal(t, "pk-1", rows[0].Pkey)
 }
 
-// An empty page must not call ByPkey at all, matching ListRows's existing
-// behavior for the same case.
+// An empty page must not error, matching ListRows's existing behavior for
+// the same case.
 func Test_RowService_ListRowsPage_EmptyPage(t *testing.T) {
 	svc, _, rowRepo, _ := setupRowService(t)
 
-	rowRepo.On("Pkeys", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]string{}, nil).Once()
+	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]storage.Row{}, nil).Once()
 
 	rows, err := svc.ListRowsPage(context.Background(), catalog.Metadata{TableId: "id-1"}, 0, 10)
 

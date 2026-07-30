@@ -47,11 +47,12 @@ et ne doit jamais être réordonnée**.
    déclenche rien. `geometryColumn` est au contraire une config stable, changée uniquement via
    `UpdateMetadata`.
 10. **`geometryType` n'existe pas en tant que champ stocké.** Une colonne géo peut mélanger POINT et
-    POLYGON ; le type se calcule à la demande via `GeometryTypes`, jamais mis en cache.
+    POLYGON ; le type se calcule à la demande via `GeoRepository.Types`, jamais mis en cache.
 11. **Le cache de métadonnées est invalidé explicitement** à chaque écriture — jamais laissé
     expirer seul.
 12. **Sortie JSON de l'API = types JSON natifs**, pas une reproduction des types Go du driver.
-    Conversion explicite selon le `ColumnType` (`DATE` → `YYYY-MM-DD`, sinon RFC 3339).
+    Conversion explicite selon le type de colonne résolu par `SchemaService.Types` (`DATE` →
+    `YYYY-MM-DD`, sinon RFC 3339).
 13. **Une table dérivée ou importée est toujours matérialisée, jamais une vue SQL.** Le contrat CRUD
     l'exige : une vue devient read-only dès qu'elle filtre ou agrège.
 14. **Pas de variable globale package-level pour l'état partagé.** Injection de dépendances dans les
@@ -108,10 +109,12 @@ jamais d'identifiant SQL, storage ne connaît ni HTTP ni cache applicatif.
 | `internal/router/validation` | résolution de `{tableId}`, validation des noms de colonnes |
 | `internal/router/response` | écriture JSON, corps d'erreur standard, mapping erreur → statut |
 | `internal/service` | logique applicative, caches, orchestration |
-| `internal/storage` | contrats et primitives indépendants du moteur |
-| `internal/storage/duckdb` | implémentation DuckDB |
+| `internal/storage` | contrats et primitives indépendants du moteur (`TableCreator`, `Row`/`GeoFeature`, `BuildFilter`, identifiants) |
+| `internal/storage/catalog` | contrat backend-agnostique du catalogue (`Metadata`, `MetadataManager`) |
+| `internal/storage/data` | contrat backend-agnostique des tables de données (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`) |
+| `internal/storage/duckdb` | implémentation DuckDB (sous-paquets `catalog/` et `data/`) |
 | `internal/storage/storagetest` | suite de conformité réutilisable par tout adapter |
-| `internal/storage/mocks` | mock testify de `storage.Storage` |
+| `internal/storage/mocks` | mocks testify des contrats `catalog`, `data` et `storage.TableCreator` |
 | `internal/webui` | `go:embed` du build de production du SPA Vue |
 
 **Pattern d'interfaces.** Chaque consommateur déclare l'interface étroite dont il a besoin, dans son
@@ -278,11 +281,8 @@ Deux index : sur `isGeo` et sur `tableName`.
 `Metadata` est un **type valeur** côté Go : chaque appelant en reçoit sa copie, aucune synchronisation
 n'est nécessaire.
 
-`geometryType` est délibérément absent (règle 10).
-
-> **Dette connue.** `sourceName` et `sourceLayer` ont été ajoutés au DDL sans entrée de migration :
-> une base créée avant leur existence ne s'ouvre plus. `rowCount` est un `INTEGER` 32 bits pour un
-> `int64` Go. Les deux sont traités par `docs/plan-repository-metadata.md`, étape 2.
+`geometryType` est délibérément absent — une colonne géométrique peut mélanger des types, donc
+calculé à la demande plutôt que mis en cache.
 
 ### 4.2 Tables de données et contrat d'accès
 
@@ -318,24 +318,31 @@ autorisé**.
 
 ### 4.4 Contrats Go
 
-Fichiers : `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`, `aggregate.go`.
+Fichiers : `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`, `aggregate.go`,
+`internal/storage/catalog/`, `internal/storage/data/`.
 
-| Interface | Responsabilité |
-|---|---|
-| `MetadataReader` | `TableIds` (trié), `TableExists`, `GetMetadata` |
-| `MetadataWriter` | `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata` |
-| `TableReader` | `Columns`, `ColumnType`, `RowsCount`, `GetPkeys`, `GetRowsByPkey`, `GetRowsWithFilter`, `GetDistinctValues` |
-| `TableWriter` | `AddColumn`, `Update`, `RemoveRows`, `InsertRow`, `BulkInsert` |
-| `GeoTableManager` | `Tile`, `FilterByBbox`, `FilteredExtent`, `GeometryTypes`, `GetGeometryGeoJSON`, `GetFeatures`, `GetFeaturesTile` |
-| `TableCreator` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS` |
-| `SQLWrapper` | `Query`, `QueryRow`, `Exec`, `Begin` — détail d'implémentation du paquet `duckdb`, **délibérément absent** de l'agrégat `Storage` pour qu'aucun service ne puisse contourner la règle 1 |
+Le catalogue (`storage/catalog`) et les tables de données (`storage/data`) sont deux contrats
+backend-agnostiques distincts, sans référence à DuckDB ni l'un à l'autre :
 
-`Storage` agrège les quatre premiers groupes. Elle sert à **documenter et asserter** qu'un adapter
-est complet ; aucun service n'en dépend — chacun déclare son interface étroite.
+| Interface | Paquet | Responsabilité |
+|---|---|---|
+| `MetadataReader` | `catalog` | `TableIds` (trié), `TableExists`, `GetMetadata`, `List`, `BySource` |
+| `MetadataWriter` | `catalog` | `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata` |
+| `TableResolver` | `data` | `Table(meta) (TableRepository, error)` — le seul point d'entrée vers une table résolue |
+| `TableRepository` | `data` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
+| `RowRepository` | `data` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
+| `GeoRepository` | `data` | `Tile`, `Features`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
+| `TableCreator` | `storage` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS` |
+| `SQLWrapper` | `storage` | `Query`, `QueryRow`, `Exec`, `Begin` — détail d'implémentation du paquet `duckdb`, utilisé par les suites de conformité, jamais par un service |
 
-**Nommage.** `MetadataWriter.Remove` supprime une table entière, `TableWriter.RemoveRows` supprime
-des lignes. Go ne permet pas deux méthodes homonymes de signatures différentes sur une interface
-combinée, d'où la distinction.
+Aucun service ne dépend de ces interfaces directement : chacun déclare sa propre interface étroite
+sur le sous-ensemble qu'il appelle réellement (`core.storageAdapter` documente la surface complète
+qu'un adapter doit satisfaire : `catalog.MetadataManager` + `storage.TableCreator` +
+`data.TableResolver`).
+
+**Nommage.** `MetadataWriter.Remove` supprime une table entière (métadonnées et table physique, dans
+une transaction unique via `duckdb/catalog.Catalog.DeleteTable`), `RowRepository.Delete` supprime des
+lignes.
 
 **Types de données transverses.** `Row` (pkey + valeurs, sans géométrie), `GeoFeature` (pkey +
 fragment GeoJSON brut + valeurs), `GeoQuery` (clause `BuildFilter` + args + tolérance de
@@ -361,17 +368,21 @@ fait qu'échapper.
 
 ### 4.6 L'adapter DuckDB
 
-Fichiers : `internal/storage/duckdb/` (`adapter.go`, `table.go`, `create.go`, `derive.go`, `mvt.go`,
-`features.go`, `migrations.go`).
+Fichiers : `internal/storage/duckdb/` (`adapter.go`, `table.go`, `create.go`, `derive.go`), plus les
+sous-paquets `duckdb/catalog/` (métadonnées, migrations, cascade de suppression) et `duckdb/data/`
+(résolution de table, lignes, géo — l'implémentation des contrats de `storage/data`).
 
-- **Ouverture** : `INSTALL spatial; LOAD spatial;` une fois, pool limité à 4 connexions, création du
-  répertoire parent, puis migration du schéma.
-- **Sérialisation des écritures** : un mutex applicatif unique couvre `Exec` (règle 21).
-  `BulkInsert` le prend lui-même pour toute la durée de sa transaction, plutôt que par instruction.
-- **Migrations** : une liste ordonnée d'instructions `ALTER`, appliquées une fois chacune, suivies
-  par une table `schema_version`. Une base neuve reçoit directement le DDL courant et est marquée à
-  la version la plus haute ; une base préexistante est marquée à 0 et rejoue tout. **La liste est
-  actuellement vide** (voir §4.1, dette connue).
+- **Ouverture** : `INSTALL spatial; LOAD spatial;` une fois, pool dimensionné par
+  `duckdb.maxOpenConns` (§2.2), création du répertoire parent, puis migration du schéma.
+- **Sérialisation des écritures** : un mutex applicatif unique (`writeMu`) couvre `Exec`.
+  `BulkInsert` et `Catalog.DeleteTable` le prennent eux-mêmes pour toute la durée de leur
+  transaction, plutôt que par instruction.
+- **Migrations** (`duckdb/catalog/migrations.go`) : une liste ordonnée d'instructions `ALTER`,
+  appliquées une fois chacune, suivies par une table `schema_version`. Une base neuve reçoit
+  directement le DDL courant et est marquée à la version la plus haute ; une base préexistante sans
+  `schema_version` est marquée à 0 et rejoue tout — une `ADD COLUMN` sur une colonne déjà présente
+  (base migrée après l'ajout de la colonne mais avant `schema_version`) est tolérée plutôt que de
+  faire échouer le démarrage.
 - **Reprojection** : la géométrie est reprojetée **une fois à l'import** vers EPSG:3857, jamais par
   requête. Toute sortie lon/lat (bbox, GeoJSON) reconvertit vers `OGC:CRS84`.
 
@@ -402,16 +413,16 @@ Il invalide l'entrée concernée après **chaque** écriture : `UpdateMetadata`,
 
 ### 5.2 `RowService` — CRUD de lignes, typé
 
-Convertit chaque valeur en type JSON natif selon son `ColumnType` (règle 12), en s'appuyant sur le
-cache de `SchemaService` pour ne pas redemander les types ligne par ligne.
+Convertit chaque valeur en type JSON natif selon le type de colonne résolu par `SchemaService.Types`
+(règle 12), résolu **une fois par page** plutôt qu'une fois par ligne.
 
 `UpdateRow` écrit toutes les colonnes en **une** instruction : un update multi-colonnes est atomique,
-tout passe ou rien (§5.1 du point de vue du code appelant). Il déclenche `RefreshDerived`
-**uniquement** si la mise à jour touche la colonne géométrique (règle 9) ; un update scalaire ne
-recalcule ni `bbox` ni `updatedAt`, et n'invalide donc pas les tuiles.
-
-`InsertRow`, `BulkInsertRows` et `RemoveRows` déclenchent systématiquement `RefreshDerived`
-(le nombre de lignes change).
+tout passe ou rien (§5.1 du point de vue du code appelant). `UpdateRow`, `InsertRow` et
+`BulkInsertRows` déclenchent `RefreshDerived` avec `touchesGeometry` vrai seulement si l'écriture
+fixe effectivement la colonne géométrique (règle 9) ; un update ou insert purement scalaire ne
+recalcule que `rowCount`/`updatedAt`, jamais le `bbox`. `RemoveRows` passe toujours `touchesGeometry`
+à `meta.IsGeo` : une ligne supprimée peut avoir été sur la frontière du bbox, qu'il n'y a pas de
+moyen bon marché de vérifier après coup.
 
 ### 5.3 `SchemaService` — structure, pas donnée
 
@@ -707,10 +718,16 @@ internal/
     webui.go           service du SPA avec repli history-mode
   service/             un fichier par service + errors.go + formats.go
   storage/
-    duckdb/            adapter, création, données, MVT, features, migrations
-    storagetest/       suite de conformité réutilisable
-    mocks/             mock testify de storage.Storage
-    *.go               contrats et primitives indépendants du moteur
+    catalog/           contrat backend-agnostique du catalogue (Metadata, MetadataManager)
+    data/              contrat backend-agnostique des tables de données (TableResolver,
+                        TableRepository, RowRepository, GeoRepository)
+    sort/              SortField, sans dépendance — casse le cycle catalog/data
+    duckdb/            adapter DuckDB, création, dérivation
+      catalog/         implémentation DuckDB du catalogue + migrations + cascade de suppression
+      data/            implémentation DuckDB des tables de données
+    storagetest/       suite de conformité réutilisable, exécutée contre duckdb/
+    mocks/             mocks testify des contrats catalog, data et storage.TableCreator
+    *.go               TableCreator, Row/GeoFeature/GeoQuery, BuildFilter, identifiants, SQLWrapper
   webui/               go:embed du build de production
 web/                   application Vue 3 (build vers internal/webui/dist)
 docs/                  cette spec, l'audit, le plan, et le Swagger généré
@@ -742,43 +759,9 @@ Commandes : `mise run test`, `mise run test-race`, `mise run lint`.
 
 ---
 
-## 11. Glossaire des références du code
-
-Les commentaires du code renvoient à des identifiants issus d'audits successifs. Les documents
-d'origine (`docs/audit.md`, `docs/audit2.md`) ne sont plus dans le dépôt ; voici ce que chaque tag
-désigne, pour que ces commentaires restent lisibles.
-
-| Tag | Sujet |
-|---|---|
-| `règle N` | règle non négociable N de la §0 de ce document |
-| `§4.1`, `§4.2`, `§4.4`, `§5`, `§5.1` | sections de ce document (numérotation préservée à cet effet) |
-| `GEO-1` | le CRS source doit être détecté ou fourni explicitement — jamais deviné ; d'où `?srid=` et `/sources/{name}/metadata` |
-| `GEO-2` | une table à plusieurs colonnes géométriques est rejetée à l'import |
-| `GEO-3` | les attributs embarqués dans une tuile (`?attrs=`) et la simplification à la résolution du zoom |
-| `PERF-1` | cache de schéma de colonnes, pour éviter une requête de type par colonne |
-| `PERF-2` | export streamé par lots bornés au lieu de tout charger en mémoire |
-| `PERF-4` | propagation de `context.Context` jusqu'aux appels `database/sql` |
-| `PERF-5` | tous les caches sont des LRU bornés avec expiration |
-| `HTTP-2` | `ETag`/`Cache-Control` sur les tuiles, dérivés de `UpdatedAt` |
-| `NEW-SEC-1` | mapping erreur → statut par type, avec 500 par défaut ; pas de fuite de message en 5xx |
-| `NEW-BUG-2` | une géométrie NULL exportée doit produire le littéral JSON `null` |
-| `NEW-BUG-3` | `/derive` génère toujours un `__pkey` neuf et exclut celui que la requête projette |
-| `NEW-BUG-4` | une `limit` absente ou nulle sur `/filter` retombe sur le défaut, pas sur `LIMIT 0` |
-| `NEW-BUG-5` | le lien source ↔ table repose sur `sourceName`/`sourceLayer`, jamais sur `tableName` |
-| `NEW-BUG-6` | `SourceService.Delete` ne retire l'entrée de cache qu'après succès complet |
-| `NEW-BUG-7` | l'export échappe au timeout de requête **et** au `WriteTimeout` du serveur |
-
----
-
-## 12. Écarts connus entre ce document et le code
-
-Recensés par `docs/audit-go.md` ; listés ici pour qu'ils ne soient pas lus comme des contrats.
+## 11. Écarts connus entre ce document et le code
 
 | Sujet | État |
 |---|---|
-| `numberMatched` OGC | renvoie le compte de la page, pas le total (audit §3.5) |
-| CRS de `POST /tables/{id}/bbox` | attend de l'EPSG:3857, alors que tous les autres bbox sont en OGC:CRS84 (audit §3.6) |
-| Migrations | la liste est vide alors que le schéma a évolué ; une base antérieure à `sourceName` ne s'ouvre pas (audit §4.1) |
-| `ColumnType` | une requête `DESCRIBE` par colonne, contrairement à ce que le commentaire du service annonce (audit §3.1) |
-| `TableExists` | présent dans le contrat, sans appelant en production (audit §4.3) |
-| `GetDistinctValues`, `FilterByBbox` | lectures sans plafond (audit §3.9) |
+| `numberMatched` OGC | renvoie le compte de la page, pas le total des éléments correspondant à la requête — un client qui s'en sert pour dimensionner sa pagination se trompe |
+| `catalog.MetadataReader.TableExists` | présent dans le contrat comme primitive d'existence bon marché, sans appelant en production actuellement |

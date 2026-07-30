@@ -30,8 +30,10 @@ type Adapter struct {
 // ensures the metadata schema exists. The parent directory of path is
 // created if missing — DuckDB itself refuses to open a file in a
 // non-existent directory ("in-memory" paths like ":memory:" have no
-// parent to create, so this is a no-op for them).
-func New(path string) (*Adapter, error) {
+// parent to create, so this is a no-op for them). maxOpenConns bounds the
+// pool DuckDB allows only one active writer per process, but concurrent
+// reads are safe across the pool.
+func New(path string, maxOpenConns int) (*Adapter, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating duckdb directory: %w", err)
@@ -42,7 +44,7 @@ func New(path string) (*Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening duckdb: %w", err)
 	}
-	db.SetMaxOpenConns(4)
+	db.SetMaxOpenConns(maxOpenConns)
 
 	if _, err := db.Exec("INSTALL spatial; LOAD spatial;"); err != nil {
 		db.Close()
@@ -82,8 +84,7 @@ func (a *Adapter) QueryRow(ctx context.Context, query string, args ...any) *sql.
 	return a.db.QueryRowContext(ctx, query, args...)
 }
 
-// Exec runs a write statement, serialized against every other write
-// (règle 21).
+// Exec runs a write statement, serialized against every other write.
 func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
@@ -92,13 +93,13 @@ func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Resu
 
 // Begin starts a transaction. Internal writers that need transactional
 // semantics (BulkInsert) take writeMu themselves around the whole
-// transaction (règle 6, règle 21) rather than through this passthrough.
+// transaction rather than through this passthrough.
 func (a *Adapter) Begin(ctx context.Context) (*sql.Tx, error) {
 	return a.db.BeginTx(ctx, nil)
 }
 
 // WithTx runs fn inside a transaction held under writeMu for its whole
-// duration (règle 6, règle 21), committing on success and rolling back on
+// duration, committing on success and rolling back on
 // any error fn returns. Shared by catalog.Catalog (cascade delete) and
 // data.Open (BulkInsert), the two consumers that need transactional
 // semantics beyond a single Exec.

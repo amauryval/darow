@@ -20,7 +20,7 @@ type metadataAPI interface {
 }
 
 // rowAPI is everything the router calls on *service.RowService. Every
-// method takes the caller's already-resolved catalog.Metadata (§4.2) —
+// method takes the caller's already-resolved catalog.Metadata —
 // each handler resolves it via resolveTable — rather than a tableId.
 type rowAPI interface {
 	ListRows(ctx context.Context, meta catalog.Metadata, sort []storage.SortField, offset, limit int64) (*service.RowsPage, error)

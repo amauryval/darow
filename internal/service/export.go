@@ -20,15 +20,15 @@ type ExportValidationError struct{ msg string }
 func (e *ExportValidationError) Error() string { return e.msg }
 
 // rowLister is what ExportService needs to fetch a table's rows, one
-// bounded page at a time (PERF-2), without a per-page COUNT(*) it has no
-// use for (§4.2).
+// bounded page at a time, without a per-page COUNT(*) it has no
+// use for.
 type rowLister interface {
 	ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error)
 }
 
 // geometryFetcher is what ExportService needs to fetch each row's
 // geometry, exported as GeoJSON — the one export-only exception to
-// "never return the geometry column" (règle 7).
+// "never return the geometry column".
 type geometryFetcher interface {
 	GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error)
 }
@@ -43,7 +43,7 @@ type columnLister interface {
 // ExportService renders a table's rows as CSV or GeoJSON — export is
 // domain logic, not HTTP transport: the router only sets headers and lets
 // Export stream the body directly to the response. Rows are fetched
-// batchSize at a time (PERF-2), so memory use stays bounded regardless of
+// batchSize at a time, so memory use stays bounded regardless of
 // table size instead of holding every row and the full rendered body at
 // once.
 type ExportService struct {
@@ -55,7 +55,7 @@ type ExportService struct {
 
 // NewExportService builds an ExportService reading rows via rows, column
 // order via columns, and, for GeoJSON, geometry via geometry. batchSize
-// bounds how many rows are held in memory at once (PERF-2); a value <= 0
+// bounds how many rows are held in memory at once; a value <= 0
 // falls back to 1000.
 func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLister, batchSize int64) *ExportService {
 	if batchSize <= 0 {
@@ -84,7 +84,7 @@ func (s *ExportService) ContentType(meta catalog.Metadata, format string) (strin
 }
 
 // Export streams every row of meta's table to w in format, fetching rows
-// batchSize at a time (PERF-2) rather than loading the whole table into
+// batchSize at a time rather than loading the whole table into
 // memory. Callers must have already validated format via ContentType.
 func (s *ExportService) Export(ctx context.Context, w io.Writer, meta catalog.Metadata, format string) error {
 	switch format {
@@ -101,7 +101,7 @@ func (s *ExportService) Export(ctx context.Context, w io.Writer, meta catalog.Me
 // batchSize rows at a time, until every row has been visited. A page
 // shorter than batchSize is always the last one — GetPkeys never returns
 // more than the limit it was given — so this needs no separate total
-// count to know when to stop (§4.2).
+// count to know when to stop.
 func (s *ExportService) forEachPage(ctx context.Context, meta catalog.Metadata, fn func([]storage.Row) error) error {
 	var offset int64
 	for {
@@ -123,7 +123,7 @@ func (s *ExportService) forEachPage(ctx context.Context, meta catalog.Metadata, 
 }
 
 // exportColumns returns meta's table's column names in schema order,
-// excluding the geometry column (règle 7 — rows never carry it either).
+// excluding the geometry column — rows never carry it either.
 func (s *ExportService) exportColumns(ctx context.Context, meta catalog.Metadata) ([]string, error) {
 	schema, err := s.columns.Schema(ctx, meta)
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 
 // TableRepository groups every operation on a single resolved data table.
 // Obtained once per request via TableResolver.Table, its existence is the
-// proof its identifiers are already validated (règle 1) — no method below
+// proof its identifiers are already validated — no method below
 // re-validates PhysicalName or the geometry column.
 type TableRepository interface {
 	// Schema lists every column together with its DuckDB type in a single
@@ -26,7 +26,7 @@ type TableRepository interface {
 }
 
 // TableResolver resolves a logical table's already-fetched Metadata into a
-// TableRepository, validating its identifiers once (règle 1) rather than
+// TableRepository, validating its identifiers once rather than
 // on every subsequent method call.
 type TableResolver interface {
 	Table(meta catalog.Metadata) (TableRepository, error)

@@ -99,7 +99,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 // scans workDir for sources. The caller must defer svcs.Close() to release
 // the storage connection, including on a crash or shutdown signal.
 func Setup(cfg config.Config) (*Services, error) {
-	adapter, err := duckdb.New(cfg.DuckDB.Path)
+	adapter, err := duckdb.New(cfg.DuckDB.Path, cfg.DuckDB.MaxOpenConns)
 	if err != nil {
 		return nil, fmt.Errorf("duckdb: %w", err)
 	}

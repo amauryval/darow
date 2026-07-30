@@ -106,6 +106,16 @@ func Test_tileETag(t *testing.T) {
 	assert.NotEqual(t, etag3, etag4, "filter should change the ETag")
 }
 
+// A filter value containing a double quote must never produce a malformed
+// ETag header (RFC 9110 §8.8.3) — the material is hashed, not interpolated.
+func Test_tileETag_QuoteInFilterArgDoesNotBreakQuoting(t *testing.T) {
+	meta := catalog.Metadata{TableId: "t1", UpdatedAt: time.Now()}
+
+	etag := tileETag(meta, 1, 2, 3, nil, storage.GeoQuery{Filter: "name = ?", Args: []any{`va"lue`}})
+
+	assert.Regexp(t, `^"[0-9a-f]+"$`, etag, "ETag must be a quoted hash, never raw filter material")
+}
+
 func Test_geoHandler_getTile(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -124,7 +134,7 @@ func Test_geoHandler_getTile(t *testing.T) {
 		{name: "invalid filter returns 400", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, filter: "not-json", wantStatus: http.StatusBadRequest},
 		{name: "tile failure returns 500", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, tileErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
-		// (audit §3.12) — the handler must map it to 404, not 500.
+		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, tileErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
@@ -215,7 +225,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 		{name: "invalid filter returns 400", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, query: "?filter=not-json", wantStatus: http.StatusBadRequest},
 		{name: "storage failure returns 500", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, featErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
-		// (audit §3.12) — the handler must map it to 404, not 500.
+		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, featErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
@@ -224,7 +234,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 100})
+			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000})
 
 			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -258,7 +268,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
-	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 1})
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 1, MaxFeaturesLimit: 10000})
 
 	meta := catalog.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -288,7 +298,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", typesErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
-		// (audit §3.12) — the handler must map it to 404, not 500.
+		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", typesErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
@@ -324,7 +334,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", filterErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
-		// (audit §3.12) — the handler must map it to 404, not 500.
+		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", filterErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
@@ -370,7 +380,7 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "storage failure returns 500", extentErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
-		// (audit §3.12) — the handler must map it to 404, not 500.
+		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", extentErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 

@@ -627,6 +627,7 @@ const docTemplate = `{
         },
         "/api/v1/tables/{tableId}/bbox": {
             "post": {
+                "description": "bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)",
                 "consumes": [
                     "application/json"
                 ],

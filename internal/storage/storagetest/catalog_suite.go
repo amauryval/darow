@@ -27,9 +27,9 @@ type CatalogHarness interface {
 type NewCatalog func(t *testing.T) CatalogHarness
 
 // RunCatalogSuite runs every catalogue conformance subtest against a fresh
-// instance from newCatalog — the contract a future catalogue backend
-// (shared by any data adapter, see docs/plan-repository-metadata.md §2.2)
-// must hold, independently of any particular data adapter.
+// instance from newCatalog — the contract a future catalogue backend must
+// hold, independently of any particular data adapter (see
+// docs/plan-repository-metadata.md).
 func RunCatalogSuite(t *testing.T, newCatalog NewCatalog) {
 	t.Run("CreateAndRead", func(t *testing.T) { testCatalogCreateAndRead(t, newCatalog) })
 	t.Run("Remove", func(t *testing.T) { testCatalogRemove(t, newCatalog) })
