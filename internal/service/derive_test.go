@@ -18,7 +18,7 @@ import (
 func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Storage) {
 	m := &mocks.Storage{}
 	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
-	metadata := NewMetadataService(m, c)
+	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
 	svc := NewDeriveService(metadata, m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m

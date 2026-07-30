@@ -10,19 +10,23 @@ _.path = ["./bin"]
 # the duckdb driver.
 CGO_LDFLAGS = ""
 
+# "./..." enumerates every package in the module tree, imported or not, so it
+# picks up web/node_modules/flatted/golang/pkg/flatted — an npm-shipped Go
+# package. It would be tested and vetted, never linked, but the go tool has no
+# exclude flag, so every task below filters the package list explicitly.
 [tasks.test]
 description = "Run all Go tests"
-run = "go test ./..."
+run = "go test $(go list ./... | grep -v /web/)"
 
 [tasks."test-race"]
 description = "Run all Go tests with the race detector"
-run = "go test ./... -race"
+run = "go test -race $(go list ./... | grep -v /web/)"
 
 [tasks.lint]
 description = "Run go vet and gofmt checks"
 run = """
-go vet ./...
-gofmt -l .
+go vet $(go list ./... | grep -v /web/)
+gofmt -l cmd internal docs
 """
 
 [tasks.docs]

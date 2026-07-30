@@ -73,8 +73,8 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
 
-	metadataSvc := service.NewMetadataService(storageAdapter, metadataCache)
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
+	metadataSvc := service.NewMetadataService(storageAdapter, metadataCache, schemaSvc)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, storageAdapter)
 	importSvc := service.NewImportService(metadataSvc, storageAdapter)

@@ -18,8 +18,8 @@ type ColumnSchema struct {
 // distinct from RowService's row data. Adding a column never affects
 // derived metadata, so it needs no dependency on MetadataService. It is
 // the single owner of its own column schema cache, a size-bounded LRU
-// with expiration, invalidated by AddColumn — the only write that can
-// change a table's structure.
+// with expiration, invalidated by AddColumn and, through
+// InvalidateSchema, by MetadataService.RemoveTable.
 type SchemaService struct {
 	storage tableResolver
 	cache   *expirable.LRU[string, []ColumnSchema]
@@ -86,6 +86,13 @@ func (s *SchemaService) AddColumn(ctx context.Context, meta catalog.Metadata, co
 	if err := repo.AddColumn(ctx, colName, colType); err != nil {
 		return err
 	}
-	s.cache.Remove(meta.TableId)
+	s.InvalidateSchema(meta.TableId)
 	return nil
+}
+
+// InvalidateSchema drops tableId's cached schema. Called by
+// MetadataService.RemoveTable, the one structural change to a table that
+// happens outside SchemaService.
+func (s *SchemaService) InvalidateSchema(tableId string) {
+	s.cache.Remove(tableId)
 }

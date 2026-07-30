@@ -241,6 +241,68 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 	assert.Equal(t, []string{"POINT"}, types)
 }
 
+func Test_tileSimplifyTolerance(t *testing.T) {
+	cases := []struct {
+		name string
+		zoom int
+		want float64
+	}{
+		{name: "world tile", zoom: 0, want: 9783.94},
+		{name: "mid zoom", zoom: 8, want: 38.22},
+		{name: "floored at high zoom", zoom: 20, want: 0.25},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.InDelta(t, c.want, tileSimplifyTolerance(c.zoom), 0.01)
+		})
+	}
+}
+
+// newDensePolygonTestTable stores a ~500 km-radius buffered polygon in
+// EPSG:3857, detailed enough that the tile query's simplification has
+// something to drop at low zoom.
+func newDensePolygonTestTable(t *testing.T, conn dbConn) catalog.Metadata {
+	_, err := conn.db.Exec(`CREATE TABLE t_poly (__pkey TEXT PRIMARY KEY, name TEXT, geom GEOMETRY)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`INSERT INTO t_poly
+        SELECT '1', 'a', ST_Buffer(ST_Point(100000, 100000), 500000, 200)`)
+	require.NoError(t, err)
+	return catalog.Metadata{TableId: "id-poly", PhysicalName: "t_poly", IsGeo: true, GeometryColumn: "geom"}
+}
+
+func Test_GeoRepository_TileSimplification(t *testing.T) {
+	cases := []struct {
+		name string
+		zoom int
+		x, y int
+	}{
+		{name: "world tile", zoom: 0, x: 0, y: 0},
+		{name: "covering tile", zoom: 5, x: 16, y: 15},
+		{name: "high zoom inside polygon", zoom: 12, x: 2065, y: 2039},
+		{name: "tile far from polygon", zoom: 5, x: 0, y: 0},
+	}
+
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newDensePolygonTestTable(t, conn))
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+
+	sizes := map[string]int{}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mvt, err := geo.Tile(context.Background(), c.zoom, c.x, c.y, nil, storage.GeoQuery{})
+			require.NoError(t, err)
+			assert.NotEmpty(t, mvt)
+			sizes[c.name] = len(mvt)
+		})
+	}
+
+	assert.Less(t, sizes["tile far from polygon"], sizes["world tile"])
+	assert.Less(t, sizes["world tile"], sizes["covering tile"])
+}
+
 func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	conn := openRepoTestDB(t)
 	repo, err := Open(conn, conn, newGeoTestTable(t, conn))

@@ -17,7 +17,7 @@ export function tileKey(tile: Tile): string {
   return `${tile.z}/${tile.x}/${tile.y}`;
 }
 
-// Same formula as tileSimplifyTolerance in internal/storage/duckdb/mvt.go:
+// Same formula as tileSimplifyTolerance in internal/storage/duckdb/data/geo.go:
 // a Web Mercator tolerance (meters) collapsing to roughly one MVT extent
 // unit at zoom, so a GeoJSON tile carries no more coordinate detail than its
 // MVT counterpart would render — the main lever against unbounded RAM use at

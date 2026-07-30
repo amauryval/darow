@@ -15,12 +15,19 @@ import (
 	"gogeoserver/internal/storage/mocks"
 )
 
-func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage) {
+type schemaInvalidatorSpy struct{ invalidated []string }
+
+func (s *schemaInvalidatorSpy) InvalidateSchema(tableId string) {
+	s.invalidated = append(s.invalidated, tableId)
+}
+
+func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage, *schemaInvalidatorSpy) {
 	m := &mocks.Storage{}
 	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
-	svc := NewMetadataService(m, c)
+	schema := &schemaInvalidatorSpy{}
+	svc := NewMetadataService(m, c, schema)
 	t.Cleanup(func() { m.AssertExpectations(t) })
-	return svc, m
+	return svc, m, schema
 }
 
 func Test_MetadataService_GetMetadata(t *testing.T) {
@@ -36,7 +43,7 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m := setupMetadataService(t)
+			svc, m, _ := setupMetadataService(t)
 
 			if c.failStorage {
 				m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{}, errors.New("boom")).Once()
@@ -56,7 +63,7 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 }
 
 func Test_MetadataService_ListTables(t *testing.T) {
-	svc, m := setupMetadataService(t)
+	svc, m, _ := setupMetadataService(t)
 	want := []catalog.Metadata{{TableId: "id-1"}}
 	m.On("List", mock.Anything, mock.Anything, int64(0), int64(1)).Return(want, int64(2), nil).Once()
 
@@ -72,7 +79,7 @@ func Test_MetadataService_ListTables(t *testing.T) {
 // source — LoadedSourceNames keys on SourceName, which a rename never
 // touches, not on TableName.
 func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
-	svc, m := setupMetadataService(t)
+	svc, m, _ := setupMetadataService(t)
 
 	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
 		{SourceName: "communes.geojson"}: "id-1",
@@ -87,7 +94,7 @@ func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 // A multi-layer source's key composes SourceName and SourceLayer with
 // layerSeparator, matching how SourceService.Refresh looks tables up.
 func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
-	svc, m := setupMetadataService(t)
+	svc, m, _ := setupMetadataService(t)
 
 	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
 		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
@@ -100,17 +107,43 @@ func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
 }
 
 func Test_MetadataService_RemoveTable(t *testing.T) {
-	svc, m := setupMetadataService(t)
+	cases := []struct {
+		name            string
+		failStorage     bool
+		wantErr         bool
+		wantInvalidated []string
+	}{
+		{name: "invalidates both caches", wantInvalidated: []string{"id-1"}},
+		{name: "leaves caches alone when storage fails", failStorage: true, wantErr: true},
+	}
 
-	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, schema := setupMetadataService(t)
+			svc.cache.Add("id-1", catalog.Metadata{TableId: "id-1"})
 
-	err := svc.RemoveTable(context.Background(), "id-1")
+			var removeErr error
+			if c.failStorage {
+				removeErr = errors.New("db locked")
+			}
+			m.On("Remove", mock.Anything, "id-1").Return(removeErr).Once()
 
-	require.NoError(t, err)
+			err := svc.RemoveTable(context.Background(), "id-1")
+
+			if c.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, c.wantInvalidated, schema.invalidated)
+			_, cached := svc.cache.Get("id-1")
+			assert.Equal(t, c.wantErr, cached)
+		})
+	}
 }
 
 func Test_MetadataService_Rollback_ReportsOriginalErrorWhenCleanupAlsoFails(t *testing.T) {
-	svc, m := setupMetadataService(t)
+	svc, m, _ := setupMetadataService(t)
 
 	m.On("Remove", mock.Anything, "id-1").Return(errors.New("db locked")).Once()
 

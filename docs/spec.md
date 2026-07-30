@@ -8,18 +8,17 @@ sans l'avoir entièrement lu.
 document qu'il faut corriger. Il ne contient volontairement pas de code : les signatures exactes se
 lisent dans les fichiers cités, qui sont indiqués à chaque section.
 
-Trois documents complètent celui-ci :
-- `docs/audit-go.md` — état de santé du code Go, défauts connus, recommandations.
-- `docs/plan-repository-metadata.md` — refonte prévue de la couche catalogue (`metadata`).
-- `docs/plan-repository-data.md` — refonte jumelle des tables de données référencées par `metadata`.
+C'est le seul document d'architecture du dépôt. `docs/swagger.json` / `docs/swagger.yaml` /
+`docs/docs.go` sont générés par `swag init` depuis les annotations des handlers et ne se modifient
+jamais à la main.
 
 ---
 
 ## 0. Règles non négociables
 
-Ces règles s'appliquent à tout le code produit pour ce projet. Elles sont référencées par leur
-numéro dans ~90 commentaires du code (« règle 7 », « règle 21 »…) : **leur numérotation est stable
-et ne doit jamais être réordonnée**.
+Ces règles s'appliquent à tout le code produit pour ce projet. La numérotation est stable et ne doit
+jamais être réordonnée — les commentaires du code décrivent le code lui-même et ne renvoient pas à
+ces numéros.
 
 1. **Jamais d'identifiant SQL non validé.** Tout nom de table/colonne interpolé dans une requête
    passe par `storage.ValidateIdentifier` **ou** `storage.QuoteIdentifier` (§4.3). Les valeurs sont
@@ -242,13 +241,12 @@ Un fichier dont l'extension n'est pas dans `allowedExtensions`, ou dont la taill
 **Verrouillage.** `Load` détient le verrou pendant tout son check-then-import, pas seulement autour
 de la lecture du cache : deux `Load` concurrents sur la même source ne peuvent pas passer tous les
 deux le test « pas encore chargée ». `Delete` ne retire l'entrée du cache qu'après succès de toutes
-les suppressions de tables, pour qu'un échec partiel laisse la source visible et réessayable
-(NEW-BUG-6).
+les suppressions de tables, pour qu'un échec partiel laisse la source visible et réessayable.
 
 **Suivi chargé/non chargé.** Le lien source ↔ table repose sur les champs `sourceName` et
 `sourceLayer` de `metadata`, **jamais** sur `tableName` — que `PATCH /tables/{id}` peut renommer
 librement. Renommer une table ne la détache donc pas de sa source, et aucune table sans relation ne
-peut se faire passer pour une source par coïncidence de nom (NEW-BUG-5).
+peut se faire passer pour une source par coïncidence de nom.
 
 **Nommage multi-couches.** Une couche chargée depuis `fichier.gpkg` produit une table nommée
 `fichier.gpkg::nom_couche` ; `sourceName` reçoit `fichier.gpkg` et `sourceLayer` reçoit
@@ -390,6 +388,35 @@ sous-paquets `duckdb/catalog/` (métadonnées, migrations, cascade de suppressio
 > comme CRS cible inverse silencieusement X et Y. Cette règle s'applique aux quatre endroits qui
 > transforment : calcul de `bbox`, `FilteredExtent`, `GetGeometryGeoJSON`, `GetFeatures`.
 
+### 4.7 Rendu d'une tuile MVT
+
+Fichier : `internal/storage/duckdb/data/geo.go` (`Tile`).
+
+Une seule requête, en trois étapes : sélection des lignes intersectant l'enveloppe de tuile
+(`ST_TileEnvelope`), simplification, puis `ST_AsMVTGeom` + agrégation `ST_AsMVT`. Les décisions qui
+gouvernent son coût :
+
+- **`ST_Intersects_Extent`, pas `ST_Intersects`**, pour le filtre de tuile : la comparaison
+  d'enveloppes suffit — `ST_AsMVTGeom` découpe ensuite exactement — et l'index RTREE n'est de toute
+  façon pas retenu par le planificateur sur ce type de requête. Le vrai élagage vient du clustering
+  Hilbert (§4.2), qui laisse les zone maps écarter les row groups hors tuile. `ST_Intersects` sur la
+  même requête est mesuré plusieurs secondes plus lent.
+- **`ST_Simplify`, pas `ST_SimplifyPreserveTopology`.** La variante préservant la topologie domine
+  le temps total de la requête (mesuré sur une couche administrative de 35 000 polygones / 7 M de
+  sommets : 4,0 s contre 0,78 s en z5 ; 3,0 s contre 0,10 s en z0) pour une tuile qui diffère de
+  0,1 % en taille, puisque `ST_AsMVTGeom` re-quantifie ensuite chaque coordonnée sur la grille
+  entière de 4096 unités. Ce que la préservation de topologie achète — des anneaux qui survivent au
+  lieu de s'effondrer — est précisément ce qui doit disparaître à un zoom où l'entité fait moins
+  d'un pixel.
+- **La tolérance vient du zoom**, `tileSimplifyTolerance` : une unité d'extent MVT convertie en
+  mètres Web Mercator, plancher à 0,25 m. Les paramètres `simplify`/`precision` de la requête HTTP
+  sont donc ignorés sur la route MVT (ils ne valent que pour les routes GeoJSON), et n'entrent pas
+  dans la clé de cache.
+- **`TRY(...)` + `WHERE mvt_geom IS NOT NULL`** autour de `ST_AsMVTGeom` : filet de sécurité contre
+  un défaut amont de duckdb-spatial (`duckdb/duckdb-spatial#792`) qui produit de la géométrie
+  découpée corrompue sur certaines combinaisons source/tuile. Il ne peut écarter qu'une entité déjà
+  cassée, jamais une entité valide.
+
 ---
 
 ## 5. Couche service
@@ -402,7 +429,10 @@ Tout autre service passe par lui pour lire ou écrire des métadonnées, via un 
 ne cache indépendamment (règle 11). Le cache est un LRU borné avec TTL.
 
 Il invalide l'entrée concernée après **chaque** écriture : `UpdateMetadata`, `RefreshDerived`,
-`RemoveTable`, `Rollback`.
+`RemoveTable`, `Rollback`. `RemoveTable` invalide en plus le cache de `SchemaService`, via un port
+étroit `schemaInvalidator` : supprimer une table change sa structure aussi sûrement qu'`AddColumn`,
+et l'entrée survivrait sinon jusqu'à son TTL. C'est la seule dépendance de `MetadataService` vers un
+autre service, et elle ne va que dans ce sens — `SchemaService` ne connaît pas `MetadataService`.
 
 - `ListTables` pagine sur l'ordre déterministe de `TableIds` et renvoie aussi le total.
 - `Rollback` supprime la ligne de métadonnées (et, via `Remove`, la table physique éventuellement à
@@ -428,8 +458,10 @@ moyen bon marché de vérifier après coup.
 
 Propriétaire de son cache de schéma. Expose le schéma complet (**géométrie incluse** : c'est de la
 structure, la règle 7 ne s'applique pas) et la table nom → type. `AddColumn` est la seule écriture
-qui change la structure et invalide donc le cache ; l'ajout de colonne n'affecte aucun champ dérivé,
-donc ce service n'a pas besoin de `MetadataService`.
+qui change la structure depuis ce service et invalide donc le cache ; l'ajout de colonne n'affecte
+aucun champ dérivé, donc ce service n'a pas besoin de `MetadataService`. `InvalidateSchema` expose la
+même invalidation à `MetadataService.RemoveTable` (§5.1), sans que le cache cesse d'appartenir à ce
+service.
 
 ### 5.4 `DeriveService` et `ImportService` — créer une table, avec rollback
 
@@ -462,12 +494,12 @@ clés non borné, contrairement au z/x/y d'une tuile.
 Le routeur ne fait que valider le format, poser les en-têtes, et laisser le service écrire
 directement dans le corps de la réponse.
 
-- Les lignes sont lues **page par page** (`exportBatchSize`), jamais toutes en mémoire (PERF-2).
+- Les lignes sont lues **page par page** (`exportBatchSize`), jamais toutes en mémoire.
 - Le format est validé **avant** le premier octet écrit : une fois le streaming commencé, le code de
   statut ne peut plus changer.
 - CSV : en-tête `pkey` + colonnes du schéma (géométrie exclue), écrit avant toute lecture de ligne.
 - GeoJSON : `FeatureCollection` assemblée en flux ; refusé sur une table non géo. Une géométrie NULL
-  produit le littéral JSON `null`, jamais une chaîne vide (NEW-BUG-2).
+  produit le littéral JSON `null`, jamais une chaîne vide.
 
 ### 5.7 `SourceService`
 
@@ -563,7 +595,8 @@ cohérent avec le style tout-JSON du reste de l'API.
   plus » disponible sans requête de comptage séparée.
 
 > **Écart connu.** `numberMatched` renvoie le nombre d'entités **de la page**, pas le total
-> correspondant à la requête. Voir `docs/audit-go.md` §3.5.
+> correspondant à la requête : le calculer exigerait une requête de comptage supplémentaire par
+> page (`internal/router/handlers/features.go`).
 
 ### 6.3 Routeur et middlewares
 
@@ -582,7 +615,7 @@ plafond de corps de requête.
 - **`/tables/{tableId}/export` est enregistrée hors de ce groupe** : un export volumineux dépasse
   légitimement le budget d'une requête normale, et le timeout tronquerait une réponse déjà passée en
   `200`. Le handler neutralise en plus `WriteTimeout` du serveur juste avant de streamer, pour la
-  même raison (NEW-BUG-7).
+  même raison.
 
 **Résolution de table.** `TableResolver` (`router/validation/resolver.go`) résout `{tableId}` une
 fois par requête, servi par le cache dans le cas courant, et écrit un `404` si la table n'existe pas.
@@ -619,7 +652,7 @@ classifiée est un problème interne, jamais une faute du client (NEW-SEC-1).
 En complément du cache applicatif (règle 20), `GET /tiles/{z}/{x}/{y}` émet un `ETag` dérivé de
 `UpdatedAt`, des attributs et du filtre, plus un `Cache-Control: public, max-age=60` court — rien
 n'invalide la copie d'un CDN entre-temps. Un `If-None-Match` correspondant renvoie `304` sans
-toucher au stockage (HTTP-2).
+toucher au stockage.
 
 ### 6.6 Documentation Swagger
 
@@ -653,11 +686,11 @@ Séquence de `CreateFromFile` (`storage/duckdb/create.go`), déclenchée par
 3. **Détection de la colonne géométrique** par introspection du schéma résultant. Le nom varie selon
    le format (`geom`, `wkb_geometry`…), il n'est jamais supposé fixe. **Une table à plusieurs
    colonnes géométriques est rejetée** : tout le reste du domaine suppose une géométrie unique, et
-   en choisir une silencieusement ne serait juste qu'à moitié (GEO-2). Sans colonne géométrique, la
+   en choisir une silencieusement ne serait juste qu'à moitié. Sans colonne géométrique, la
    table est non géo et la séquence s'arrête ici.
 4. **Résolution du CRS source** : `srid` explicite s'il est fourni, sinon détection depuis les
    métadonnées du fichier. **Si aucun des deux n'aboutit, le chargement échoue** plutôt que de
-   deviner (GEO-1) — l'appelant doit rappeler avec un `srid` explicite.
+   deviner — l'appelant doit rappeler avec un `srid` explicite.
 5. **Reprojection vers EPSG:3857**, une fois, en base. La chaîne de CRS source est un **paramètre
    lié**, pas une interpolation : elle peut provenir des métadonnées d'un fichier, qui ne sont pas
    du contenu de confiance.
@@ -697,7 +730,7 @@ suffisant.
 toujours généré, exactement comme à l'import. La requête est donc libre de projeter ce qu'elle veut —
 projection partielle, `GROUP BY`, jointure — sans rien savoir de `__pkey`. Si elle en projette déjà
 un (typiquement un `SELECT *` sur une table déjà importée), il est exclu de l'enveloppe plutôt que
-d'entrer en collision (NEW-BUG-3).
+d'entrer en collision.
 
 Le reste de la séquence (détection géométrie, clustering, index) est identique à §7, étapes 3, 6, 7.
 
@@ -756,6 +789,15 @@ Fichiers de test à côté du code testé, dans le même paquet.
 Règle 17 : une struct, méthode ou handler livré sans son test n'est pas terminé.
 
 Commandes : `mise run test`, `mise run test-race`, `mise run lint`.
+
+Ces tâches (et les étapes correspondantes de la CI) **ne passent jamais `./...` au go tool**.
+`./...` énumère les paquets présents dans l'arborescence du module, importés ou non : il retient donc
+`web/node_modules/flatted/golang/pkg/flatted`, un paquet Go tiers livré par npm. Il serait *testé et
+vérifié*, jamais lié — le binaire n'est composé que du graphe d'imports de `cmd/server`, et
+`internal/webui` n'embarque que `dist/` — mais c'est du temps de CI dépensé sur du code tiers et un
+échec `gofmt` potentiel sur du code qu'on ne contrôle pas. Le go tool n'ayant pas de mécanisme
+d'exclusion, la liste de paquets est filtrée explicitement (`go list ./... | grep -v /web/`) et
+`gofmt` ne balaie que `cmd internal docs`.
 
 ---
 

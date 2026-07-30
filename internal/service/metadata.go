@@ -18,12 +18,22 @@ import (
 type MetadataService struct {
 	storage catalog.MetadataManager
 	cache   *expirable.LRU[string, catalog.Metadata]
+	schema  schemaInvalidator
+}
+
+// schemaInvalidator drops a table's cached column schema. MetadataService
+// holds it for RemoveTable alone: dropping a table changes its structure
+// as surely as AddColumn does, and the entry would otherwise sit in
+// SchemaService's cache until its TTL.
+type schemaInvalidator interface {
+	InvalidateSchema(tableId string)
 }
 
 // NewMetadataService builds a MetadataService backed by storage, using c
-// to cache metadata reads.
-func NewMetadataService(s catalog.MetadataManager, c *expirable.LRU[string, catalog.Metadata]) *MetadataService {
-	return &MetadataService{storage: s, cache: c}
+// to cache metadata reads and schema to drop a removed table's cached
+// schema.
+func NewMetadataService(s catalog.MetadataManager, c *expirable.LRU[string, catalog.Metadata], schema schemaInvalidator) *MetadataService {
+	return &MetadataService{storage: s, cache: c, schema: schema}
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
@@ -72,12 +82,14 @@ func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, pa
 	return nil
 }
 
-// RemoveTable deletes tableId's metadata and underlying physical table.
+// RemoveTable deletes tableId's metadata and underlying physical table,
+// then invalidates both the metadata and the schema cache.
 func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error {
 	if err := s.storage.Remove(ctx, tableId); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)
+	s.schema.InvalidateSchema(tableId)
 	return nil
 }
 

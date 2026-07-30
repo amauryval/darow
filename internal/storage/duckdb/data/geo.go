@@ -20,10 +20,10 @@ type geoRepository struct {
 
 var _ contract.GeoRepository = (*geoRepository)(nil)
 
-// tileSimplifyTolerance returns the ST_SimplifyPreserveTopology tolerance
-// (in Web Mercator meters) that collapses to roughly one MVT extent unit at
-// zoom — shrinking to near-zero at high zoom, so it never needs to be
-// switched off past some threshold.
+// tileSimplifyTolerance returns the ST_Simplify tolerance (in Web Mercator
+// meters) that collapses to roughly one MVT extent unit at zoom — shrinking
+// to near-zero at high zoom, so it never needs to be switched off past some
+// threshold.
 func tileSimplifyTolerance(zoom int) float64 {
 	const webMercatorCircumference = 40075016
 	const mvtExtent = 4096
@@ -70,6 +70,17 @@ func (g *geoRepository) Tile(ctx context.Context, zoom, x, y int, attrs []string
 	// valid one. The geometry is simplified to the tile's MVT extent
 	// resolution before clipping, so a low zoom over detailed polygons
 	// doesn't process full-resolution vertices for nothing.
+	//
+	// The simplification is ST_Simplify, not ST_SimplifyPreserveTopology:
+	// the topology-preserving variant dominates the whole query (measured
+	// on a 35k-polygon, 7M-vertex admin layer: 4.0s vs 0.78s at z5, 3.0s
+	// vs 0.10s at z0) for a tile that differs by 0.1% in size, because
+	// ST_AsMVTGeom re-snaps every coordinate to the 4096-unit integer grid
+	// afterwards anyway. What topology preservation buys — rings that
+	// survive rather than collapse — is exactly what should disappear at a
+	// zoom where the feature is sub-pixel, and the invalid geometry it can
+	// leave behind is tolerated by MVT renderers and already caught by the
+	// TRY/NULL filter above.
 	query := fmt.Sprintf(`
         WITH tile AS (
             SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
@@ -79,7 +90,7 @@ func (g *geoRepository) Tile(ctx context.Context, zoom, x, y int, attrs []string
             'layer'
         ) AS mvt
         FROM (
-            SELECT TRY(ST_AsMVTGeom(ST_SimplifyPreserveTopology(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
+            SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
             FROM %s, tile
             %s
         )

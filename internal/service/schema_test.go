@@ -50,3 +50,31 @@ func Test_SchemaService_AddColumn(t *testing.T) {
 
 	require.NoError(t, err)
 }
+
+func Test_SchemaService_InvalidateSchema(t *testing.T) {
+	cases := []struct {
+		name        string
+		invalidated string
+		wantCached  bool
+	}{
+		{name: "drops the entry it names", invalidated: "id-1"},
+		{name: "leaves other tables cached", invalidated: "id-2", wantCached: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, tableRepo := setupSchemaService(t)
+			meta := catalog.Metadata{TableId: "id-1"}
+
+			m.On("Table", meta).Return(tableRepo, nil).Once()
+			tableRepo.On("Schema", context.Background()).Return([]storage.ColumnInfo{{Name: "height", Type: "DOUBLE"}}, nil).Once()
+			_, err := svc.Schema(context.Background(), meta)
+			require.NoError(t, err)
+
+			svc.InvalidateSchema(c.invalidated)
+
+			_, cached := svc.cache.Get("id-1")
+			assert.Equal(t, c.wantCached, cached)
+		})
+	}
+}

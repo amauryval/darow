@@ -29,9 +29,9 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Storage, rowRepo *
 	tableRepo.On("Rows").Return(rowRepo)
 
 	metadataCache := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
-	metadata := NewMetadataService(m, metadataCache)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
+	metadata := NewMetadataService(m, metadataCache, schema)
 	svc = NewRowService(m, metadata, schema)
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo

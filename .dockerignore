@@ -6,4 +6,3 @@ internal/webui/dist/*
 !internal/webui/dist/index.html
 .git/
 .claude/
-docs/audit.md

@@ -17,7 +17,7 @@ import (
 
 func setupImportService(t *testing.T) (*ImportService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	metadata := NewMetadataService(m, expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute))
+	metadata := NewMetadataService(m, expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute), &schemaInvalidatorSpy{})
 	svc := NewImportService(metadata, m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
