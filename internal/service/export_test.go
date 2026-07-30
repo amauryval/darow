@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 type fakeRowLister struct {
@@ -18,7 +19,7 @@ type fakeRowLister struct {
 	err   error
 }
 
-func (f *fakeRowLister) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
+func (f *fakeRowLister) ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -35,7 +36,7 @@ type fakeGeometryFetcher struct {
 	err        error
 }
 
-func (f fakeGeometryFetcher) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
+func (f fakeGeometryFetcher) GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error) {
 	return f.geometries, f.err
 }
 
@@ -44,7 +45,7 @@ type fakeColumnLister struct {
 	err    error
 }
 
-func (f fakeColumnLister) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
+func (f fakeColumnLister) Schema(ctx context.Context, meta catalog.Metadata) ([]ColumnSchema, error) {
 	return f.schema, f.err
 }
 
@@ -59,9 +60,9 @@ func Test_ExportService_Export_CSV(t *testing.T) {
 	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
 
 	var buf bytes.Buffer
-	contentType, err := svc.ContentType(storage.Metadata{TableId: "id-1"}, "csv")
+	contentType, err := svc.ContentType(catalog.Metadata{TableId: "id-1"}, "csv")
 	require.NoError(t, err)
-	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1"}, "csv"))
+	require.NoError(t, svc.Export(context.Background(), &buf, catalog.Metadata{TableId: "id-1"}, "csv"))
 
 	assert.Equal(t, "text/csv", contentType)
 	assert.Equal(t, "pkey,name\npk-1,a\npk-2,b\n", buf.String())
@@ -75,7 +76,7 @@ func Test_ExportService_Export_CSV_ExcludesGeometryColumn(t *testing.T) {
 	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
 
 	var buf bytes.Buffer
-	meta := storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}
+	meta := catalog.Metadata{TableId: "id-1", GeometryColumn: "geom"}
 	require.NoError(t, svc.Export(context.Background(), &buf, meta, "csv"))
 
 	assert.Equal(t, "pkey,name\npk-1,a\n", buf.String())
@@ -95,7 +96,7 @@ func Test_ExportService_Export_CSV_PaginatesAcrossBatches(t *testing.T) {
 	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 2)
 
 	var buf bytes.Buffer
-	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1"}, "csv"))
+	require.NoError(t, svc.Export(context.Background(), &buf, catalog.Metadata{TableId: "id-1"}, "csv"))
 
 	assert.Equal(t, "pkey,name\npk-1,a\npk-2,b\npk-3,c\n", buf.String())
 }
@@ -108,9 +109,9 @@ func Test_ExportService_Export_GeoJSON(t *testing.T) {
 	svc := NewExportService(rows, geometry, fakeColumnLister{}, 10)
 
 	var buf bytes.Buffer
-	contentType, err := svc.ContentType(storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson")
+	contentType, err := svc.ContentType(catalog.Metadata{TableId: "id-1", IsGeo: true}, "geojson")
 	require.NoError(t, err)
-	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
+	require.NoError(t, svc.Export(context.Background(), &buf, catalog.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
 
 	assert.Equal(t, "application/geo+json", contentType)
 	assert.Contains(t, buf.String(), `"type":"FeatureCollection"`)
@@ -129,7 +130,7 @@ func Test_ExportService_Export_GeoJSON_NullGeometry(t *testing.T) {
 	svc := NewExportService(rows, geometry, fakeColumnLister{}, 10)
 
 	var buf bytes.Buffer
-	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
+	require.NoError(t, svc.Export(context.Background(), &buf, catalog.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
 
 	assert.Contains(t, buf.String(), `"geometry":null`)
 	assert.True(t, json.Valid(buf.Bytes()))
@@ -138,7 +139,7 @@ func Test_ExportService_Export_GeoJSON_NullGeometry(t *testing.T) {
 func Test_ExportService_ContentType_RejectsGeoJSONOnNonGeoTable(t *testing.T) {
 	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
 
-	_, err := svc.ContentType(storage.Metadata{TableId: "id-1", IsGeo: false}, "geojson")
+	_, err := svc.ContentType(catalog.Metadata{TableId: "id-1", IsGeo: false}, "geojson")
 
 	require.Error(t, err)
 	var validationErr *ExportValidationError
@@ -148,7 +149,7 @@ func Test_ExportService_ContentType_RejectsGeoJSONOnNonGeoTable(t *testing.T) {
 func Test_ExportService_ContentType_RejectsUnsupportedFormat(t *testing.T) {
 	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
 
-	_, err := svc.ContentType(storage.Metadata{TableId: "id-1"}, "xml")
+	_, err := svc.ContentType(catalog.Metadata{TableId: "id-1"}, "xml")
 
 	require.Error(t, err)
 	var validationErr *ExportValidationError
@@ -158,7 +159,7 @@ func Test_ExportService_ContentType_RejectsUnsupportedFormat(t *testing.T) {
 func Test_ExportService_Export_PropagatesRowListingFailure(t *testing.T) {
 	svc := NewExportService(&fakeRowLister{err: errors.New("boom")}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
 
-	err := svc.Export(context.Background(), &bytes.Buffer{}, storage.Metadata{TableId: "id-1"}, "geojson")
+	err := svc.Export(context.Background(), &bytes.Buffer{}, catalog.Metadata{TableId: "id-1"}, "geojson")
 
 	require.Error(t, err)
 	var validationErr *ExportValidationError

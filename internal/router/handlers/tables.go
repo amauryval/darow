@@ -12,6 +12,7 @@ import (
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 // TablesHandler serves table-level endpoints: metadata, schema, columns,
@@ -150,7 +151,7 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, map[string]any{"tableName": body.TableName}); err != nil {
+	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, catalog.MetadataPatch{TableName: &body.TableName}); err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}

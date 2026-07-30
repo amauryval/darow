@@ -1,6 +1,10 @@
 package storage
 
-import "context"
+import (
+	"context"
+
+	"gogeoserver/internal/storage/catalog"
+)
 
 // TableCreator materializes the physical table backing a freshly created
 // logical table, either from a source file or from a derived SELECT query,
@@ -33,7 +37,7 @@ type TableCreator interface {
 // SQL directly instead of going through the typed methods below — it
 // stays an implementation detail of the duckdb package.
 type Storage interface {
-	MetadataManager
+	catalog.MetadataManager
 	TableManager
 	GeoTableManager
 	TableCreator

@@ -6,12 +6,12 @@ import (
 	"slices"
 
 	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 // SchemaGetter is the port ColumnValidator needs to look up a table's schema.
 type SchemaGetter interface {
-	Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error)
+	Schema(ctx context.Context, meta catalog.Metadata) ([]service.ColumnSchema, error)
 }
 
 // ColumnValidator checks client-supplied column names against a table's
@@ -29,7 +29,7 @@ func NewColumnValidator(schemaSvc SchemaGetter) ColumnValidator {
 // ValidateColumns checks that every name in requested is a real column of
 // meta's table, excluding the geometry column (règle 7 — never surface
 // geometry through a generic column-name path).
-func (cv ColumnValidator) ValidateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
+func (cv ColumnValidator) ValidateColumns(ctx context.Context, meta catalog.Metadata, requested []string) error {
 	if len(requested) == 0 {
 		return nil
 	}

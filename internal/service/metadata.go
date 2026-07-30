@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 // MetadataService is the single owner of the metadata cache (règle 11):
@@ -15,56 +16,38 @@ import (
 // stays in one place. The cache is a size-bounded LRU with expiration
 // (PERF-5), never unbounded.
 type MetadataService struct {
-	storage storage.MetadataManager
-	cache   *expirable.LRU[string, storage.Metadata]
+	storage catalog.MetadataManager
+	cache   *expirable.LRU[string, catalog.Metadata]
 }
 
 // NewMetadataService builds a MetadataService backed by storage, using c
 // to cache metadata reads.
-func NewMetadataService(s storage.MetadataManager, c *expirable.LRU[string, storage.Metadata]) *MetadataService {
+func NewMetadataService(s catalog.MetadataManager, c *expirable.LRU[string, catalog.Metadata]) *MetadataService {
 	return &MetadataService{storage: s, cache: c}
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
 // is a value type (§4.1), so every caller already gets its own copy with no
 // extra step.
-func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
+func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error) {
 	if meta, ok := s.cache.Get(tableId); ok {
 		return meta, nil
 	}
 
 	meta, err := s.storage.GetMetadata(ctx, tableId)
 	if err != nil {
-		return storage.Metadata{}, err
+		return catalog.Metadata{}, err
 	}
 
 	s.cache.Add(tableId, meta)
 	return meta, nil
 }
 
-// ListTables returns one page of metadata (offset/limit over TableIds'
-// deterministic order — sort when given, else ORDER BY tableId) plus the
-// total number of registered tables.
-func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
-	ids, err := s.storage.TableIds(ctx, sort)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	total := int64(len(ids))
-	start := min(max(offset, 0), total)
-	end := min(max(start+limit, start), total)
-	page := ids[start:end]
-
-	tables := make([]storage.Metadata, 0, len(page))
-	for _, id := range page {
-		meta, err := s.GetMetadata(ctx, id)
-		if err != nil {
-			return nil, 0, err
-		}
-		tables = append(tables, meta)
-	}
-	return tables, total, nil
+// ListTables returns one page of metadata, offset/limit over sort's
+// deterministic order (or ORDER BY tableId when empty), plus the total
+// number of registered tables.
+func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]catalog.Metadata, int64, error) {
+	return s.storage.List(ctx, sort, offset, limit)
 }
 
 // invalidateMetadataCache must be called after any write that changes
@@ -81,8 +64,8 @@ func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bo
 }
 
 // UpdateMetadata patches tableId's metadata and invalidates the cache.
-func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error {
-	if err := s.storage.UpdateMetadata(ctx, tableId, updates); err != nil {
+func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, patch catalog.MetadataPatch) error {
+	if err := s.storage.UpdateMetadata(ctx, tableId, patch); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)
@@ -131,24 +114,18 @@ func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause er
 // (NEW-BUG-5). A table with no SourceName (e.g. created via /derive) is
 // not a loaded source and is excluded.
 func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
-	ids, err := s.storage.TableIds(ctx, nil)
+	bySource, err := s.storage.BySource(ctx)
 	if err != nil {
 		return nil, err
 	}
-	names := make(map[string]string, len(ids))
-	for _, id := range ids {
-		meta, err := s.GetMetadata(ctx, id)
-		if err != nil {
-			return nil, err
+
+	names := make(map[string]string, len(bySource))
+	for key, tableId := range bySource {
+		name := key.SourceName
+		if key.SourceLayer != "" {
+			name = key.SourceName + layerSeparator + key.SourceLayer
 		}
-		if meta.SourceName == "" {
-			continue
-		}
-		key := meta.SourceName
-		if meta.SourceLayer != "" {
-			key = meta.SourceName + layerSeparator + meta.SourceLayer
-		}
-		names[key] = meta.TableId
+		names[name] = tableId
 	}
 	return names, nil
 }

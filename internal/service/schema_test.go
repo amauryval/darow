@@ -7,41 +7,46 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 	"gogeoserver/internal/storage/mocks"
 )
 
-func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage) {
+func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage, *mocks.TableRepository) {
 	m := &mocks.Storage{}
+	tableRepo := &mocks.TableRepository{}
 	c := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	svc := NewSchemaService(m, c)
-	t.Cleanup(func() { m.AssertExpectations(t) })
-	return svc, m
+	t.Cleanup(func() { m.AssertExpectations(t); tableRepo.AssertExpectations(t) })
+	return svc, m, tableRepo
 }
 
 func Test_SchemaService_Schema(t *testing.T) {
-	svc, m := setupSchemaService(t)
+	svc, m, tableRepo := setupSchemaService(t)
+	meta := catalog.Metadata{TableId: "id-1"}
 
-	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{
+	m.On("Table", meta).Return(tableRepo, nil).Once()
+	tableRepo.On("Schema", context.Background()).Return([]storage.ColumnInfo{
 		{Name: "__pkey", Type: "VARCHAR"},
 		{Name: "height", Type: "DOUBLE"},
 	}, nil).Once()
 
-	schema, err := svc.Schema(context.Background(), storage.Metadata{TableId: "id-1"})
+	schema, err := svc.Schema(context.Background(), meta)
 
 	require.NoError(t, err)
 	assert.Equal(t, []ColumnSchema{{Name: "__pkey", Type: "VARCHAR"}, {Name: "height", Type: "DOUBLE"}}, schema)
 }
 
 func Test_SchemaService_AddColumn(t *testing.T) {
-	svc, m := setupSchemaService(t)
+	svc, m, tableRepo := setupSchemaService(t)
+	meta := catalog.Metadata{TableId: "id-1"}
 
-	m.On("AddColumn", mock.Anything, "id-1", "height", "DOUBLE").Return(nil).Once()
+	m.On("Table", meta).Return(tableRepo, nil).Once()
+	tableRepo.On("AddColumn", context.Background(), "height", "DOUBLE").Return(nil).Once()
 
-	err := svc.AddColumn(context.Background(), storage.Metadata{TableId: "id-1"}, "height", "DOUBLE")
+	err := svc.AddColumn(context.Background(), meta, "height", "DOUBLE")
 
 	require.NoError(t, err)
 }

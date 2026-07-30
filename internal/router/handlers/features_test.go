@@ -11,6 +11,7 @@ import (
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI, *mockGeoAPI) {
@@ -61,7 +62,7 @@ func Test_FeaturesHandler_Conformance(t *testing.T) {
 func Test_FeaturesHandler_ListCollections_OnlyGeoTables(t *testing.T) {
 	fh, metadataSvc, _, _ := setupFeaturesHandler()
 
-	tables := []storage.Metadata{
+	tables := []catalog.Metadata{
 		{TableId: "geo-1", IsGeo: true},
 		{TableId: "scalar-1", IsGeo: false},
 	}
@@ -91,7 +92,7 @@ func Test_FeaturesHandler_GetCollection(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fh, metadataSvc, _, _ := setupFeaturesHandler()
-			meta := storage.Metadata{TableId: "t1", IsGeo: c.isGeo}
+			meta := catalog.Metadata{TableId: "t1", IsGeo: c.isGeo}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 
 			rec := doHandlerRequest(fh.GetCollection, http.MethodGet, "/api/v1/ogc/collections/t1", nil, map[string]string{"tableId": "t1"})
@@ -124,7 +125,7 @@ func Test_FeaturesHandler_GetItems(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fh, metadataSvc, schemaSvc, geoSvc := setupFeaturesHandler()
-			meta := storage.Metadata{TableId: "t1", IsGeo: c.isGeo}
+			meta := catalog.Metadata{TableId: "t1", IsGeo: c.isGeo}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.isGeo && c.query != "?bbox=1,2,3" {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status"}}, c.schemaErr).Maybe()
@@ -155,7 +156,7 @@ func Test_FeaturesHandler_GetItems_PagingLinks(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fh, metadataSvc, schemaSvc, geoSvc := setupFeaturesHandler()
-			meta := storage.Metadata{TableId: "t1", IsGeo: true}
+			meta := catalog.Metadata{TableId: "t1", IsGeo: true}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 			schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{}, nil).Once()
 
@@ -205,7 +206,7 @@ func Test_FeaturesHandler_GetItem(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fh, metadataSvc, _, geoSvc := setupFeaturesHandler()
-			meta := storage.Metadata{TableId: "t1", IsGeo: c.isGeo}
+			meta := catalog.Metadata{TableId: "t1", IsGeo: c.isGeo}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.isGeo {
 				geoSvc.On("GetFeatures", mock.Anything, meta, []string{"pk-1"}, (*[4]float64)(nil), []string(nil), storage.GeoQuery{}, 1, 0).

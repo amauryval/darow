@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
@@ -32,9 +32,9 @@ func validateSelectOnly(query string) error {
 // materializing its physical table fails — declared here, the consumer,
 // rather than depending on the concrete *MetadataService.
 type metadataStore interface {
-	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error)
 	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error)
-	UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error
+	UpdateMetadata(ctx context.Context, tableId string, patch catalog.MetadataPatch) error
 	RefreshDerived(ctx context.Context, tableId string) error
 	Rollback(ctx context.Context, tableId string, cause error) error
 }
@@ -82,8 +82,8 @@ func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName str
 	}
 
 	if isGeo {
-		if err := s.metadata.UpdateMetadata(ctx, tableId, map[string]any{
-			"isGeo": true, "geometryColumn": geometryColumn,
+		if err := s.metadata.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{
+			IsGeo: &isGeo, GeometryColumn: &geometryColumn,
 		}); err != nil {
 			return "", s.metadata.Rollback(ctx, tableId, err)
 		}

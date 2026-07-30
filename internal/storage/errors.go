@@ -12,6 +12,18 @@ func NewInvalidSortError(msg string) *InvalidSortError {
 	return &InvalidSortError{msg: msg}
 }
 
+// ValidationError marks a storage write rejected because of the data the
+// caller supplied (e.g. a geometry column that isn't valid WKT), so the
+// router can map it to 400 instead of the 500 default.
+type ValidationError struct{ msg string }
+
+func (e *ValidationError) Error() string { return e.msg }
+
+// NewValidationError builds a ValidationError with the given message.
+func NewValidationError(msg string) *ValidationError {
+	return &ValidationError{msg: msg}
+}
+
 // NotFoundError marks a storage failure caused by a missing entity (e.g. no
 // metadata row for a tableId), so the router can map it to 404 instead of
 // the 500 default — distinct from any other failure reading the same row

@@ -14,6 +14,7 @@ import (
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 // GeoHandler serves geo-specific endpoints: MVT tiles, geometry types, and
@@ -119,7 +120,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 
 	mvt, err := gh.geoService.GetTile(req.Context(), meta, z, x, y, attrs, q)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -192,7 +193,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 
 	features, err := gh.geoService.GetFeaturesTile(req.Context(), meta, z, x, y, attrs, q, limit, offset)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -204,7 +205,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 // the ETag for every tile of that table. attrs and q.Filter/q.Args are
 // folded in too, since they change the tile's content for the same table
 // version (GEO-3).
-func tileETag(meta storage.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
+func tileETag(meta catalog.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
 	sorted := slices.Clone(attrs)
 	slices.Sort(sorted)
 	return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s-%s-%v"`, meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","), q.Filter, q.Args)
@@ -228,7 +229,7 @@ func (gh *GeoHandler) GetGeometryTypes(w http.ResponseWriter, req *http.Request)
 
 	types, err := gh.geoService.GeometryTypes(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string][]string{"types": types})
@@ -263,7 +264,7 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 
 	bbox, err := gh.geoService.FilteredExtent(req.Context(), meta, q)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]string{"bbox": bbox})

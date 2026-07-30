@@ -12,6 +12,7 @@ import (
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func Test_newRowsHandler(t *testing.T) {
@@ -25,7 +26,7 @@ func Test_newRowsHandler(t *testing.T) {
 	assert.Same(t, rowSvc, rh.rowService)
 	assert.Equal(t, apiCfg, rh.apiCfg)
 
-	meta := storage.Metadata{TableId: "t1"}
+	meta := catalog.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 	got, ok := rh.ResolveTable(httptest.NewRecorder(), req)
@@ -82,7 +83,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 				apiCfg:        config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				rowSvc.On("ListRows", mock.Anything, meta, mock.Anything, int64(0), int64(100)).
@@ -123,7 +124,7 @@ func Test_rowsHandler_listRows_Sort(t *testing.T) {
 				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 			if c.query != "" {
 				schema := []service.ColumnSchema{{Name: "name"}, {Name: "createdAt"}}
@@ -165,7 +166,7 @@ func Test_rowsHandler_addRows(t *testing.T) {
 			rowSvc := &mockRowAPI{}
 			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			rowsBody := c.body.(map[string]any)["rows"].([]map[string]any)
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && len(rowsBody) == 1 {
@@ -203,7 +204,7 @@ func Test_rowsHandler_getRow(t *testing.T) {
 			rowSvc := &mockRowAPI{}
 			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				rowSvc.On("GetRow", mock.Anything, meta, "1").Return(c.row, c.getErr).Once()
@@ -239,7 +240,7 @@ func Test_rowsHandler_getRowsByPkey(t *testing.T) {
 			rowSvc := &mockRowAPI{}
 			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			pkeys := c.body.(map[string]any)["pkeys"].([]string)
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && len(pkeys) > 0 {
@@ -276,7 +277,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 			rowSvc := &mockRowAPI{}
 			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			updates := map[string]any{"name": "b"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -313,7 +314,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 			rowSvc := &mockRowAPI{}
 			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				rowSvc.On("RemoveRows", mock.Anything, meta, []string{"1"}).Return(c.removeErr).Once()

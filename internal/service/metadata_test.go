@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 	"gogeoserver/internal/storage/mocks"
 )
 
 func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
+	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
 	svc := NewMetadataService(m, c)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
@@ -39,13 +39,13 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 			svc, m := setupMetadataService(t)
 
 			if c.failStorage {
-				m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("boom")).Once()
+				m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{}, errors.New("boom")).Once()
 				_, err := svc.GetMetadata(context.Background(), "id-1")
 				assert.Error(t, err)
 				return
 			}
 
-			m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{TableId: "id-1"}, nil).Once()
 			for i := 0; i < c.cacheHits; i++ {
 				meta, err := svc.GetMetadata(context.Background(), "id-1")
 				require.NoError(t, err)
@@ -56,34 +56,15 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 }
 
 func Test_MetadataService_ListTables(t *testing.T) {
-	cases := []struct {
-		name       string
-		offset     int64
-		limit      int64
-		wantIds    []string
-		wantTotal  int64
-		wantLength int
-	}{
-		{name: "full page", offset: 0, limit: 10, wantIds: []string{"id-1", "id-2"}, wantTotal: 2, wantLength: 2},
-		{name: "second page beyond total", offset: 2, limit: 10, wantIds: nil, wantTotal: 2, wantLength: 0},
-		{name: "one item page", offset: 0, limit: 1, wantIds: []string{"id-1"}, wantTotal: 2, wantLength: 1},
-	}
+	svc, m := setupMetadataService(t)
+	want := []catalog.Metadata{{TableId: "id-1"}}
+	m.On("List", mock.Anything, mock.Anything, int64(0), int64(1)).Return(want, int64(2), nil).Once()
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			svc, m := setupMetadataService(t)
-			m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1", "id-2"}, nil).Once()
-			for _, id := range c.wantIds {
-				m.On("GetMetadata", mock.Anything, id).Return(storage.Metadata{TableId: id}, nil).Once()
-			}
+	tables, total, err := svc.ListTables(context.Background(), nil, 0, 1)
 
-			tables, total, err := svc.ListTables(context.Background(), nil, c.offset, c.limit)
-
-			require.NoError(t, err)
-			assert.Len(t, tables, c.wantLength)
-			assert.Equal(t, c.wantTotal, total)
-		})
-	}
+	require.NoError(t, err)
+	assert.Equal(t, want, tables)
+	assert.EqualValues(t, 2, total)
 }
 
 // NEW-BUG-5: renaming a table loaded from a source (tableName only, via
@@ -93,9 +74,8 @@ func Test_MetadataService_ListTables(t *testing.T) {
 func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 	svc, m := setupMetadataService(t)
 
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
-		TableId: "id-1", TableName: "my renamed communes", SourceName: "communes.geojson",
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "communes.geojson"}: "id-1",
 	}, nil).Once()
 
 	names, err := svc.LoadedSourceNames(context.Background())
@@ -104,22 +84,19 @@ func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 	assert.Equal(t, map[string]string{"communes.geojson": "id-1"}, names)
 }
 
-// NEW-BUG-5: renaming an unrelated table to a file name that happens to
-// match a source (e.g. "communes.geojson") must not make it pass for that
-// source's table — matching is on SourceName, set only at import time,
-// never on the freely-renamable TableName.
-func Test_MetadataService_LoadedSourceNames_RenameToSourceNameDoesNotHijack(t *testing.T) {
+// A multi-layer source's key composes SourceName and SourceLayer with
+// layerSeparator, matching how SourceService.Refresh looks tables up.
+func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
 	svc, m := setupMetadataService(t)
 
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
-		TableId: "id-1", TableName: "communes.geojson", SourceName: "",
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
 
 	names, err := svc.LoadedSourceNames(context.Background())
 
 	require.NoError(t, err)
-	assert.Empty(t, names)
+	assert.Equal(t, map[string]string{"regions.gpkg::communes": "id-1"}, names)
 }
 
 func Test_MetadataService_RemoveTable(t *testing.T) {

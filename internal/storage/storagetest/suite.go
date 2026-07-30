@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 // NewStorage builds a fresh, empty storage.Storage for one subtest. The
@@ -30,7 +31,10 @@ func RunSuite(t *testing.T, newStorage NewStorage) {
 	t.Run("Metadata_CreateAndRead", func(t *testing.T) { testMetadataCreateAndRead(t, newStorage) })
 	t.Run("Metadata_Remove", func(t *testing.T) { testMetadataRemove(t, newStorage) })
 	t.Run("Metadata_UpdateAndRefreshDerived", func(t *testing.T) { testMetadataUpdateAndRefreshDerived(t, newStorage) })
+	t.Run("Metadata_ListPagination", func(t *testing.T) { testMetadataListPagination(t, newStorage) })
+	t.Run("Metadata_BySource", func(t *testing.T) { testMetadataBySource(t, newStorage) })
 	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newStorage) })
+	t.Run("Rows_EmptyPkeysNoOp", func(t *testing.T) { testRowsEmptyPkeysNoOp(t, newStorage) })
 	t.Run("Rows_BulkInsert", func(t *testing.T) { testRowsBulkInsert(t, newStorage) })
 	t.Run("Rows_GetPkeysPagination", func(t *testing.T) { testRowsGetPkeysPagination(t, newStorage) })
 	t.Run("Rows_GetPkeysSort", func(t *testing.T) { testRowsGetPkeysSort(t, newStorage) })
@@ -86,7 +90,7 @@ func lambert93Fixture(t *testing.T) string {
 // newGeoTable creates a table and materializes it from geoJSONFixture,
 // returning its refreshed Metadata and the pkeys of the two fixture rows
 // in file order.
-func newGeoTable(t *testing.T, s storage.Storage) (meta storage.Metadata, pkeys []string) {
+func newGeoTable(t *testing.T, s storage.Storage) (meta catalog.Metadata, pkeys []string) {
 	ctx := context.Background()
 
 	tableId, err := s.Create(ctx, "points", false, "")
@@ -97,7 +101,7 @@ func newGeoTable(t *testing.T, s storage.Storage) (meta storage.Metadata, pkeys 
 	geometryColumn, isGeo, _, err := s.CreateFromFile(ctx, meta.PhysicalName, geoJSONFixture(t), "", 0)
 	require.NoError(t, err)
 	require.True(t, isGeo)
-	require.NoError(t, s.UpdateMetadata(ctx, tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
+	require.NoError(t, s.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
 	require.NoError(t, s.RefreshDerivedMetadata(ctx, tableId))
 
 	meta, err = s.GetMetadata(ctx, tableId)
@@ -155,7 +159,8 @@ func testMetadataUpdateAndRefreshDerived(t *testing.T, newStorage NewStorage) {
 	ctx := context.Background()
 	meta, pkeys := newGeoTable(t, s)
 
-	require.NoError(t, s.UpdateMetadata(ctx, meta.TableId, map[string]any{"tableName": "renamed"}))
+	renamed := "renamed"
+	require.NoError(t, s.UpdateMetadata(ctx, meta.TableId, catalog.MetadataPatch{TableName: &renamed}))
 	meta, err := s.GetMetadata(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", meta.TableName)
@@ -166,6 +171,71 @@ func testMetadataUpdateAndRefreshDerived(t *testing.T, newStorage NewStorage) {
 	meta, err = s.GetMetadata(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.EqualValues(t, len(pkeys)-1, meta.RowCount)
+}
+
+func testMetadataListPagination(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+
+	var ids []string
+	for range 3 {
+		tableId, err := s.Create(ctx, "points", false, "")
+		require.NoError(t, err)
+		ids = append(ids, tableId)
+	}
+
+	page, total, err := s.List(ctx, nil, 0, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, total)
+	require.Len(t, page, 2)
+
+	rest, total, err := s.List(ctx, nil, 2, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, total)
+	require.Len(t, rest, 1)
+
+	var seen []string
+	for _, m := range append(page, rest...) {
+		seen = append(seen, m.TableId)
+	}
+	assert.ElementsMatch(t, ids, seen)
+}
+
+func testMetadataBySource(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+
+	tableId, err := s.Create(ctx, "points", false, "")
+	require.NoError(t, err)
+	sourceName, sourceLayer := "points.geojson", "layer1"
+	require.NoError(t, s.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{
+		SourceName: &sourceName, SourceLayer: &sourceLayer,
+	}))
+
+	unrelatedId, err := s.Create(ctx, "other", false, "")
+	require.NoError(t, err)
+
+	bySource, err := s.BySource(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, tableId, bySource[catalog.SourceKey{SourceName: "points.geojson", SourceLayer: "layer1"}])
+	assert.NotContains(t, bySource, catalog.SourceKey{SourceName: ""})
+	for key, id := range bySource {
+		assert.NotEqual(t, unrelatedId, id, "table with no sourceName must be excluded, got key %v", key)
+	}
+}
+
+// An empty pkey list must no-op rather than build "IN ()", a SQL syntax
+// error in most engines (audit 3.10).
+func testRowsEmptyPkeysNoOp(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	meta, _ := newGeoTable(t, s)
+
+	rows, err := s.GetRowsByPkey(ctx, meta, nil)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+
+	require.NoError(t, s.RemoveRows(ctx, meta, nil))
 }
 
 func testRowsInsertGetUpdateRemove(t *testing.T, newStorage NewStorage) {

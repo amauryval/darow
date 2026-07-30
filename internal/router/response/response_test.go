@@ -3,13 +3,45 @@ package response
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gogeoserver/internal/service"
+	"gogeoserver/internal/storage"
 )
+
+// MapServiceError is the single decision point for every error status the
+// API returns; each error type it dispatches on must map to the status the
+// audit expects, and anything unclassified must default to 500 rather than
+// leak an internal failure as a client error.
+func Test_MapServiceError(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{"service.ExportValidationError -> 400", &service.ExportValidationError{}, http.StatusBadRequest},
+		{"service.ValidationError -> 400", &service.ValidationError{}, http.StatusBadRequest},
+		{"storage.InvalidSortError -> 400", storage.NewInvalidSortError("bad sort"), http.StatusBadRequest},
+		{"storage.ValidationError -> 400", storage.NewValidationError("bad geometry"), http.StatusBadRequest},
+		{"service.NotFoundError -> 404", &service.NotFoundError{}, http.StatusNotFound},
+		{"storage.NotFoundError -> 404", storage.NewNotFoundError("no such table"), http.StatusNotFound},
+		{"service.ConflictError -> 409", &service.ConflictError{}, http.StatusConflict},
+		{"unclassified error -> 500", errors.New("duckdb: connection reset"), http.StatusInternalServerError},
+		{"wrapped typed error still matches -> 400", fmt.Errorf("insert: %w", storage.NewValidationError("bad geometry")), http.StatusBadRequest},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.wantCode, MapServiceError(c.err))
+		})
+	}
+}
 
 func Test_WriteError(t *testing.T) {
 	cases := []struct {

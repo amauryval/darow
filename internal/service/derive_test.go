@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 	"gogeoserver/internal/storage/mocks"
 )
 
 func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Storage) {
 	m := &mocks.Storage{}
-	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
+	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, c)
 	svc := NewDeriveService(metadata, m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
@@ -89,10 +89,11 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 			}
 
 			m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-			m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-derived").Return(catalog.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
 			m.On("CreateFromQuery", mock.Anything, "t_derived", c.query).Return("geom", c.isGeo, nil).Once()
 			if c.isGeo {
-				m.On("UpdateMetadata", mock.Anything, "id-derived", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
+				wantIsGeo, wantGeom := true, "geom"
+				m.On("UpdateMetadata", mock.Anything, "id-derived", catalog.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
 			}
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived").Return(nil).Once()
 
@@ -110,7 +111,7 @@ func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t 
 	svc, m := setupDeriveService(t)
 
 	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-derived").Return(catalog.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
 	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, errors.New("unknown table")).Once()
 	m.On("Remove", mock.Anything, "id-derived").Return(nil).Once()
 

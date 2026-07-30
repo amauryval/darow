@@ -88,7 +88,9 @@ func Test_Adapter_Update_MultipleColumnsIsAtomic(t *testing.T) {
 		"name":  "after",
 		geomCol: "not-a-valid-wkt",
 	})
-	assert.Error(t, err)
+	require.Error(t, err)
+	var validationErr *storage.ValidationError
+	assert.ErrorAs(t, err, &validationErr, "an invalid geometry value must map to a client error, not a bare 500")
 
 	rows, err := a.GetRowsByPkey(context.Background(), meta, []string{pkey})
 	require.NoError(t, err)
@@ -158,6 +160,32 @@ func Test_Adapter_GetDistinctValues_Pagination(t *testing.T) {
 	page2, err := a.GetDistinctValues(context.Background(), meta, "name", 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, []any{"b"}, page2)
+}
+
+// An invalid WKT value on InsertRow must map to a client error, the same as
+// Update — a caller mistake, not a server failure.
+func Test_Adapter_InsertRow_InvalidWKT(t *testing.T) {
+	a := setupAdapter(t)
+	meta, geomCol := createGeoTable(t, a)
+
+	_, err := a.InsertRow(context.Background(), meta, map[string]any{geomCol: "not-a-valid-wkt"})
+
+	require.Error(t, err)
+	var validationErr *storage.ValidationError
+	assert.ErrorAs(t, err, &validationErr)
+}
+
+// GetRowsByPkey/RemoveRows must no-op on an empty pkey list instead of
+// building "IN ()", which DuckDB rejects as a syntax error (audit 3.10).
+func Test_Adapter_EmptyPkeys_NoOp(t *testing.T) {
+	a := setupAdapter(t)
+	meta := createScalarTable(t, a)
+
+	rows, err := a.GetRowsByPkey(context.Background(), meta, nil)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+
+	require.NoError(t, a.RemoveRows(context.Background(), meta, nil))
 }
 
 func Test_Adapter_TableIds_And_TableExists(t *testing.T) {

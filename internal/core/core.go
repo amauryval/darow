@@ -14,16 +14,19 @@ import (
 	"gogeoserver/internal/config"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
+	"gogeoserver/internal/storage/data"
 	"gogeoserver/internal/storage/duckdb"
 )
 
 // storageAdapter is everything Services needs from the storage layer.
 // Declared here, the consumer, so tests can satisfy it with a mock.
 type storageAdapter interface {
-	storage.MetadataManager
+	catalog.MetadataManager
 	storage.TableManager
 	storage.GeoTableManager
 	storage.TableCreator
+	data.TableResolver
 }
 
 // Services groups every application service built on top of the storage
@@ -68,7 +71,7 @@ func (s *Services) Ping(ctx context.Context) error {
 // NewServices constructs every service, wiring caches from cfg.Cache and
 // sizing export batches from cfg.API.ExportBatchSize.
 func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
-	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
+	metadataCache := expirable.NewLRU[string, catalog.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
 	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
 

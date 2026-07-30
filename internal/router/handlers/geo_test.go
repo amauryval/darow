@@ -14,6 +14,7 @@ import (
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/service"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func Test_newGeoHandler(t *testing.T) {
@@ -25,7 +26,7 @@ func Test_newGeoHandler(t *testing.T) {
 
 	assert.Same(t, geoSvc, gh.geoService)
 
-	meta := storage.Metadata{TableId: "t1"}
+	meta := catalog.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 	got, ok := gh.ResolveTable(httptest.NewRecorder(), req)
@@ -93,7 +94,7 @@ func Test_parseTileAttrs(t *testing.T) {
 
 func Test_tileETag(t *testing.T) {
 	updatedAt := time.Now()
-	meta := storage.Metadata{TableId: "t1", UpdatedAt: updatedAt}
+	meta := catalog.Metadata{TableId: "t1", UpdatedAt: updatedAt}
 
 	etag1 := tileETag(meta, 1, 2, 3, []string{"b", "a"}, storage.GeoQuery{})
 	etag2 := tileETag(meta, 1, 2, 3, []string{"a", "b"}, storage.GeoQuery{})
@@ -122,6 +123,9 @@ func Test_geoHandler_getTile(t *testing.T) {
 		{name: "unknown attr is rejected", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, attrs: "bogus", wantStatus: http.StatusBadRequest},
 		{name: "invalid filter returns 400", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, filter: "not-json", wantStatus: http.StatusBadRequest},
 		{name: "tile failure returns 500", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, tileErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		// GeoService rejects a scalar table with a typed NotFoundError
+		// (audit §3.12) — the handler must map it to 404, not 500.
+		{name: "non-geo table returns 404", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, tileErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -136,7 +140,7 @@ func Test_geoHandler_getTile(t *testing.T) {
 				geoService:      geoSvc,
 			}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.coords["z"] != "a" {
 				schemaSvc.On("Schema", mock.Anything, meta).Return(nil, c.schemaErr).Maybe()
@@ -177,7 +181,7 @@ func Test_geoHandler_getTile_NotModifiedWhenETagMatches(t *testing.T) {
 		geoService:      geoSvc,
 	}
 
-	meta := storage.Metadata{TableId: "t1", UpdatedAt: time.Unix(1, 0)}
+	meta := catalog.Metadata{TableId: "t1", UpdatedAt: time.Unix(1, 0)}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
 
@@ -210,6 +214,9 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 		{name: "unknown attr is rejected", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, attrs: "bogus", wantStatus: http.StatusBadRequest},
 		{name: "invalid filter returns 400", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, query: "?filter=not-json", wantStatus: http.StatusBadRequest},
 		{name: "storage failure returns 500", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, featErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		// GeoService rejects a scalar table with a typed NotFoundError
+		// (audit §3.12) — the handler must map it to 404, not 500.
+		{name: "non-geo table returns 404", coords: map[string]string{"z": "1", "x": "2", "y": "3"}, featErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -219,7 +226,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 			geoSvc := &mockGeoAPI{}
 			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 100})
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.coords["z"] != "a" {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status"}}, c.schemaErr).Maybe()
@@ -253,7 +260,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	geoSvc := &mockGeoAPI{}
 	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 1})
 
-	meta := storage.Metadata{TableId: "t1"}
+	meta := catalog.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
 	geoSvc.On("GetFeaturesTile", mock.Anything, meta, 1, 2, 3, []string(nil), mock.Anything, 1, 3).
@@ -280,6 +287,9 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 		{name: "returns geometry types", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", typesErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		// GeoService rejects a scalar table with a typed NotFoundError
+		// (audit §3.12) — the handler must map it to 404, not 500.
+		{name: "non-geo table returns 404", typesErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -288,7 +298,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 			geoSvc := &mockGeoAPI{}
 			gh := &GeoHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				geoSvc.On("GeometryTypes", mock.Anything, meta).Return([]string{"POLYGON"}, c.typesErr).Once()
@@ -313,6 +323,9 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 		{name: "returns matching pkeys", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", filterErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		// GeoService rejects a scalar table with a typed NotFoundError
+		// (audit §3.12) — the handler must map it to 404, not 500.
+		{name: "non-geo table returns 404", filterErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -325,7 +338,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 				apiCfg:        config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			bbox := [4]float64{1, 2, 3, 4}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -356,6 +369,9 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 		{name: "invalid filter returns 400", filter: "not-json", wantStatus: http.StatusBadRequest},
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "storage failure returns 500", extentErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		// GeoService rejects a scalar table with a typed NotFoundError
+		// (audit §3.12) — the handler must map it to 404, not 500.
+		{name: "non-geo table returns 404", extentErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -369,7 +385,7 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 				geoService:    geoSvc,
 			}
 
-			meta := storage.Metadata{TableId: "t1"}
+			meta := catalog.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), c.schemaErr).Once()

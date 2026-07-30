@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gogeoserver/internal/storage/catalog"
 )
 
 func writeGeoJSONFixture(t *testing.T) string {
@@ -96,7 +98,7 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	geometryColumn, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
 	require.NoError(t, err)
 	require.True(t, isGeo)
-	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, map[string]any{"isGeo": true, "geometryColumn": geometryColumn}))
+	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, catalog.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
 	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId))
 
 	updated, err := a.GetMetadata(context.Background(), tableId)

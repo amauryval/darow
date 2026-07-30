@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func Test_NewColumnValidator(t *testing.T) {
@@ -38,7 +38,7 @@ func Test_ColumnValidator_ValidateColumns(t *testing.T) {
 			schemaSvc := &mockSchemaGetter{}
 			cv := ColumnValidator{schemaService: schemaSvc}
 
-			meta := storage.Metadata{TableId: "t1", GeometryColumn: "geom"}
+			meta := catalog.Metadata{TableId: "t1", GeometryColumn: "geom"}
 			if len(c.requested) > 0 {
 				schemaSvc.On("Schema", mock.Anything, meta).
 					Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}, {Name: "geom", Type: "GEOMETRY"}}, c.schemaErr).Once()

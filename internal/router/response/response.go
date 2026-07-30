@@ -73,6 +73,10 @@ func MapServiceError(err error) int {
 	if errors.As(err, &invalidSortErr) {
 		return http.StatusBadRequest
 	}
+	var storageValidationErr *storage.ValidationError
+	if errors.As(err, &storageValidationErr) {
+		return http.StatusBadRequest
+	}
 	var notFoundErr *service.NotFoundError
 	if errors.As(err, &notFoundErr) {
 		return http.StatusNotFound

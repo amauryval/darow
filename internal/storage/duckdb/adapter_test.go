@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func setupAdapter(t *testing.T) *Adapter {
@@ -20,7 +21,7 @@ func setupAdapter(t *testing.T) *Adapter {
 	return a
 }
 
-func createScalarTable(t *testing.T, a *Adapter) storage.Metadata {
+func createScalarTable(t *testing.T, a *Adapter) catalog.Metadata {
 	tableId, err := a.Create(context.Background(), "widgets", false, "")
 	require.NoError(t, err)
 
@@ -32,7 +33,7 @@ func createScalarTable(t *testing.T, a *Adapter) storage.Metadata {
 	return meta
 }
 
-func createGeoTable(t *testing.T, a *Adapter) (meta storage.Metadata, geomCol string) {
+func createGeoTable(t *testing.T, a *Adapter) (meta catalog.Metadata, geomCol string) {
 	tableId, err := a.Create(context.Background(), "buildings", true, "geom")
 	require.NoError(t, err)
 

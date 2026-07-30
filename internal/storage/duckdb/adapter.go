@@ -6,40 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
-	"github.com/google/uuid"
 
 	"gogeoserver/internal/storage"
+	catalogcontract "gogeoserver/internal/storage/catalog"
+	"gogeoserver/internal/storage/duckdb/catalog"
 )
-
-// sourceName/sourceLayer (NEW-BUG-5) are new columns without a
-// schemaMigrations entry: a database created before they existed won't
-// have them, and GetMetadata's SELECT will fail against it until it's
-// recreated or migrated by hand — accepted as a known limitation rather
-// than a migration for these two columns specifically.
-const metadataSchema = `
-CREATE TABLE IF NOT EXISTS metadata (
-    tableId TEXT PRIMARY KEY,
-    physicalName TEXT NOT NULL UNIQUE,
-    tableName TEXT NOT NULL,
-    isGeo BOOLEAN DEFAULT FALSE,
-    createdAt TIMESTAMP DEFAULT NOW(),
-    updatedAt TIMESTAMP DEFAULT NOW(),
-    geometryColumn TEXT,
-    rowCount INTEGER DEFAULT 0,
-    bbox TEXT,
-    srid INTEGER DEFAULT 4326,
-    sourceName TEXT,
-    sourceLayer TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo);
-CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
-`
 
 var _ storage.Storage = (*Adapter)(nil)
 
@@ -50,6 +24,7 @@ var _ storage.Storage = (*Adapter)(nil)
 type Adapter struct {
 	db      *sql.DB
 	writeMu sync.Mutex
+	catalog *catalog.Catalog
 }
 
 // New opens the DuckDB database at path, loads the spatial extension, and
@@ -75,12 +50,14 @@ func New(path string) (*Adapter, error) {
 		return nil, fmt.Errorf("loading spatial extension: %w", err)
 	}
 
-	if err := migrateSchema(db); err != nil {
+	if err := catalog.Migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 
-	return &Adapter{db: db}, nil
+	a := &Adapter{db: db}
+	a.catalog = catalog.NewCatalog(a, a)
+	return a, nil
 }
 
 // Close releases the underlying DuckDB connection.
@@ -121,96 +98,53 @@ func (a *Adapter) Begin(ctx context.Context) (*sql.Tx, error) {
 	return a.db.BeginTx(ctx, nil)
 }
 
-// metadataSortColumns maps a sort field's public name to its SQL column —
-// an allowlist, so a sort request can never interpolate an arbitrary
-// identifier into the ORDER BY.
-var metadataSortColumns = map[string]string{
-	"tableId":     "tableId",
-	"tableName":   "tableName",
-	"isGeo":       "isGeo",
-	"createdAt":   "createdAt",
-	"updatedAt":   "updatedAt",
-	"rowCount":    "rowCount",
-	"srid":        "srid",
-	"sourceName":  "sourceName",
-	"sourceLayer": "sourceLayer",
-}
+// WithTx runs fn inside a transaction held under writeMu for its whole
+// duration (règle 6, règle 21), committing on success and rolling back on
+// any error fn returns. Shared by catalog.Catalog (cascade delete) and
+// data.Open (BulkInsert), the two consumers that need transactional
+// semantics beyond a single Exec.
+func (a *Adapter) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
-// metadataOrderBy builds an ORDER BY clause from sort, validating each
-// field against metadataSortColumns, with tableId always appended last as a
-// deterministic tiebreaker (règle 8).
-func metadataOrderBy(sort []storage.SortField) (string, error) {
-	clauses := make([]string, 0, len(sort)+1)
-	for _, f := range sort {
-		col, ok := metadataSortColumns[f.Column]
-		if !ok {
-			return "", storage.NewInvalidSortError(fmt.Sprintf("invalid sort column: %q", f.Column))
-		}
-		if f.Desc {
-			col += " DESC"
-		}
-		clauses = append(clauses, col)
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	clauses = append(clauses, "tableId")
-	return strings.Join(clauses, ", "), nil
+	defer tx.Rollback()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // TableIds lists the tableId of every logical table currently registered,
 // ordered by sort or by tableId when sort is empty.
 func (a *Adapter) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
-	orderBy, err := metadataOrderBy(sort)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := a.Query(ctx, fmt.Sprintf(`SELECT tableId FROM metadata ORDER BY %s`, orderBy))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return a.catalog.TableIds(ctx, sort)
 }
 
 // TableExists reports whether tableId is a registered logical table.
 func (a *Adapter) TableExists(ctx context.Context, tableId string) (bool, error) {
-	var count int
-	err := a.QueryRow(ctx, `SELECT COUNT(*) FROM metadata WHERE tableId = ?`, tableId).Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	return a.catalog.TableExists(ctx, tableId)
 }
 
 // GetMetadata fetches the metadata row for tableId.
-func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
-	row := a.QueryRow(ctx, `
-        SELECT tableId, physicalName, tableName, isGeo, createdAt, updatedAt,
-               COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid,
-               COALESCE(sourceName, ''), COALESCE(sourceLayer, '')
-        FROM metadata WHERE tableId = ?
-    `, tableId)
+func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (catalogcontract.Metadata, error) {
+	return a.catalog.GetMetadata(ctx, tableId)
+}
 
-	var m storage.Metadata
-	err := row.Scan(
-		&m.TableId, &m.PhysicalName, &m.TableName, &m.IsGeo, &m.CreatedAt, &m.UpdatedAt,
-		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
-	)
-	if err == sql.ErrNoRows {
-		return m, storage.NewNotFoundError(fmt.Sprintf("table %q not found", tableId))
-	}
-	if err != nil {
-		return m, err
-	}
-	return m, nil
+// List returns one page of metadata ordered by sort (or by tableId when
+// empty), plus the total number of registered tables.
+func (a *Adapter) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]catalogcontract.Metadata, int64, error) {
+	return a.catalog.List(ctx, sort, offset, limit)
+}
+
+// BySource maps every loaded table's source key to its tableId in a single
+// query.
+func (a *Adapter) BySource(ctx context.Context) (map[catalogcontract.SourceKey]string, error) {
+	return a.catalog.BySource(ctx)
 }
 
 // Create registers a new logical table in metadata and returns its
@@ -218,110 +152,21 @@ func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Meta
 // callers use TableCreator for that, then persist the resolved geometry
 // column via UpdateMetadata.
 func (a *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	tableId := uuid.NewString()
-	physicalName := "t_" + strings.ReplaceAll(tableId, "-", "")
-
-	_, err := a.Exec(ctx, `
-        INSERT INTO metadata (tableId, physicalName, tableName, isGeo, geometryColumn)
-        VALUES (?, ?, ?, ?, ?)
-    `, tableId, physicalName, tableName, isGeo, geometryColumn)
-	if err != nil {
-		return "", err
-	}
-	return tableId, nil
+	return a.catalog.Create(ctx, tableName, isGeo, geometryColumn)
 }
 
 // Remove deletes a logical table's metadata and drops its physical table.
 func (a *Adapter) Remove(ctx context.Context, tableId string) error {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return err
-	}
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return err
-	}
-
-	if _, err := a.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
-		return err
-	}
-	_, err = a.Exec(ctx, `DELETE FROM metadata WHERE tableId = ?`, tableId)
-	return err
+	return a.catalog.Remove(ctx, tableId)
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata.
-// Supported keys: tableName, isGeo, geometryColumn, srid, sourceName,
-// sourceLayer.
-func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, updates map[string]any) error {
-	if len(updates) == 0 {
-		return nil
-	}
-
-	allowed := map[string]bool{
-		"tableName": true, "isGeo": true, "geometryColumn": true, "srid": true,
-		"sourceName": true, "sourceLayer": true,
-	}
-	sets := make([]string, 0, len(updates))
-	args := make([]any, 0, len(updates)+1)
-	for col, val := range updates {
-		if !allowed[col] {
-			return fmt.Errorf("unsupported metadata field: %q", col)
-		}
-		sets = append(sets, fmt.Sprintf("%s = ?", col))
-		args = append(args, val)
-	}
-	args = append(args, tableId)
-
-	query := fmt.Sprintf(`UPDATE metadata SET %s WHERE tableId = ?`, strings.Join(sets, ", "))
-	_, err := a.Exec(ctx, query, args...)
-	return err
+func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, patch catalogcontract.MetadataPatch) error {
+	return a.catalog.UpdateMetadata(ctx, tableId, patch)
 }
 
 // RefreshDerivedMetadata recomputes rowCount and bbox from the underlying
 // table and bumps updatedAt (règle 9).
 func (a *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string) error {
-	meta, err := a.GetMetadata(ctx, tableId)
-	if err != nil {
-		return err
-	}
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return err
-	}
-
-	var rowCount int64
-	if err := a.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&rowCount); err != nil {
-		return err
-	}
-
-	bbox := ""
-	if meta.IsGeo {
-		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
-		if err != nil {
-			return err
-		}
-		var minX, minY, maxX, maxY sql.NullFloat64
-		// The geometry column is stored reprojected to EPSG:3857 (section 7
-		// of docs/spec.md), but bbox is reported in lon/lat order so API
-		// consumers — notably map clients, whose camera/bounds APIs take
-		// WGS84 degrees — never have to reproject it themselves. Target
-		// CRS must be OGC:CRS84, not EPSG:4326: the latter's official axis
-		// order is (lat, lon), which would silently swap X/Y here.
-		query := fmt.Sprintf(`
-            SELECT MIN(ST_XMin(g)), MIN(ST_YMin(g)), MAX(ST_XMax(g)), MAX(ST_YMax(g))
-            FROM (
-                SELECT ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84') AS g
-                FROM %s WHERE %s IS NOT NULL
-            ) t
-        `, quotedGeom, meta.PhysicalName, quotedGeom)
-		if err := a.QueryRow(ctx, query).Scan(&minX, &minY, &maxX, &maxY); err != nil {
-			return err
-		}
-		if minX.Valid {
-			bbox = fmt.Sprintf("%g,%g,%g,%g", minX.Float64, minY.Float64, maxX.Float64, maxY.Float64)
-		}
-	}
-
-	_, err = a.Exec(ctx, `
-        UPDATE metadata SET rowCount = ?, bbox = ?, updatedAt = ? WHERE tableId = ?
-    `, rowCount, bbox, time.Now(), tableId)
-	return err
+	return a.catalog.RefreshDerivedMetadata(ctx, tableId)
 }

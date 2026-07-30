@@ -9,9 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
-func createGeoTableWithPoint(t *testing.T, a *Adapter) (meta storage.Metadata, pkey string) {
+func createGeoTableWithPoint(t *testing.T, a *Adapter) (meta catalog.Metadata, pkey string) {
 	meta, geomCol := createGeoTable(t, a)
 
 	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{})

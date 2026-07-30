@@ -1,4 +1,4 @@
-package duckdb
+package catalog
 
 import (
 	"database/sql"
@@ -8,19 +8,26 @@ import (
 
 // schemaMigrations are ALTER statements applied in order, once each,
 // against a database created before they existed — metadataSchema's
-// CREATE TABLE IF NOT EXISTS only ever benefits a brand-new database
-// (§4.4 of docs/audit2.md). Append to this list, never edit or remove an
-// entry: existing databases have already applied everything before their
-// recorded version.
-var schemaMigrations = []string{}
+// CREATE TABLE IF NOT EXISTS only ever benefits a brand-new database.
+// Append to this list, never edit or remove an entry: existing databases
+// have already applied everything before their recorded version.
+var schemaMigrations = []string{
+	`ALTER TABLE metadata ADD COLUMN sourceName TEXT`,
+	`ALTER TABLE metadata ADD COLUMN sourceLayer TEXT`,
+	`DROP INDEX IF EXISTS idx_metadata_geo`,
+	`DROP INDEX IF EXISTS idx_metadata_name`,
+	`ALTER TABLE metadata ALTER COLUMN rowCount SET DATA TYPE BIGINT`,
+	`CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo)`,
+	`CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName)`,
+}
 
-// migrateSchema ensures the metadata table and schema_version tracking
-// exist, then applies every migration a database hasn't seen yet. A
-// database that didn't exist before this call gets metadataSchema's
-// current definition directly (already including every migrated column),
-// so it's seeded at the latest version rather than replaying migrations
-// that would collide with columns already present.
-func migrateSchema(db *sql.DB) error {
+// Migrate ensures the metadata table and schema_version tracking exist,
+// then applies every migration a database hasn't seen yet. A database that
+// didn't exist before this call gets metadataSchema's current definition
+// directly (already including every migrated column), so it's seeded at
+// the latest version rather than replaying migrations that would collide
+// with columns already present.
+func Migrate(db *sql.DB) error {
 	var metadataTableExisted bool
 	err := db.QueryRow(`SELECT COUNT(*) > 0 FROM duckdb_tables() WHERE table_name = 'metadata'`).Scan(&metadataTableExisted)
 	if err != nil {

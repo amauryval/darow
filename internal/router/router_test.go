@@ -18,6 +18,7 @@ import (
 	"gogeoserver/internal/core"
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 	"gogeoserver/internal/storage/mocks"
 )
 
@@ -167,14 +168,18 @@ func Test_Router_Setup(t *testing.T) {
 		deps := setupRouterDeps(t)
 
 		var normalRouteHadDeadline, exportRouteHadDeadline bool
-		deps.storage.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {
+		deps.storage.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {
 			_, normalRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 		})
-		deps.storage.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
+		deps.storage.On("GetMetadata", mock.Anything, "id-2").Return(catalog.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
 			_, exportRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 		})
-		deps.storage.On("ColumnsWithTypes", mock.Anything, "id-2").Return([]storage.ColumnInfo{}, nil).Once()
-		deps.storage.On("GetPkeys", mock.Anything, "id-2", mock.Anything, int64(0), int64(1000)).Return([]string{}, nil).Once()
+		tableRepo := &mocks.TableRepository{}
+		rowRepo := &mocks.RowRepository{}
+		deps.storage.On("Table", catalog.Metadata{TableId: "id-2", TableName: "gadgets"}).Return(tableRepo, nil)
+		tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{}, nil).Once()
+		tableRepo.On("Rows").Return(rowRepo)
+		rowRepo.On("Pkeys", mock.Anything, []storage.SortField(nil), int64(0), int64(1000)).Return([]string{}, nil).Once()
 
 		apiCfg := config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30}
 		handler := deps.newRouter(apiCfg, func(context.Context) error { return nil }).Setup()

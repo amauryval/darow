@@ -8,9 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
-func createGeoTableWithTwoPoints(t *testing.T, a *Adapter) (meta storage.Metadata, pkeyA, pkeyB string) {
+func createGeoTableWithTwoPoints(t *testing.T, a *Adapter) (meta catalog.Metadata, pkeyA, pkeyB string) {
 	meta, geomCol := createGeoTable(t, a)
 	_, err := a.Exec(context.Background(), "ALTER TABLE "+meta.PhysicalName+" ADD COLUMN name TEXT")
 	require.NoError(t, err)
@@ -26,7 +27,7 @@ func createGeoTableWithTwoPoints(t *testing.T, a *Adapter) (meta storage.Metadat
 	return meta, pkeyA, pkeyB
 }
 
-func createGeoTableWithTwoClosePoints(t *testing.T, a *Adapter) (meta storage.Metadata, pkeyA, pkeyB string) {
+func createGeoTableWithTwoClosePoints(t *testing.T, a *Adapter) (meta catalog.Metadata, pkeyA, pkeyB string) {
 	meta, geomCol := createGeoTable(t, a)
 
 	pkeyA, err := a.InsertRow(context.Background(), meta, map[string]any{})

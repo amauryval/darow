@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gogeoserver/internal/config"
-	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 func writeFixture(t *testing.T, dir, name string, size int) {
@@ -27,7 +27,7 @@ func Test_SourceService_Refresh(t *testing.T) {
 	writeFixture(t, dir, "ignored.txt", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -47,8 +47,9 @@ func Test_SourceService_Refresh_MarksLoadedSources(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "buildings.geojson", SourceName: "buildings.geojson"}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "buildings.geojson"}: "id-1",
+	}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -164,8 +165,9 @@ func Test_SourceService_Load_RejectsAlreadyLoaded(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "buildings.geojson", SourceName: "buildings.geojson"}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "buildings.geojson"}: "id-1",
+	}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -185,7 +187,7 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -197,9 +199,10 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 	require.NoError(t, err)
 
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(catalog.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "buildings.geojson", "sourceLayer": ""}).Return(nil).Once()
+	wantSourceName, wantSourceLayer := "buildings.geojson", ""
+	m.On("UpdateMetadata", mock.Anything, "id-new", catalog.MetadataPatch{SourceName: &wantSourceName, SourceLayer: &wantSourceLayer}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
@@ -216,7 +219,7 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -228,9 +231,10 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 	require.NoError(t, err)
 
 	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(catalog.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{"sourceName": "buildings.geojson", "sourceLayer": ""}).Return(nil).Once()
+	wantSourceName, wantSourceLayer := "buildings.geojson", ""
+	m.On("UpdateMetadata", mock.Anything, "id-new", catalog.MetadataPatch{SourceName: &wantSourceName, SourceLayer: &wantSourceLayer}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
@@ -249,7 +253,7 @@ func Test_SourceService_List_Paginates(t *testing.T) {
 	writeFixture(t, dir, "c.geojson", 10)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -294,7 +298,7 @@ func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -323,7 +327,7 @@ func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -343,9 +347,8 @@ func Test_SourceService_Refresh_PopulatesGpkgLayers(t *testing.T) {
 	writeFixture(t, dir, "regions.gpkg", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
-		TableId: "id-1", TableName: "regions.gpkg::communes", SourceName: "regions.gpkg", SourceLayer: "communes",
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
 	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 
@@ -371,7 +374,7 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 	writeFixture(t, dir, "regions.gpkg", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -384,10 +387,11 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 	require.NoError(t, err)
 
 	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(catalog.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("geom", true, 4326, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{
-		"sourceName": "regions.gpkg", "sourceLayer": "communes", "isGeo": true, "geometryColumn": "geom", "srid": 4326,
+	wantSourceName, wantSourceLayer, wantIsGeo, wantGeom, wantSrid := "regions.gpkg", "communes", true, "geom", 4326
+	m.On("UpdateMetadata", mock.Anything, "id-new", catalog.MetadataPatch{
+		SourceName: &wantSourceName, SourceLayer: &wantSourceLayer, IsGeo: &wantIsGeo, GeometryColumn: &wantGeom, Srid: &wantSrid,
 	}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
@@ -402,7 +406,7 @@ func Test_SourceService_Load_GpkgRequiresLayer(t *testing.T) {
 	writeFixture(t, dir, "regions.gpkg", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes"}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
@@ -423,7 +427,7 @@ func Test_SourceService_Load_ForwardsSridOverride(t *testing.T) {
 	writeFixture(t, dir, "lambert.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -435,10 +439,11 @@ func Test_SourceService_Load_ForwardsSridOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-new").Return(catalog.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
 	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
-	m.On("UpdateMetadata", mock.Anything, "id-new", map[string]any{
-		"sourceName": "lambert.geojson", "sourceLayer": "", "isGeo": true, "geometryColumn": "geom", "srid": 2154,
+	wantSourceName, wantSourceLayer, wantIsGeo, wantGeom, wantSrid := "lambert.geojson", "", true, "geom", 2154
+	m.On("UpdateMetadata", mock.Anything, "id-new", catalog.MetadataPatch{
+		SourceName: &wantSourceName, SourceLayer: &wantSourceLayer, IsGeo: &wantIsGeo, GeometryColumn: &wantGeom, Srid: &wantSrid,
 	}).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-new").Return(nil).Once()
 
@@ -453,7 +458,7 @@ func Test_SourceService_DetectCRS(t *testing.T) {
 	writeFixture(t, dir, "lambert.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -490,8 +495,9 @@ func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "buildings.geojson", SourceName: "buildings.geojson"}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "buildings.geojson"}: "id-1",
+	}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -520,7 +526,7 @@ func Test_SourceService_Delete_UnloadedSourceSkipsTableRemoval(t *testing.T) {
 	writeFixture(t, dir, "buildings.geojson", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{}, nil).Once()
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{
 		WorkDir:           dir,
@@ -554,9 +560,8 @@ func Test_SourceService_Delete_ConcurrentWithList_NoRace(t *testing.T) {
 	writeFixture(t, dir, "regions.gpkg", 100)
 
 	tableSvc, m := setupImportService(t)
-	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
-		TableId: "id-1", TableName: "regions.gpkg::communes", SourceName: "regions.gpkg", SourceLayer: "communes",
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
 	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()

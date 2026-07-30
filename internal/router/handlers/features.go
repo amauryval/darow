@@ -12,6 +12,7 @@ import (
 	"gogeoserver/internal/router/response"
 	"gogeoserver/internal/router/validation"
 	"gogeoserver/internal/storage"
+	"gogeoserver/internal/storage/catalog"
 )
 
 const ogcCRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
@@ -159,7 +160,7 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 	offset, limit := fh.featuresPaginationParams(req)
 	features, err := fh.geoService.GetFeatures(req.Context(), meta, nil, bbox, nil, q, int(limit), int(offset))
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
@@ -185,7 +186,7 @@ func (fh *FeaturesHandler) GetItem(w http.ResponseWriter, req *http.Request) {
 	featureId := chi.URLParam(req, "featureId")
 	features, err := fh.geoService.GetFeatures(req.Context(), meta, []string{featureId}, nil, nil, storage.GeoQuery{}, 1, 0)
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 	if len(features) == 0 {
@@ -198,14 +199,14 @@ func (fh *FeaturesHandler) GetItem(w http.ResponseWriter, req *http.Request) {
 
 // resolveGeoTable resolves {tableId} and rejects non-geo tables, since an
 // OGC API - Features collection is meaningless for a table without geometry.
-func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Request) (storage.Metadata, bool) {
+func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Request) (catalog.Metadata, bool) {
 	meta, ok := fh.ResolveTable(w, req)
 	if !ok {
-		return storage.Metadata{}, false
+		return catalog.Metadata{}, false
 	}
 	if !meta.IsGeo {
 		response.WriteError(w, req, fmt.Errorf("table %q is not a geo table", meta.TableId), http.StatusNotFound)
-		return storage.Metadata{}, false
+		return catalog.Metadata{}, false
 	}
 	return meta, true
 }

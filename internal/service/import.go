@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"gogeoserver/internal/storage/catalog"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:
@@ -79,13 +81,13 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 	if layer != "" {
 		sourceName = strings.TrimSuffix(name, layerSeparator+layer)
 	}
-	updates := map[string]any{"sourceName": sourceName, "sourceLayer": layer}
+	patch := catalog.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
 	if isGeo {
-		updates["isGeo"] = true
-		updates["geometryColumn"] = geometryColumn
-		updates["srid"] = resolvedSrid
+		patch.IsGeo = &isGeo
+		patch.GeometryColumn = &geometryColumn
+		patch.Srid = &resolvedSrid
 	}
-	if err := s.metadata.UpdateMetadata(ctx, tableId, updates); err != nil {
+	if err := s.metadata.UpdateMetadata(ctx, tableId, patch); err != nil {
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 
