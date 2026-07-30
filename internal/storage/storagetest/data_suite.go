@@ -1,7 +1,11 @@
-// Package storagetest holds a storage.Storage conformance suite: a battery
-// of behavioral tests runnable against any adapter, so a future
-// PostGISAdapter (or any other) can prove it satisfies the same contract
-// DuckDBAdapter does, without duplicating these tests per backend.
+// Package storagetest holds the storage layer's conformance suites: two
+// batteries of behavioral tests — one for the catalogue
+// (catalog.MetadataManager), one for data tables (storage.Storage) —
+// runnable against any adapter, so a future PostGISAdapter (or any other)
+// can prove it satisfies the same contracts DuckDBAdapter does, without
+// duplicating these tests per backend. The two are independent: an
+// adapter can hold the data contract without reimplementing the
+// catalogue, and vice versa (docs/plan-repository-data.md §5).
 package storagetest
 
 import (
@@ -18,37 +22,43 @@ import (
 	"gogeoserver/internal/storage/catalog"
 )
 
-// NewStorage builds a fresh, empty storage.Storage for one subtest. The
-// suite calls it once per subtest so tests never share state.
-type NewStorage func(t *testing.T) storage.Storage
+// DataHarness is storage.Storage plus catalog.MetadataManager: the data
+// suite's own fixtures need a catalogue to produce the Metadata each table
+// operation resolves against (docs/plan-repository-data.md §0.2 — a data
+// adapter always consumes Metadata a catalogue produced, whether or not
+// it's the same backend), but the suite only ever calls storage.Storage
+// methods on the table under test.
+type DataHarness interface {
+	storage.Storage
+	catalog.MetadataManager
+}
 
-// RunSuite runs every conformance subtest against a fresh instance from
-// newStorage. Every table it creates goes through CreateFromFile — the one
-// way to materialize a physical table that is part of the storage.Storage
-// contract itself, so the suite never depends on a backend-specific way to
-// create a table (e.g. raw SQL DDL).
-func RunSuite(t *testing.T, newStorage NewStorage) {
-	t.Run("Metadata_CreateAndRead", func(t *testing.T) { testMetadataCreateAndRead(t, newStorage) })
-	t.Run("Metadata_Remove", func(t *testing.T) { testMetadataRemove(t, newStorage) })
-	t.Run("Metadata_UpdateAndRefreshDerived", func(t *testing.T) { testMetadataUpdateAndRefreshDerived(t, newStorage) })
-	t.Run("Metadata_ListPagination", func(t *testing.T) { testMetadataListPagination(t, newStorage) })
-	t.Run("Metadata_BySource", func(t *testing.T) { testMetadataBySource(t, newStorage) })
-	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newStorage) })
-	t.Run("Rows_EmptyPkeysNoOp", func(t *testing.T) { testRowsEmptyPkeysNoOp(t, newStorage) })
-	t.Run("Rows_BulkInsert", func(t *testing.T) { testRowsBulkInsert(t, newStorage) })
-	t.Run("Rows_GetPkeysPagination", func(t *testing.T) { testRowsGetPkeysPagination(t, newStorage) })
-	t.Run("Rows_GetPkeysSort", func(t *testing.T) { testRowsGetPkeysSort(t, newStorage) })
-	t.Run("Rows_GetDistinctValues", func(t *testing.T) { testRowsGetDistinctValues(t, newStorage) })
-	t.Run("Rows_GetDistinctValuesPagination", func(t *testing.T) { testRowsGetDistinctValuesPagination(t, newStorage) })
-	t.Run("Rows_GetRowsWithFilter", func(t *testing.T) { testRowsGetRowsWithFilter(t, newStorage) })
-	t.Run("Schema_AddColumn", func(t *testing.T) { testSchemaAddColumn(t, newStorage) })
-	t.Run("Geo_TileAndBboxAndTypes", func(t *testing.T) { testGeoTileAndBboxAndTypes(t, newStorage) })
-	t.Run("Geo_FilterByBboxPagination", func(t *testing.T) { testGeoFilterByBboxPagination(t, newStorage) })
-	t.Run("Geo_GetGeometryGeoJSON", func(t *testing.T) { testGeoGetGeometryGeoJSON(t, newStorage) })
-	t.Run("Geo_GetFeatures", func(t *testing.T) { testGeoGetFeatures(t, newStorage) })
-	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newStorage) })
-	t.Run("Create_FromQuery", func(t *testing.T) { testCreateFromQuery(t, newStorage) })
-	t.Run("Create_FromFile_DetectsAndReprojectsFromNonWGS84CRS", func(t *testing.T) { testCreateFromFileDetectsNonWGS84CRS(t, newStorage) })
+// NewData builds a fresh, empty DataHarness for one subtest. The suite
+// calls it once per subtest so tests never share state.
+type NewData func(t *testing.T) DataHarness
+
+// RunDataSuite runs every data-table conformance subtest against a fresh
+// instance from newData. Every table it creates goes through
+// CreateFromFile — the one way to materialize a physical table that is
+// part of the storage.Storage contract itself, so the suite never depends
+// on a backend-specific way to create a table (e.g. raw SQL DDL).
+func RunDataSuite(t *testing.T, newData NewData) {
+	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newData) })
+	t.Run("Rows_EmptyPkeysNoOp", func(t *testing.T) { testRowsEmptyPkeysNoOp(t, newData) })
+	t.Run("Rows_BulkInsert", func(t *testing.T) { testRowsBulkInsert(t, newData) })
+	t.Run("Rows_GetPkeysPagination", func(t *testing.T) { testRowsGetPkeysPagination(t, newData) })
+	t.Run("Rows_GetPkeysSort", func(t *testing.T) { testRowsGetPkeysSort(t, newData) })
+	t.Run("Rows_GetDistinctValues", func(t *testing.T) { testRowsGetDistinctValues(t, newData) })
+	t.Run("Rows_GetDistinctValuesPagination", func(t *testing.T) { testRowsGetDistinctValuesPagination(t, newData) })
+	t.Run("Rows_GetRowsWithFilter", func(t *testing.T) { testRowsGetRowsWithFilter(t, newData) })
+	t.Run("Schema_AddColumn", func(t *testing.T) { testSchemaAddColumn(t, newData) })
+	t.Run("Geo_TileAndBboxAndTypes", func(t *testing.T) { testGeoTileAndBboxAndTypes(t, newData) })
+	t.Run("Geo_FilterByBboxPagination", func(t *testing.T) { testGeoFilterByBboxPagination(t, newData) })
+	t.Run("Geo_GetGeometryGeoJSON", func(t *testing.T) { testGeoGetGeometryGeoJSON(t, newData) })
+	t.Run("Geo_GetFeatures", func(t *testing.T) { testGeoGetFeatures(t, newData) })
+	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newData) })
+	t.Run("Create_FromQuery", func(t *testing.T) { testCreateFromQuery(t, newData) })
+	t.Run("Create_FromFile_DetectsAndReprojectsFromNonWGS84CRS", func(t *testing.T) { testCreateFromFileDetectsNonWGS84CRS(t, newData) })
 }
 
 // geoJSONFixture writes a two-point, one-property FeatureCollection to a
@@ -90,7 +100,7 @@ func lambert93Fixture(t *testing.T) string {
 // newGeoTable creates a table and materializes it from geoJSONFixture,
 // returning its refreshed Metadata and the pkeys of the two fixture rows
 // in file order.
-func newGeoTable(t *testing.T, s storage.Storage) (meta catalog.Metadata, pkeys []string) {
+func newGeoTable(t *testing.T, s DataHarness) (meta catalog.Metadata, pkeys []string) {
 	ctx := context.Background()
 
 	tableId, err := s.Create(ctx, "points", false, "")
@@ -113,121 +123,10 @@ func newGeoTable(t *testing.T, s storage.Storage) (meta catalog.Metadata, pkeys 
 	return meta, pkeys
 }
 
-func testMetadataCreateAndRead(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
-	ctx := context.Background()
-
-	meta, pkeys := newGeoTable(t, s)
-
-	ids, err := s.TableIds(ctx, nil)
-	require.NoError(t, err)
-	assert.Contains(t, ids, meta.TableId)
-
-	exists, err := s.TableExists(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.True(t, exists)
-
-	meta, err = s.GetMetadata(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.Equal(t, "points", meta.TableName)
-	assert.True(t, meta.IsGeo)
-	assert.EqualValues(t, len(pkeys), meta.RowCount)
-
-	exists, err = s.TableExists(ctx, "no-such-table")
-	require.NoError(t, err)
-	assert.False(t, exists)
-
-	_, err = s.GetMetadata(ctx, "no-such-table")
-	var notFoundErr *storage.NotFoundError
-	assert.ErrorAs(t, err, &notFoundErr)
-}
-
-func testMetadataRemove(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
-	ctx := context.Background()
-	meta, _ := newGeoTable(t, s)
-
-	require.NoError(t, s.Remove(ctx, meta.TableId))
-
-	exists, err := s.TableExists(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
-}
-
-func testMetadataUpdateAndRefreshDerived(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
-	ctx := context.Background()
-	meta, pkeys := newGeoTable(t, s)
-
-	renamed := "renamed"
-	require.NoError(t, s.UpdateMetadata(ctx, meta.TableId, catalog.MetadataPatch{TableName: &renamed}))
-	meta, err := s.GetMetadata(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.Equal(t, "renamed", meta.TableName)
-
-	require.NoError(t, s.RemoveRows(ctx, meta, pkeys[:1]))
-	require.NoError(t, s.RefreshDerivedMetadata(ctx, meta.TableId))
-
-	meta, err = s.GetMetadata(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.EqualValues(t, len(pkeys)-1, meta.RowCount)
-}
-
-func testMetadataListPagination(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
-	ctx := context.Background()
-
-	var ids []string
-	for range 3 {
-		tableId, err := s.Create(ctx, "points", false, "")
-		require.NoError(t, err)
-		ids = append(ids, tableId)
-	}
-
-	page, total, err := s.List(ctx, nil, 0, 2)
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, total)
-	require.Len(t, page, 2)
-
-	rest, total, err := s.List(ctx, nil, 2, 2)
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, total)
-	require.Len(t, rest, 1)
-
-	var seen []string
-	for _, m := range append(page, rest...) {
-		seen = append(seen, m.TableId)
-	}
-	assert.ElementsMatch(t, ids, seen)
-}
-
-func testMetadataBySource(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
-	ctx := context.Background()
-
-	tableId, err := s.Create(ctx, "points", false, "")
-	require.NoError(t, err)
-	sourceName, sourceLayer := "points.geojson", "layer1"
-	require.NoError(t, s.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{
-		SourceName: &sourceName, SourceLayer: &sourceLayer,
-	}))
-
-	unrelatedId, err := s.Create(ctx, "other", false, "")
-	require.NoError(t, err)
-
-	bySource, err := s.BySource(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, tableId, bySource[catalog.SourceKey{SourceName: "points.geojson", SourceLayer: "layer1"}])
-	assert.NotContains(t, bySource, catalog.SourceKey{SourceName: ""})
-	for key, id := range bySource {
-		assert.NotEqual(t, unrelatedId, id, "table with no sourceName must be excluded, got key %v", key)
-	}
-}
-
 // An empty pkey list must no-op rather than build "IN ()", a SQL syntax
 // error in most engines (audit 3.10).
-func testRowsEmptyPkeysNoOp(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsEmptyPkeysNoOp(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 
@@ -238,8 +137,8 @@ func testRowsEmptyPkeysNoOp(t *testing.T, newStorage NewStorage) {
 	require.NoError(t, s.RemoveRows(ctx, meta, nil))
 }
 
-func testRowsInsertGetUpdateRemove(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsInsertGetUpdateRemove(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 
@@ -264,8 +163,8 @@ func testRowsInsertGetUpdateRemove(t *testing.T, newStorage NewStorage) {
 	assert.Empty(t, rows)
 }
 
-func testRowsBulkInsert(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsBulkInsert(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, existing := newGeoTable(t, s)
 
@@ -280,8 +179,8 @@ func testRowsBulkInsert(t *testing.T, newStorage NewStorage) {
 	assert.EqualValues(t, len(existing)+3, count)
 }
 
-func testRowsGetPkeysPagination(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsGetPkeysPagination(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 	_, err := s.BulkInsert(ctx, meta, []map[string]any{
@@ -301,8 +200,8 @@ func testRowsGetPkeysPagination(t *testing.T, newStorage NewStorage) {
 	assert.Equal(t, all[2:4], page)
 }
 
-func testRowsGetPkeysSort(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsGetPkeysSort(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, existing := newGeoTable(t, s)
 
@@ -326,8 +225,8 @@ func testRowsGetPkeysSort(t *testing.T, newStorage NewStorage) {
 	assert.Error(t, err)
 }
 
-func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsGetDistinctValues(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 	_, err := s.InsertRow(ctx, meta, map[string]any{"name": "a"})
@@ -342,8 +241,8 @@ func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {
 // return unbounded rows in one call. Ordering by the column itself makes
 // paging deterministic, so a limit-1 page followed by an offset-1 page
 // covers the same two values as one unpaginated call, in order.
-func testRowsGetDistinctValuesPagination(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsGetDistinctValuesPagination(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 
@@ -359,8 +258,8 @@ func testRowsGetDistinctValuesPagination(t *testing.T, newStorage NewStorage) {
 	assert.ElementsMatch(t, []any{"a", "b"}, []any{page1[0], page2[0]})
 }
 
-func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testRowsGetRowsWithFilter(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 
@@ -376,8 +275,8 @@ func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
 	assert.Equal(t, "a", rows[0].Values["name"])
 }
 
-func testSchemaAddColumn(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testSchemaAddColumn(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
 
@@ -392,8 +291,8 @@ func testSchemaAddColumn(t *testing.T, newStorage NewStorage) {
 	assert.Equal(t, "DOUBLE", colType)
 }
 
-func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testGeoTileAndBboxAndTypes(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	tableId, pkeys := newGeoTable(t, s)
 
@@ -428,8 +327,8 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
 // table can't materialize every intersecting pkey in one call. Ordering by
 // pkey makes paging deterministic, so a limit-1 page followed by an
 // offset-1 page covers the same two pkeys as one unpaginated call, in order.
-func testGeoFilterByBboxPagination(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testGeoFilterByBboxPagination(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	meta, pkeys := newGeoTable(t, s)
 	bothPoints := [4]float64{-2000000, -2000000, 2000000, 2000000}
@@ -446,8 +345,8 @@ func testGeoFilterByBboxPagination(t *testing.T, newStorage NewStorage) {
 	assert.ElementsMatch(t, pkeys, []string{page1[0], page2[0]})
 }
 
-func testGeoGetGeometryGeoJSON(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testGeoGetGeometryGeoJSON(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	tableId, pkeys := newGeoTable(t, s)
 
@@ -458,8 +357,8 @@ func testGeoGetGeometryGeoJSON(t *testing.T, newStorage NewStorage) {
 	}
 }
 
-func testGeoGetFeatures(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testGeoGetFeatures(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	tableId, pkeys := newGeoTable(t, s)
 
@@ -485,8 +384,8 @@ func testGeoGetFeatures(t *testing.T, newStorage NewStorage) {
 	assert.ElementsMatch(t, all, append(firstPage, secondPage...))
 }
 
-func testCreateListLayers(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testCreateListLayers(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 
 	layers, err := s.ListLayers(ctx, geoJSONFixture(t))
@@ -497,8 +396,8 @@ func testCreateListLayers(t *testing.T, newStorage NewStorage) {
 // GEO-1: the source CRS must be detected (or overridable) rather than
 // always assumed WGS84 — a Lambert-93 (EPSG:2154) source, ultra-common for
 // French datasets, must still land at the correct Web Mercator position.
-func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	path := lambert93Fixture(t)
 
@@ -518,8 +417,8 @@ func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newStorage NewStorage) {
 	assert.Equal(t, 2154, srid)
 }
 
-func testCreateFromQuery(t *testing.T, newStorage NewStorage) {
-	s := newStorage(t)
+func testCreateFromQuery(t *testing.T, newData NewData) {
+	s := newData(t)
 	ctx := context.Background()
 	sourceMeta, _ := newGeoTable(t, s)
 

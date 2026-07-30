@@ -11,13 +11,19 @@ import (
 	"gogeoserver/internal/storage/data"
 )
 
-// Storage is a testify mock implementing storage.Storage, for use in
-// service-layer unit tests.
+// Storage is a testify mock implementing storage.Storage plus
+// catalog.MetadataManager and data.TableResolver — the full surface
+// core.NewServices wires up, kept as one mock since service-layer tests
+// exercise data, catalogue, and resolver methods interchangeably.
 type Storage struct {
 	mock.Mock
 }
 
-var _ storage.Storage = (*Storage)(nil)
+var (
+	_ storage.Storage         = (*Storage)(nil)
+	_ catalog.MetadataManager = (*Storage)(nil)
+	_ data.TableResolver      = (*Storage)(nil)
+)
 
 func (m *Storage) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	callArgs := m.Called(ctx, query, args)
