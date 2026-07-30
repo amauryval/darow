@@ -205,7 +205,7 @@ func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Meta
 		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
 	)
 	if err == sql.ErrNoRows {
-		return m, fmt.Errorf("table %q not found: %w", tableId, err)
+		return m, storage.NewNotFoundError(fmt.Sprintf("table %q not found", tableId))
 	}
 	if err != nil {
 		return m, err

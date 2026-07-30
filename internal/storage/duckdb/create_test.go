@@ -48,6 +48,7 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	assert.Equal(t, "geom", geometryColumn)
 	assert.Equal(t, 4326, srid, "GeoJSON with no explicit crs declares WGS84")
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_geom"))
+	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_pkey"), "clustering rebuilds the table and must recreate the pkey index dropped with it")
 
 	count, err := a.RowsCount(context.Background(), meta)
 	require.NoError(t, err)
@@ -247,4 +248,61 @@ func Test_Adapter_CreateFromQuery_GroupBy(t *testing.T) {
 	count, err := a.RowsCount(context.Background(), derivedMeta)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
+}
+
+func Test_Adapter_clusterByHilbert(t *testing.T) {
+	cases := []struct {
+		name        string
+		allNullGeom bool
+	}{
+		{name: "reorders rows by spatial locality, preserving every row"},
+		{name: "leaves an all-NULL geometry column untouched", allNullGeom: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := setupAdapter(t)
+			path := writeGeoJSONFixture(t)
+
+			tableId, err := a.Create(context.Background(), "points", false, "")
+			require.NoError(t, err)
+			meta, err := a.GetMetadata(context.Background(), tableId)
+			require.NoError(t, err)
+			_, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
+			require.NoError(t, err)
+			require.True(t, isGeo)
+
+			if c.allNullGeom {
+				_, err := a.Exec(context.Background(), fmt.Sprintf(`UPDATE %s SET geom = NULL`, meta.PhysicalName))
+				require.NoError(t, err)
+			}
+
+			var pkeysBefore []string
+			rows, err := a.Query(context.Background(), fmt.Sprintf(`SELECT __pkey FROM %s ORDER BY __pkey`, meta.PhysicalName))
+			require.NoError(t, err)
+			for rows.Next() {
+				var pkey string
+				require.NoError(t, rows.Scan(&pkey))
+				pkeysBefore = append(pkeysBefore, pkey)
+			}
+			require.NoError(t, rows.Err())
+			rows.Close()
+
+			err = a.clusterByHilbert(context.Background(), meta.PhysicalName, "geom")
+			require.NoError(t, err)
+
+			var pkeysAfter []string
+			rows, err = a.Query(context.Background(), fmt.Sprintf(`SELECT __pkey FROM %s ORDER BY __pkey`, meta.PhysicalName))
+			require.NoError(t, err)
+			for rows.Next() {
+				var pkey string
+				require.NoError(t, rows.Scan(&pkey))
+				pkeysAfter = append(pkeysAfter, pkey)
+			}
+			require.NoError(t, rows.Err())
+			rows.Close()
+
+			assert.ElementsMatch(t, pkeysBefore, pkeysAfter, "clustering must not drop or duplicate rows")
+		})
+	}
 }

@@ -84,7 +84,7 @@ func Test_FeaturesHandler_GetCollection(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "returns the collection", isGeo: true, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "non-geo table returns 404", isGeo: false, wantStatus: http.StatusNotFound},
 	}
 
@@ -113,7 +113,7 @@ func Test_FeaturesHandler_GetItems(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "returns features", isGeo: true, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "non-geo table returns 404", isGeo: false, wantStatus: http.StatusNotFound},
 		{name: "invalid bbox returns 400", isGeo: true, query: "?bbox=1,2,3", wantStatus: http.StatusBadRequest},
 		{name: "invalid filter returns 400", isGeo: true, query: "?filter=not-json", wantStatus: http.StatusBadRequest},
@@ -196,7 +196,7 @@ func Test_FeaturesHandler_GetItem(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "returns the feature", isGeo: true, features: []storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "non-geo table returns 404", isGeo: false, wantStatus: http.StatusNotFound},
 		{name: "unknown feature returns 404", isGeo: true, features: nil, wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", isGeo: true, featErr: assert.AnError, wantStatus: http.StatusInternalServerError},

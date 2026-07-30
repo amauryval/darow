@@ -86,8 +86,8 @@ func (m *mockRowAPI) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 	return rows, args.Error(1)
 }
 
-func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error) {
-	args := m.Called(ctx, meta, column)
+func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
+	args := m.Called(ctx, meta, column, offset, limit)
 	values, _ := args.Get(0).([]any)
 	return values, args.Error(1)
 }
@@ -120,10 +120,16 @@ type mockGeoAPI struct{ mock.Mock }
 
 var _ geoAPI = (*mockGeoAPI)(nil)
 
-func (m *mockGeoAPI) GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error) {
-	args := m.Called(ctx, meta, zoom, x, y, attrs)
+func (m *mockGeoAPI) GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
+	args := m.Called(ctx, meta, zoom, x, y, attrs, q)
 	tile, _ := args.Get(0).([]byte)
 	return tile, args.Error(1)
+}
+
+func (m *mockGeoAPI) FilteredExtent(ctx context.Context, meta storage.Metadata, q storage.GeoQuery) (string, error) {
+	args := m.Called(ctx, meta, q)
+	bbox, _ := args.Get(0).(string)
+	return bbox, args.Error(1)
 }
 
 func (m *mockGeoAPI) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {
@@ -132,14 +138,20 @@ func (m *mockGeoAPI) GeometryTypes(ctx context.Context, meta storage.Metadata) (
 	return types, args.Error(1)
 }
 
-func (m *mockGeoAPI) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
-	args := m.Called(ctx, meta, bbox)
+func (m *mockGeoAPI) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
+	args := m.Called(ctx, meta, bbox, offset, limit)
 	pkeys, _ := args.Get(0).([]string)
 	return pkeys, args.Error(1)
 }
 
 func (m *mockGeoAPI) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
 	args := m.Called(ctx, meta, pkeys, bbox, attrs, q, limit, offset)
+	features, _ := args.Get(0).([]storage.GeoFeature)
+	return features, args.Error(1)
+}
+
+func (m *mockGeoAPI) GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, zoom, x, y, attrs, q, limit, offset)
 	features, _ := args.Get(0).([]storage.GeoFeature)
 	return features, args.Error(1)
 }

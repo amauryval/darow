@@ -68,7 +68,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "lists rows", wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", listErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
@@ -155,7 +155,7 @@ func Test_rowsHandler_addRows(t *testing.T) {
 		{name: "inserts a single row", body: map[string]any{"rows": []map[string]any{{"name": "a"}}}, wantStatus: http.StatusCreated},
 		{name: "bulk-inserts multiple rows", body: map[string]any{"rows": []map[string]any{{"name": "a"}, {"name": "b"}}}, wantStatus: http.StatusCreated},
 		{name: "empty rows is rejected", body: map[string]any{"rows": []map[string]any{}}, wantStatus: http.StatusBadRequest},
-		{name: "unknown table returns 404", body: map[string]any{"rows": []map[string]any{{"name": "a"}}}, lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", body: map[string]any{"rows": []map[string]any{{"name": "a"}}}, lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "insert failure maps to 500", body: map[string]any{"rows": []map[string]any{{"name": "a"}}}, insertErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
@@ -192,7 +192,7 @@ func Test_rowsHandler_getRow(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "returns the row", row: &storage.Row{Pkey: "1"}, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "missing row returns 404", row: nil, wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", getErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
@@ -229,7 +229,7 @@ func Test_rowsHandler_getRowsByPkey(t *testing.T) {
 	}{
 		{name: "returns the rows", body: map[string]any{"pkeys": []string{"1", "2"}}, rows: []storage.Row{{Pkey: "1"}, {Pkey: "2"}}, wantStatus: http.StatusOK},
 		{name: "empty pkeys short-circuits without a storage call", body: map[string]any{"pkeys": []string{}}, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", body: map[string]any{"pkeys": []string{"1"}}, lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", body: map[string]any{"pkeys": []string{"1"}}, lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "storage failure returns 500", body: map[string]any{"pkeys": []string{"1"}}, getErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
@@ -265,7 +265,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "updates the row", row: &storage.Row{Pkey: "1"}, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "update failure maps to 500", updateErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "row disappears after update", row: nil, wantStatus: http.StatusNotFound},
 	}
@@ -303,7 +303,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "deletes the row", wantStatus: http.StatusNoContent},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "removal failure returns 500", removeErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 

@@ -105,7 +105,7 @@ func Test_tablesHandler_getTableMetadata(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "existing table returns metadata", wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -133,7 +133,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 	}{
 		{name: "renames the table", body: map[string]string{"tableName": "new"}, wantStatus: http.StatusOK},
 		{name: "missing tableName is rejected", body: map[string]string{"tableName": ""}, wantStatus: http.StatusBadRequest},
-		{name: "unknown table returns 404", body: map[string]string{"tableName": "new"}, lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", body: map[string]string{"tableName": "new"}, lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "update failure returns 400", body: map[string]string{"tableName": "new"}, updateErr: assert.AnError, wantStatus: http.StatusBadRequest},
 	}
 
@@ -166,7 +166,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "deletes the table", wantStatus: http.StatusNoContent},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "removal failure returns 500", removeErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
@@ -196,7 +196,7 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "returns the schema", wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
@@ -233,7 +233,7 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "adds the column", wantStatus: http.StatusCreated},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "add failure returns 400", addErr: assert.AnError, wantStatus: http.StatusBadRequest},
 	}
 
@@ -272,7 +272,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 		wantBodyExcerpt string
 	}{
 		{name: "derives a new table", wantStatus: http.StatusCreated},
-		{name: "unknown source table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown source table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
 			// NEW-SEC-1: an internal storage failure (e.g. a raw DuckDB
@@ -320,7 +320,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "filters rows", wantLimit: 100, wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "filter failure maps to 500", filterErr: assert.AnError, wantLimit: 100, wantStatus: http.StatusInternalServerError},
 		{name: "limit above MaxRowLimit is capped", bodyLimit: 100000000, wantLimit: 1000, wantStatus: http.StatusOK},
@@ -372,7 +372,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 		wantStatus  int
 	}{
 		{name: "returns distinct values", wantStatus: http.StatusOK},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "unknown column is rejected", schemaErr: nil, wantStatus: http.StatusBadRequest},
 		{name: "distinct lookup failure returns 500", distinctErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
@@ -386,6 +386,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
+				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -399,7 +400,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}}, nil).Once()
 			}
 			if c.lookupErr == nil && col == "status" {
-				rowSvc.On("GetDistinctValues", mock.Anything, meta, col).Return([]any{"a", "b"}, c.distinctErr).Once()
+				rowSvc.On("GetDistinctValues", mock.Anything, meta, col, 0, 100).Return([]any{"a", "b"}, c.distinctErr).Once()
 			}
 
 			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, "/api/v1/tables/t1/columns/"+col+"/distinct", nil,

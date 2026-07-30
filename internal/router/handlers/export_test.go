@@ -65,7 +65,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 	}{
 		{name: "defaults csv for a non-geo table", wantStatus: http.StatusOK, wantContent: "text/csv"},
 		{name: "defaults geojson for a geo table", isGeo: true, wantStatus: http.StatusOK, wantContent: "application/geo+json"},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "unknown format maps to its service error", format: "bogus", wantStatus: http.StatusBadRequest},
 	}
 

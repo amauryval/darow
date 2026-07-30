@@ -179,10 +179,11 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 	return s.convertRows(ctx, meta, rows)
 }
 
-// GetDistinctValues returns column's distinct values, converted to native
+// GetDistinctValues returns a page of up to limit of column's distinct
+// values, skipping offset matches first (règle 18), converted to native
 // JSON types (règle 12) the same way row reads are.
-func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error) {
-	values, err := s.storage.GetDistinctValues(ctx, meta, column)
+func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
+	values, err := s.storage.GetDistinctValues(ctx, meta, column, offset, limit)
 	if err != nil {
 		return nil, err
 	}

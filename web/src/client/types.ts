@@ -69,13 +69,17 @@ export interface SchemaResponse {
   columns: ColumnSchema[];
 }
 
-// Matches storage.FilterCondition — column and operator are validated
-// server-side against the table's real schema and a fixed operator
-// whitelist, so no enum is enforced client-side.
+// Matches storage.FilterCondition — a node is either a leaf
+// (column/operator/value) or a boolean group (bool + conditions), never
+// both. Column and operator are validated server-side against the table's
+// real schema and a fixed operator whitelist, so no enum is enforced
+// client-side.
 export interface FilterCondition {
-  column: string;
-  operator: string;
-  value: RowValue;
+  column?: string;
+  operator?: string;
+  value?: RowValue;
+  bool?: "AND" | "OR";
+  conditions?: FilterCondition[];
 }
 
 export interface ErrorResponse {

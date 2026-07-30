@@ -68,6 +68,12 @@ type Row struct {
 	Values map[string]any
 }
 
+// ColumnInfo names a single column and its DuckDB type.
+type ColumnInfo struct {
+	Name string
+	Type string
+}
+
 // TableManager reads and writes rows of a data table.
 type TableManager interface {
 	TableReader
@@ -81,6 +87,9 @@ type TableManager interface {
 // export) never forces a redundant metadata SELECT per call (§4.2).
 type TableReader interface {
 	Columns(ctx context.Context, meta Metadata) ([]string, error)
+	// ColumnsWithTypes lists every column together with its DuckDB type in
+	// a single call, unlike calling ColumnType once per column.
+	ColumnsWithTypes(ctx context.Context, meta Metadata) ([]ColumnInfo, error)
 	ColumnType(ctx context.Context, meta Metadata, column string) (string, error)
 	RowsCount(ctx context.Context, meta Metadata) (int64, error)
 	// GetPkeys returns a page of primary keys ordered by sort (multi-column,
@@ -90,7 +99,11 @@ type TableReader interface {
 	GetPkeys(ctx context.Context, meta Metadata, sort []SortField, offset, limit int64) ([]string, error)
 	GetRowsByPkey(ctx context.Context, meta Metadata, pKeys []string) ([]Row, error)
 	GetRowsWithFilter(ctx context.Context, meta Metadata, filter string, args []any, limit int) ([]Row, error)
-	GetDistinctValues(ctx context.Context, meta Metadata, column string) ([]any, error)
+	// GetDistinctValues returns a page of up to limit distinct values of
+	// column, ordered by column itself for a deterministic offset — a
+	// high-cardinality column (an identifier, a date) could otherwise
+	// return the whole column to an unauthenticated caller in one response.
+	GetDistinctValues(ctx context.Context, meta Metadata, column string, offset, limit int) ([]any, error)
 }
 
 // TableWriter exposes write access to a data table's rows and schema, on
@@ -119,8 +132,21 @@ type GeoTableManager interface {
 	// aborting a request for a zoom level it has since scrolled past).
 	// attrs selects extra non-geometry columns to embed in the tile
 	// (GEO-3), validated by the caller against the table's real columns.
-	Tile(ctx context.Context, meta Metadata, zoom, x, y int, attrs []string) ([]byte, error)
-	FilterByBbox(ctx context.Context, meta Metadata, bbox [4]float64) ([]string, error)
+	// q adds an optional filter clause, restricting which rows the tile
+	// renders; q.Tolerance/q.Precision are ignored since a tile always
+	// simplifies to its own zoom-derived resolution.
+	Tile(ctx context.Context, meta Metadata, zoom, x, y int, attrs []string, q GeoQuery) ([]byte, error)
+	// FilterByBbox returns a page of up to limit pkeys of rows whose
+	// geometry intersects bbox, ordered by pkey for a deterministic offset —
+	// a world-spanning bbox on a large table could otherwise materialize
+	// every pkey in the table at once in one response.
+	FilterByBbox(ctx context.Context, meta Metadata, bbox [4]float64, offset, limit int) ([]string, error)
+
+	// FilteredExtent returns the bounding box, in the same "minX,minY,maxX,
+	// maxY" OGC:CRS84 format as Metadata.Bbox, of every row matching
+	// q.Filter/q.Args — empty if no row matches. Used to re-center a map
+	// view on a filter's results rather than the whole table's extent.
+	FilteredExtent(ctx context.Context, meta Metadata, q GeoQuery) (string, error)
 	GeometryTypes(ctx context.Context, meta Metadata) ([]string, error)
 
 	// GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
@@ -137,4 +163,11 @@ type GeoTableManager interface {
 	// every column). This is GetGeometryGeoJSON's sibling exception to
 	// règle 7, for OGC API - Features.
 	GetFeatures(ctx context.Context, meta Metadata, pkeys []string, bbox *[4]float64, attrs []string, q GeoQuery, limit, offset int) ([]GeoFeature, error)
+
+	// GetFeaturesTile is GetFeatures scoped to a single z/x/y tile instead
+	// of an arbitrary bbox — the envelope is computed the same way Tile's
+	// MVT envelope is (ST_TileEnvelope), so a client tiling its GeoJSON
+	// loading shares the exact same tile grid as the MVT layer, with no
+	// tile-boundary math duplicated client-side.
+	GetFeaturesTile(ctx context.Context, meta Metadata, zoom, x, y int, attrs []string, q GeoQuery, limit, offset int) ([]GeoFeature, error)
 }

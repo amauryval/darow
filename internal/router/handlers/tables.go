@@ -58,6 +58,25 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 	return offset, limit
 }
 
+// distinctValuesPaginationParams reads offset/limit query params, capped by
+// DefaultRowLimit/MaxRowLimit — a column's distinct values are per-row
+// content, not a metadata record, so they share RowsHandler's limits rather
+// than listPaginationParams's smaller ones.
+func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request) (offset, limit int64) {
+	offset = 0
+	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
+		offset = v
+	}
+	limit = int64(th.apiCfg.DefaultRowLimit)
+	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > int64(th.apiCfg.MaxRowLimit) {
+		limit = int64(th.apiCfg.MaxRowLimit)
+	}
+	return offset, limit
+}
+
 // ListTables handles GET /tables.
 //
 // @Summary List tables
@@ -331,13 +350,17 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 
 // GetDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct.
 // col is validated against the table's real, non-geometry columns (règle 7
-// — never surface geometry through a generic column-name path).
+// — never surface geometry through a generic column-name path). Paginated
+// like ListRows (règle 18): a high-cardinality column (an identifier, a
+// date) never returns unbounded values in one response.
 //
 // @Summary List a column's distinct values
 // @Tags tables
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Param col path string true "Column name"
+// @Param offset query int false "Pagination offset"
+// @Param limit query int false "Pagination limit"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/columns/{col}/distinct [get]
@@ -353,10 +376,11 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col)
+	offset, limit := th.distinctValuesPaginationParams(req)
+	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, int(offset), int(limit))
 	if err != nil {
-		response.WriteError(w, req, err, http.StatusInternalServerError)
+		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values})
+	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values, "limit": limit, "offset": offset})
 }

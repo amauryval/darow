@@ -208,6 +208,87 @@ func Test_Adapter_GetFeatures_NullGeometry(t *testing.T) {
 	assert.Equal(t, "null", features[0].GeoJSON)
 }
 
+func Test_Adapter_GetFeaturesTile_MatchesTileEnvelope(t *testing.T) {
+	a := setupAdapter(t)
+	meta, geomCol := createGeoTable(t, a)
+	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{})
+	require.NoError(t, err)
+	require.NoError(t, a.Update(context.Background(), meta, []string{pkey}, map[string]any{geomCol: "POINT(1 1)"}))
+
+	features, err := a.GetFeaturesTile(context.Background(), meta, 0, 0, 0, nil, storage.GeoQuery{}, 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, features, 1)
+	assert.Equal(t, pkey, features[0].Pkey)
+}
+
+func Test_Adapter_GetFeaturesTile_ExcludesPointsOutsideTile(t *testing.T) {
+	a := setupAdapter(t)
+	meta, geomCol := createGeoTable(t, a)
+	pkey, err := a.InsertRow(context.Background(), meta, map[string]any{})
+	require.NoError(t, err)
+	// At zoom 1, tile (0,0) covers the top-left quadrant of the world
+	// (negative X, positive Y in Web Mercator); a point in the opposite
+	// quadrant should not match.
+	require.NoError(t, a.Update(context.Background(), meta, []string{pkey}, map[string]any{geomCol: "POINT(10000000 -10000000)"}))
+
+	features, err := a.GetFeaturesTile(context.Background(), meta, 1, 0, 0, nil, storage.GeoQuery{}, 10, 0)
+
+	require.NoError(t, err)
+	assert.Empty(t, features)
+}
+
+func Test_Adapter_GetFeaturesTile_WithFilter(t *testing.T) {
+	a := setupAdapter(t)
+	meta, pkeyA, _ := createGeoTableWithTwoPoints(t, a)
+
+	filter, args, err := storage.BuildFilter([]storage.FilterCondition{{Column: "name", Operator: "=", Value: "a"}}, []string{"name"})
+	require.NoError(t, err)
+
+	features, err := a.GetFeaturesTile(context.Background(), meta, 0, 0, 0, nil, storage.GeoQuery{Filter: filter, Args: args}, 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, features, 1)
+	assert.Equal(t, pkeyA, features[0].Pkey)
+}
+
+func Test_Adapter_GetFeaturesTile_AttrsSubset(t *testing.T) {
+	a := setupAdapter(t)
+	meta, pkeyA, _ := createGeoTableWithTwoPoints(t, a)
+
+	restricted, err := a.GetFeaturesTile(context.Background(), meta, 0, 0, 0, []string{"name"}, storage.GeoQuery{}, 10, 0)
+
+	require.NoError(t, err)
+	pkeys := make([]string, len(restricted))
+	for i, f := range restricted {
+		pkeys[i] = f.Pkey
+	}
+	require.Contains(t, pkeys, pkeyA)
+	for _, f := range restricted {
+		assert.Equal(t, []string{"name"}, keys(f.Values))
+	}
+}
+
+func keys(m map[string]any) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+func Test_Adapter_GetFeaturesTile_StopsOnCancelledContext(t *testing.T) {
+	a := setupAdapter(t)
+	meta, _, _ := createGeoTableWithTwoPoints(t, a)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := a.GetFeaturesTile(ctx, meta, 0, 0, 0, nil, storage.GeoQuery{}, 10, 0)
+
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 func Test_Adapter_GetFeatures_StopsOnCancelledContext(t *testing.T) {
 	a := setupAdapter(t)
 	meta, _, _ := createGeoTableWithTwoPoints(t, a)

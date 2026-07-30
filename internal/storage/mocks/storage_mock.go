@@ -93,6 +93,12 @@ func (m *Storage) ColumnType(ctx context.Context, meta storage.Metadata, column 
 	return callArgs.String(0), callArgs.Error(1)
 }
 
+func (m *Storage) ColumnsWithTypes(ctx context.Context, meta storage.Metadata) ([]storage.ColumnInfo, error) {
+	callArgs := m.Called(ctx, meta.TableId)
+	cols, _ := callArgs.Get(0).([]storage.ColumnInfo)
+	return cols, callArgs.Error(1)
+}
+
 func (m *Storage) RowsCount(ctx context.Context, meta storage.Metadata) (int64, error) {
 	callArgs := m.Called(ctx, meta.TableId)
 	count, _ := callArgs.Get(0).(int64)
@@ -117,8 +123,8 @@ func (m *Storage) GetRowsWithFilter(ctx context.Context, meta storage.Metadata, 
 	return rows, callArgs.Error(1)
 }
 
-func (m *Storage) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error) {
-	callArgs := m.Called(ctx, meta.TableId, column)
+func (m *Storage) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
+	callArgs := m.Called(ctx, meta.TableId, column, offset, limit)
 	values, _ := callArgs.Get(0).([]any)
 	return values, callArgs.Error(1)
 }
@@ -146,8 +152,8 @@ func (m *Storage) BulkInsert(ctx context.Context, meta storage.Metadata, rows []
 	return pkeys, callArgs.Error(1)
 }
 
-func (m *Storage) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error) {
-	callArgs := m.Called(ctx, meta.TableId, zoom, x, y, attrs)
+func (m *Storage) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
+	callArgs := m.Called(ctx, meta.TableId, zoom, x, y, attrs, q)
 	tile, _ := callArgs.Get(0).([]byte)
 	return tile, callArgs.Error(1)
 }
@@ -158,10 +164,22 @@ func (m *Storage) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys 
 	return features, callArgs.Error(1)
 }
 
-func (m *Storage) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, bbox)
+func (m *Storage) GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	callArgs := m.Called(ctx, meta.TableId, zoom, x, y, attrs, q, limit, offset)
+	features, _ := callArgs.Get(0).([]storage.GeoFeature)
+	return features, callArgs.Error(1)
+}
+
+func (m *Storage) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
+	callArgs := m.Called(ctx, meta.TableId, bbox, offset, limit)
 	pkeys, _ := callArgs.Get(0).([]string)
 	return pkeys, callArgs.Error(1)
+}
+
+func (m *Storage) FilteredExtent(ctx context.Context, meta storage.Metadata, q storage.GeoQuery) (string, error) {
+	callArgs := m.Called(ctx, meta.TableId, q)
+	bbox, _ := callArgs.Get(0).(string)
+	return bbox, callArgs.Error(1)
 }
 
 func (m *Storage) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {

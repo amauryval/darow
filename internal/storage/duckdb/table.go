@@ -64,6 +64,26 @@ func (a *Adapter) Columns(ctx context.Context, meta storage.Metadata) ([]string,
 	return names, rows.Err()
 }
 
+// ColumnsWithTypes lists every column of meta's underlying table, geometry
+// column included, together with its DuckDB type — a single DESCRIBE, unlike
+// calling ColumnType once per column.
+func (a *Adapter) ColumnsWithTypes(ctx context.Context, meta storage.Metadata) ([]storage.ColumnInfo, error) {
+	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return nil, err
+	}
+
+	described, err := a.describeColumns(ctx, meta.PhysicalName)
+	if err != nil {
+		return nil, err
+	}
+
+	cols := make([]storage.ColumnInfo, 0, len(described))
+	for _, col := range described {
+		cols = append(cols, storage.ColumnInfo{Name: col[0], Type: col[1]})
+	}
+	return cols, nil
+}
+
 // ColumnType returns column's DuckDB type name (e.g. "DATE", "TIMESTAMP").
 func (a *Adapter) ColumnType(ctx context.Context, meta storage.Metadata, column string) (string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
@@ -251,8 +271,10 @@ func (a *Adapter) GetRowsWithFilter(ctx context.Context, meta storage.Metadata, 
 	return a.scanRows(rows)
 }
 
-// GetDistinctValues returns every distinct value found in column.
-func (a *Adapter) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error) {
+// GetDistinctValues returns a page of up to limit distinct values found in
+// column, skipping offset matches first, ordered by column itself so paging
+// is deterministic across calls.
+func (a *Adapter) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -261,7 +283,9 @@ func (a *Adapter) GetDistinctValues(ctx context.Context, meta storage.Metadata, 
 		return nil, err
 	}
 
-	rows, err := a.Query(ctx, fmt.Sprintf(`SELECT DISTINCT %s FROM %s`, quotedCol, meta.PhysicalName))
+	rows, err := a.Query(ctx, fmt.Sprintf(
+		`SELECT DISTINCT %s FROM %s ORDER BY %s LIMIT ? OFFSET ?`, quotedCol, meta.PhysicalName, quotedCol,
+	), limit, offset)
 	if err != nil {
 		return nil, err
 	}

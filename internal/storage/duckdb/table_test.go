@@ -23,6 +23,18 @@ func Test_Adapter_Columns_And_ColumnType(t *testing.T) {
 	assert.Equal(t, "VARCHAR", colType)
 }
 
+func Test_Adapter_ColumnsWithTypes(t *testing.T) {
+	a := setupAdapter(t)
+	meta := createScalarTable(t, a)
+
+	cols, err := a.ColumnsWithTypes(context.Background(), meta)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []storage.ColumnInfo{
+		{Name: "__pkey", Type: "VARCHAR"},
+		{Name: "name", Type: "VARCHAR"},
+	}, cols)
+}
+
 func Test_Adapter_AddColumn(t *testing.T) {
 	a := setupAdapter(t)
 	meta := createScalarTable(t, a)
@@ -57,7 +69,7 @@ func Test_Adapter_AccentedColumnName_RoundTrips(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, "Bretagne", rows[0].Values["nom_région"])
 
-	values, err := a.GetDistinctValues(context.Background(), meta, "nom_région")
+	values, err := a.GetDistinctValues(context.Background(), meta, "nom_région", 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, []any{"Bretagne"}, values)
 }
@@ -125,9 +137,27 @@ func Test_Adapter_GetDistinctValues(t *testing.T) {
 	_, err = a.InsertRow(context.Background(), meta, map[string]any{"name": "b"})
 	require.NoError(t, err)
 
-	values, err := a.GetDistinctValues(context.Background(), meta, "name")
+	values, err := a.GetDistinctValues(context.Background(), meta, "name", 0, 10)
 	require.NoError(t, err)
 	assert.Len(t, values, 2)
+}
+
+func Test_Adapter_GetDistinctValues_Pagination(t *testing.T) {
+	a := setupAdapter(t)
+	meta := createScalarTable(t, a)
+
+	_, err := a.InsertRow(context.Background(), meta, map[string]any{"name": "a"})
+	require.NoError(t, err)
+	_, err = a.InsertRow(context.Background(), meta, map[string]any{"name": "b"})
+	require.NoError(t, err)
+
+	page1, err := a.GetDistinctValues(context.Background(), meta, "name", 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, []any{"a"}, page1)
+
+	page2, err := a.GetDistinctValues(context.Background(), meta, "name", 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, []any{"b"}, page2)
 }
 
 func Test_Adapter_TableIds_And_TableExists(t *testing.T) {

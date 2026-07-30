@@ -383,7 +383,11 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 // is only spliced out after every table removal has succeeded, so a
 // failure midway (e.g. one layer's RemoveTable erroring after another's
 // already succeeded) leaves the source visible for a retry instead of
-// silently vanishing from the cache (NEW-BUG-6).
+// silently vanishing from the cache (NEW-BUG-6). found is read under mu and
+// never mutated outside it: it is about to be deleted from the cache
+// wholesale, so updating its Loaded/TableId fields on the way out would only
+// race a concurrent List against the live entry's shared Layers slice for no
+// observable benefit.
 func (s *SourceService) Delete(ctx context.Context, name string) error {
 	s.mu.Lock()
 	index := -1
@@ -404,16 +408,12 @@ func (s *SourceService) Delete(ctx context.Context, name string) error {
 		if err := s.tableService.RemoveTable(ctx, found.TableId); err != nil {
 			return err
 		}
-		found.Loaded = false
-		found.TableId = ""
 	}
-	for i, layer := range found.Layers {
+	for _, layer := range found.Layers {
 		if layer.Loaded && layer.TableId != "" {
 			if err := s.tableService.RemoveTable(ctx, layer.TableId); err != nil {
 				return err
 			}
-			found.Layers[i].Loaded = false
-			found.Layers[i].TableId = ""
 		}
 	}
 

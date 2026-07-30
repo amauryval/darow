@@ -1,1513 +1,784 @@
-# GeoAPI — Guide d'Implémentation (destiné à un agent IA)
+# GeoAPI — Spécification
 
-Ce document fait autorité sur les décisions d'architecture du serveur cartographique GeoAPI. Il est écrit pour être suivi par un agent IA qui implémente le projet, pas pour retracer l'historique des choix. Toute décision présentée ici est **définitive** sauf mention explicite du contraire ("à trancher").
+Ce document décrit **l'état actuel** du serveur cartographique GeoAPI : son architecture, ses
+contrats, ses invariants. Il est écrit pour être lu par un agent IA qui doit intervenir sur le code
+sans l'avoir entièrement lu.
 
-Si une tâche demandée contredit une règle de ce document, la règle de ce document prévaut — signaler le conflit plutôt que de le résoudre silencieusement.
+**Le code est la source de vérité.** Ce document en est la description ; s'il diverge, c'est ce
+document qu'il faut corriger. Il ne contient volontairement pas de code : les signatures exactes se
+lisent dans les fichiers cités, qui sont indiqués à chaque section.
+
+Trois documents complètent celui-ci :
+- `docs/audit-go.md` — état de santé du code Go, défauts connus, recommandations.
+- `docs/plan-repository-metadata.md` — refonte prévue de la couche catalogue (`metadata`).
+- `docs/plan-repository-data.md` — refonte jumelle des tables de données référencées par `metadata`.
 
 ---
 
 ## 0. Règles non négociables
 
-Ces règles s'appliquent à tout le code produit pour ce projet, quelle que soit la tâche en cours. Ne jamais les enfreindre pour "simplifier" ou "aller plus vite".
+Ces règles s'appliquent à tout le code produit pour ce projet. Elles sont référencées par leur
+numéro dans ~90 commentaires du code (« règle 7 », « règle 21 »…) : **leur numérotation est stable
+et ne doit jamais être réordonnée**.
 
-1. **Jamais d'identifiant SQL non validé.** Tout nom de table/colonne interpolé dans une requête (via `fmt.Sprintf` ou équivalent) doit passer par `storage.ValidateIdentifier` ou `storage.QuoteIdentifier` avant. `ValidateIdentifier` (rejet par motif alphanumérique strict) est réservé aux identifiants générés côté serveur (`physicalName`, mots-clés de type DuckDB) — jamais à un nom de colonne susceptible de provenir de données importées (accents, espaces, ponctuation d'un CSV/GeoJSON français), qui doit passer par `QuoteIdentifier` (guillemetage, doublement des `"` internes, rejet du seul caractère réellement dangereux dans un identifiant guillemeté : l'octet NUL). Dans les deux cas, la sécurité vient de la validation avant interpolation, pas du jeu de caractères qu'elle autorise. Valeurs (pas identifiants) toujours en paramètres liés (`?`), jamais interpolées.
-2. **`tableId` (UUID) n'est jamais un identifiant SQL.** Chaque table logique a un `physicalName` généré côté serveur (`t_<uuid_sans_tirets>`), stocké dans `metadata`, résolu à chaque accès.
-3. **Génération d'identifiant : `uuid()` (fonction native DuckDB).** Extension spatiale chargée une fois au démarrage (`INSTALL spatial; LOAD spatial;`), jamais par requête individuelle.
-4. **Toute requête SQL fournie par l'utilisateur (`/derive`) est restreinte à `SELECT`.** Aucune requête arbitraire n'atteint `Exec`.
-5. **Tout filtre de lecture (`GetRowsWithFilter`) passe par un DSL validé** (`FilterCondition` : colonne whitelistée contre `Columns(tableId)`, opérateur whitelisté, valeur en paramètre lié). Jamais de string construite par concaténation depuis la requête HTTP.
-6. **`BulkInsert` s'exécute dans une transaction unique** (`Begin`/`Commit`/`defer Rollback`).
-7. **La colonne géométrique n'est jamais retournée par les endpoints de lecture de rows** (`GetRowsByPkey`, `GetRowsWithFilter`). Elle ne sert qu'au rendu carte (`Tile`) et, si besoin plus tard, à l'export en `ST_AsText`/WKT.
-8. **`GetPkeys` trie explicitement (`ORDER BY __pkey`).** DuckDB ne garantit aucun ordre stable sans `ORDER BY` — la pagination doit être déterministe.
-9. **`rowCount` et `bbox` dans `metadata` sont dérivés, pas des faits stables.** `rowCount` est recalculé via `RefreshDerivedMetadata` après tout `InsertRow`/`BulkInsert`/`Remove`. `bbox` est recalculé après ces mêmes opérations et après tout `Update` qui touche spécifiquement la colonne géométrique — un `Update` sur un champ scalaire ne déclenche pas de recalcul de `bbox`. `geometryColumn` est en revanche une config stable, changée uniquement via `UpdateMetadata`.
-10. **`geometryType` n'existe pas en tant que champ stocké.** Une colonne géo peut mélanger des types (POINT + POLYGON) ; utiliser `GeometryTypes(tableId)`, calculé à la demande.
-11. **Le cache de métadonnées doit être invalidé explicitement** à chaque écriture (`UpdateMetadata`, `RefreshDerivedMetadata`) — jamais laissé expirer seul.
-12. **Sortie JSON de l'API = types JSON natifs**, pas une reproduction des types Go du driver. Conversion explicite selon `ColumnType` (ex. `time.Time` → ISO 8601 selon `DATE`/`TIMESTAMP`/`TIMESTAMPTZ`).
-13. **Une table dérivée (`/derive`) et une table chargée depuis une source sont toujours des tables matérialisées, jamais des vues SQL.** Le contrat CRUD (`AddColumn`, `Update`, `InsertRow`...) l'exige — une vue devient read-only dès que la requête filtre ou agrège.
-14. **Pas de variable globale package-level pour l'état partagé** (cache, connexion DB, config, liste de sources) — injection de dépendances dans les structs de service, pour rester testable/mockable.
-15. **Le chargement de données passe par des fichiers déposés dans `workDir`.** Un seul chemin de création de table à partir d'un fichier : `POST /sources/{name}/load`, où `name` provient exclusivement du dernier `Refresh`/`List` en cache — jamais une valeur construite librement depuis la requête, pour éliminer tout risque de traversée de répertoire.
-16. **Le scope du projet est celui décrit dans ce document** (sources, tables, rows, tuiles, dérivation). Toute fonctionnalité hors de ce périmètre se traite dans une demande dédiée, pas en ajout incidental à une autre tâche.
-17. **Toute écriture ou modification d'une structure de code (struct, interface, méthode, handler) s'accompagne des tests associés dans le même changement.** Pas de test différé "à la fin" — une struct/fonction livrée sans son test n'est pas considérée terminée.
-18. **Tout paramètre susceptible d'être ajusté sans recompiler (limites, tailles max, chemins) vit dans le composant `config`, jamais en constante codée en dur dans le storage/service/router.** Voir section 2.
-19. **Toute table géométrique reçoit un index spatial RTREE sur sa colonne géométrique**, créé immédiatement après le chargement/derive (sections 7, 8). Sans lui, `Tile`/`FilterByBbox` scannent la table entière à chaque appel.
-20. **Les tuiles MVT sont mises en cache**, clé incluant `UpdatedAt` de la table (`GeoService`, section 5.5). Une tuile déjà servie pour la même version de la table ne recalcule jamais `ST_AsMVT`.
-21. **Toute écriture DuckDB (`Exec`, transaction, `CREATE TABLE`) passe par le verrou applicatif unique de `DuckDBAdapter`** (section 4.6). DuckDB n'autorise qu'un seul writer actif à la fois ; des écritures concurrentes non sérialisées échouent ou corrompent l'état.
-22. **Une écriture sur la colonne géométrique (`Update`, `InsertRow`, `BulkInsert`) attend du WKT en entrée et le convertit via `ST_GeomFromText(?)`** — jamais un bind direct comme pour une colonne scalaire. Cohérent avec le WKT déjà utilisé en sortie (règle 7). Une écriture qui touche la colonne géométrique déclenche `RefreshDerived` (règle 9) via `RowService` pour une écriture de rows, ou via `ImportService`/`DeriveService` lors de la création d'une table — jamais directement dans le storage layer.
-23. **`context.Context` est le premier paramètre de toute méthode storage/service qui accède à DuckDB ou à un stockage externe** (PERF-4), reçu de `req.Context()` côté router et propagé sans dérivation jusqu'à l'appel `*Context` de `database/sql`. Un timeout par requête (`api.requestTimeoutSec`, section 2) l'annule si le traitement dépasse la limite. Les méthodes qui ne touchent ni DuckDB ni le disque (ex. `SourceService.List`) n'en ont pas besoin.
-24. **Chaque cache applicatif (métadonnées, schéma de colonnes, tuiles) est une LRU bornée en taille avec expiration** (`hashicorp/golang-lru/v2/expirable`), jamais un cache illimité — TTL et taille max réglables sans recompiler (règle 18, section 2).
+1. **Jamais d'identifiant SQL non validé.** Tout nom de table/colonne interpolé dans une requête
+   passe par `storage.ValidateIdentifier` **ou** `storage.QuoteIdentifier` (§4.3). Les valeurs sont
+   toujours des paramètres liés, jamais interpolées.
+2. **`tableId` (UUID) n'est jamais un identifiant SQL.** Chaque table logique a un `physicalName`
+   généré côté serveur (`t_<uuid_sans_tirets>`), stocké dans `metadata`, résolu à chaque accès.
+3. **Identifiants générés par `uuid()`** (fonction native DuckDB pour les `__pkey` créés en CTAS,
+   `github.com/google/uuid` côté Go pour les insertions ligne à ligne). L'extension spatiale est
+   chargée une fois à l'ouverture de la connexion, jamais par requête.
+4. **Toute requête SQL fournie par l'utilisateur (`/derive`) est restreinte à `SELECT`**, validée
+   par le parseur DuckDB lui-même (§8), et ne peut référencer que des tables déjà enregistrées.
+5. **Tout filtre de lecture passe par le DSL validé `BuildFilter`** (§4.5) : colonne whitelistée
+   contre le schéma réel, opérateur whitelisté, valeur liée. Jamais de chaîne concaténée depuis la
+   requête HTTP.
+6. **`BulkInsert` s'exécute dans une transaction unique.**
+7. **La colonne géométrique n'est jamais retournée par les endpoints de lecture de rows.** Deux
+   exceptions délibérées et nommées : l'export (`GetGeometryGeoJSON`) et OGC API - Features
+   (`GetFeatures`, `GetFeaturesTile`), où la géométrie *est* la donnée demandée.
+8. **Tout listing paginé trie explicitement**, avec une clé de départage déterministe (`__pkey`
+   pour les rows, `tableId` pour le catalogue) toujours ajoutée en dernier. DuckDB ne garantit
+   aucun ordre stable sans `ORDER BY`.
+9. **`rowCount` et `bbox` sont dérivés, pas des faits stables.** Ils sont recalculés par
+   `RefreshDerivedMetadata` après tout `InsertRow`/`BulkInsert`/`RemoveRows`, et après tout `Update`
+   touchant **spécifiquement** la colonne géométrique. Un `Update` sur un champ scalaire ne
+   déclenche rien. `geometryColumn` est au contraire une config stable, changée uniquement via
+   `UpdateMetadata`.
+10. **`geometryType` n'existe pas en tant que champ stocké.** Une colonne géo peut mélanger POINT et
+    POLYGON ; le type se calcule à la demande via `GeometryTypes`, jamais mis en cache.
+11. **Le cache de métadonnées est invalidé explicitement** à chaque écriture — jamais laissé
+    expirer seul.
+12. **Sortie JSON de l'API = types JSON natifs**, pas une reproduction des types Go du driver.
+    Conversion explicite selon le `ColumnType` (`DATE` → `YYYY-MM-DD`, sinon RFC 3339).
+13. **Une table dérivée ou importée est toujours matérialisée, jamais une vue SQL.** Le contrat CRUD
+    l'exige : une vue devient read-only dès qu'elle filtre ou agrège.
+14. **Pas de variable globale package-level pour l'état partagé.** Injection de dépendances dans les
+    structs de service.
+15. **Le chargement de données passe par des fichiers de `workDir`.** Un `name` provient
+    exclusivement du dernier `Refresh`/`List` en cache — jamais une valeur construite librement
+    depuis la requête, pour éliminer tout risque de traversée de répertoire.
+16. **Le scope du projet est celui décrit ici.** Toute fonctionnalité hors périmètre se traite dans
+    une demande dédiée, pas en ajout incident.
+17. **Toute écriture ou modification d'une struct, interface, méthode ou handler s'accompagne de ses
+    tests dans le même changement.**
+18. **Tout paramètre ajustable sans recompiler vit dans `config`**, jamais en constante en dur dans
+    storage/service/router (§2).
+19. **Toute table géométrique reçoit un index spatial RTREE**, créé immédiatement après le
+    chargement/derive, plus un index unique sur `__pkey`.
+20. **Les tuiles MVT sont mises en cache**, clé incluant `UpdatedAt` de la table — une écriture
+    invalide donc les tuiles sans mécanisme d'invalidation séparé.
+21. **Toute écriture DuckDB passe par le verrou applicatif unique de l'adapter.** DuckDB n'autorise
+    qu'un seul writer actif ; des écritures concurrentes non sérialisées échouent.
+22. **Une écriture sur la colonne géométrique attend du WKT** et le convertit via
+    `ST_GeomFromText`, jamais un bind direct. Elle déclenche `RefreshDerived` via le service, jamais
+    depuis la couche storage.
+23. **`context.Context` est le premier paramètre de toute méthode qui accède à DuckDB ou au disque**,
+    reçu de `req.Context()` et propagé sans dérivation. Les méthodes purement mémoire
+    (`SourceService.List`, `MaxUploadBytes`) n'en prennent pas.
+24. **Chaque cache applicatif est un LRU borné avec expiration** (`hashicorp/golang-lru/v2/expirable`),
+    jamais illimité, TTL et taille réglables par config.
 
 ---
 
-## 1. Architecture Globale
+## 1. Architecture
 
 ```mermaid
 graph TD
-    Z[Config] --> A[API REST]
-    Z --> B[Service Layer]
-    Z --> C[Storage Layer]
+    Z[config] --> A[router]
+    Z --> B[service]
+    Z --> C[storage]
     A --> B
     B --> C
-    B --> G[SourceService / workDir]
-    C --> D[SQLWrapper interface]
-    D --> E[DuckDBAdapter]
-    D --> F[PostGISAdapter later...]
+    C --> E[duckdb.Adapter]
+    A --> W[webui embarqué]
 ```
 
-**Couches :**
-- **Config** : chargée une fois au démarrage, injectée dans les autres couches — jamais lue depuis un global ailleurs dans le code.
-- **API REST** : Router (`chi`) + Middlewares + Swagger UI
-- **Service Layer** : `MetadataService` (cache de métadonnées), `RowService` (CRUD de rows), `SchemaService` (colonnes), `DeriveService`/`ImportService` (création de table), `GeoService` (MVT, requêtes géo), `SourceService` (scan/chargement de `workDir`), `ExportService` (CSV/GeoJSON) — voir section 5
-- **Storage Layer** :
-  - `SQLWrapper` (interface d'abstraction SQL)
-  - `DuckDBAdapter` (implémente `SQLWrapper`)
-  - `PostGISAdapter` (future implémentation, hors scope actuel)
+Quatre couches, sans court-circuit : un handler n'appelle jamais storage, un service ne construit
+jamais d'identifiant SQL, storage ne connaît ni HTTP ni cache applicatif.
+
+| Paquet | Rôle |
+|---|---|
+| `cmd/server` | point d'entrée : config, bootstrap, serveur HTTP, arrêt gracieux |
+| `internal/config` | chargement YAML + surcharges d'environnement + validation |
+| `internal/core` | câblage : construit les huit services et les caches à partir de la config |
+| `internal/router` | routeur `chi`, middlewares, montage du SPA et de Swagger |
+| `internal/router/handlers` | un handler par famille d'endpoints + les ports vers les services |
+| `internal/router/validation` | résolution de `{tableId}`, validation des noms de colonnes |
+| `internal/router/response` | écriture JSON, corps d'erreur standard, mapping erreur → statut |
+| `internal/service` | logique applicative, caches, orchestration |
+| `internal/storage` | contrats et primitives indépendants du moteur |
+| `internal/storage/duckdb` | implémentation DuckDB |
+| `internal/storage/storagetest` | suite de conformité réutilisable par tout adapter |
+| `internal/storage/mocks` | mock testify de `storage.Storage` |
+| `internal/webui` | `go:embed` du build de production du SPA Vue |
+
+**Pattern d'interfaces.** Chaque consommateur déclare l'interface étroite dont il a besoin, dans son
+propre paquet, avec une assertion de conformité (`var _ X = (*Y)(nil)`). Les handlers ne connaissent
+jamais un type de service concret ; les services ne connaissent jamais l'adapter complet. Les
+fichiers concernés : `router/handlers/ports.go`, `service/derive.go`, `service/import.go`,
+`service/rows.go`, `service/export.go`, `service/source.go`, `core/core.go`.
+
+**Bootstrap** (`core/core.go`) : `Setup` ouvre DuckDB, crée `workDir` si absent, construit les trois
+caches LRU depuis la config, câble les huit services, puis fait un premier scan de `workDir`.
+L'appelant doit différer `Close`. `NewServices` fait le câblage seul, sans connexion — c'est ce que
+les tests utilisent avec un mock.
 
 ---
 
-## 2. Configuration (Settings)
+## 2. Configuration
 
-Composant indépendant, chargé une fois au démarrage dans `main.go`, injecté explicitement partout où une valeur réglable est nécessaire — jamais lu depuis une variable globale (règle 14) ni codé en dur dans le storage/service/router (règle 18).
+Fichier `config.yaml` à la racine, **optionnel** (les défauts s'appliquent s'il est absent). Ordre
+d'application : défauts → fichier → variables d'environnement `GEOAPI_*` → validation. Un fichier
+malformé, une variable non parsable ou une valeur invalide sont des erreurs fatales au démarrage,
+jamais ignorées silencieusement. La validation collecte **toutes** les violations avant d'échouer.
 
-### 2.1 Fichier de configuration
+Fichier : `internal/config/config.go`.
 
-```yaml
-# config.yaml — valeurs par défaut, surchargeables par variables d'environnement
-# ou par argument de ligne de commande pour workDir (voir 2.3).
-server:
-  port: 8080
+### 2.1 `server`
 
-duckdb:
-  path: "./data/geo.db"
+| Champ | Défaut | Variable d'env | Contrainte |
+|---|---|---|---|
+| `port` | 8080 | `GEOAPI_SERVER_PORT` | 1..65535 |
+| `readTimeoutSec` | 15 | `GEOAPI_SERVER_READ_TIMEOUT_SEC` | ≥ 0 |
+| `writeTimeoutSec` | 30 | `GEOAPI_SERVER_WRITE_TIMEOUT_SEC` | ≥ 0 |
+| `idleTimeoutSec` | 60 | `GEOAPI_SERVER_IDLE_TIMEOUT_SEC` | ≥ 0 |
+| `shutdownTimeoutSec` | 10 | `GEOAPI_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0 |
 
-sources:
-  workDir: "./data/sources"
-  maxSizeBytes: 104857600  # 100 Mo — fichier au-delà exclu de la liste chargeable
-  allowedExtensions: [".geojson", ".shp", ".csv", ".gpkg"]
-```
+### 2.2 `duckdb`
 
-Format YAML retenu (plus lisible qu'un `.env` pour une structure imbriquée). Chaque valeur a un défaut raisonnable dans le code — le fichier n'est jamais obligatoire pour démarrer en local.
+| Champ | Défaut | Variable d'env |
+|---|---|---|
+| `path` | `./data/geo.db` | `GEOAPI_DUCKDB_PATH` |
 
-Deux sections supplémentaires suivent le même principe : `api.requestTimeoutSec` (règle 23, timeout par requête HTTP, 0 = désactivé) en plus des limites de pagination déjà présentes dans `APIConfig` ; `cache.{metadata,schema,tile}{TTLSec,MaxItems}` (règle 24) pour la taille/expiration de chacune des trois LRU (`MetadataService`, `SchemaService`, `GeoService` — sections 5.1, 5.3, 5.5).
+Le répertoire parent est créé s'il n'existe pas — DuckDB refuse d'ouvrir un fichier dans un
+répertoire absent.
 
-### 2.2 Struct Go et chargement
+### 2.3 `sources`
 
-```go
-type Config struct {
-    Server  ServerConfig  `yaml:"server"`
-    DuckDB  DuckDBConfig  `yaml:"duckdb"`
-    Sources SourcesConfig `yaml:"sources"`
-}
+| Champ | Défaut | Variable d'env |
+|---|---|---|
+| `workDir` | `./data/sources` | `GEOAPI_SOURCES_WORKDIR` |
+| `maxSizeBytes` | 104 857 600 (100 Mio) | `GEOAPI_SOURCES_MAX_SIZE_BYTES` |
+| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (séparées par `,`) |
 
-type ServerConfig struct {
-    Port int `yaml:"port"`
-}
+Chaque extension doit commencer par un point. `workDir` est aussi surchargeable par le flag
+`--workdir`, qui a la priorité sur tout le reste (§2.6).
 
-type DuckDBConfig struct {
-    Path string `yaml:"path"`
-}
+### 2.4 `api`
 
-type SourcesConfig struct {
-    // WorkDir est le répertoire où l'opérateur dépose les fichiers à
-    // charger (GeoJSON, Shapefile, CSV, GeoPackage). Peut être surchargé
-    // par l'argument --workdir au lancement (voir 2.3) sans recompiler.
-    WorkDir           string   `yaml:"workDir"`
-    // MaxSizeBytes exclut un fichier de la liste chargeable au-delà de
-    // cette taille, vérifié lors du scan de workDir (section 3).
-    MaxSizeBytes      int64    `yaml:"maxSizeBytes"`
-    AllowedExtensions []string `yaml:"allowedExtensions"`
-}
+| Champ | Défaut | Rôle |
+|---|---|---|
+| `defaultRowLimit` | 100 | pagination des rows sans `limit` explicite |
+| `maxRowLimit` | 1000 | plafond dur des rows |
+| `defaultListLimit` | 50 | pagination de `/tables` et `/sources` |
+| `maxListLimit` | 500 | plafond dur des listings |
+| `maxBodyBytes` | 10 Mio | taille max du corps de requête (hors `/sources/upload`) |
+| `requestTimeoutSec` | 30 | timeout par requête ; `0` désactive |
+| `exportBatchSize` | 1000 | taille de page du streaming d'export |
+| `defaultFeaturesLimit` | 100 | pagination OGC items et tuiles GeoJSON |
+| `maxSimplifyTolerance` | 10000 | plafond du paramètre `simplify` |
+| `maxPrecision` | 1000 | plafond du paramètre `precision` |
 
-func defaultConfig() Config {
-    return Config{
-        Server: ServerConfig{Port: 8080},
-        DuckDB: DuckDBConfig{Path: "./data/geo.db"},
-        Sources: SourcesConfig{
-            WorkDir:           "./data/sources",
-            MaxSizeBytes:      100 * 1024 * 1024,
-            AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg"},
-        },
-    }
-}
+Variables d'environnement correspondantes : `GEOAPI_API_<CHAMP_EN_SNAKE_MAJUSCULE>`.
 
-// Load reads config.yaml if present, falling back to defaultConfig() for
-// any field left unset. Never panics on a missing file — only on a
-// malformed one, since a malformed config is a deployment error worth
-// surfacing loudly.
-func Load(path string) (*Config, error) {
-    cfg := defaultConfig()
+### 2.5 `cache`
 
-    data, err := os.ReadFile(path)
-    if errors.Is(err, os.ErrNotExist) {
-        return &cfg, nil
-    }
-    if err != nil {
-        return nil, fmt.Errorf("reading config: %w", err)
-    }
+Trois caches indépendants, tous LRU bornés avec TTL (règle 24).
 
-    if err := yaml.Unmarshal(data, &cfg); err != nil {
-        return nil, fmt.Errorf("parsing config: %w", err)
-    }
-    return &cfg, nil
-}
-```
+| Champ | Défaut | Cache concerné |
+|---|---|---|
+| `metadataTTLSec` / `metadataMaxItems` | 300 / 1000 | métadonnées de table (`MetadataService`) |
+| `schemaTTLSec` / `schemaMaxItems` | 300 / 1000 | schéma de colonnes (`SchemaService`) |
+| `tileTTLSec` / `tileMaxItems` | 300 / 5000 | tuiles MVT rendues (`GeoService`) |
 
-### 2.3 `workDir` en argument de ligne de commande
+### 2.6 Flags de ligne de commande
 
-`workDir` est le seul champ de config qu'on attend voir varier d'un lancement à l'autre (environnement de dev vs poste d'un utilisateur). Il est donc exposé en flag CLI, qui surcharge `config.yaml` si fourni :
-
-```go
-func main() {
-    var workDirFlag string
-    flag.StringVar(&workDirFlag, "workdir", "", "surcharge sources.workDir de config.yaml")
-    flag.Parse()
-
-    cfg, err := config.Load("config.yaml")
-    if err != nil {
-        log.Fatalf("config: %v", err)
-    }
-    if workDirFlag != "" {
-        cfg.Sources.WorkDir = workDirFlag
-    }
-
-    metadataService := service.NewMetadataService(storage, cache.New(5*time.Minute, 10*time.Minute))
-    importService := service.NewImportService(metadataService, storage)
-    sourceService := service.NewSourceService(cfg.Sources, importService)
-    router := router.NewRouter(metadataService, rowService, schemaService, deriveService, geoService, sourceService, exportService, cfg.API, uiAssets)
-    // ...
-}
-```
-
-`cfg.Sources` (toujours la config, jamais une variable globale — règle 14) est injecté dans `SourceService`, qui est le seul composant à connaître `workDir`.
+| Flag | Défaut | Effet |
+|---|---|---|
+| `--config` | `config.yaml` | chemin du fichier de configuration |
+| `--workdir` | vide | surcharge `sources.workDir` après chargement complet |
 
 ---
 
-## 3. Sources de données (`workDir`)
+## 3. Sources (`workDir`)
 
-Le chargement de données passe par des fichiers déposés dans `workDir` (règle 15) : l'opérateur y dépose les fichiers, l'API les découvre et les charge à la demande. Les tests s'appuient sur un simple répertoire de fixtures.
+`workDir` est un répertoire de fichiers déposés à la main ou uploadés. `SourceService`
+(`internal/service/source.go`) le scanne et maintient un **cache en mémoire** de son contenu.
 
 ### 3.1 Modèle
 
-```go
-type Source struct {
-    Name      string    // nom du fichier, relatif à workDir (ex: "buildings.geojson")
-    Ext       string
-    SizeBytes int64
-    ModTime   time.Time
-    Loaded    bool      // true si déjà chargé en base (toujours false pour un .gpkg — 7.1)
-    TableId   string    // renseigné uniquement si Loaded
-    Layers    []SourceLayer // peuplé uniquement pour un .gpkg (7.1)
-}
+Une `Source` porte : nom de fichier, extension, taille, date de modification, état chargé, `tableId`
+si chargée, et pour un format multi-couches la liste de ses couches (chacune avec son propre état
+chargé et son `tableId`).
 
-// SourceLayer suit l'état de chargement d'une couche d'un .gpkg
-// indépendamment des autres — voir 7.1.
-type SourceLayer struct {
-    Name    string
-    Loaded  bool
-    TableId string
-}
+Formats reconnus (`internal/service/formats.go`) :
 
-type SourceManager interface {
-    // Refresh rescanne workDir et remplace le cache en mémoire. Les
-    // fichiers dépassant MaxSizeBytes ou d'extension non whitelistée sont
-    // exclus de la liste (pas d'erreur — juste absents, silencieusement
-    // filtrés comme non chargeables).
-    Refresh() ([]Source, error)
+| Extension | Multi-couches |
+|---|---|
+| `.geojson` | non |
+| `.shp` | non |
+| `.csv` | non |
+| `.gpkg` | oui |
 
-    // List retourne le cache du dernier Refresh — ne rescanne jamais le
-    // disque elle-même. Un scan implicite à chaque List casserait
-    // l'intention d'un refresh explicite et coûterait un os.ReadDir par
-    // requête.
-    List() []Source
+Un fichier dont l'extension n'est pas dans `allowedExtensions`, ou dont la taille dépasse
+`maxSizeBytes`, est **silencieusement exclu** du scan — ce n'est pas une erreur.
 
-    // Load importe la source nommée. name DOIT correspondre à une entrée
-    // du cache courant — jamais un chemin construit depuis la requête HTTP
-    // sans être passé par ce cache (règle 15, protection contre la
-    // traversée de répertoire). layer est requis pour un .gpkg (doit nommer
-    // une entrée de Source.Layers), rejeté sinon (7.1).
-    Load(name, layer string) (tableId string, err error)
-}
-```
+### 3.2 Opérations
 
-### 3.2 Implémentation
+| Opération | Comportement |
+|---|---|
+| `Refresh` | rescanne `workDir`, recroise avec les tables déjà chargées, remplace le cache. Appelée au démarrage et via `POST /sources/refresh`. |
+| `List` | pagine et trie une **copie** du cache, sans jamais retoucher le disque. Tri validé contre une allowlist (`name`, `sizeBytes`, `modTime`, `loaded`). |
+| `Upload` | écrit dans `workDir` après réduction du nom à sa base (anti-traversée), vérification d'extension et de taille. Refuse d'écraser un fichier existant. |
+| `Load` | importe une source (ou une de ses couches) en table. `name` doit exister dans le cache (règle 15). |
+| `DetectCRS` | lit le CRS déclaré par le fichier, sans rien importer — permet à l'UI de le montrer et de le corriger avant chargement. |
+| `Delete` | supprime la ou les tables issues de la source et son entrée de cache. **Le fichier lui-même n'est jamais supprimé.** |
 
-```go
-// tableImporter est ce dont SourceService a besoin — déclaré ici, le
-// consommateur, plutôt que dépendre du type concret *ImportService (5.4).
-type tableImporter interface {
-    LoadedSourceNames() (map[string]string, error)
-    ListLayers(path string) ([]string, error)
-    ImportFromFile(name, path, ext, layer string) (string, error)
-}
+**Verrouillage.** `Load` détient le verrou pendant tout son check-then-import, pas seulement autour
+de la lecture du cache : deux `Load` concurrents sur la même source ne peuvent pas passer tous les
+deux le test « pas encore chargée ». `Delete` ne retire l'entrée du cache qu'après succès de toutes
+les suppressions de tables, pour qu'un échec partiel laisse la source visible et réessayable
+(NEW-BUG-6).
 
-type SourceService struct {
-    cfg          config.SourcesConfig
-    tableService tableImporter
+**Suivi chargé/non chargé.** Le lien source ↔ table repose sur les champs `sourceName` et
+`sourceLayer` de `metadata`, **jamais** sur `tableName` — que `PATCH /tables/{id}` peut renommer
+librement. Renommer une table ne la détache donc pas de sa source, et aucune table sans relation ne
+peut se faire passer pour une source par coïncidence de nom (NEW-BUG-5).
 
-    mu      sync.Mutex // tenu pour toute la durée du check-then-import de Load
-    sources []Source
-}
-
-func NewSourceService(cfg config.SourcesConfig, tableService tableImporter) *SourceService {
-    return &SourceService{cfg: cfg, tableService: tableService}
-}
-
-func (s *SourceService) Refresh() ([]Source, error) {
-    entries, err := os.ReadDir(s.cfg.WorkDir)
-    if err != nil {
-        return nil, fmt.Errorf("reading workDir: %w", err)
-    }
-
-    loaded, err := s.tableService.LoadedSourceNames() // depuis metadata.tableName
-    if err != nil {
-        return nil, err
-    }
-
-    var sources []Source
-    for _, entry := range entries {
-        if entry.IsDir() {
-            continue
-        }
-        ext := filepath.Ext(entry.Name())
-        if !slices.Contains(s.cfg.AllowedExtensions, ext) {
-            continue
-        }
-        info, err := entry.Info()
-        if err != nil {
-            continue
-        }
-        if info.Size() > s.cfg.MaxSizeBytes {
-            continue
-        }
-
-        source := Source{Name: entry.Name(), Ext: ext, SizeBytes: info.Size(), ModTime: info.ModTime()}
-        if ext == ".gpkg" {
-            source.Layers = s.listLoadedLayers(entry.Name(), loaded) // 7.1
-        } else {
-            source.TableId, source.Loaded = loaded[entry.Name()]
-        }
-        sources = append(sources, source)
-    }
-
-    s.mu.Lock()
-    s.sources = sources
-    s.mu.Unlock()
-    return sources, nil
-}
-
-func (s *SourceService) List() []Source {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-    return s.sources
-}
-
-// Load : name doit exister dans le cache (règle 15) — ReadDir ne renvoie
-// que des noms de fichiers simples, jamais de chemin avec séparateurs,
-// donc filepath.Join(workDir, name) reste borné à workDir par construction
-// une fois validé contre le cache. Pour un .gpkg, layer doit nommer une
-// entrée de found.Layers (7.1) ; pour tout autre format, layer doit être
-// vide.
-func (s *SourceService) Load(name, layer string) (string, error) {
-    s.mu.RLock()
-    var found *Source
-    for i := range s.sources {
-        if s.sources[i].Name == name {
-            found = &s.sources[i]
-            break
-        }
-    }
-    s.mu.RUnlock()
-
-    if found == nil {
-        return "", fmt.Errorf("source inconnue %q — appeler /sources/refresh d'abord", name)
-    }
-
-    if found.Ext != ".gpkg" {
-        if layer != "" {
-            return "", fmt.Errorf("source %q ne supporte pas la sélection de couche", name)
-        }
-        if found.Loaded {
-            return "", fmt.Errorf("source %q déjà chargée (table %s)", name, found.TableId)
-        }
-        path := filepath.Join(s.cfg.WorkDir, found.Name)
-        return s.tableService.ImportFromFile(found.Name, path, found.Ext, "")
-    }
-
-    // .gpkg : layer requis, validé contre found.Layers (règle 15), jamais
-    // chargé "en entier" (7.1).
-    layerEntry := findLayer(found.Layers, layer)
-    if layerEntry == nil {
-        return "", fmt.Errorf("couche %q inconnue pour la source %q", layer, name)
-    }
-    if layerEntry.Loaded {
-        return "", fmt.Errorf("couche %q déjà chargée (table %s)", layer, layerEntry.TableId)
-    }
-    path := filepath.Join(s.cfg.WorkDir, found.Name)
-    return s.tableService.ImportFromFile(found.Name+"::"+layer, path, found.Ext, layer)
-}
-```
-
-`Refresh` est appelé une fois au démarrage (dans `main.go`, juste après la construction de `SourceService`) pour peupler le cache initial, puis à la demande via `POST /sources/refresh`.
+**Nommage multi-couches.** Une couche chargée depuis `fichier.gpkg` produit une table nommée
+`fichier.gpkg::nom_couche` ; `sourceName` reçoit `fichier.gpkg` et `sourceLayer` reçoit
+`nom_couche`.
 
 ---
 
-## 4. Storage Layer
+## 4. Couche storage
 
-### 4.1 Schéma `metadata`
+### 4.1 Le catalogue `metadata`
 
-```sql
-CREATE TABLE IF NOT EXISTS metadata (
-    tableId TEXT PRIMARY KEY,          -- UUID v4, identifiant logique/API
-    physicalName TEXT NOT NULL UNIQUE, -- nom réel de la table SQL (ex: t_a1b2c3...)
-    tableName TEXT NOT NULL,           -- nom original du fichier source, éditable
-    isGeo BOOLEAN DEFAULT FALSE,
-    createdAt TIMESTAMP DEFAULT NOW(),
-    updatedAt TIMESTAMP DEFAULT NOW(),
-    geometryColumn TEXT,               -- config, changée uniquement via UpdateMetadata
-    rowCount INTEGER DEFAULT 0,        -- dérivé, voir RefreshDerivedMetadata
-    bbox TEXT,                         -- dérivé, "minX,minY,maxX,maxY"
-    srid INTEGER DEFAULT 4326
-);
+Une table système, un enregistrement par table logique. Colonnes :
 
-CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo) WHERE isGeo = TRUE;
-CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
-```
+| Colonne | Type SQL | Nature | Sens |
+|---|---|---|---|
+| `tableId` | `TEXT PRIMARY KEY` | config | UUID v4, identifiant logique/API |
+| `physicalName` | `TEXT NOT NULL UNIQUE` | config | nom réel de la table SQL (`t_<uuid>`) |
+| `tableName` | `TEXT NOT NULL` | config | nom d'affichage, renommable |
+| `isGeo` | `BOOLEAN` | config | la table a une colonne géométrique |
+| `createdAt` / `updatedAt` | `TIMESTAMP` | dérivé (`updatedAt`) | `updatedAt` est bumpé par chaque refresh dérivé — c'est le signal d'invalidation des tuiles (règle 20) |
+| `geometryColumn` | `TEXT` | config | nom de la colonne géométrique, variable selon le format source |
+| `rowCount` | `INTEGER` | dérivé | recalculé par `RefreshDerivedMetadata` (règle 9) |
+| `bbox` | `TEXT` | dérivé | `"minX,minY,maxX,maxY"` en **OGC:CRS84** (lon/lat) |
+| `srid` | `INTEGER` | config | CRS **source** d'origine, avant reprojection |
+| `sourceName` | `TEXT` | config | fichier de `workDir` d'origine ; vide pour une table `/derive` |
+| `sourceLayer` | `TEXT` | config | couche d'origine pour une source multi-couches |
 
-`CREATE TABLE IF NOT EXISTS` exécuté au démarrage de l'application — c'est le seul mécanisme de migration nécessaire (voir règle 9, et section 9 "Structure du Projet" pour le détail). Les tables de données (`t_xxx`) n'ont pas de schéma versionné : elles sont créées dynamiquement via CTAS au chargement/derive.
+Deux index : sur `isGeo` et sur `tableName`.
 
-`tableName` est le nom du fichier source (`Source.Name`) une fois chargé via `SourceService.Load` — c'est ce qui permet à `LoadedSourceNames()` (3.2) de savoir quels fichiers de `workDir` sont déjà en base.
+`Metadata` est un **type valeur** côté Go : chaque appelant en reçoit sa copie, aucune synchronisation
+n'est nécessaire.
 
-### 4.2 Tables de données
+`geometryType` est délibérément absent (règle 10).
 
-```sql
-CREATE TABLE t_a1b2c3 (
-    __pkey TEXT PRIMARY KEY DEFAULT uuid()
-);
-```
+> **Dette connue.** `sourceName` et `sourceLayer` ont été ajoutés au DDL sans entrée de migration :
+> une base créée avant leur existence ne s'ouvre plus. `rowCount` est un `INTEGER` 32 bits pour un
+> `int64` Go. Les deux sont traités par `docs/plan-repository-metadata.md`, étape 2.
 
-Toute table de données a une colonne `__pkey` (UUID). Lors d'un chargement (section 7), `__pkey` est généré et rempli ligne par ligne dans le `CREATE TABLE AS SELECT`, pas ajouté après coup.
+### 4.2 Tables de données et contrat d'accès
 
-Pour toute table géométrique (`isGeo = TRUE`), un index spatial suit immédiatement la création (règle 19) :
+Chaque table logique est matérialisée en `t_<uuid_sans_tirets>` avec une colonne `__pkey` (UUID
+texte) générée dans le `CREATE TABLE AS SELECT`, jamais ajoutée après coup. Un index unique sur
+`__pkey` remplace la contrainte de clé primaire, que DuckDB ne permet pas d'ajouter après CTAS.
 
-```sql
-CREATE INDEX idx_t_a1b2c3_geom ON t_a1b2c3 USING RTREE (geometryColumn);
-```
+Pour une table géo : un index RTREE sur la colonne géométrique (règle 19), et un **clustering
+Hilbert** — les lignes sont physiquement réordonnées le long d'une courbe de Hilbert sur la
+géométrie, pour que les scans de tuiles élaguent par localité spatiale. Le clustering reconstruit la
+table, donc les deux index sont créés **après** lui, jamais avant.
 
-`geometryColumn` interpolé après `validateIdentifier` (4.3), comme tout identifiant. Sans cet index, `Tile`/`FilterByBbox` scannent la table entière à chaque appel — voir sections 7 et 8 pour où cette étape s'insère dans le chargement et la dérivation.
+**Contrat d'accès (référencé « §4.2 » dans le code).** Toute méthode storage de lecture/écriture de
+données prend la `storage.Metadata` **déjà résolue** par l'appelant, jamais un `tableId`. Le
+middleware de résolution du routeur la lit une fois par requête ; `ExportService` la garde pour tout
+un export. Aucune méthode ne refait un `SELECT` sur `metadata` que l'appelant a déjà fait. Corollaire
+appliqué à l'export : `ListRowsPage` existe à côté de `ListRows` précisément pour éviter un
+`COUNT(*)` par page dont le streaming n'a aucun usage.
 
 ### 4.3 Validation des identifiants
 
-```go
-var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+Deux primitives aux rôles **distincts et non interchangeables** (`internal/storage/identifier.go`) :
 
-// Réservée aux identifiants générés côté serveur (physicalName, mots-clés
-// de type DuckDB) — jamais à un nom de colonne issu de données importées.
-func ValidateIdentifier(name string) error {
-    if !identifierRe.MatchString(name) {
-        return fmt.Errorf("invalid identifier: %q", name)
-    }
-    return nil
-}
+| Primitive | Usage | Mécanique |
+|---|---|---|
+| `ValidateIdentifier` | identifiants **générés côté serveur** : `physicalName`, mots-clés de type DuckDB | rejet par motif alphanumérique strict (`^[a-zA-Z_][a-zA-Z0-9_]*$`) |
+| `QuoteIdentifier` | tout nom de colonne pouvant **provenir de données importées** (accents, espaces, ponctuation d'un CSV français) | guillemetage, doublement des `"` internes, rejet du seul octet réellement dangereux dans un identifiant guillemeté : NUL |
 
-// Pour tout nom de colonne pouvant provenir de données importées (accents,
-// espaces, ponctuation) : validation par guillemetage, pas par rejet du
-// jeu de caractères.
-func QuoteIdentifier(name string) (string, error) {
-    if name == "" {
-        return "", fmt.Errorf("empty identifier")
-    }
-    if strings.ContainsRune(name, 0) {
-        return "", fmt.Errorf("invalid identifier: %q", name)
-    }
-    return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`, nil
-}
-```
+Utiliser `ValidateIdentifier` sur un nom de colonne importé casse les fichiers réels ; utiliser
+`QuoteIdentifier` sur un `physicalName` fonctionne mais masque une erreur de conception. Dans les
+deux cas, **la sécurité vient de la validation avant interpolation, pas du jeu de caractères
+autorisé**.
 
-`ValidateIdentifier` est appelée avant toute interpolation d'un `physicalName` ; `QuoteIdentifier` avant toute interpolation d'un nom de colonne (règle 1). Un nom de colonne n'est jamais passé à `Exec`/`Query` non guillemeté.
+### 4.4 Contrats Go
 
-### 4.4 Interfaces Go
+Fichiers : `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`, `aggregate.go`.
 
-```go
-// Metadata holds config fields (set once, changed only via UpdateMetadata)
-// and derived fields (RowCount, Bbox — recomputed by RefreshDerivedMetadata
-// after any write to the underlying table). GeometryType is intentionally
-// absent: a geometry column can hold mixed types, so it's computed on demand
-// via GeoTableManager.GeometryTypes rather than cached as a single stale string.
-type Metadata struct {
-    TableId        string
-    PhysicalName   string
-    TableName      string
-    IsGeo          bool
-    CreatedAt      time.Time
-    UpdatedAt      time.Time
-    GeometryColumn string
-    RowCount       int64
-    Bbox           string
-    Srid           int
-}
+| Interface | Responsabilité |
+|---|---|
+| `MetadataReader` | `TableIds` (trié), `TableExists`, `GetMetadata` |
+| `MetadataWriter` | `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata` |
+| `TableReader` | `Columns`, `ColumnType`, `RowsCount`, `GetPkeys`, `GetRowsByPkey`, `GetRowsWithFilter`, `GetDistinctValues` |
+| `TableWriter` | `AddColumn`, `Update`, `RemoveRows`, `InsertRow`, `BulkInsert` |
+| `GeoTableManager` | `Tile`, `FilterByBbox`, `FilteredExtent`, `GeometryTypes`, `GetGeometryGeoJSON`, `GetFeatures`, `GetFeaturesTile` |
+| `TableCreator` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS` |
+| `SQLWrapper` | `Query`, `QueryRow`, `Exec`, `Begin` — détail d'implémentation du paquet `duckdb`, **délibérément absent** de l'agrégat `Storage` pour qu'aucun service ne puisse contourner la règle 1 |
 
-type MetadataManager interface {
-    MetadataReader
-    MetadataWriter
-}
+`Storage` agrège les quatre premiers groupes. Elle sert à **documenter et asserter** qu'un adapter
+est complet ; aucun service n'en dépend — chacun déclare son interface étroite.
 
-type MetadataReader interface {
-    TableIds() ([]string, error)
-    TableExists(tableId string) (bool, error)
-    GetMetadata(tableId string) (*Metadata, error)
-}
+**Nommage.** `MetadataWriter.Remove` supprime une table entière, `TableWriter.RemoveRows` supprime
+des lignes. Go ne permet pas deux méthodes homonymes de signatures différentes sur une interface
+combinée, d'où la distinction.
 
-type MetadataWriter interface {
-    Create(tableName string, isGeo bool, geometryColumn string) (tableId string, err error)
-    Remove(tableId string) error
-    UpdateMetadata(tableId string, updates map[string]any) error
+**Types de données transverses.** `Row` (pkey + valeurs, sans géométrie), `GeoFeature` (pkey +
+fragment GeoJSON brut + valeurs), `GeoQuery` (clause `BuildFilter` + args + tolérance de
+simplification + précision, tous optionnels), `SortField` (colonne + sens, parsé depuis une valeur
+`sort=a,-b`).
 
-    // RefreshDerivedMetadata recomputes RowCount and Bbox from the underlying
-    // table, bumps UpdatedAt, and persists them. Must be called after
-    // InsertRow, BulkInsert, row Update/Remove, and any Update touching the
-    // geometry column. UpdatedAt is what invalidates GeoService's tile
-    // cache (section 5.5, règle 20).
-    RefreshDerivedMetadata(tableId string) error
-}
-```
+### 4.5 Construction des filtres
 
-```go
-type Row struct {
-    Pkey   string
-    Values map[string]any // clé = nom de colonne (hors colonne géométrique), valeur typée JSON natif
-}
+`storage.BuildFilter` (`internal/storage/filter.go`) est **le seul** chemin autorisé vers un `WHERE`
+piloté par le client (règle 5).
 
-type TableManager interface {
-    TableReader
-    TableWriter
-}
+Une `FilterCondition` est soit une feuille (`Column` + `Operator` + `Value`), soit un groupe booléen
+(`Bool` valant `AND` ou `OR`, plus `Conditions` enfants) — jamais les deux.
 
-type TableReader interface {
-    Columns(tableId string) ([]string, error)
-    ColumnType(tableId, column string) (string, error)
-    RowsCount(tableId string) (int64, error)
-    // Must order by __pkey internally (ORDER BY __pkey LIMIT ? OFFSET ?) — voir règle 8.
-    GetPkeys(tableId string, offset, limit int64) ([]string, error)
-    GetRowsByPkey(tableId string, pKeys []string) ([]Row, error)
-    // filter est produit par BuildFilter (4.5), jamais une string libre — voir règle 5.
-    GetRowsWithFilter(tableId string, filter string, args []any, limit int) ([]Row, error)
-    GetDistinctValues(tableId, column string) ([]any, error)
-}
+- La colonne est validée contre la liste des colonnes réelles de la table, **géométrie exclue**.
+- L'opérateur est validé contre `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`.
+- Le connecteur booléen est validé contre `AND`, `OR`.
+- La valeur est **toujours** un paramètre lié.
+- Les conditions de premier niveau sont jointes par `AND` ; les groupes sont parenthésés.
 
-type TableWriter interface {
-    AddColumn(tableId, colName, colType string) error
-    // Update met à jour toutes les colonnes de updates en une requête —
-    // un update multi-colonnes est atomique, jamais un Exec par colonne.
-    Update(tableId string, pkeys []string, updates map[string]any) error
-    Remove(tableId string, pKeys []string) error
-    InsertRow(tableId string, values map[string]any) (string, error)
-    // Doit s'exécuter dans une transaction unique — voir règle 6.
-    BulkInsert(tableId string, rows []map[string]any) ([]string, error)
-}
+Le whitelisting contre le schéma réel est ce qui rend l'interpolation sûre ; `QuoteIdentifier` ne
+fait qu'échapper.
 
-type GeoTableManager interface {
-    Tile(tableId string, zoom, x, y int, attrs []string) ([]byte, error)
-    FilterByBbox(tableId string, bbox [4]float64) ([]string, error)
-    // Computed on demand, never cached — voir règle 10.
-    GeometryTypes(tableId string) ([]string, error)
-    // GetGeometryGeoJSON : exception à la règle 7, réservée à l'export.
-    GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error)
-    // GetFeatures : seconde exception délibérée à la règle 7 — un item OGC
-    // API - Features se définit par la présence de sa géométrie. pkeys/bbox,
-    // non-nil, restreignent le résultat ; q ajoute filtre/tolérance ; attrs
-    // sélectionne les colonnes non-géométriques renvoyées (vide = toutes).
-    // GeoQuery n'existe que pour GetFeatures — le tuilage MVT (Tile) n'a
-    // volontairement ni filtre ni tolérance pilotables : ce n'est utile
-    // qu'en tant qu'exigence de conformité OGC API - Features, pas pour la
-    // carte MVT de l'UI, qui n'expose aucun contrôle pour ça.
-    GetFeatures(tableId string, pkeys []string, bbox *[4]float64, attrs []string, q GeoQuery, limit int) ([]GeoFeature, error)
-}
+### 4.6 L'adapter DuckDB
 
-// GeoQuery n'est consommé que par GetFeatures (OGC API - Features).
-type GeoQuery struct {
-    Filter    string // clause BuildFilter, "" = pas de filtre
-    Args      []any
-    Tolerance *float64 // nil : pas de simplification
-    Precision *float64 // nil : pas de réduction de précision (ST_ReducePrecision)
-}
+Fichiers : `internal/storage/duckdb/` (`adapter.go`, `table.go`, `create.go`, `derive.go`, `mvt.go`,
+`features.go`, `migrations.go`).
 
-// GeoFeature est l'équivalent de Row côté géométrie, produit par GetFeatures.
-type GeoFeature struct {
-    Pkey    string
-    GeoJSON string
-    Values  map[string]any
-}
-```
+- **Ouverture** : `INSTALL spatial; LOAD spatial;` une fois, pool limité à 4 connexions, création du
+  répertoire parent, puis migration du schéma.
+- **Sérialisation des écritures** : un mutex applicatif unique couvre `Exec` (règle 21).
+  `BulkInsert` le prend lui-même pour toute la durée de sa transaction, plutôt que par instruction.
+- **Migrations** : une liste ordonnée d'instructions `ALTER`, appliquées une fois chacune, suivies
+  par une table `schema_version`. Une base neuve reçoit directement le DDL courant et est marquée à
+  la version la plus haute ; une base préexistante est marquée à 0 et rejoue tout. **La liste est
+  actuellement vide** (voir §4.1, dette connue).
+- **Reprojection** : la géométrie est reprojetée **une fois à l'import** vers EPSG:3857, jamais par
+  requête. Toute sortie lon/lat (bbox, GeoJSON) reconvertit vers `OGC:CRS84`.
 
-`GeoTableManager` se limite aux opérations géospatiales (`Tile`, `FilterByBbox`, `GeometryTypes`, `GetGeometryGeoJSON`, `GetFeatures`) ; l'état `isGeo`/`geometryColumn` vit dans `MetadataReader`, source unique de vérité.
-
-### 4.5 Construction sécurisée des filtres
-
-```go
-type FilterCondition struct {
-    Column   string // validé contre Columns(tableId) avant usage
-    Operator string // whitelist: "=", "!=", ">", "<", ">=", "<=", "LIKE"
-    Value    any    // toujours passé en paramètre lié, jamais interpolé
-}
-
-// BuildFilter valide chaque Column contre validColumns (le whitelisting
-// contre le schéma réel de la table est ce qui rend l'interpolation sûre)
-// et chaque Operator contre la whitelist, guillemette Column via
-// QuoteIdentifier (règle 1), puis construit "\"column\" op ?" par condition
-// jointe en AND. C'est le seul chemin autorisé vers GetRowsWithFilter —
-// voir règle 5.
-func BuildFilter(conditions []FilterCondition, validColumns []string) (filter string, args []any, err error) {
-    // implémentation : validation puis construction de la clause
-}
-```
-
-`storage.Storage` (l'agrégat plus haut) documente ce qu'un adaptateur complet doit implémenter — aucun service n'en dépend directement. Chaque service déclare, dans son propre paquet, l'interface étroite composée à partir de `MetadataManager`/`TableManager`/`GeoTableManager`/`TableCreator` qui correspond exactement à ce qu'il appelle (voir 5.1–5.6, 7) ; l'adaptateur DuckDB la satisfait implicitement (typage structurel Go), sans changement de câblage dans `main.go`.
-
-### 4.6 `SQLWrapper` / `DuckDBAdapter`
-
-`SQLWrapper` n'est jamais exposé à un service : `Query`/`QueryRow`/`Exec`/`Begin` restent un détail interne du paquet `duckdb`, utilisé par `DuckDBAdapter` pour implémenter ses propres méthodes typées. Un service qui pouvait y accéder aurait pu contourner toute validation d'identifiant (règle 1) en écrivant du SQL directement au lieu de passer par les méthodes ci-dessus.
-
-```go
-type SQLWrapper interface {
-    Query(query string, args ...any) (*sql.Rows, error)
-    QueryRow(query string, args ...any) *sql.Row
-    Exec(query string, args ...any) (sql.Result, error)
-    Begin() (*sql.Tx, error)
-}
-
-type DuckDBAdapter struct {
-    db      *sql.DB
-    writeMu sync.Mutex // règle 21 : sérialise toute écriture, DuckDB n'autorisant qu'un seul writer actif
-}
-
-func (d *DuckDBAdapter) Query(query string, args ...any) (*sql.Rows, error) {
-    return d.db.Query(query, args...)
-}
-
-// Exec sérialise toute écriture via writeMu (règle 21).
-func (d *DuckDBAdapter) Exec(query string, args ...any) (sql.Result, error) {
-    d.writeMu.Lock()
-    defer d.writeMu.Unlock()
-    return d.db.Exec(query, args...)
-}
-
-// Tile builds an MVT tile for the given z/x/y. Identifiers are validated
-// before interpolation (règle 1); zoom/x/y are bound parameters.
-func (d *DuckDBAdapter) Tile(tableId string, zoom, x, y int) ([]byte, error) {
-    meta, err := d.GetMetadata(tableId)
-    if err != nil {
-        return nil, err
-    }
-    if err := validateIdentifier(meta.PhysicalName); err != nil {
-        return nil, err
-    }
-    if err := validateIdentifier(meta.GeometryColumn); err != nil {
-        return nil, err
-    }
-
-    query := fmt.Sprintf(`
-        SELECT ST_AsMVT(
-            ST_AsMVTGeom(%s, ST_TileEnvelope(?, ?, ?), 4096, 256, true),
-            __pkey
-        ) AS mvt
-        FROM %s
-        WHERE %s && ST_TileEnvelope(?, ?, ?)
-    `, meta.GeometryColumn, meta.PhysicalName, meta.GeometryColumn)
-
-    var mvt []byte
-    err = d.QueryRow(query, zoom, x, y, zoom, x, y).Scan(&mvt)
-    return mvt, err
-}
-
-// GeometryTypes runs a lightweight distinct scan; not cached (règle 10).
-func (d *DuckDBAdapter) GeometryTypes(tableId string) ([]string, error) {
-    meta, err := d.GetMetadata(tableId)
-    if err != nil {
-        return nil, err
-    }
-    if err := validateIdentifier(meta.PhysicalName); err != nil {
-        return nil, err
-    }
-    if err := validateIdentifier(meta.GeometryColumn); err != nil {
-        return nil, err
-    }
-
-    query := fmt.Sprintf(
-        `SELECT DISTINCT ST_GeometryType(%s) FROM %s`,
-        meta.GeometryColumn, meta.PhysicalName,
-    )
-    rows, err := d.Query(query)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var types []string
-    for rows.Next() {
-        var t string
-        if err := rows.Scan(&t); err != nil {
-            return nil, err
-        }
-        types = append(types, t)
-    }
-    return types, rows.Err()
-}
-
-// Rows de lecture : la colonne géométrique est systématiquement exclue (règle 7).
-func rowsQuery(meta *Metadata) string {
-    return fmt.Sprintf(
-        `SELECT * EXCLUDE (%s) FROM %s WHERE __pkey IN (?)`,
-        meta.GeometryColumn, meta.PhysicalName,
-    )
-}
-
-// BulkInsert s'exécute dans une transaction unique (règle 6), tenue sous
-// writeMu pour toute sa durée (règle 21) — une transaction ouverte ne doit
-// jamais rester longtemps active, pour ne pas bloquer les autres écritures.
-func (d *DuckDBAdapter) BulkInsert(tableId string, rows []map[string]any) ([]string, error) {
-    d.writeMu.Lock()
-    defer d.writeMu.Unlock()
-
-    tx, err := d.db.Begin()
-    if err != nil {
-        return nil, err
-    }
-    defer tx.Rollback() // no-op si Commit réussit
-
-    pkeys := make([]string, 0, len(rows))
-    for _, row := range rows {
-        pkey := uuid.NewString()
-        // ... construire et exécuter l'INSERT dans tx pour cette row ...
-        pkeys = append(pkeys, pkey)
-    }
-
-    if err := tx.Commit(); err != nil {
-        return nil, err
-    }
-    return pkeys, nil
-}
-
-// Update : chaque colonne de updates est mise à jour dans une unique
-// requête (spec §5.2) — un update multi-colonnes est atomique, jamais un
-// Exec par colonne. Si une colonne est la colonne géométrique, sa valeur
-// (WKT) est convertie via ST_GeomFromText(?) plutôt que bindée directement
-// — une géométrie n'est pas une valeur scalaire (règle 22). Chaque colonne
-// est guillemetée via QuoteIdentifier (règle 1) avant interpolation dans
-// le SET.
-func (d *DuckDBAdapter) Update(tableId string, pkeys []string, updates map[string]any) error {
-    meta, err := d.GetMetadata(tableId)
-    if err != nil {
-        return err
-    }
-    if err := validateIdentifier(meta.PhysicalName); err != nil {
-        return err
-    }
-
-    setClauses := make([]string, 0, len(updates))
-    args := make([]any, 0, len(updates)+len(pkeys))
-    for column, value := range updates {
-        quotedCol, err := quoteIdentifier(column)
-        if err != nil {
-            return err
-        }
-        setClause := fmt.Sprintf("%s = ?", quotedCol)
-        if column == meta.GeometryColumn {
-            setClause = fmt.Sprintf("%s = ST_GeomFromText(?)", quotedCol)
-        }
-        setClauses = append(setClauses, setClause)
-        args = append(args, value)
-    }
-    args = append(args, pkeysToArgs(pkeys)...)
-
-    query := fmt.Sprintf(
-        `UPDATE %s SET %s WHERE __pkey IN (%s)`,
-        meta.PhysicalName, strings.Join(setClauses, ", "), placeholders(len(pkeys)),
-    )
-
-    d.writeMu.Lock()
-    defer d.writeMu.Unlock()
-
-    args := append([]any{value}, pkeysToArgs(pkeys)...)
-    if _, err := d.db.Exec(query, args...); err != nil {
-        return fmt.Errorf("update failed (invalid WKT si colonne géométrique): %w", err)
-    }
-    return nil
-}
-```
-
-Le chargement de l'extension spatiale (`LOAD spatial;`) est une étape d'initialisation de connexion, exécutée une fois à l'ouverture de la connexion DuckDB (section 4).
+> **`OGC:CRS84`, jamais `EPSG:4326`.** L'ordre d'axes officiel d'EPSG:4326 est (lat, lon) : l'utiliser
+> comme CRS cible inverse silencieusement X et Y. Cette règle s'applique aux quatre endroits qui
+> transforment : calcul de `bbox`, `FilteredExtent`, `GetGeometryGeoJSON`, `GetFeatures`.
 
 ---
 
-## 5. Service Layer
+## 5. Couche service
 
-Ce qui était `TableService` (métadonnées + cache, CRUD de rows, schéma, dérivation, import) est
-éclaté en cinq services à responsabilité unique — `MetadataService`, `RowService`,
-`SchemaService`, `DeriveService`, `ImportService` — plus `GeoService` et `ExportService`. Chacun
-dépend du storage layer via une interface qu'il déclare lui-même (4.6), jamais via
-`storage.Storage` : par exemple `SchemaService` n'a besoin que de `storage.TableManager`, jamais
-de métadonnées ni de `GeoTableManager`.
+Huit services, chacun propriétaire exclusif de son état. Fichiers : `internal/service/`.
 
-`MetadataService` est le seul propriétaire du cache de métadonnées (règle 11) : tous les autres
-services y accèdent via un port étroit qu'ils déclarent (`metadataGetter`, `metadataRefresher`,
-`metadataStore`...), jamais en cachant indépendamment — l'invalidation reste à un seul endroit.
+### 5.1 `MetadataService` — propriétaire unique du cache de métadonnées
 
-Toute méthode ci-dessous qui touche le storage layer prend désormais `ctx context.Context` en
-premier paramètre (règle 23), reçu de `req.Context()` côté router ; les extraits de code de cette
-section l'omettent pour rester courts, mais c'est le comportement réel. De même, les caches
-présentés comme `*cache.Cache` sont en réalité des LRU bornées `*expirable.LRU[K, V]`
-(`github.com/hashicorp/golang-lru/v2/expirable`, règle 24), avec `.Get`/`.Add`/`.Remove` à la place
-de `.Get`/`.Set`/`.Delete`.
+Tout autre service passe par lui pour lire ou écrire des métadonnées, via un port étroit ; personne
+ne cache indépendamment (règle 11). Le cache est un LRU borné avec TTL.
 
-### 5.1 `MetadataService` : seul propriétaire du cache de métadonnées
+Il invalide l'entrée concernée après **chaque** écriture : `UpdateMetadata`, `RefreshDerived`,
+`RemoveTable`, `Rollback`.
 
-```go
-type MetadataService struct {
-    storage storage.MetadataManager
-    cache   *cache.Cache
-}
+- `ListTables` pagine sur l'ordre déterministe de `TableIds` et renvoie aussi le total.
+- `Rollback` supprime la ligne de métadonnées (et, via `Remove`, la table physique éventuellement à
+  moitié matérialisée) après un échec en cours de création, et renvoie la cause d'origine enrichie.
+  C'est ce qui garantit qu'aucune ligne de catalogue ne survit sans table physique.
+- `LoadedSourceNames` construit la table de correspondance source → `tableId` utilisée par
+  `SourceService.Refresh`, clé sur `sourceName`(`::sourceLayer`).
 
-func NewMetadataService(s storage.MetadataManager, c *cache.Cache) *MetadataService {
-    return &MetadataService{storage: s, cache: c}
-}
+### 5.2 `RowService` — CRUD de lignes, typé
 
-func (s *MetadataService) GetMetadata(tableId string) (*storage.Metadata, error) {
-    if val, ok := s.cache.Get("metadata_" + tableId); ok {
-        return val.(*storage.Metadata), nil
-    }
+Convertit chaque valeur en type JSON natif selon son `ColumnType` (règle 12), en s'appuyant sur le
+cache de `SchemaService` pour ne pas redemander les types ligne par ligne.
 
-    meta, err := s.storage.GetMetadata(tableId)
-    if err != nil {
-        return nil, err
-    }
+`UpdateRow` écrit toutes les colonnes en **une** instruction : un update multi-colonnes est atomique,
+tout passe ou rien (§5.1 du point de vue du code appelant). Il déclenche `RefreshDerived`
+**uniquement** si la mise à jour touche la colonne géométrique (règle 9) ; un update scalaire ne
+recalcule ni `bbox` ni `updatedAt`, et n'invalide donc pas les tuiles.
 
-    s.cache.Set("metadata_"+tableId, meta, cache.DefaultExpiration)
-    return meta, nil
-}
+`InsertRow`, `BulkInsertRows` et `RemoveRows` déclenchent systématiquement `RefreshDerived`
+(le nombre de lignes change).
 
-func (s *MetadataService) ListTables() ([]*storage.Metadata, error) {
-    // implémentation : storage.TableIds() puis GetMetadata par id (mis en
-    // cache au passage)
-}
+### 5.3 `SchemaService` — structure, pas donnée
 
-// Create enregistre la ligne metadata d'une nouvelle table logique, utilisé
-// par DeriveService/ImportService avant de matérialiser sa table physique.
-func (s *MetadataService) Create(tableName string, isGeo bool, geometryColumn string) (string, error) {
-    return s.storage.Create(tableName, isGeo, geometryColumn)
-}
+Propriétaire de son cache de schéma. Expose le schéma complet (**géométrie incluse** : c'est de la
+structure, la règle 7 ne s'applique pas) et la table nom → type. `AddColumn` est la seule écriture
+qui change la structure et invalide donc le cache ; l'ajout de colonne n'affecte aucun champ dérivé,
+donc ce service n'a pas besoin de `MetadataService`.
 
-// invalidateMetadataCache doit être appelée après toute écriture qui change
-// metadata: UpdateMetadata, RefreshDerived, RemoveTable, Rollback (règle 11).
-func (s *MetadataService) invalidateMetadataCache(tableId string) {
-    s.cache.Delete("metadata_" + tableId)
-}
+### 5.4 `DeriveService` et `ImportService` — créer une table, avec rollback
 
-func (s *MetadataService) UpdateMetadata(tableId string, updates map[string]any) error {
-    if err := s.storage.UpdateMetadata(tableId, updates); err != nil {
-        return err
-    }
-    s.invalidateMetadataCache(tableId)
-    return nil
-}
+Même séquence dans les deux cas :
 
-func (s *MetadataService) RemoveTable(tableId string) error {
-    if err := s.storage.Remove(tableId); err != nil {
-        return err
-    }
-    s.invalidateMetadataCache(tableId)
-    return nil
-}
+1. Créer la ligne de catalogue (obtenir `tableId` et `physicalName`).
+2. Matérialiser la table physique (CTAS depuis un fichier ou depuis une requête).
+3. Persister la colonne géométrique / le SRID / la source résolus via `UpdateMetadata`.
+4. `RefreshDerived`.
 
-// RefreshDerived recalcule RowCount/Bbox/UpdatedAt (règle 9) et invalide le
-// cache. Appelée par RowService et ImportService/DeriveService après toute
-// écriture qui change le nombre de lignes ou touche la colonne géométrique
-// — c'est ce qui invalide le cache de tuiles de GeoService (5.5, règle 20).
-func (s *MetadataService) RefreshDerived(tableId string) error {
-    if err := s.storage.RefreshDerivedMetadata(tableId); err != nil {
-        return err
-    }
-    s.invalidateMetadataCache(tableId)
-    return nil
-}
+Tout échec après l'étape 1 passe par `Rollback`. `ImportService` porte en plus l'attribution de
+`sourceName`/`sourceLayer` (§3.2) et le passage de la couche et du SRID explicite.
 
-// Rollback supprime la ligne metadata (et la table physique partiellement
-// créée, via le DROP TABLE IF EXISTS de storage.Remove) après un échec en
-// cours de création dans DeriveService/ImportService (BUG-2) : une création
-// ratée ne doit jamais laisser une ligne metadata sans table physique.
-func (s *MetadataService) Rollback(tableId string, cause error) error {
-    if err := s.RemoveTable(tableId); err != nil {
-        return fmt.Errorf("%w (cleanup also failed: %v)", cause, err)
-    }
-    return cause
-}
+`DeriveService` applique un fail-fast bon marché sur la forme de la requête (un seul énoncé,
+commençant par `SELECT`) — **ce n'est pas le contrôle qui fait autorité** : la validation réelle est
+faite par le parseur DuckDB côté storage (§8).
 
-// LoadedSourceNames retourne les tableName déjà présents en metadata,
-// utilisé par ImportService pour satisfaire SourceService.Refresh (3.2).
-func (s *MetadataService) LoadedSourceNames() (map[string]string, error) {
-    ids, err := s.storage.TableIds()
-    if err != nil {
-        return nil, err
-    }
-    names := make(map[string]string, len(ids))
-    for _, id := range ids {
-        meta, err := s.GetMetadata(id)
-        if err != nil {
-            return nil, err
-        }
-        names[meta.TableName] = meta.TableId
-    }
-    return names, nil
-}
-```
+### 5.5 `GeoService` — cache de tuiles
 
-### 5.2 `RowService` : CRUD de rows, atomique et typé
+Seul service à cacher un résultat de rendu. La clé de cache inclut : `tableId`, z/x/y, `UpdatedAt`
+(règle 20), les attributs demandés (triés), et la clause de filtre avec ses arguments — puisque tous
+changent le contenu de la tuile pour une même version de table.
 
-```go
-// metadataRefresher est ce dont RowService a besoin de MetadataService :
-// lire les métadonnées (pour savoir quelle colonne est géométrique) et
-// rafraîchir les champs dérivés après une écriture (règle 9).
-type metadataRefresher interface {
-    GetMetadata(tableId string) (*storage.Metadata, error)
-    RefreshDerived(tableId string) error
-}
+Tout le reste est calculé à la demande et **jamais caché** : `GetFeatures`, `GetFeaturesTile`,
+`FilteredExtent`, `GeometryTypes`. Raison : filtre, bbox, tolérance et attributs forment un espace de
+clés non borné, contrairement au z/x/y d'une tuile.
 
-type RowService struct {
-    storage  storage.TableManager
-    metadata metadataRefresher
-}
+### 5.6 `ExportService` — l'export est du domaine, pas du transport
 
-func NewRowService(storage storage.TableManager, metadata metadataRefresher) *RowService {
-    return &RowService{storage: storage, metadata: metadata}
-}
+Le routeur ne fait que valider le format, poser les en-têtes, et laisser le service écrire
+directement dans le corps de la réponse.
 
-// UpdateRow met à jour toutes les colonnes de updates pour les pkeys donnés
-// en un seul appel storage, donc un PATCH multi-colonnes est atomique :
-// soit toutes les colonnes changent, soit aucune. Si une des colonnes est
-// la colonne géométrique, RefreshDerived recalcule bbox et bumpe UpdatedAt
-// (règle 9). Un update ne touchant que des champs scalaires ne déclenche
-// rien de plus.
-func (s *RowService) UpdateRow(tableId string, pkeys []string, updates map[string]any) error {
-    meta, err := s.metadata.GetMetadata(tableId)
-    if err != nil {
-        return err
-    }
+- Les lignes sont lues **page par page** (`exportBatchSize`), jamais toutes en mémoire (PERF-2).
+- Le format est validé **avant** le premier octet écrit : une fois le streaming commencé, le code de
+  statut ne peut plus changer.
+- CSV : en-tête `pkey` + colonnes du schéma (géométrie exclue), écrit avant toute lecture de ligne.
+- GeoJSON : `FeatureCollection` assemblée en flux ; refusé sur une table non géo. Une géométrie NULL
+  produit le littéral JSON `null`, jamais une chaîne vide (NEW-BUG-2).
 
-    if err := s.storage.Update(tableId, pkeys, updates); err != nil {
-        return err
-    }
+### 5.7 `SourceService`
 
-    if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
-        return s.metadata.RefreshDerived(tableId)
-    }
-    return nil
-}
-```
-
-Principe de typage de sortie (règle 12) : la sortie JSON de l'API utilise des types JSON natifs, jamais une reproduction directe des types Go du driver DuckDB. `Row.Values` reste un `map[string]any` (schéma dynamique par table), mais chaque valeur est convertie explicitement selon `ColumnType` :
-- `DATE` → `"YYYY-MM-DD"`
-- `TIMESTAMP`/`TIMESTAMPTZ` → ISO 8601 complet
-- colonne géométrique → absente du résultat (règle 7)
-
-### 5.3 `SchemaService` : structure, pas donnée
-
-`Schema`/`AddColumn` ne déclenchent jamais `RefreshDerived` (ajouter une colonne n'affecte ni
-`RowCount` ni `Bbox`) : `SchemaService` n'a donc aucune dépendance vers `MetadataService`, juste
-`storage.TableManager`.
-
-`SchemaService` est aussi le seul propriétaire d'un cache par table du schéma complet
-(`[]ColumnSchema`, PERF-1), invalidé par `AddColumn` — la seule écriture qui change la structure
-d'une table. `Types(ctx, tableId) map[string]string`, dérivé du même cache, est le port
-(`columnTyper`) que `RowService.convertRow` utilise pour convertir les valeurs d'une row sans
-émettre un `DESCRIBE`/`ColumnType` par colonne à chaque lecture.
-
-### 5.4 `DeriveService` et `ImportService` : créer une table, avec rollback
-
-Les deux services suivent le même schéma — enregistrer la ligne `metadata` puis matérialiser la
-table physique, avec compensation (`Rollback`, 5.1) si la matérialisation échoue (BUG-2) — d'où un
-port `metadataStore` partagé :
-
-```go
-// metadataStore est ce dont DeriveService/ImportService ont besoin de
-// MetadataService pour enregistrer une nouvelle table logique et nettoyer
-// en cas d'échec de sa matérialisation.
-type metadataStore interface {
-    GetMetadata(tableId string) (*storage.Metadata, error)
-    Create(tableName string, isGeo bool, geometryColumn string) (string, error)
-    UpdateMetadata(tableId string, updates map[string]any) error
-    RefreshDerived(tableId string) error
-    Rollback(tableId string, cause error) error
-}
-
-type DeriveService struct {
-    metadata metadataStore
-    storage  storage.TableCreator // n'utilise que CreateFromQuery
-}
-
-// DeriveTable matérialise une nouvelle table à partir d'une requête SELECT
-// fournie par l'appelant (règle 4). Table dérivée = instantané figé, jamais
-// une vue (règle 13).
-func (s *DeriveService) DeriveTable(query, newTableName string) (string, error) {
-    // implémentation : validateSelectOnly, puis Create/GetMetadata/
-    // CreateFromQuery/UpdateMetadata/RefreshDerived, Rollback à chaque échec
-}
-```
-
-`ImportService` a en plus besoin de `LoadedSourceNames` (d'où `metadataImporter`, qui embarque
-`metadataStore`) pour satisfaire à lui seul le `tableImporter` que `SourceService` attend (7) — les
-trois méthodes de ce port (`LoadedSourceNames`, `ListLayers`, `ImportFromFile`) vivent donc sur
-`ImportService`, `LoadedSourceNames` délèguant directement à `MetadataService.LoadedSourceNames`.
-
-### 5.5 `GeoService` : cache des tuiles
-
-```go
-// metadataGetter est ce dont GeoService a besoin de MetadataService :
-// lire les métadonnées en cache, pour clé de cache sur UpdatedAt.
-type metadataGetter interface {
-    GetMetadata(tableId string) (*storage.Metadata, error)
-}
-
-type GeoService struct {
-    storage   storage.GeoTableManager
-    metadata  metadataGetter
-    tileCache *cache.Cache
-}
-
-func NewGeoService(storage storage.GeoTableManager, metadata metadataGetter, tileCache *cache.Cache) *GeoService {
-    return &GeoService{storage: storage, metadata: metadata, tileCache: tileCache}
-}
-
-// GetTile sert une tuile depuis le cache pour la version courante de la
-// table. La clé inclut UpdatedAt : une écriture sur la table change
-// UpdatedAt (via RefreshDerived, règle 9), ce qui invalide automatiquement
-// les tuiles de l'ancienne version sans mécanisme séparé (règle 20).
-func (g *GeoService) GetTile(tableId string, zoom, x, y int) ([]byte, error) {
-    meta, err := g.metadata.GetMetadata(tableId)
-    if err != nil {
-        return nil, err
-    }
-
-    key := fmt.Sprintf("tile_%s_%d_%d_%d_%d", tableId, zoom, x, y, meta.UpdatedAt.UnixNano())
-    if val, ok := g.tileCache.Get(key); ok {
-        return val.([]byte), nil
-    }
-
-    mvt, err := g.storage.Tile(tableId, zoom, x, y)
-    if err != nil {
-        return nil, err
-    }
-
-    g.tileCache.Set(key, mvt, cache.DefaultExpiration)
-    return mvt, nil
-}
-```
-
-`RefreshDerived` (5.1) doit mettre à jour `UpdatedAt` en plus de `RowCount`/`Bbox` — c'est ce qui fait fonctionner l'invalidation de `GetTile` sans code d'invalidation dédié.
-
-`GeoService.GetFeatures` (OGC API - Features, 6.1.1), à l'inverse de `GetTile`, n'est jamais mis en
-cache (règle 10) : filtre, bbox, tolérance et attrs forment un espace de clés non borné, contrairement
-au z/x/y borné d'une tuile — même raisonnement que pour `FilterByBbox`/`GeometryTypes`/
-`GetGeometryGeoJSON`, déjà non mis en cache.
-
-### 5.6 `ExportService` : export = domaine, pas transport
-
-L'export CSV/GeoJSON (`GET /tables/{tableId}/export`) est de la logique métier, pas un détail de
-transport HTTP : `ExportService.Export` construit le corps de la réponse et son content-type, le
-router se limite à poser les en-têtes et écrire le corps.
-
-```go
-// rowLister et geometryFetcher sont la composition exacte dont
-// ExportService a besoin, déclarée ici (le consommateur).
-type rowLister interface {
-    ListRows(tableId string, offset, limit int64) (*RowsPage, error)
-}
-
-type geometryFetcher interface {
-    // GetGeometryGeoJSON : seule exception export à "jamais la colonne
-    // géométrique dans une lecture de rows" (règle 7).
-    GetGeometryGeoJSON(tableId string, pkeys []string) (map[string]string, error)
-}
-
-type ExportService struct {
-    rows     rowLister
-    geometry geometryFetcher
-}
-
-func NewExportService(rows rowLister, geometry geometryFetcher) *ExportService {
-    return &ExportService{rows: rows, geometry: geometry}
-}
-
-// Export rend toutes les lignes de meta au format demandé ("csv" ou
-// "geojson"), déjà résolu par le caller (le défaut par type de table est
-// une décision HTTP, pas domaine). Une erreur de validation (format
-// inconnu, GeoJSON sur une table non géo) est un *ExportValidationError,
-// que le router mappe en 400 ; toute autre erreur reste un 500.
-func (s *ExportService) Export(meta *storage.Metadata, format string) (body []byte, contentType string, err error) {
-    // implémentation : ListRows puis rendu CSV ou GeoJSON (avec
-    // GetGeometryGeoJSON pour ce dernier)
-}
-```
-
-Instancié dans `main.go` avec `RowService` et `GeoService` eux-mêmes (chacun satisfait
-implicitement `rowLister`/`geometryFetcher`), pas avec une nouvelle dépendance storage.
+Voir §3.
 
 ---
 
 ## 6. API REST
 
+Préfixe `/api/v1` pour toute l'API métier. Hors préfixe : `/healthz`, `/readyz`, `/swagger/*`,
+`/ui/*`, et `/` qui redirige vers `/ui/`.
+
 ### 6.1 Endpoints
 
-| **Domaine**       | **Endpoint**                          | **Méthode** | **Description**                                | **Réponse**                          |
-|-------------------|----------------------------------------|-------------|-------------------------------------------------|---------------------------------------|
-| **Metadata**      | `/tables`                             | GET         | Liste les tables avec leurs métadonnées (pagination) | `200: {"tables": [{"tableId": "...", ...}], "total": 10, "limit": 50, "offset": 0}` |
-|                   | `/tables/{tableId}`                   | GET         | Métadonnées d'une table                         | `200: {"tableId": "...", ...}`        |
-|                   | `/tables/{tableId}`                   | DELETE      | Supprime une table + ses données                | `204: No Content`                     |
-| **Sources**       | `/sources`                            | GET         | Liste les fichiers de `workDir` en cache, chargés ou non (pagination) | `200: {"sources": [{"name": "...", "loaded": true, ...}], "total": 5, "limit": 50, "offset": 0}` |
-|                   | `/sources/refresh`                    | POST        | Rescanne `workDir`, met à jour le cache (pagination) | `200: {"sources": [{"name": "...", ...}], "total": 5, "limit": 50, "offset": 0}` |
-|                   | `/sources/{name}/load?layer=`         | POST        | Charge la source (ou une couche `.gpkg`) dans une nouvelle table | `201: {"tableId": "..."}` |
-| **Données**       | `/tables/{tableId}/rows`              | GET         | Liste les lignes (pagination)                   | `200: {"rows": [...], "total": 100, "limit": 100, "offset": 0}` |
-|                   | `/tables/{tableId}/rows`              | POST        | Ajoute une ou plusieurs lignes                  | `201: {"pkeys": ["...", ...]}`        |
-|                   | `/tables/{tableId}/rows/{pkey}`       | GET         | Récupère une ligne par pkey                     | `200: {"row": {...}}`                 |
-|                   | `/tables/{tableId}/rows/{pkey}`       | PATCH       | Met à jour une ligne                            | `200: {"row": {...}}`                 |
-|                   | `/tables/{tableId}/rows/{pkey}`       | DELETE      | Supprime une ligne                              | `204: No Content`                     |
-|                   | `/tables/{tableId}/filter`            | POST        | Filtre les lignes par conditions de colonnes (`BuildFilter`, règle 5) | `200: {"rows": [...]}` |
-| **Géo (MVT)**     | `/tables/{tableId}/tiles/{z}/{x}/{y}?attrs=` | GET  | Récupère une tuile MVT ; `attrs` (colonnes séparées par `,`) embarque des attributs non-géométrie dans la tuile (GEO-3) | `200: []byte (application/x-protobuf)`|
-|                   | `/tables/{tableId}/geometry-types`    | GET         | Types de géométrie distincts (règle 10)         | `200: {"types": ["POLYGON", ...]}`    |
-| **Géo (Requêtes)**| `/tables/{tableId}/bbox`              | POST        | Filtre les pkeys dans un bbox                   | `200: {"pkeys": ["...", ...]}`        |
-| **Géo (OGC API - Features)** | `/ogc/`                    | GET         | Landing page (liens self/conformance/data)      | `200: {"title": "...", "links": [...]}` |
-|                   | `/ogc/conformance`                    | GET         | Classes de conformance déclarées (Core + GeoJSON) | `200: {"conformsTo": [...]}`        |
-|                   | `/ogc/collections`                    | GET         | Une collection par table géo (`isGeo=true`)     | `200: {"collections": [...]}`         |
-|                   | `/ogc/collections/{tableId}`          | GET         | Description d'une collection (`404` si non géo) | `200: {"id": "...", "extent": {...}}` |
-|                   | `/ogc/collections/{tableId}/items?bbox=&filter=&simplify=&limit=&offset=` | GET | `FeatureCollection` GeoJSON — `filter`/`simplify` sont des extensions de conformité au standard (6.1.1), sans consommateur dans l'UI | `200: {"type": "FeatureCollection", "features": [...]}` |
-|                   | `/ogc/collections/{tableId}/items/{featureId}` | GET  | Une `Feature` GeoJSON, résolution complète (pas de filtre/simplify) | `200: {"type": "Feature", ...}` ; `404` si absente |
-| **Schémas**       | `/tables/{tableId}/schema`            | GET         | Schéma de la table (colonnes + types)            | `200: {"columns": [{"name": "...", "type": "..."}]}` |
-|                   | `/tables/{tableId}/columns`           | POST        | Ajoute une colonne                              | `201: {"name": "...", "type": "..."}` |
-|                   | `/tables/{tableId}/columns/{col}/distinct` | GET   | Valeurs distinctes d'une colonne (non-géométrie) | `200: {"values": [...]}`             |
-| **Dérivation**    | `/tables/{tableId}/derive`            | POST        | Crée une table à partir d'une requête `SELECT`  | `201: {"tableId": "..."}`             |
-| **Export**        | `/tables/{tableId}/export`            | GET         | Exporte la table en GeoJSON/CSV                 | `200: file`                           |
+**Ops**
 
-Le chargement d'une table à partir d'un fichier passe uniquement par le trio `/sources` (règle 15). `POST /sources/{name}/load` échoue en `409 Conflict` si la source (ou, pour un `.gpkg`, la couche demandée) est déjà chargée, ou si `layer` est absent/inconnu pour un `.gpkg` (voir `SourceService.Load`, 3.2, et 7.1).
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/healthz` | liveness — le processus répond, indépendamment de l'état du stockage |
+| GET | `/readyz` | readiness — ping de la connexion DuckDB ; `503` si injoignable |
 
-`/tables/{tableId}/filter`, `/tables/{tableId}/columns/{col}/distinct` et `?attrs=` sur les tuiles sont une API publique stable, testée et documentée dans Swagger — mais sans consommateur dans `web/` à ce jour (décision `docs/audit2.md` §4.5) : l'UI n'appelle aucun des trois. Toute UI future qui veut un filtre par colonne, une inspection de valeurs distinctes, ou une infobulle carte les consomme directement via `web/src/client/`, sans en faire des endpoints nouveaux.
+**Sources**
 
-#### 6.1.1 OGC API - Features (Core)
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/api/v1/sources` | liste paginée et triable du cache (`offset`, `limit`, `sort`) |
+| POST | `/api/v1/sources/refresh` | rescanne `workDir` puis renvoie la même enveloppe paginée |
+| POST | `/api/v1/sources/upload` | multipart, champ `file` ; écrit dans `workDir` **puis charge immédiatement** en table. `?srid=` optionnel. Une source multi-couches est renvoyée telle quelle sans chargement (le choix de couche revient à l'appelant) |
+| POST | `/api/v1/sources/{name}/load` | charge une source en table. `?layer=` requis pour un `.gpkg`, rejeté sinon. `?srid=` fixe le CRS source explicitement |
+| GET | `/api/v1/sources/{name}/metadata` | CRS détecté du fichier, sans import. `srid` vaut `null` si indétectable |
+| DELETE | `/api/v1/sources/{name}` | supprime la ou les tables issues de la source ; **ne supprime pas le fichier** |
 
-`/ogc/...` implémente OGC API - Features — le successeur JSON/REST de WFS, pas le WFS 2.0.0
-XML/GML historique, cohérent avec le style tout-JSON du reste de l'API. `collectionId` dans l'URL
-*est* `tableId` : déjà un identifiant serveur stable et opaque (UUID), exactement ce qu'exige OGC.
-Une table non géo (`isGeo=false`) renvoie `404` sur toute route `/ogc/collections/{tableId}/...`.
+**Tables**
 
-- Classes de conformance déclarées : Core + GeoJSON uniquement (pas `oas30`, pas de CQL2).
-- `filter`/`simplify` sont des extensions spécifiques à cette API, au-delà de Core — CQL2 complet
-  ne correspond pas au modèle colonne/opérateur whitelisté qu'impose la règle 5, mais un client OGC
-  conforme peut s'y attendre. Ils réutilisent `GeoQuery`/`BuildFilter`. C'est une exigence de
-  conformité au standard, pas un besoin produit : l'UI n'expose aucun contrôle filtre/simplification,
-  ni ici ni sur les tuiles MVT (`Tile` n'accepte d'ailleurs pas de `GeoQuery` — seul `GetFeatures` en
-  a besoin).
-- `datetime` n'est pas supporté : aucune notion de colonne temporelle n'existe dans ce modèle.
-- `GetFeatures` (4.4, 5.5) est le seul point d'entrée storage à accepter un `GeoQuery` — seconde
-  exception délibérée à la règle 7, au même titre qu'`GetGeometryGeoJSON`.
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/api/v1/tables` | liste paginée et triable des métadonnées |
+| GET | `/api/v1/tables/{tableId}` | métadonnées d'une table |
+| PATCH | `/api/v1/tables/{tableId}` | renommage (`tableName` uniquement) |
+| DELETE | `/api/v1/tables/{tableId}` | supprime la table et ses données |
+| GET | `/api/v1/tables/{tableId}/schema` | colonnes et types, géométrie incluse |
+| POST | `/api/v1/tables/{tableId}/columns` | ajoute une colonne |
+| GET | `/api/v1/tables/{tableId}/columns/{col}/distinct` | valeurs distinctes d'une colonne non géométrique |
+| POST | `/api/v1/tables/{tableId}/derive` | crée une nouvelle table depuis une requête `SELECT` |
+| POST | `/api/v1/tables/{tableId}/filter` | filtre par conditions (`BuildFilter`) |
+| GET | `/api/v1/tables/{tableId}/export` | export streamé, `?format=csv\|geojson` |
 
-### 6.2 Router (`chi`)
+**Rows**
 
-`Setup()` monte `middleware.Timeout(api.requestTimeoutSec)` juste après `Recoverer`, seulement si
-`requestTimeoutSec > 0` (0 désactive le timeout plutôt que d'annuler chaque requête instantanément,
-règle 23) — avant `maxBodyBytes` puisqu'un timeout doit couvrir toute la requête, pas seulement la
-lecture du corps.
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/api/v1/tables/{tableId}/rows` | liste paginée (`offset`, `limit`, `sort` validé contre le schéma) |
+| POST | `/api/v1/tables/{tableId}/rows` | insère une ou plusieurs lignes (une seule → insert simple, plusieurs → transaction) |
+| POST | `/api/v1/tables/{tableId}/rows/batch` | récupère plusieurs lignes par pkeys |
+| GET | `/api/v1/tables/{tableId}/rows/{pkey}` | une ligne |
+| PATCH | `/api/v1/tables/{tableId}/rows/{pkey}` | met à jour une ligne, renvoie l'état résultant |
+| DELETE | `/api/v1/tables/{tableId}/rows/{pkey}` | supprime une ligne |
 
-```go
-package router
+**Géo**
 
-import (
-    "net/http"
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}` | tuile MVT. `?attrs=` embarque des colonnes non géométriques ; `?filter=` restreint les lignes. `simplify`/`precision` sont ignorés (une tuile simplifie à sa propre résolution de zoom) |
+| GET | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | **mêmes** limites de tuile, en `FeatureCollection` GeoJSON — un client peut découper son chargement GeoJSON sur la grille MVT sans refaire le calcul d'emprise |
+| GET | `/api/v1/tables/{tableId}/geometry-types` | types de géométrie distincts présents |
+| POST | `/api/v1/tables/{tableId}/bbox` | pkeys des lignes intersectant une emprise |
+| GET | `/api/v1/tables/{tableId}/filtered-extent` | emprise des lignes correspondant à un filtre, pour recentrer une carte |
 
-    "github.com/go-chi/chi/v5"
-    "github.com/go-chi/chi/v5/middleware"
-    httpSwagger "github.com/swaggo/http-swagger"
-    _ "your-app/docs"
-)
+**OGC API - Features**
 
-// metadataAPI/rowAPI/schemaAPI/deriveAPI/geoAPI/sourceAPI (déclarées dans le
-// paquet router, un fichier ports.go) sont exactement les méthodes que le
-// router appelle sur chaque service — jamais les types concrets
-// *service.MetadataService/RowService/SchemaService/DeriveService/
-// GeoService/SourceService, qui les satisfont implicitement. Un test de
-// handler peut les satisfaire avec un double plus léger que le service
-// entier.
-type Router struct {
-    metadataService metadataAPI
-    rowService      rowAPI
-    schemaService   schemaAPI
-    deriveService   deriveAPI
-    geoService      geoAPI
-    sourceService   sourceAPI
-    exportService   *service.ExportService
-}
+| Méthode | Chemin | Description |
+|---|---|---|
+| GET | `/api/v1/ogc/` | landing page (liens self / conformance / data) |
+| GET | `/api/v1/ogc/conformance` | classes déclarées : Core + GeoJSON |
+| GET | `/api/v1/ogc/collections` | une collection par table géo |
+| GET | `/api/v1/ogc/collections/{tableId}` | description d'une collection |
+| GET | `/api/v1/ogc/collections/{tableId}/items` | `FeatureCollection`, paramètres `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset` |
+| GET | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | une `Feature`, résolution pleine |
 
-func NewRouter(
-    metadataSvc metadataAPI, rowSvc rowAPI, schemaSvc schemaAPI, deriveSvc deriveAPI,
-    geoSvc geoAPI, sourceSvc sourceAPI, exportSvc *service.ExportService,
-) *Router {
-    return &Router{
-        metadataService: metadataSvc, rowService: rowSvc, schemaService: schemaSvc, deriveService: deriveSvc,
-        geoService: geoSvc, sourceService: sourceSvc, exportService: exportSvc,
-    }
-}
+### 6.2 OGC API - Features
 
-func (rt *Router) Setup() http.Handler {
-    router := chi.NewRouter()
+C'est OGC API - Features (le successeur JSON/REST de WFS), pas le WFS 2.0.0 XML/GML historique —
+cohérent avec le style tout-JSON du reste de l'API.
 
-    router.Use(middleware.Logger)
-    router.Use(middleware.Recoverer)
-    router.Use(middleware.AllowContentType("application/json"))
+- `collectionId` **est** `tableId` : déjà un identifiant serveur opaque et stable, exactement ce que
+  le standard demande.
+- Une table non géo renvoie `404` sur toute route `/ogc/collections/{tableId}/...`.
+- Conformance déclarée : Core + GeoJSON uniquement. Ni `oas30`, ni CQL2.
+- `filter`, `simplify` et `precision` sont des **extensions** au-delà de Core : CQL2 complet ne
+  correspond pas au modèle colonne/opérateur whitelisté qu'impose la règle 5.
+- `datetime` n'est pas supporté : le modèle n'a aucune notion de colonne temporelle.
+- Le lien `next` n'est émis que si la page renvoyée est pleine — seul signal de « il y a peut-être
+  plus » disponible sans requête de comptage séparée.
 
-    router.Get("/swagger/*", httpSwagger.WrapHandler)
+> **Écart connu.** `numberMatched` renvoie le nombre d'entités **de la page**, pas le total
+> correspondant à la requête. Voir `docs/audit-go.md` §3.5.
 
-    router.Route("/sources", func(sub chi.Router) {
-        sub.Get("/", rt.listSources)
-        sub.Post("/refresh", rt.refreshSources)
-        sub.Post("/{name}/load", rt.loadSource)
-    })
+### 6.3 Routeur et middlewares
 
-    router.Route("/tables", func(sub chi.Router) {
-        sub.Get("/", rt.listTables)
-        sub.Route("/{tableId}", func(sub chi.Router) {
-            sub.Use(rt.tableMiddleware)
-            sub.Get("/", rt.getTableMetadata)
-            sub.Delete("/", rt.deleteTable)
+Fichier : `internal/router/routes.go`.
 
-            sub.Route("/rows", func(sub chi.Router) {
-                sub.Get("/", rt.listRows)
-                sub.Post("/", rt.addRows)
-                sub.Route("/{pkey}", func(sub chi.Router) {
-                    sub.Get("/", rt.getRow)
-                    sub.Patch("/", rt.updateRow)
-                    sub.Delete("/", rt.deleteRow)
-                })
-            })
+Chaîne globale, dans l'ordre : `RequestID` → journalisation structurée `slog` → `Recoverer` →
+plafond de corps de requête.
 
-            sub.Get("/tiles/{z}/{x}/{y}", rt.getTile)
-            sub.Post("/bbox", rt.filterByBbox)
-        })
-    })
+- **Plafond de corps** : rejette immédiatement en `413` si `Content-Length` dépasse la limite,
+  **avant** de lire un seul octet. Nécessaire car un dépassement détecté en cours de flux force Go à
+  fermer la connexion avec des octets non lus, ce que le client voit comme une coupure brutale sans
+  statut HTTP. La route `/sources/upload` reçoit un plafond dédié (taille max de source + 64 Kio de
+  marge pour l'encadrement multipart).
+- **Timeout par requête** : appliqué au **groupe** `/api/v1` seulement, et seulement si
+  `requestTimeoutSec > 0`.
+- **`/tables/{tableId}/export` est enregistrée hors de ce groupe** : un export volumineux dépasse
+  légitimement le budget d'une requête normale, et le timeout tronquerait une réponse déjà passée en
+  `200`. Le handler neutralise en plus `WriteTimeout` du serveur juste avant de streamer, pour la
+  même raison (NEW-BUG-7).
 
-    return router
-}
+**Résolution de table.** `TableResolver` (`router/validation/resolver.go`) résout `{tableId}` une
+fois par requête, servi par le cache dans le cas courant, et écrit un `404` si la table n'existe pas.
+Tous les handlers d'une table l'embarquent.
 
-func (rt *Router) listSources(w http.ResponseWriter, req *http.Request) {
-    json.NewEncoder(w).Encode(rt.sourceService.List())
-}
+**Validation des colonnes.** `ColumnValidator` (`router/validation/columns.go`) vérifie tout nom de
+colonne fourni par le client contre le schéma réel, **géométrie exclue** (règle 7 : ne jamais
+exposer la géométrie par un chemin générique). Utilisé par `/filter`, `/distinct`, le `sort` des
+rows, et les `attrs` de tuile.
 
-func (rt *Router) refreshSources(w http.ResponseWriter, req *http.Request) {
-    sources, err := rt.sourceService.Refresh()
-    if err != nil {
-        WriteError(w, err, http.StatusInternalServerError)
-        return
-    }
-    json.NewEncoder(w).Encode(sources)
-}
+### 6.4 Erreurs
 
-// loadSource implements POST /sources/{name}/load. name est validé contre
-// le cache par SourceService.Load lui-même (règle 15) — le handler ne fait
-// aucune validation de chemin ici, ce n'est pas sa responsabilité. layer
-// (query param) sélectionne une couche pour un .gpkg (7.1).
-func (rt *Router) loadSource(w http.ResponseWriter, req *http.Request) {
-    name := chi.URLParam(req, "name")
-    layer := req.URL.Query().Get("layer")
+Corps d'erreur unique : `{"error", "message", "code"}` (`router/response/response.go`).
 
-    tableId, err := rt.sourceService.Load(name, layer)
-    if err != nil {
-        WriteError(w, err, http.StatusConflict)
-        return
-    }
+**Un 5xx ne renvoie jamais le message d'origine** — il est journalisé côté serveur avec l'identifiant
+de requête, et le client reçoit le texte standard du statut. Une erreur DuckDB peut contenir un
+`physicalName` ou des détails internes. Les 4xx, causés par la requête de l'appelant, transmettent
+le message.
 
-    w.Header().Set("Location", "/tables/"+tableId)
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(map[string]string{"tableId": tableId})
-}
+`MapServiceError` fait le mapping par type d'erreur, avec **500 par défaut** : une erreur non
+classifiée est un problème interne, jamais une faute du client (NEW-SEC-1).
 
-func (rt *Router) getTile(w http.ResponseWriter, req *http.Request) {
-    tableId := chi.URLParam(req, "tableId")
-    z, x, y := parseTileCoords(req)
+| Type d'erreur | Statut |
+|---|---|
+| `service.ValidationError` | 400 |
+| `service.ExportValidationError` | 400 |
+| `storage.InvalidSortError` | 400 |
+| `service.NotFoundError` | 404 |
+| `service.ConflictError` | 409 |
+| tout le reste | 500 |
 
-    mvt, err := rt.geoService.GetTile(tableId, z, x, y)
-    if err != nil {
-        WriteError(w, err, http.StatusInternalServerError)
-        return
-    }
+### 6.5 Cache HTTP des tuiles
 
-    // Cache-Control complète le cache applicatif de GeoService (5.5, règle
-    // 20) : évite même l'aller-retour réseau pour un client/CDN qui a déjà
-    // la tuile. max-age court car une tuile change dès la prochaine écriture.
-    w.Header().Set("Cache-Control", "public, max-age=3600")
-    w.Header().Set("Content-Type", "application/x-protobuf")
-    w.Write(mvt)
-}
+En complément du cache applicatif (règle 20), `GET /tiles/{z}/{x}/{y}` émet un `ETag` dérivé de
+`UpdatedAt`, des attributs et du filtre, plus un `Cache-Control: public, max-age=60` court — rien
+n'invalide la copie d'un CDN entre-temps. Un `If-None-Match` correspondant renvoie `304` sans
+toucher au stockage (HTTP-2).
 
-func (rt *Router) deriveTable(w http.ResponseWriter, req *http.Request) {
-    var body struct {
-        Query        string `json:"query"`
-        NewTableName string `json:"newTableName"`
-    }
-    if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-        WriteError(w, err, http.StatusBadRequest)
-        return
-    }
+### 6.6 Documentation Swagger
 
-    // DeriveTable doit rejeter tout ce qui n'est pas un SELECT (règle 4).
-    // sourceTableId (path param) ne sert qu'à faire résoudre 404 par le
-    // routeur si la table source n'existe pas — la query peut référencer
-    // n'importe quelle(s) table(s), donc il n'est jamais transmis au service.
-    tableId, err := rt.tableService.DeriveTable(
-        body.Query,
-        body.NewTableName,
-    )
-    if err != nil {
-        WriteError(w, req, err, http.StatusBadRequest)
-        return
-    }
+Générée par `swag init` depuis les annotations des handlers (`mise run docs`). `docs/docs.go`,
+`docs/swagger.json` et `docs/swagger.yaml` sont **générés** : ne jamais les éditer à la main. Servie
+sous `/swagger/`.
 
-    w.Header().Set("Location", "/tables/"+tableId)
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(map[string]string{"tableId": tableId})
-}
-```
+### 6.7 Sécurité — état actuel
 
-Note pour toute closure de routing chi : nommer le paramètre `sub` (ou équivalent), jamais `r` — masquerait le receiver `*Router` et empêcherait la compilation.
+**Il n'y a ni authentification, ni autorisation, ni CORS, ni limitation de débit.** Toutes les routes
+d'écriture (`POST /rows`, `DELETE /tables/{id}`, `POST /derive`, `POST /sources/upload`,
+`DELETE /sources/{name}`) sont ouvertes. C'est cohérent avec le périmètre (règle 16) : le serveur est
+conçu pour un déploiement en réseau de confiance ou derrière un reverse-proxy qui porte ces
+fonctions. **Ce n'est pas un oubli, c'est une décision** — mais elle interdit une exposition directe
+sur Internet.
 
-### 6.3 Doc Swagger
-
-`swag init -g cmd/main.go -o docs`, annotations standard (`@Summary`, `@Router`) sur chaque handler.
-
-### 6.4 Gestion des erreurs
-
-```go
-type ErrorResponse struct {
-    Error   string `json:"error"`
-    Message string `json:"message"`
-    Code    int    `json:"code"`
-}
-
-// Un 5xx journalise err côté serveur (méthode + chemin) et n'en envoie jamais
-// le détail au client (peut contenir du texte d'erreur DuckDB, un
-// physicalName...) — seul un 4xx, causé par la requête de l'appelant
-// lui-même, expose le message sous-jacent.
-func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
-    message := err.Error()
-    if code >= 500 {
-        log.Printf("%s %s: %v", req.Method, req.URL.Path, err)
-        message = http.StatusText(code)
-    }
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(code)
-    json.NewEncoder(w).Encode(ErrorResponse{
-        Error:   message,
-        Message: http.StatusText(code),
-        Code:    code,
-    })
-}
-```
+Les protections en place sont : plafond de corps de requête, plafonds de pagination, timeout par
+requête, whitelisting systématique des identifiants et des colonnes, restriction de `/derive` aux
+tables enregistrées, et confinement des chemins de fichiers au cache de `workDir`.
 
 ---
 
-## 7. Chargement de données (`SourceService.Load`)
+## 7. Chargement d'un fichier
 
-`SourceService.Load` (section 3.2) appelle `ImportService.ImportFromFile(name, path, ext, layer)` avec un chemin déjà résolu et validé dans `workDir` — `layer` reste vide hors GeoPackage (7.1). `SourceService` dépend d'un `tableImporter` (`LoadedSourceNames`, `ListLayers`, `ImportFromFile` — déclaré dans son propre paquet), pas du type concret `*ImportService` : sa dépendance réelle est ces trois méthodes (5.4), satisfaites par `ImportService`.
+Séquence de `CreateFromFile` (`storage/duckdb/create.go`), déclenchée par
+`POST /sources/{name}/load` ou `/sources/upload` :
 
-`ImportFromFile` (et de façon symétrique `DeriveTable`, section 8) enregistre d'abord la ligne
-`metadata` (`storage.Create`) puis matérialise la table physique. Si la matérialisation échoue
-(fichier corrompu, requête invalide) — le cas nominal d'une erreur utilisateur, pas une exception —
-la ligne `metadata` déjà créée est supprimée (`storage.Remove`, dont le `DROP TABLE IF EXISTS` gère
-aussi bien une table jamais créée qu'une table partiellement créée) avant de renvoyer l'erreur.
-Sans cette compensation, une table apparaîtrait dans `GET /tables` sans `physicalName` valide.
+1. **CTAS depuis `ST_Read`** avec génération de `__pkey` dans la projection. `ST_Read` ne fait que
+   lire : la table résultante est matérialisée (règle 13), jamais une vue.
+2. **Index unique sur `__pkey`.**
+3. **Détection de la colonne géométrique** par introspection du schéma résultant. Le nom varie selon
+   le format (`geom`, `wkb_geometry`…), il n'est jamais supposé fixe. **Une table à plusieurs
+   colonnes géométriques est rejetée** : tout le reste du domaine suppose une géométrie unique, et
+   en choisir une silencieusement ne serait juste qu'à moitié (GEO-2). Sans colonne géométrique, la
+   table est non géo et la séquence s'arrête ici.
+4. **Résolution du CRS source** : `srid` explicite s'il est fourni, sinon détection depuis les
+   métadonnées du fichier. **Si aucun des deux n'aboutit, le chargement échoue** plutôt que de
+   deviner (GEO-1) — l'appelant doit rappeler avec un `srid` explicite.
+5. **Reprojection vers EPSG:3857**, une fois, en base. La chaîne de CRS source est un **paramètre
+   lié**, pas une interpolation : elle peut provenir des métadonnées d'un fichier, qui ne sont pas
+   du contenu de confiance.
+6. **Clustering Hilbert** sur la géométrie. Il reconstruit la table, donc détruit les index — d'où
+   l'ordre. Une table sans géométrie non NULL est laissée telle quelle (pas d'emprise de référence).
+7. **Recréation de l'index `__pkey` + création de l'index RTREE** (règle 19).
 
-`ST_Read` est un mécanisme de **lecture** du fichier source, jamais un mode de stockage : il ne permet ni `AddColumn`, ni `Update`/`InsertRow`/`Remove` fiables, ni `__pkey`. La table doit toujours être matérialisée (règle 13) :
+### 7.1 Sources multi-couches
 
-```sql
-CREATE TABLE t_a1b2c3 AS
-SELECT
-    uuid()::TEXT AS __pkey,
-    *
-FROM ST_Read('/data/sources/buildings.geojson');
-
--- CREATE TABLE AS SELECT ne préserve aucune contrainte, à redéclarer explicitement
-ALTER TABLE t_a1b2c3 ADD PRIMARY KEY (__pkey);
-
--- Index spatial obligatoire pour toute table géo (règle 19, détail 4.2)
-CREATE INDEX idx_t_a1b2c3_geom ON t_a1b2c3 USING RTREE (geom);
-```
-
-**Deux points à traiter systématiquement au chargement, jamais différés :**
-
-1. **Nom de la colonne géométrique variable selon le format source** (souvent `geom`, parfois `wkb_geometry` selon Shapefile/GeoPackage/GeoJSON). Inspecter après chargement (`DESCRIBE t_a1b2c3`), stocker dans `metadata.geometryColumn` — ne jamais supposer un nom fixe.
-2. **SRID.** `Tile()` compare en Web Mercator (EPSG:3857). Si la donnée source est en 4326 (GeoJSON standard) ou autre SRID, reprojeter au chargement (`ST_Transform(geom, 'EPSG:4326', 'EPSG:3857')`) — choix par défaut si les données servent surtout au rendu carte. Reprojection à la volée dans `Tile()` uniquement si l'usage hors-carte de la précision native est explicitement demandé.
-
-### 7.1 Sources multi-couches (GeoPackage)
-
-Un GeoPackage (`.gpkg`) peut contenir plusieurs couches (tables de features distinctes). `ST_Read` ne lit qu'une seule couche par appel — celle passée en paramètre nommé `layer`, ou la première par défaut si omis :
-
-```sql
-SELECT * FROM ST_Read('/data/sources/regions.gpkg', layer='communes');
-```
-
-Les couches disponibles se découvrent via `ST_Read_Meta`, qui expose un champ `layers` (liste de structs, dont `name`) sans matérialiser aucune donnée :
-
-```sql
-SELECT layer.name FROM (SELECT unnest(layers) AS layer FROM st_read_meta('/data/sources/regions.gpkg'));
-```
-
-Un `.gpkg` n'est donc jamais « chargé » comme un tout : chaque couche se charge indépendamment dans sa propre table via `ImportFromFile(name, path, ext, layer)`, avec `name` composé comme `"<fichier>::<couche>"` pour distinguer les tables issues d'un même fichier. `Source.Layers` (un `SourceLayer{Name, Loaded, TableId}` par couche) remplace, pour ce format, l'état `Loaded`/`TableId` au niveau du fichier — chaque couche a son propre statut de chargement, sans état global pour le fichier entier.
+Un `.gpkg` n'est **jamais** chargé en bloc. `ListLayers` énumère ses couches, chacune se charge
+indépendamment dans sa propre table, et son état chargé est suivi individuellement (§3.2).
 
 ---
 
-## 8. Dérivation de tables (`/derive`)
+## 8. Dérivation de tables
 
-`query` est une requête `SELECT` fournie par l'utilisateur (règle 4) — rejeter tout le reste avant exécution.
+`POST /tables/{tableId}/derive` matérialise une nouvelle table depuis une requête `SELECT` fournie
+par l'appelant. La table dérivée est un **instantané figé** : aucune synchronisation avec sa source,
+dans aucun sens.
 
-Le rejet se fait en deux temps : le service layer fait un rejet rapide sur la forme de la requête
-(pas de `;`, doit commencer par `SELECT`) avant même de toucher le storage layer ; le storage layer
-(`DuckDBAdapter.CreateFromQuery`) fait le contrôle qui compte réellement, en s'appuyant sur le
-propre parseur SQL de DuckDB (`json_serialize_sql`) plutôt que sur une liste noire de mots-clés —
-une liste noire ne peut jamais énumérer toutes les fonctions-table de DuckDB qui lisent des
-fichiers ou de l'état système (`read_csv`, `read_text`, `duckdb_settings`, `st_read_meta`, ...).
-`json_serialize_sql` rejette déjà lui-même tout ce qui n'est pas un unique `SELECT` ; l'arbre
-résultant est ensuite parcouru récursivement pour rejeter tout nœud `TABLE_FUNCTION` (aucune
-fonction-table n'a de raison légitime d'apparaître dans un `/derive`, qui ne fait que joindre des
-tables déjà enregistrées) et tout nœud `BASE_TABLE` dont le nom ne figure pas dans les
-`physicalName` actuellement enregistrés dans `metadata` — `metadata` elle-même n'y figure jamais,
-donc une requête ne peut jamais la lire. Les noms de CTE (`WITH x AS (...)`) sont collectés à part
-et ajoutés à l'ensemble autorisé, puisqu'ils ne résolvent qu'à l'intérieur de la requête qui les
-définit.
+**Validation en deux temps :**
 
-Table dérivée = table matérialisée, jamais une vue (règle 13) :
+1. Côté service, un fail-fast : un seul énoncé, commençant par `SELECT`.
+2. Côté storage, la validation qui fait autorité : la requête est parsée **par DuckDB lui-même**
+   (sérialisation de l'AST), puis l'arbre est parcouru pour rejeter (règle 4) :
+   - **toute fonction de table** — c'est ce qui bloque `read_csv`, `read_text`, `duckdb_settings` et
+     tout autre lecteur de fichiers ou d'état système ;
+   - **toute table de base** qui n'est pas un `physicalName` enregistré dans `metadata` ;
+   - **tout énoncé non-`SELECT`**, que le sérialiseur rejette de lui-même.
+   Les noms introduits par des CTE (`WITH x AS …`) sont collectés au préalable et autorisés.
 
-```sql
-CREATE TABLE t_derived_xyz AS
-SELECT * FROM t_a1b2c3 WHERE height > 10;
+Une blacklist de mots-clés ne pourrait jamais énumérer toutes les fonctions de table de DuckDB : la
+validation par AST est le seul contrôle fiable, et le regex ne doit jamais être considéré comme
+suffisant.
 
-ALTER TABLE t_derived_xyz ADD PRIMARY KEY (__pkey);
+**Génération de `__pkey`.** La requête de l'appelant est **enveloppée** : un `__pkey` neuf est
+toujours généré, exactement comme à l'import. La requête est donc libre de projeter ce qu'elle veut —
+projection partielle, `GROUP BY`, jointure — sans rien savoir de `__pkey`. Si elle en projette déjà
+un (typiquement un `SELECT *` sur une table déjà importée), il est exclu de l'enveloppe plutôt que
+d'entrer en collision (NEW-BUG-3).
 
--- Index spatial obligatoire si la table dérivée est géo (règle 19, détail 4.2)
-CREATE INDEX idx_t_derived_xyz_geom ON t_derived_xyz USING RTREE (geom);
-```
-
-Une table dérivée est un instantané figé au moment de la création — pas de synchronisation avec la table source, ni dans un sens ni dans l'autre. Pas de statut spécial ("read-only", "liée à une source") à gérer dans le service layer.
+Le reste de la séquence (détection géométrie, clustering, index) est identique à §7, étapes 3, 6, 7.
 
 ---
 
-## 9. Structure du Projet
+## 9. Structure du projet
 
-```bash
-.
-├── cmd/
-│   └── server/
-│       └── main.go
-├── internal/
-│   ├── config/
-│   │   └── config.go
-│   ├── storage/
-│   │   ├── duckdb/
-│   │   │   ├── adapter.go
-│   │   │   └── mvt.go
-│   │   ├── postgis/
-│   │   ├── sqlwrapper.go
-│   │   └── metadata.go
-│   ├── service/
-│   │   ├── metadata.go
-│   │   ├── rows.go
-│   │   ├── schema.go
-│   │   ├── derive.go
-│   │   ├── import.go
-│   │   ├── geo.go
-│   │   ├── export.go
-│   │   └── source.go
-│   └── router/
-│       ├── ports.go
-│       ├── handlers_*.go
-│       ├── middleware.go
-│       └── routes.go
-├── config.yaml
-├── docs/
-├── go.mod
-└── go.sum
+```
+cmd/server/            point d'entrée
+internal/
+  config/              chargement et validation de la configuration
+  core/                câblage services + caches, bootstrap
+  router/
+    handlers/          un fichier par famille d'endpoints + ports.go + dto.go
+    validation/        résolution de table, validation de colonnes
+    response/          JSON, erreurs, mapping statut
+    routes.go          montage chi, middlewares
+    webui.go           service du SPA avec repli history-mode
+  service/             un fichier par service + errors.go + formats.go
+  storage/
+    duckdb/            adapter, création, données, MVT, features, migrations
+    storagetest/       suite de conformité réutilisable
+    mocks/             mock testify de storage.Storage
+    *.go               contrats et primitives indépendants du moteur
+  webui/               go:embed du build de production
+web/                   application Vue 3 (build vers internal/webui/dist)
+docs/                  cette spec, l'audit, le plan, et le Swagger généré
 ```
 
-Les structs de domaine restent dans leur package propriétaire (`Metadata`/`Source` dans `storage`/`service`, `ErrorResponse` dans `router`).
-
-Seule la table `metadata` a un schéma à faire évoluer, géré par `CREATE TABLE IF NOT EXISTS` au démarrage (section 4.1).
-
-`config.yaml` à la racine, optionnel (défauts en dur dans `config.Load` si absent) — voir section 2. `sources.workDir` pointe par défaut vers `./data/sources`, surchargeable par `--workdir`.
+Les structs de domaine restent dans leur paquet propriétaire : `Metadata`/`Row`/`GeoFeature` dans
+`storage`, `Source`/`ColumnSchema`/`RowsPage` dans `service`, les DTO dans `handlers`,
+`ErrorResponse` dans `response`.
 
 ---
 
 ## 10. Tests
 
-```go
-func TestMetadataService_GetMetadata(t *testing.T) {
-    mockStorage := &mocks.MetadataManager{}
-    mockStorage.On("GetMetadata", "id-1").Return(&storage.Metadata{TableId: "id-1"}, nil)
+Fichiers de test à côté du code testé, dans le même paquet.
 
-    svc := service.NewMetadataService(mockStorage, cache.New(5*time.Minute, 10*time.Minute))
-    meta, err := svc.GetMetadata("id-1")
+| Niveau | Approche |
+|---|---|
+| `config` | chargement avec/sans fichier, surcharges d'environnement, cas invalides |
+| `storage` | tests unitaires des primitives (`BuildFilter`, identifiants, tri) |
+| `storage/duckdb` | tests d'intégration sur une **vraie** base DuckDB temporaire — le moteur n'est jamais mocké |
+| `storagetest` | suite de conformité comportementale, exécutable contre tout adapter ; branchée sur DuckDB par `conformance_test.go`. Elle ne crée ses tables que par `CreateFromFile`, jamais par DDL propre à un backend |
+| `service` | mocks testify des ports, aucun accès disque ni base |
+| `router/handlers` | `httptest` + doubles légers des ports déclarés dans `ports.go` |
+| `router` | câblage des routes et middlewares |
 
-    assert.NoError(t, err)
-    assert.Equal(t, "id-1", meta.TableId)
-}
+Règle 17 : une struct, méthode ou handler livré sans son test n'est pas terminé.
 
-func TestConfig_Load_DefaultsWhenFileAbsent(t *testing.T) {
-    cfg, err := config.Load("does-not-exist.yaml")
-
-    assert.NoError(t, err)
-    assert.Equal(t, "./data/sources", cfg.Sources.WorkDir)
-}
-
-func TestSourceService_Refresh_ExcludesOversizedAndDisallowedFiles(t *testing.T) {
-    dir := t.TempDir()
-    writeFixture(t, dir, "ok.geojson", 100)
-    writeFixture(t, dir, "too_big.geojson", 200*1024*1024)
-    writeFixture(t, dir, "ignored.txt", 100)
-
-    svc := service.NewSourceService(config.SourcesConfig{
-        WorkDir:           dir,
-        MaxSizeBytes:      100 * 1024 * 1024,
-        AllowedExtensions: []string{".geojson"},
-    }, mockImportService)
-
-    sources, err := svc.Refresh()
-
-    assert.NoError(t, err)
-    assert.Len(t, sources, 1)
-    assert.Equal(t, "ok.geojson", sources[0].Name)
-}
-
-func TestSourceService_Load_RejectsNameNotInCache(t *testing.T) {
-    svc := service.NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, mockImportService)
-    // pas de Refresh() appelé — le cache est vide
-
-    _, err := svc.Load("../../etc/passwd")
-
-    assert.Error(t, err)
-}
-```
+Commandes : `mise run test`, `mise run test-race`, `mise run lint`.
 
 ---
 
-## 11. Plan d'implémentation (ordre séquentiel)
+## 11. Glossaire des références du code
 
-Chaque étape dépend de la précédente — suivre l'ordre, ne pas paralléliser sans nécessité. Chaque étape inclut ses tests unitaires (règle 17) — une étape n'est pas terminée sans eux, même pour une structure simple.
+Les commentaires du code renvoient à des identifiants issus d'audits successifs. Les documents
+d'origine (`docs/audit.md`, `docs/audit2.md`) ne sont plus dans le dépôt ; voici ce que chaque tag
+désigne, pour que ces commentaires restent lisibles.
 
-1. `config.Load` + `Config`/`SourcesConfig` (section 2), flag `--workdir` en surcharge + tests (défauts, fichier présent, fichier malformé, surcharge par flag) — prérequis de tout composant réglable.
-2. Init idempotente du schéma `metadata` (`CREATE TABLE IF NOT EXISTS`), section 4.1 + test de création/idempotence.
-3. `validateIdentifier` (4.3) + tests (identifiants valides/invalides).
-4. `SQLWrapper` + `DuckDBAdapter`, avec `LOAD spatial` au démarrage de connexion, `writeMu` sérialisant les écritures, et `Update` convertissant la géométrie via `ST_GeomFromText` (4.6, règles 21, 22) + tests d'intégration sur DuckDB en mémoire, y compris un test de contention sur écritures concurrentes et un test de WKT invalide sur la colonne géométrique.
-5. Interfaces `MetadataManager` / `TableManager` / `GeoTableManager` (4.4) + mocks associés pour les tests des couches supérieures.
-6. `MetadataWriter.RefreshDerivedMetadata`, appelée après chaque écriture, mettant aussi à jour `UpdatedAt` (4.4, règle 9) + test vérifiant le recalcul après `InsertRow`/`Update`/`Remove`.
-7. `BuildFilter` / `FilterCondition` (4.5) + tests (colonnes/opérateurs valides et rejetés) — prérequis de `GetRowsWithFilter`.
-8. `MetadataService` avec cache et invalidation explicite (`RefreshDerived`, `Rollback`) et `RowService.UpdateRow` orchestrant `RefreshDerived` conditionnel sur la colonne géométrique (5.1, 5.2, règles 9, 11, 22) + tests vérifiant l'invalidation après écriture scalaire vs géométrique.
-9. Conversion typée de `Row.Values` selon `ColumnType` (5.2) + tests par type (date, timestamp, exclusion géométrie).
-10. `SourceService` : `Refresh`/`List`/`Load` (section 3), dépendant du port `tableImporter` (7) + tests sur répertoire de fixtures (filtrage taille/extension, rejet nom hors-cache, conflit si déjà chargé).
-11. `ImportService.ImportFromFile` : CTAS + résolution nom colonne géo + gestion SRID + création de l'index RTREE (section 7, règle 19, 5.4) + tests sur au moins deux formats (GeoJSON, Shapefile) vérifiant la présence de l'index.
-12. `DeriveService.DeriveTable` avec restriction `SELECT`-only + matérialisation + index RTREE si la table dérivée est géo (section 8, règle 19, 5.4) + tests rejetant les requêtes non-`SELECT`.
-13. `GeoService`/`Tile`/`GeometryTypes`/`FilterByBbox`, avec cache de tuiles clé sur `UpdatedAt` (5.5, règle 20) + tests sur une table géo de référence, y compris un test d'invalidation après écriture.
-14. Router `chi` + handlers, y compris `/sources` et `Cache-Control` sur `getTile` (6.2), attention au shadowing de paramètre (note 6.2) + tests HTTP par handler.
-15. Swagger (6.3).
-16. Revue finale de couverture de tests sur l'ensemble des étapes précédentes.
+| Tag | Sujet |
+|---|---|
+| `règle N` | règle non négociable N de la §0 de ce document |
+| `§4.1`, `§4.2`, `§4.4`, `§5`, `§5.1` | sections de ce document (numérotation préservée à cet effet) |
+| `GEO-1` | le CRS source doit être détecté ou fourni explicitement — jamais deviné ; d'où `?srid=` et `/sources/{name}/metadata` |
+| `GEO-2` | une table à plusieurs colonnes géométriques est rejetée à l'import |
+| `GEO-3` | les attributs embarqués dans une tuile (`?attrs=`) et la simplification à la résolution du zoom |
+| `PERF-1` | cache de schéma de colonnes, pour éviter une requête de type par colonne |
+| `PERF-2` | export streamé par lots bornés au lieu de tout charger en mémoire |
+| `PERF-4` | propagation de `context.Context` jusqu'aux appels `database/sql` |
+| `PERF-5` | tous les caches sont des LRU bornés avec expiration |
+| `HTTP-2` | `ETag`/`Cache-Control` sur les tuiles, dérivés de `UpdatedAt` |
+| `NEW-SEC-1` | mapping erreur → statut par type, avec 500 par défaut ; pas de fuite de message en 5xx |
+| `NEW-BUG-2` | une géométrie NULL exportée doit produire le littéral JSON `null` |
+| `NEW-BUG-3` | `/derive` génère toujours un `__pkey` neuf et exclut celui que la requête projette |
+| `NEW-BUG-4` | une `limit` absente ou nulle sur `/filter` retombe sur le défaut, pas sur `LIMIT 0` |
+| `NEW-BUG-5` | le lien source ↔ table repose sur `sourceName`/`sourceLayer`, jamais sur `tableName` |
+| `NEW-BUG-6` | `SourceService.Delete` ne retire l'entrée de cache qu'après succès complet |
+| `NEW-BUG-7` | l'export échappe au timeout de requête **et** au `WriteTimeout` du serveur |
 
-Le périmètre reste celui de ce document (règle 16) — toute extension se traite dans une demande dédiée.
+---
+
+## 12. Écarts connus entre ce document et le code
+
+Recensés par `docs/audit-go.md` ; listés ici pour qu'ils ne soient pas lus comme des contrats.
+
+| Sujet | État |
+|---|---|
+| `numberMatched` OGC | renvoie le compte de la page, pas le total (audit §3.5) |
+| CRS de `POST /tables/{id}/bbox` | attend de l'EPSG:3857, alors que tous les autres bbox sont en OGC:CRS84 (audit §3.6) |
+| Migrations | la liste est vide alors que le schéma a évolué ; une base antérieure à `sourceName` ne s'ouvre pas (audit §4.1) |
+| `ColumnType` | une requête `DESCRIBE` par colonne, contrairement à ce que le commentaire du service annonce (audit §3.1) |
+| `TableExists` | présent dans le contrat, sans appelant en production (audit §4.3) |
+| `GetDistinctValues`, `FilterByBbox` | lectures sans plafond (audit §3.9) |

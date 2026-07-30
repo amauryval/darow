@@ -482,10 +482,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              items:
-                type: string
-              type: array
+            additionalProperties: true
             type: object
       summary: Filter row pkeys by bounding box
       tags:
@@ -529,6 +526,14 @@ paths:
         name: col
         required: true
         type: string
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -622,6 +627,34 @@ paths:
       summary: Filter rows by column conditions
       tags:
       - tables
+  /api/v1/tables/{tableId}/filtered-extent:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get the bounding box of rows matching a filter
+      tags:
+      - geo
   /api/v1/tables/{tableId}/geometry-types:
     get:
       parameters:
@@ -852,6 +885,10 @@ paths:
         in: query
         name: attrs
         type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
       produces:
       - application/vnd.mapbox-vector-tile
       responses:
@@ -860,6 +897,68 @@ paths:
           schema:
             type: file
       summary: Get an MVT tile
+      tags:
+      - geo
+  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Zoom level
+        in: path
+        name: z
+        required: true
+        type: integer
+      - description: Tile X
+        in: path
+        name: x
+        required: true
+        type: integer
+      - description: Tile Y
+        in: path
+        name: "y"
+        required: true
+        type: integer
+      - description: Comma-separated non-geometry columns to embed
+        in: query
+        name: attrs
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      - description: Simplify tolerance override
+        in: query
+        name: simplify
+        type: string
+      - description: Coordinate precision grid size override
+        in: query
+        name: precision
+        type: string
+      - description: Max features returned
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get features intersecting an MVT-style tile, as GeoJSON
       tags:
       - geo
   /healthz:

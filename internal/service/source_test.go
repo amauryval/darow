@@ -544,3 +544,50 @@ func Test_SourceService_Delete_RejectsUnknownSource(t *testing.T) {
 
 	assert.Error(t, err)
 }
+
+// Delete used to mutate a loaded Source's Layers entry (shared with the live
+// cache entry) after releasing mu, racing a concurrent List reading the same
+// slice — go test -race only catches this when both run genuinely
+// concurrently, hence looping List alongside a single Delete.
+func Test_SourceService_Delete_ConcurrentWithList_NoRace(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "regions.gpkg", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("TableIds", mock.Anything, mock.Anything).Return([]string{"id-1"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{
+		TableId: "id-1", TableName: "regions.gpkg::communes", SourceName: "regions.gpkg", SourceLayer: "communes",
+	}, nil).Once()
+	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".gpkg"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, _, err := svc.List(nil, 0, 10); err != nil {
+				return
+			}
+		}
+	}()
+
+	err = svc.Delete(context.Background(), "regions.gpkg")
+	require.NoError(t, err)
+	close(stop)
+	<-finished
+}

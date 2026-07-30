@@ -25,9 +25,10 @@ func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage) {
 func Test_SchemaService_Schema(t *testing.T) {
 	svc, m := setupSchemaService(t)
 
-	m.On("Columns", mock.Anything, "id-1").Return([]string{"__pkey", "height"}, nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "__pkey").Return("VARCHAR", nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "height").Return("DOUBLE", nil).Once()
+	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{
+		{Name: "__pkey", Type: "VARCHAR"},
+		{Name: "height", Type: "DOUBLE"},
+	}, nil).Once()
 
 	schema, err := svc.Schema(context.Background(), storage.Metadata{TableId: "id-1"})
 

@@ -24,13 +24,13 @@ func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {
 	geoSvc, m := setupGeoService(t)
 	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
 
-	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil)).Return([]byte("mvt-data"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("mvt-data"), nil).Once()
 
-	tile, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil)
+	tile, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("mvt-data"), tile)
 
-	tile2, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil)
+	tile2, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("mvt-data"), tile2)
 }
@@ -39,24 +39,41 @@ func Test_GeoService_GetTile_AttrsChangeTheCacheKey(t *testing.T) {
 	geoSvc, m := setupGeoService(t)
 	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
 
-	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil)).Return([]byte("no-attrs"), nil).Once()
-	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string{"name"}).Return([]byte("with-attrs"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("no-attrs"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string{"name"}, storage.GeoQuery{}).Return([]byte("with-attrs"), nil).Once()
 
-	tile, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil)
+	tile, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("no-attrs"), tile)
 
-	tile2, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, []string{"name"})
+	tile2, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, []string{"name"}, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("with-attrs"), tile2)
+}
+
+func Test_GeoService_GetTile_FilterChangesTheCacheKey(t *testing.T) {
+	geoSvc, m := setupGeoService(t)
+	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
+	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("unfiltered"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), q).Return([]byte("filtered"), nil).Once()
+
+	tile, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("unfiltered"), tile)
+
+	tile2, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, q)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("filtered"), tile2)
 }
 
 func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	geoSvc, m := setupGeoService(t)
 
-	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil)).Return([]byte("old"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("old"), nil).Once()
 
-	tile, err := geoSvc.GetTile(context.Background(), storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, 1, 2, 3, nil)
+	tile, err := geoSvc.GetTile(context.Background(), storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}, 1, 2, 3, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("old"), tile)
 
@@ -64,9 +81,9 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 	// — GetTile's cache key includes UpdatedAt, so a caller passing the
 	// refreshed metadata bypasses the stale cache entry with no separate
 	// invalidation mechanism (règle 20).
-	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil)).Return([]byte("new"), nil).Once()
+	m.On("Tile", context.Background(), "id-1", 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("new"), nil).Once()
 
-	tile2, err := geoSvc.GetTile(context.Background(), storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, 1, 2, 3, nil)
+	tile2, err := geoSvc.GetTile(context.Background(), storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(2000, 0)}, 1, 2, 3, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("new"), tile2)
 }
@@ -74,9 +91,9 @@ func Test_GeoService_GetTile_InvalidatesOnUpdatedAtChange(t *testing.T) {
 func Test_GeoService_FilterByBbox(t *testing.T) {
 	geoSvc, m := setupGeoService(t)
 
-	m.On("FilterByBbox", context.Background(), "id-1", [4]float64{0, 0, 1, 1}).Return([]string{"pk-1"}, nil).Once()
+	m.On("FilterByBbox", context.Background(), "id-1", [4]float64{0, 0, 1, 1}, 0, 100).Return([]string{"pk-1"}, nil).Once()
 
-	pkeys, err := geoSvc.FilterByBbox(context.Background(), storage.Metadata{TableId: "id-1"}, [4]float64{0, 0, 1, 1})
+	pkeys, err := geoSvc.FilterByBbox(context.Background(), storage.Metadata{TableId: "id-1"}, [4]float64{0, 0, 1, 1}, 0, 100)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pk-1"}, pkeys)
@@ -94,6 +111,31 @@ func Test_GeoService_GetFeatures_ProxiesToStorage(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, features, got)
+}
+
+func Test_GeoService_GetFeaturesTile_ProxiesToStorage(t *testing.T) {
+	geoSvc, m := setupGeoService(t)
+	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+	features := []storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}
+
+	m.On("GetFeaturesTile", context.Background(), "id-1", 3, 4, 5, []string{"name"}, q, 10, 5).Return(features, nil).Once()
+
+	got, err := geoSvc.GetFeaturesTile(context.Background(), storage.Metadata{TableId: "id-1"}, 3, 4, 5, []string{"name"}, q, 10, 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, features, got)
+}
+
+func Test_GeoService_FilteredExtent_ProxiesToStorage(t *testing.T) {
+	geoSvc, m := setupGeoService(t)
+	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+
+	m.On("FilteredExtent", context.Background(), "id-1", q).Return("0,0,1,1", nil).Once()
+
+	bbox, err := geoSvc.FilteredExtent(context.Background(), storage.Metadata{TableId: "id-1"}, q)
+
+	require.NoError(t, err)
+	assert.Equal(t, "0,0,1,1", bbox)
 }
 
 func Test_GeoService_GeometryTypes(t *testing.T) {

@@ -173,7 +173,7 @@ func Test_Router_Setup(t *testing.T) {
 		deps.storage.On("GetMetadata", mock.Anything, "id-2").Return(storage.Metadata{TableId: "id-2", TableName: "gadgets"}, nil).Once().Run(func(args mock.Arguments) {
 			_, exportRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 		})
-		deps.storage.On("Columns", mock.Anything, "id-2").Return([]string{}, nil).Once()
+		deps.storage.On("ColumnsWithTypes", mock.Anything, "id-2").Return([]storage.ColumnInfo{}, nil).Once()
 		deps.storage.On("GetPkeys", mock.Anything, "id-2", mock.Anything, int64(0), int64(1000)).Return([]string{}, nil).Once()
 
 		apiCfg := config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30}

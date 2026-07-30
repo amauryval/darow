@@ -77,6 +77,10 @@ func MapServiceError(err error) int {
 	if errors.As(err, &notFoundErr) {
 		return http.StatusNotFound
 	}
+	var storageNotFoundErr *storage.NotFoundError
+	if errors.As(err, &storageNotFoundErr) {
+		return http.StatusNotFound
+	}
 	var conflictErr *service.ConflictError
 	if errors.As(err, &conflictErr) {
 		return http.StatusConflict

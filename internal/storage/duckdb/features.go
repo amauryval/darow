@@ -96,6 +96,72 @@ func (a *Adapter) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys 
 	return scanFeatureRows(rows)
 }
 
+// GetFeaturesTile is GetFeatures scoped to a single MVT-style z/x/y tile:
+// the envelope comes from ST_TileEnvelope (the same function Tile uses),
+// so a GeoJSON tile and its MVT counterpart always agree on boundaries,
+// and no lon/lat-per-tile math needs to live anywhere else. Since the
+// geometry column is stored in EPSG:3857 (règle 7) — the same CRS
+// ST_TileEnvelope works in — the intersects test needs no reprojection,
+// unlike GetFeatures' bbox path.
+func (a *Adapter) GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return nil, err
+	}
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
+		return nil, err
+	}
+
+	attrSelect := "* EXCLUDE (" + quotedGeom + ")"
+	if len(attrs) > 0 {
+		quotedAttrs := make([]string, len(attrs))
+		for i, attr := range attrs {
+			quoted, err := storage.QuoteIdentifier(attr)
+			if err != nil {
+				return nil, err
+			}
+			quotedAttrs[i] = quoted
+		}
+		attrSelect = strings.Join(quotedAttrs, ", ")
+	}
+
+	geomExpr := quotedGeom
+	args := []any{zoom, x, y}
+	if q.Tolerance != nil {
+		geomExpr = fmt.Sprintf("ST_SimplifyPreserveTopology(%s, ?)", quotedGeom)
+		args = append(args, *q.Tolerance)
+	}
+	if q.Precision != nil {
+		geomExpr = fmt.Sprintf("ST_ReducePrecision(%s, ?)", geomExpr)
+		args = append(args, *q.Precision)
+	}
+
+	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
+	if q.Filter != "" {
+		where += " AND (" + q.Filter + ")"
+		args = append(args, q.Args...)
+	}
+	args = append(args, limit, offset)
+
+	query := fmt.Sprintf(`
+        WITH tile AS (
+            SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
+        )
+        SELECT __pkey, %s, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) AS __geojson
+        FROM %s, tile
+        %s
+        ORDER BY __pkey LIMIT ? OFFSET ?
+    `, attrSelect, geomExpr, meta.PhysicalName, where)
+
+	rows, err := a.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanFeatureRows(rows)
+}
+
 func scanFeatureRows(rows *sql.Rows) ([]storage.GeoFeature, error) {
 	cols, err := rows.Columns()
 	if err != nil {

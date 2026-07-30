@@ -30,7 +30,7 @@ type rowAPI interface {
 	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error
 	RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error
 	ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error)
-	GetDistinctValues(ctx context.Context, meta storage.Metadata, column string) ([]any, error)
+	GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error)
 }
 
 // schemaAPI is everything the router calls on *service.SchemaService.
@@ -46,10 +46,12 @@ type deriveAPI interface {
 
 // geoAPI is everything the router calls on *service.GeoService.
 type geoAPI interface {
-	GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error)
+	GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error)
+	FilteredExtent(ctx context.Context, meta storage.Metadata, q storage.GeoQuery) (string, error)
 	GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error)
-	FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error)
+	FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64, offset, limit int) ([]string, error)
 	GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
+	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 }
 
 // sourceAPI is everything the router calls on *service.SourceService.

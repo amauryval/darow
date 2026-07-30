@@ -129,6 +129,54 @@ func (a *Adapter) createSpatialIndex(ctx context.Context, physicalName, geometry
 	return err
 }
 
+func (a *Adapter) createPkeyIndex(ctx context.Context, physicalName string) error {
+	_, err := a.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName))
+	return err
+}
+
+// clusterByHilbert physically reorders physicalName's rows along a Hilbert
+// curve over geometryColumn, so tile scans (ST_Intersects_Extent) prune row
+// groups by spatial locality instead of touching the whole table. DuckDB
+// has no in-place ORDER BY, so the table is rebuilt from scratch — every
+// index that existed on physicalName is gone afterward and must be
+// recreated by the caller. A table with no non-NULL geometry is left
+// untouched, since ST_Hilbert has no reference extent to sort against.
+func (a *Adapter) clusterByHilbert(ctx context.Context, physicalName, geometryColumn string) error {
+	if err := storage.ValidateIdentifier(physicalName); err != nil {
+		return err
+	}
+	quotedGeom, err := storage.QuoteIdentifier(geometryColumn)
+	if err != nil {
+		return err
+	}
+
+	var hasGeometry bool
+	if err := a.QueryRow(ctx, fmt.Sprintf(
+		`SELECT count(*) > 0 FROM %s WHERE %s IS NOT NULL`, physicalName, quotedGeom,
+	)).Scan(&hasGeometry); err != nil {
+		return err
+	}
+	if !hasGeometry {
+		return nil
+	}
+
+	tmpName := physicalName + "__hilbert_tmp"
+	createTmp := fmt.Sprintf(
+		`CREATE TABLE %s AS SELECT * FROM %s ORDER BY ST_Hilbert(%s, (SELECT ST_Extent(ST_Extent_Agg(%s))::BOX_2D FROM %s))`,
+		tmpName, physicalName, quotedGeom, quotedGeom, physicalName,
+	)
+	if _, err := a.Exec(ctx, createTmp); err != nil {
+		return fmt.Errorf("clustering rows by Hilbert curve: %w", err)
+	}
+	if _, err := a.Exec(ctx, fmt.Sprintf(`DROP TABLE %s`, physicalName)); err != nil {
+		return err
+	}
+	if _, err := a.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, tmpName, physicalName)); err != nil {
+		return err
+	}
+	return nil
+}
+
 // CreateFromFile materializes physicalName from a source file readable by
 // ST_Read (GeoJSON, Shapefile, CSV, GeoPackage). ST_Read only reads the
 // file — it never backs CRUD operations (règle 13) — so the result is
@@ -157,7 +205,7 @@ func (a *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, 
 	// CREATE TABLE AS SELECT preserves no constraint; this DuckDB build
 	// also rejects ALTER TABLE ADD PRIMARY KEY on an existing table, so a
 	// unique index is the closest equivalent enforcement available here.
-	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
+	if err := a.createPkeyIndex(ctx, physicalName); err != nil {
 		return "", false, 0, err
 	}
 
@@ -197,6 +245,15 @@ func (a *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, 
 		return "", false, 0, fmt.Errorf("reprojecting geometry: %w", err)
 	}
 
+	// Clustering rebuilds the table, dropping the pkey index created above
+	// along with it — both indexes are (re)created only once rows are in
+	// their final spatial order.
+	if err := a.clusterByHilbert(ctx, physicalName, geometryColumn); err != nil {
+		return "", false, 0, err
+	}
+	if err := a.createPkeyIndex(ctx, physicalName); err != nil {
+		return "", false, 0, err
+	}
 	if err := a.createSpatialIndex(ctx, physicalName, geometryColumn); err != nil {
 		return "", false, 0, err
 	}
@@ -269,18 +326,25 @@ func (a *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery
 		return "", false, fmt.Errorf("materializing derived table: %w", err)
 	}
 
-	if _, err := a.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName)); err != nil {
-		return "", false, err
-	}
-
 	geometryColumn, err := a.findGeometryColumn(ctx, physicalName)
 	if err != nil {
 		return "", false, err
 	}
 	if geometryColumn == "" {
+		if err := a.createPkeyIndex(ctx, physicalName); err != nil {
+			return "", false, err
+		}
 		return "", false, nil
 	}
 
+	// Clustered before either index is created — clustering rebuilds the
+	// table, so an index created earlier would just be dropped with it.
+	if err := a.clusterByHilbert(ctx, physicalName, geometryColumn); err != nil {
+		return "", false, err
+	}
+	if err := a.createPkeyIndex(ctx, physicalName); err != nil {
+		return "", false, err
+	}
 	if err := a.createSpatialIndex(ctx, physicalName, geometryColumn); err != nil {
 		return "", false, err
 	}

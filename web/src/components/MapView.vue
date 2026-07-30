@@ -3,13 +3,20 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import maplibregl, { Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { getGeometryTypes, tileUrl } from "../client/geo";
-import { getItems, type OgcFeature } from "../client/features";
+import type { OgcFeature } from "../client/features";
+import type { FilterCondition } from "../client/types";
+import { useTiledFeatures } from "../composables/useTiledFeatures";
 
 const props = defineProps<{
   tableId: string;
   bbox?: string;
-  wfsEnabled?: boolean;
+  conditions: FilterCondition[];
 }>();
+
+// MVT and WFS are two independent rendering modes for the same table/filter
+// (règle 5 applies to both), toggled manually by the user — not tied to
+// whether a filter is active.
+const wfsEnabled = ref(false);
 
 const emit = defineEmits<{ selectionChange: [pkeys: string[]] }>();
 
@@ -18,7 +25,7 @@ let map: Map | null = null;
 const sourceId = `table-${props.tableId}`;
 const sourceLayer = "layer";
 const wfsSourceId = `wfs-${props.tableId}`;
-const WFS_VIEWPORT_LIMIT = 100_000;
+const tiledFeatures = useTiledFeatures();
 const selectedPkeys = new Set<string>();
 let mvtLayerIds: string[] = [];
 let mvtInteractiveLayerIds: string[] = [];
@@ -61,7 +68,7 @@ async function addMvtLayer(m: Map) {
   const bounds = props.bbox ? parseBbox(props.bbox) : null;
   m.addSource(sourceId, {
     type: "vector",
-    tiles: [`${location.origin}${tileUrl(props.tableId)}`],
+    tiles: [`${location.origin}${tileUrl(props.tableId, props.conditions)}`],
     // Promotes the "pkey" tile property to the MapLibre feature id, so
     // selection state (setFeatureState) can be tracked per row and
     // survives tile reloads instead of resetting on every pan/zoom.
@@ -123,6 +130,11 @@ async function addMvtLayer(m: Map) {
     m.on("mouseleave", mvtInteractiveLayerIds, onMvtMouseLeave);
     m.on("click", mvtInteractiveLayerIds, onMvtClick);
   }
+}
+
+function refreshMvtTiles(m: Map) {
+  const source = m.getSource<maplibregl.VectorTileSource>(sourceId);
+  source?.setTiles([`${location.origin}${tileUrl(props.tableId, props.conditions)}`]);
 }
 
 function removeMvtLayer(m: Map) {
@@ -229,11 +241,29 @@ async function refreshWfsData(m: Map) {
     viewBounds.getEast(),
     viewBounds.getNorth(),
   ];
-  const collection = await getItems(props.tableId, { bbox, limit: WFS_VIEWPORT_LIMIT }).catch(() => null);
-  if (!collection || requestId !== wfsRequestId) return;
+  const zoom = Math.max(0, Math.floor(m.getZoom()));
 
-  const features = collection.features.filter((f): f is OgcFeature & { geometry: GeoJSON.Geometry } => f.geometry !== null);
-  source.setData({ type: "FeatureCollection", features });
+  // A GeoJSON source re-indexes its whole feature set on every setData call
+  // (synchronously, on the main thread) — calling it once per tile as they
+  // land in a burst freezes the map. Coalescing to one setData per animation
+  // frame keeps the progressive-loading feel without the reindex storm.
+  let renderScheduled = false;
+  let latest: OgcFeature[] | null = null;
+
+  function render(loaded: OgcFeature[]) {
+    if (requestId !== wfsRequestId) return;
+    latest = loaded;
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      if (requestId !== wfsRequestId || !source || !latest) return;
+      const features = latest.filter((f): f is OgcFeature & { geometry: GeoJSON.Geometry } => f.geometry !== null);
+      source.setData({ type: "FeatureCollection", features });
+    });
+  }
+
+  await tiledFeatures.loadVisible(props.tableId, bbox, zoom, props.conditions, render).catch(() => null);
 }
 
 function enableWfsLayer(m: Map) {
@@ -271,7 +301,7 @@ onMounted(() => {
   map.on("load", async () => {
     if (!map) return;
 
-    if (props.wfsEnabled) {
+    if (wfsEnabled.value) {
       enableWfsLayer(map);
     } else {
       await addMvtLayer(map);
@@ -302,21 +332,42 @@ watch(
 // MVT and WFS are mutually exclusive on the map — switching modes tears
 // down the previous mode's source/layers entirely rather than layering
 // both, so there is only ever one rendering of the table at a time.
+watch(wfsEnabled, (enabled) => {
+  if (!map) return;
+  if (enabled) {
+    removeMvtLayer(map);
+    enableWfsLayer(map);
+  } else {
+    removeWfsLayer(map);
+    addMvtLayer(map);
+  }
+});
+
+// A filter change re-fetches the currently visible tiles under the new
+// filter, in whichever mode is active — the MVT source's tile template
+// embeds the filter (règle 5), so updating it and re-requesting tiles is
+// enough; WFS re-fetches the viewport directly.
 watch(
-  () => props.wfsEnabled,
-  (enabled) => {
+  () => props.conditions,
+  () => {
     if (!map) return;
-    if (enabled) {
-      removeMvtLayer(map);
-      enableWfsLayer(map);
+    if (wfsEnabled.value) {
+      refreshWfsData(map);
     } else {
-      removeWfsLayer(map);
-      addMvtLayer(map);
+      refreshMvtTiles(map);
     }
   },
 );
 </script>
 
 <template>
-  <div ref="container" class="h-full w-full rounded-lg" />
+  <div class="relative h-full w-full">
+    <label
+      class="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow"
+    >
+      <input v-model="wfsEnabled" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" />
+      Rendu WFS
+    </label>
+    <div ref="container" class="h-full w-full rounded-lg" />
+  </div>
 </template>

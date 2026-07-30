@@ -35,9 +35,11 @@ func RunSuite(t *testing.T, newStorage NewStorage) {
 	t.Run("Rows_GetPkeysPagination", func(t *testing.T) { testRowsGetPkeysPagination(t, newStorage) })
 	t.Run("Rows_GetPkeysSort", func(t *testing.T) { testRowsGetPkeysSort(t, newStorage) })
 	t.Run("Rows_GetDistinctValues", func(t *testing.T) { testRowsGetDistinctValues(t, newStorage) })
+	t.Run("Rows_GetDistinctValuesPagination", func(t *testing.T) { testRowsGetDistinctValuesPagination(t, newStorage) })
 	t.Run("Rows_GetRowsWithFilter", func(t *testing.T) { testRowsGetRowsWithFilter(t, newStorage) })
 	t.Run("Schema_AddColumn", func(t *testing.T) { testSchemaAddColumn(t, newStorage) })
 	t.Run("Geo_TileAndBboxAndTypes", func(t *testing.T) { testGeoTileAndBboxAndTypes(t, newStorage) })
+	t.Run("Geo_FilterByBboxPagination", func(t *testing.T) { testGeoFilterByBboxPagination(t, newStorage) })
 	t.Run("Geo_GetGeometryGeoJSON", func(t *testing.T) { testGeoGetGeometryGeoJSON(t, newStorage) })
 	t.Run("Geo_GetFeatures", func(t *testing.T) { testGeoGetFeatures(t, newStorage) })
 	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newStorage) })
@@ -130,6 +132,10 @@ func testMetadataCreateAndRead(t *testing.T, newStorage NewStorage) {
 	exists, err = s.TableExists(ctx, "no-such-table")
 	require.NoError(t, err)
 	assert.False(t, exists)
+
+	_, err = s.GetMetadata(ctx, "no-such-table")
+	var notFoundErr *storage.NotFoundError
+	assert.ErrorAs(t, err, &notFoundErr)
 }
 
 func testMetadataRemove(t *testing.T, newStorage NewStorage) {
@@ -257,9 +263,30 @@ func testRowsGetDistinctValues(t *testing.T, newStorage NewStorage) {
 	_, err := s.InsertRow(ctx, meta, map[string]any{"name": "a"})
 	require.NoError(t, err)
 
-	values, err := s.GetDistinctValues(ctx, meta, "name")
+	values, err := s.GetDistinctValues(ctx, meta, "name", 0, 10)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []any{"a", "b"}, values)
+}
+
+// GetDistinctValues is paginated (règle 18): a high-cardinality column can't
+// return unbounded rows in one call. Ordering by the column itself makes
+// paging deterministic, so a limit-1 page followed by an offset-1 page
+// covers the same two values as one unpaginated call, in order.
+func testRowsGetDistinctValuesPagination(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	meta, _ := newGeoTable(t, s)
+
+	page1, err := s.GetDistinctValues(ctx, meta, "name", 0, 1)
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+
+	page2, err := s.GetDistinctValues(ctx, meta, "name", 1, 1)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+
+	assert.NotEqual(t, page1[0], page2[0])
+	assert.ElementsMatch(t, []any{"a", "b"}, []any{page1[0], page2[0]})
 }
 
 func testRowsGetRowsWithFilter(t *testing.T, newStorage NewStorage) {
@@ -300,7 +327,7 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
 	ctx := context.Background()
 	tableId, pkeys := newGeoTable(t, s)
 
-	mvt, err := s.Tile(ctx, tableId, 0, 0, 0, nil)
+	mvt, err := s.Tile(ctx, tableId, 0, 0, 0, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
 
@@ -309,7 +336,7 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
 	// lon/lat — roughly 111km per degree at the equator. pkeys aren't in
 	// file order (GetPkeys sorts by pkey), so identify the matched row by
 	// its "name" property rather than assuming which pkey it is.
-	inBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{0, 0, 200000, 200000})
+	inBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{0, 0, 200000, 200000}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, inBbox, 1)
 	assert.Contains(t, pkeys, inBbox[0])
@@ -318,13 +345,35 @@ func testGeoTileAndBboxAndTypes(t *testing.T, newStorage NewStorage) {
 	require.Len(t, matched, 1)
 	assert.Equal(t, "a", matched[0].Values["name"])
 
-	outsideBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{5000000, 5000000, 6000000, 6000000})
+	outsideBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{5000000, 5000000, 6000000, 6000000}, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, outsideBbox)
 
 	types, err := s.GeometryTypes(ctx, tableId)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT"}, types)
+}
+
+// FilterByBbox is paginated (règle 18): a world-spanning bbox on a large
+// table can't materialize every intersecting pkey in one call. Ordering by
+// pkey makes paging deterministic, so a limit-1 page followed by an
+// offset-1 page covers the same two pkeys as one unpaginated call, in order.
+func testGeoFilterByBboxPagination(t *testing.T, newStorage NewStorage) {
+	s := newStorage(t)
+	ctx := context.Background()
+	meta, pkeys := newGeoTable(t, s)
+	bothPoints := [4]float64{-2000000, -2000000, 2000000, 2000000}
+
+	page1, err := s.FilterByBbox(ctx, meta, bothPoints, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+
+	page2, err := s.FilterByBbox(ctx, meta, bothPoints, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+
+	assert.NotEqual(t, page1[0], page2[0])
+	assert.ElementsMatch(t, pkeys, []string{page1[0], page2[0]})
 }
 
 func testGeoGetGeometryGeoJSON(t *testing.T, newStorage NewStorage) {

@@ -42,7 +42,7 @@ func NewRouter(
 	return &Router{
 		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
 		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, apiCfg),
-		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo),
+		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
@@ -123,8 +123,10 @@ func (rt *Router) Setup() http.Handler {
 					})
 
 					sub.Get("/tiles/{z}/{x}/{y}", rt.geo.GetTile)
+					sub.Get("/tiles/{z}/{x}/{y}/features", rt.geo.GetTileFeatures)
 					sub.Get("/geometry-types", rt.geo.GetGeometryTypes)
 					sub.Post("/bbox", rt.geo.FilterByBbox)
+					sub.Get("/filtered-extent", rt.geo.GetFilteredExtent)
 				})
 			})
 

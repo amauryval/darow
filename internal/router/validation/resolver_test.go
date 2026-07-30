@@ -29,7 +29,8 @@ func Test_TableResolver_ResolveTable(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "existing table resolves", wantOK: true},
-		{name: "unknown table returns 404", lookupErr: assert.AnError, wantOK: false, wantStatus: http.StatusNotFound},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("table not found"), wantOK: false, wantStatus: http.StatusNotFound},
+		{name: "storage failure returns 500", lookupErr: assert.AnError, wantOK: false, wantStatus: http.StatusInternalServerError},
 	}
 
 	for _, c := range cases {

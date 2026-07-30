@@ -53,8 +53,7 @@ func Test_RowService_ListRows(t *testing.T) {
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
 	}, nil).Once()
-	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 	m.On("RowsCount", mock.Anything, "id-1").Return(int64(1), nil).Once()
 
 	page, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, nil, 0, 10)
@@ -89,8 +88,7 @@ func Test_RowService_ListRowsPage(t *testing.T) {
 	m.On("GetRowsByPkey", mock.Anything, "id-1", []string{"pk-1"}).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"name": "a"}},
 	}, nil).Once()
-	m.On("Columns", mock.Anything, "id-1").Return([]string{"name"}, nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "name").Return("VARCHAR", nil).Once()
+	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{{Name: "name", Type: "VARCHAR"}}, nil).Once()
 
 	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
@@ -119,8 +117,7 @@ func Test_RowService_GetRowsByPkey(t *testing.T) {
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
 		{Pkey: "pk-2", Values: map[string]any{"createdAt": time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)}},
 	}, nil).Once()
-	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 
 	rows, err := svc.GetRowsByPkey(context.Background(), storage.Metadata{TableId: "id-1"}, []string{"pk-1", "pk-2"})
 
@@ -144,14 +141,13 @@ func Test_RowService_GetRow_NotFound(t *testing.T) {
 func Test_RowService_GetDistinctValues(t *testing.T) {
 	svc, m := setupRowService(t)
 
-	m.On("GetDistinctValues", mock.Anything, "id-1", "createdAt").Return([]any{
+	m.On("GetDistinctValues", mock.Anything, "id-1", "createdAt", 0, 100).Return([]any{
 		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
 	}, nil).Once()
-	m.On("Columns", mock.Anything, "id-1").Return([]string{"createdAt"}, nil).Once()
-	m.On("ColumnType", mock.Anything, "id-1", "createdAt").Return("DATE", nil).Once()
+	m.On("ColumnsWithTypes", mock.Anything, "id-1").Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 
-	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt")
+	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt", 0, 100)
 
 	require.NoError(t, err)
 	assert.Equal(t, []any{"2024-01-01", "2024-02-01"}, values)

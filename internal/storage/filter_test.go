@@ -75,6 +75,62 @@ func Test_BuildFilter(t *testing.T) {
 			wantFilter:   `"height; DROP TABLE x" = ?`,
 			wantArgs:     []any{1},
 		},
+		{
+			name: "OR group ANDed with a root-level leaf",
+			conditions: []FilterCondition{
+				{Column: "height", Operator: ">", Value: 10},
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Column: "name", Operator: "=", Value: "a"},
+					{Column: "name", Operator: "=", Value: "b"},
+				}},
+			},
+			validColumns: []string{"height", "name"},
+			wantFilter:   `"height" > ? AND ("name" = ? OR "name" = ?)`,
+			wantArgs:     []any{10, "a", "b"},
+		},
+		{
+			name: "AND group nested inside an OR group",
+			conditions: []FilterCondition{
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Bool: "AND", Conditions: []FilterCondition{
+						{Column: "height", Operator: ">", Value: 10},
+						{Column: "name", Operator: "=", Value: "a"},
+					}},
+					{Column: "name", Operator: "=", Value: "b"},
+				}},
+			},
+			validColumns: []string{"height", "name"},
+			wantFilter:   `(("height" > ? AND "name" = ?) OR "name" = ?)`,
+			wantArgs:     []any{10, "a", "b"},
+		},
+		{
+			name: "unsupported boolean operator rejected",
+			conditions: []FilterCondition{
+				{Bool: "XOR", Conditions: []FilterCondition{
+					{Column: "height", Operator: ">", Value: 10},
+				}},
+			},
+			validColumns: []string{"height"},
+			wantErr:      true,
+		},
+		{
+			name: "empty boolean group rejected",
+			conditions: []FilterCondition{
+				{Bool: "AND", Conditions: nil},
+			},
+			validColumns: []string{"height"},
+			wantErr:      true,
+		},
+		{
+			name: "unknown column rejected even nested inside a group",
+			conditions: []FilterCondition{
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Column: "geom", Operator: "=", Value: "x"},
+				}},
+			},
+			validColumns: []string{"height"},
+			wantErr:      true,
+		},
 	}
 
 	for _, c := range cases {

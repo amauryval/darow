@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { deleteTable, deriveTable, exportUrl, getSchema, getTable, renameTable } from "../client/tables";
+import { addColumn, deleteTable, deriveTable, exportUrl, getSchema, getTable, renameTable } from "../client/tables";
 import type { ColumnSchema, Metadata } from "../client/types";
 import { errorMessage } from "../client/http";
 import Badge from "../components/Badge.vue";
+import ColumnsModal from "../components/ColumnsModal.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
 import Modal from "../components/Modal.vue";
-import TableFilterTab from "../components/TableFilterTab.vue";
-import TableMapTab from "../components/TableMapTab.vue";
-import TableRowsTab from "../components/TableRowsTab.vue";
-import TableSchemaTab from "../components/TableSchemaTab.vue";
+import TableDataPanel from "../components/TableDataPanel.vue";
 import { useToast } from "../composables/useToast";
 
 const props = defineProps<{ tableId: string }>();
@@ -19,7 +17,6 @@ const toast = useToast();
 
 const table = ref<Metadata | null>(null);
 const columns = ref<ColumnSchema[]>([]);
-const tab = ref<"rows" | "schema" | "map" | "filter">("rows");
 const renaming = ref(false);
 const editingName = ref(false);
 const nameInput = ref("");
@@ -31,9 +28,11 @@ const nameInput = ref("");
 const editableColumns = computed(() => columns.value.map((c) => c.name).filter((name) => name !== "__pkey"));
 const rowColumns = computed(() => editableColumns.value.filter((name) => name !== table.value?.geometryColumn));
 
+const visibleColumns = ref<string[]>([]);
+watch(rowColumns, (cols) => (visibleColumns.value = cols), { immediate: true });
+
 async function loadTable() {
   table.value = await getTable(props.tableId);
-  if (table.value.isGeo) tab.value = "map";
 }
 
 async function loadSchema() {
@@ -107,6 +106,39 @@ async function confirmDerive() {
   }
 }
 
+// --- Columns modal (visibility + distinct values) ---
+const showColumns = ref(false);
+
+// --- Add column modal ---
+const showAddColumn = ref(false);
+const newColumnName = ref("");
+const newColumnType = ref("VARCHAR");
+const addingColumn = ref(false);
+const addColumnError = ref<string | null>(null);
+
+function openAddColumn() {
+  newColumnName.value = "";
+  newColumnType.value = "VARCHAR";
+  addColumnError.value = null;
+  showAddColumn.value = true;
+}
+
+async function confirmAddColumn() {
+  if (!newColumnName.value.trim()) return;
+  addingColumn.value = true;
+  addColumnError.value = null;
+  try {
+    await addColumn(props.tableId, newColumnName.value.trim(), newColumnType.value.trim());
+    showAddColumn.value = false;
+    await loadSchema();
+    toast.success("Colonne ajoutée.");
+  } catch (e) {
+    addColumnError.value = errorMessage(e, "Impossible d'ajouter la colonne");
+  } finally {
+    addingColumn.value = false;
+  }
+}
+
 onMounted(loadAll);
 </script>
 
@@ -150,6 +182,18 @@ onMounted(loadAll);
       <div class="flex gap-2">
         <button
           class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          @click="showColumns = true"
+        >
+          Colonnes
+        </button>
+        <button
+          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          @click="openAddColumn"
+        >
+          Ajouter une colonne
+        </button>
+        <button
+          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           @click="openDerive"
         >
           Dériver
@@ -164,48 +208,16 @@ onMounted(loadAll);
       </div>
     </div>
 
-    <div class="mb-4 flex shrink-0 gap-1 border-b border-slate-200">
-      <button
-        v-if="table?.isGeo"
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'map' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'map'"
-      >
-        Carte
-      </button>
-      <button
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'rows' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'rows'"
-      >
-        Données
-      </button>
-      <button
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'filter' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'filter'"
-      >
-        Filtrer
-      </button>
-      <button
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'schema' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'schema'"
-      >
-        Schéma
-      </button>
-    </div>
-
-    <TableMapTab v-if="tab === 'map' && table?.isGeo" :table-id="table.tableId" :bbox="table.bbox" :row-columns="rowColumns" />
-    <TableSchemaTab v-else-if="tab === 'schema'" :table-id="tableId" :columns="columns" @column-added="loadSchema" />
-    <TableFilterTab v-else-if="tab === 'filter'" :table-id="tableId" :row-columns="rowColumns" :columns="columns" />
-    <TableRowsTab
-      v-else
-      :table-id="tableId"
+    <TableDataPanel
+      v-if="table"
+      :table-id="table.tableId"
+      :bbox="table.bbox"
+      :is-geo="table.isGeo"
       :row-columns="rowColumns"
+      :visible-columns="visibleColumns"
       :editable-columns="editableColumns"
       :columns="columns"
-      :geometry-column="table?.geometryColumn"
+      :geometry-column="table.geometryColumn"
       @mutated="loadTable"
     />
 
@@ -240,6 +252,51 @@ onMounted(loadAll);
           @click="confirmDerive"
         >
           {{ deriving ? "Création…" : "Créer" }}
+        </button>
+      </div>
+    </Modal>
+
+    <ColumnsModal
+      v-if="showColumns && table"
+      :table-id="table.tableId"
+      :row-columns="rowColumns"
+      :visible-columns="visibleColumns"
+      @update:visible-columns="visibleColumns = $event"
+      @close="showColumns = false"
+    />
+
+    <Modal v-if="showAddColumn" title="Ajouter une colonne" @close="showAddColumn = false">
+      <label class="mb-3 block">
+        <span class="mb-1 block text-xs font-medium text-slate-500">Nom</span>
+        <input
+          v-model="newColumnName"
+          type="text"
+          class="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        />
+      </label>
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-slate-500">Type DuckDB</span>
+        <input
+          v-model="newColumnType"
+          type="text"
+          placeholder="VARCHAR, INTEGER, DOUBLE…"
+          class="w-full rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        />
+      </label>
+      <p v-if="addColumnError" class="mt-3 text-xs text-red-600">{{ addColumnError }}</p>
+      <div class="mt-4 flex justify-end gap-2">
+        <button
+          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          @click="showAddColumn = false"
+        >
+          Annuler
+        </button>
+        <button
+          class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          :disabled="addingColumn || !newColumnName.trim()"
+          @click="confirmAddColumn"
+        >
+          {{ addingColumn ? "Ajout…" : "Ajouter" }}
         </button>
       </div>
     </Modal>

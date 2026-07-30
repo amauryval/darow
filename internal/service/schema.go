@@ -43,18 +43,14 @@ func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]Co
 		return schema, nil
 	}
 
-	cols, err := s.storage.Columns(ctx, meta)
+	cols, err := s.storage.ColumnsWithTypes(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
 
 	schema := make([]ColumnSchema, 0, len(cols))
 	for _, col := range cols {
-		colType, err := s.storage.ColumnType(ctx, meta, col)
-		if err != nil {
-			return nil, err
-		}
-		schema = append(schema, ColumnSchema{Name: col, Type: colType})
+		schema = append(schema, ColumnSchema{Name: col.Name, Type: col.Type})
 	}
 
 	s.cache.Add(meta.TableId, schema)

@@ -11,13 +11,13 @@ import (
 )
 
 // tileSimplifyTolerance returns the ST_SimplifyPreserveTopology tolerance
-// (in Web Mercator meters) that collapses to roughly one output pixel at
+// (in Web Mercator meters) that collapses to roughly one MVT extent unit at
 // zoom — shrinking to near-zero at high zoom, so it never needs to be
 // switched off past some threshold.
 func tileSimplifyTolerance(zoom int) float64 {
 	const webMercatorCircumference = 40075016
-	const tilePixels = 256
-	tolerance := webMercatorCircumference / (tilePixels * math.Pow(2, float64(zoom)))
+	const mvtExtent = 4096
+	tolerance := webMercatorCircumference / (mvtExtent * math.Pow(2, float64(zoom)))
 	return math.Max(tolerance, 0.25)
 }
 
@@ -25,8 +25,10 @@ func tileSimplifyTolerance(zoom int) float64 {
 // validated before interpolation (règle 1); zoom/x/y and the source CRS
 // string are bound parameters. attrs embeds extra non-geometry columns in
 // each feature (GEO-3) — the caller must have already validated them
-// against the table's real columns. Stops early if ctx is cancelled.
-func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string) ([]byte, error) {
+// against the table's real columns. q.Filter/q.Args, if set, must already be
+// a storage.BuildFilter clause (règle 5), narrowing which rows the tile
+// renders. Stops early if ctx is cancelled.
+func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -47,6 +49,13 @@ func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y in
 		structFields[i] = fmt.Sprintf(", '%s': %s", strings.ReplaceAll(attr, "'", "''"), alias)
 	}
 
+	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
+	args := []any{zoom, x, y, tileSimplifyTolerance(zoom)}
+	if q.Filter != "" {
+		where += " AND (" + q.Filter + ")"
+		args = append(args, q.Args...)
+	}
+
 	// ST_AsMVTGeom is a known source of corrupt (non-NULL, but invalid)
 	// clipped geometry for certain source/tile combinations — an upstream
 	// DuckDB spatial defect (github.com/duckdb/duckdb-spatial#792), not
@@ -54,9 +63,9 @@ func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y in
 	// clipping). TRY() plus filtering NULL catches only some cases, since
 	// the corruption doesn't always surface as NULL, but it's a cheap,
 	// safe filter that can only drop otherwise-broken features, never a
-	// valid one. The geometry is simplified to the tile's pixel resolution
-	// before clipping, so a low zoom over detailed polygons doesn't process
-	// full-resolution vertices for nothing (GEO-3).
+	// valid one. The geometry is simplified to the tile's MVT extent
+	// resolution before clipping, so a low zoom over detailed polygons
+	// doesn't process full-resolution vertices for nothing (GEO-3).
 	query := fmt.Sprintf(`
         WITH tile AS (
             SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
@@ -68,19 +77,20 @@ func (a *Adapter) Tile(ctx context.Context, meta storage.Metadata, zoom, x, y in
         FROM (
             SELECT TRY(ST_AsMVTGeom(ST_SimplifyPreserveTopology(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
             FROM %s, tile
-            WHERE ST_Intersects_Extent(%s, tile.envelope)
+            %s
         )
         WHERE mvt_geom IS NOT NULL
-    `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), meta.PhysicalName, quotedGeom)
+    `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), meta.PhysicalName, where)
 
 	var mvt []byte
-	err = a.QueryRow(ctx, query, zoom, x, y, tileSimplifyTolerance(zoom)).Scan(&mvt)
+	err = a.QueryRow(ctx, query, args...).Scan(&mvt)
 	return mvt, err
 }
 
-// FilterByBbox returns the primary keys of rows whose geometry intersects
-// bbox ([minX, minY, maxX, maxY]).
-func (a *Adapter) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64) ([]string, error) {
+// FilterByBbox returns a page of up to limit primary keys of rows whose
+// geometry intersects bbox ([minX, minY, maxX, maxY]), skipping offset
+// matches first, ordered by pkey so paging is deterministic across calls.
+func (a *Adapter) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return nil, err
 	}
@@ -93,9 +103,10 @@ func (a *Adapter) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox 
         SELECT __pkey FROM %s
         WHERE ST_Intersects(%s, ST_MakeEnvelope(?, ?, ?, ?))
         ORDER BY __pkey
+        LIMIT ? OFFSET ?
     `, meta.PhysicalName, quotedGeom)
 
-	rows, err := a.Query(ctx, query, bbox[0], bbox[1], bbox[2], bbox[3])
+	rows, err := a.Query(ctx, query, bbox[0], bbox[1], bbox[2], bbox[3], limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +121,44 @@ func (a *Adapter) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox 
 		pkeys = append(pkeys, pkey)
 	}
 	return pkeys, rows.Err()
+}
+
+// FilteredExtent computes the bounding box of every row matching
+// q.Filter/q.Args, reprojected to OGC:CRS84 lon/lat like Metadata.Bbox
+// (règle 7) — empty if no row matches. q.Filter/q.Args must already be a
+// storage.BuildFilter clause (règle 5).
+func (a *Adapter) FilteredExtent(ctx context.Context, meta storage.Metadata, q storage.GeoQuery) (string, error) {
+	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return "", err
+	}
+	quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
+	if err != nil {
+		return "", err
+	}
+
+	where := quotedGeom + " IS NOT NULL"
+	args := []any{}
+	if q.Filter != "" {
+		where += " AND (" + q.Filter + ")"
+		args = append(args, q.Args...)
+	}
+
+	query := fmt.Sprintf(`
+        SELECT MIN(ST_XMin(g)), MIN(ST_YMin(g)), MAX(ST_XMax(g)), MAX(ST_YMax(g))
+        FROM (
+            SELECT ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84') AS g
+            FROM %s WHERE %s
+        ) t
+    `, quotedGeom, meta.PhysicalName, where)
+
+	var minX, minY, maxX, maxY sql.NullFloat64
+	if err := a.QueryRow(ctx, query, args...).Scan(&minX, &minY, &maxX, &maxY); err != nil {
+		return "", err
+	}
+	if !minX.Valid {
+		return "", nil
+	}
+	return fmt.Sprintf("%g,%g,%g,%g", minX.Float64, minY.Float64, maxX.Float64, maxY.Float64), nil
 }
 
 // GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
