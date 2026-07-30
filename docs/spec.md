@@ -8,7 +8,9 @@ sans l'avoir entièrement lu.
 document qu'il faut corriger. Il ne contient volontairement pas de code : les signatures exactes se
 lisent dans les fichiers cités, qui sont indiqués à chaque section.
 
-C'est le seul document d'architecture du dépôt. `docs/swagger.json` / `docs/swagger.yaml` /
+Son périmètre est le **serveur Go** seul. L'application d'administration Vue 3 (`web/`) a sa propre
+spécification, `docs/spec-front.md` ; les deux documents sont disjoints et leur seul point de
+contact est l'API REST, décrite ici (§6) et consommée là-bas. `docs/swagger.json` / `docs/swagger.yaml` /
 `docs/docs.go` sont générés par `swag init` depuis les annotations des handlers et ne se modifient
 jamais à la main.
 
@@ -762,8 +764,8 @@ internal/
     mocks/             mocks testify des contrats catalog, data et storage.TableCreator
     *.go               TableCreator, Row/GeoFeature/GeoQuery, BuildFilter, identifiants, SQLWrapper
   webui/               go:embed du build de production
-web/                   application Vue 3 (build vers internal/webui/dist)
-docs/                  cette spec, l'audit, le plan, et le Swagger généré
+web/                   application Vue 3 (build vers internal/webui/dist) — voir docs/spec-front.md
+docs/                  cette spec, la spec du front, et le Swagger généré
 ```
 
 Les structs de domaine restent dans leur paquet propriétaire : `Metadata`/`Row`/`GeoFeature` dans

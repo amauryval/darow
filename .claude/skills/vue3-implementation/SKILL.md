@@ -1,30 +1,38 @@
 ---
 name: vue3-implementation
 description:
-    Handles Vue3/TypeScript implementation tasks in vue3 app — component and composable style, type
-    safety, file structure.
+    Handles Vue3/TypeScript implementation tasks in the web/ admin UI — layering, composable and
+    component style, type safety, file structure.
 ---
 
 ## When to Use This Skill
 
--   Writing or modifying `.vue` components or `views/composables/*.ts` files
+-   Writing or modifying `.vue` components, `src/composables/*.ts` or `src/utils/*.ts` in `web/`
 -   Adding a new resource's view + composable
 -   Reviewing Vue3/TypeScript code for style or type-safety issues
 
 # Vue3 Implementation Skill
 
-Provides guidance for writing idiomatic Vue3/TypeScript code in `app/vue3`.
+Guidance for writing idiomatic Vue3/TypeScript in `web/`. **`docs/spec-front.md` is the
+authority** — architecture, layer contracts, target composable/component split, style rules and
+known deviations. Read it before a non-trivial change; this file is the short form.
 
 ## Core Principles
 
--   **Duplication over factoring for composable.** This codebase favors duplication over extracting shared logic
-    into composables in `views/composables/`. Do not propose extracting a new shared composable/helper as a "simplification" unless the
-    user explicitly asks for it.
--   **factoring over duplication for components.**
--   **Never add comments** — remove them if found. Code must be self-explanatory (clear names, small
-    functions).
+-   **Business logic never lives in a `.vue` file.** Loading, pagination, mutations, selection,
+    derived state → a composable (`src/composables/`) or a pure function (`src/utils/`). A
+    component wires those up and renders.
+-   **Factor components and composables rather than duplicating.** A second occurrence of the same
+    loading pattern is a composable; a second occurrence of the same markup/classes is a component.
+-   **No network access outside `src/client/`.** No `fetch`, no hand-built API URL anywhere else.
+-   **No markup in `h()` render functions.** A rich table cell is a `.vue` component referenced by
+    the column definition.
+-   **No Tailwind/daisyUI classes in a `.ts` file.** Style stays in `<template>` and in
+    `components/ui/` primitives.
 -   Use `<script setup lang="ts">` for every component. No Options API.
--   Limit files to under ~300 lines; split components rather than growing them.
+-   Size caps: 300 lines per `.vue`, 150 per composable, 100 per pure function. Split, never grow.
+-   Comments explain the *why* — an invariant, a server constraint, a trap. Never paraphrase the
+    next line.
 
 ## Type Safety — No Type Assertions
 
@@ -48,53 +56,49 @@ Guard usage in templates with `v-if`, not `!`:
 
 ```vue
 <!-- ✅ -->
-<UserForm v-if="userId" :editUserProperty="(k, v) => editUser(userId, k, v)" />
+<TableHeader v-if="table" :table="table" @rename="rename" />
 ```
 
 ## No .ts import extensions
 
-Never suffix a TypeScript import path with `.ts` in `app/vue3`, even when a neighboring import in
-the same file already has one.
+Never suffix a TypeScript import path with `.ts`.
 
 ```typescript
 // ❌
-import { useFoo } from '@/views/composables/useFoo.ts'
+import { useToast } from '../composables/useToast.ts'
 // ✅
-import { useFoo } from '@/views/composables/useFoo'
+import { useToast } from '../composables/useToast'
 ```
 
-**Why:** Volar (the TS plugin) flags `.ts`-suffixed imports as an error (TS5097) unless
-`allowImportingTsExtensions` is set, which it isn't here. Some pre-existing files already have
-`.ts`-suffixed imports — that's legacy/inconsistent, not a convention to match. Don't "fix"
-pre-existing ones unless asked; just never add new ones.
+**Why:** Volar flags `.ts`-suffixed imports as TS5097 unless `allowImportingTsExtensions` is set,
+which it isn't here.
 
 ## Naming
 
--   **PascalCase** for component files: `UserCard.vue`.
--   **camelCase** for variables/functions/composables: `isLoading`, `handleClick`, `useUsers`.
+-   **PascalCase** for component files: `TableHeader.vue`.
+-   **camelCase** for variables/functions/composables: `isLoading`, `handleClick`, `useTableRows`.
 -   **UPPER_SNAKE_CASE** for constants: `const MAX_ITEMS = 100`.
+-   User-facing strings are in French, including fallback error messages.
 
 ## Reactivity
 
 -   `ref` for primitives, `computed` for derived state. Don't reach for `reactive()` for simple
     state.
--   Never destructure a `ref`/`reactive` object — it loses reactivity (`const { count } = items` is
-    wrong).
+-   Never destructure a `ref`/`reactive` object — it loses reactivity.
 -   `shallowRef`/`shallowReactive` for large, effectively-immutable structures.
+-   A view parameterised by a route param loads via `watch(param, …, { immediate: true })`, never
+    `onMounted` alone — vue-router reuses the component when only the param changes.
+-   Every `addEventListener`, observer, interval or MapLibre layer is torn down by the composable
+    that created it.
 
 ## Async/Error Handling
 
-Prefer a flat happy-path over nested `try/catch`, when the underlying call already returns a
-`[result, error]` tuple:
+Every rejection becomes a user-facing message through `errorMessage` — a toast for a global action,
+a local message for a form. Silent `catch` is only for best-effort display loads (tiles, extent),
+and is commented on the spot.
 
-```typescript
-// ✅
-const handleSave = async () => {
-    loading.value = true
-    error.value = null
-    const [result, err] = await api.save(data)
-    userList.value = [...userList.value, result]
-    error.value = err
-    loading.value = false
-}
-```
+## Tests
+
+The front has no mandatory automated tests (deliberate choice — see `docs/spec-front.md` §0.14).
+Verification is `mise run ui-lint` + `mise run ui-build` (type-check) plus manual review by the
+user. `client/http.test.ts` stays as the HTTP transport safety net.
