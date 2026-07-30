@@ -87,9 +87,10 @@ type MetadataWriter interface {
 	Remove(ctx context.Context, tableId string) error
 	UpdateMetadata(ctx context.Context, tableId string, patch MetadataPatch) error
 
-	// RefreshDerivedMetadata recomputes RowCount and Bbox from the
-	// underlying table and bumps UpdatedAt. Must be called after
-	// InsertRow, BulkInsert, row Update/Remove, and any Update touching
-	// the geometry column.
-	RefreshDerivedMetadata(ctx context.Context, tableId string) error
+	// RefreshDerivedMetadata recomputes RowCount and bumps UpdatedAt after
+	// any write to the underlying table. Bbox is only recomputed when
+	// touchesGeometry is true — a scan of the whole geometry column, so
+	// skipped for writes that provably can't move it (e.g. a scalar-only
+	// update or insert on a geo table).
+	RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error
 }

@@ -52,7 +52,9 @@ func Test_Adapter_CreateFromFile(t *testing.T) {
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_geom"))
 	assert.True(t, indexExists(t, a, "idx_"+meta.PhysicalName+"_pkey"), "clustering rebuilds the table and must recreate the pkey index dropped with it")
 
-	count, err := a.RowsCount(context.Background(), meta)
+	repo, err := a.Table(meta)
+	require.NoError(t, err)
+	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
@@ -99,7 +101,7 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isGeo)
 	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, catalog.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
-	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId))
+	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId, true))
 
 	updated, err := a.GetMetadata(context.Background(), tableId)
 	require.NoError(t, err)
@@ -114,6 +116,38 @@ func Test_Adapter_RefreshDerivedMetadata_BboxIsWGS84(t *testing.T) {
 	assert.InDelta(t, 45.76, minY, 0.01)
 	assert.InDelta(t, 4.83, maxX, 0.01)
 	assert.InDelta(t, 48.85, maxY, 0.01)
+}
+
+func Test_Adapter_RefreshDerivedMetadata_PreservesBboxWhenNotTouchingGeometry(t *testing.T) {
+	a := setupAdapter(t)
+	path := writeGeoJSONFixture(t)
+
+	tableId, err := a.Create(context.Background(), "points", false, "")
+	require.NoError(t, err)
+	meta, err := a.GetMetadata(context.Background(), tableId)
+	require.NoError(t, err)
+
+	geometryColumn, isGeo, _, err := a.CreateFromFile(context.Background(), meta.PhysicalName, path, "", 0)
+	require.NoError(t, err)
+	require.True(t, isGeo)
+	require.NoError(t, a.UpdateMetadata(context.Background(), tableId, catalog.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
+	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId, true))
+
+	before, err := a.GetMetadata(context.Background(), tableId)
+	require.NoError(t, err)
+	require.NotEmpty(t, before.Bbox)
+
+	repo, err := a.Table(before)
+	require.NoError(t, err)
+	_, err = repo.Rows().Insert(context.Background(), map[string]any{"name": "c"})
+	require.NoError(t, err)
+
+	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), tableId, false))
+
+	after, err := a.GetMetadata(context.Background(), tableId)
+	require.NoError(t, err)
+	assert.Equal(t, before.Bbox, after.Bbox, "bbox must survive a refresh that doesn't touch geometry")
+	assert.EqualValues(t, before.RowCount+1, after.RowCount, "rowCount must still be recomputed")
 }
 
 // multiLayerGpkgFixture is a hand-built 2-layer GeoPackage (layer_a: two
@@ -155,7 +189,9 @@ func Test_Adapter_CreateFromFile_SelectsNamedLayer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, isGeo)
 	assert.Equal(t, "geom", geometryColumn)
-	count, err := a.RowsCount(context.Background(), meta)
+	repo, err := a.Table(meta)
+	require.NoError(t, err)
+	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count)
 
@@ -218,7 +254,9 @@ func Test_Adapter_CreateFromQuery_PartialProjection(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, isGeo)
 
-	count, err := a.RowsCount(context.Background(), derivedMeta)
+	repo, err := a.Table(derivedMeta)
+	require.NoError(t, err)
+	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
@@ -247,7 +285,9 @@ func Test_Adapter_CreateFromQuery_GroupBy(t *testing.T) {
 
 	require.NoError(t, err)
 
-	count, err := a.RowsCount(context.Background(), derivedMeta)
+	repo, err := a.Table(derivedMeta)
+	require.NoError(t, err)
+	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }

@@ -95,7 +95,7 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 				wantIsGeo, wantGeom := true, "geom"
 				m.On("UpdateMetadata", mock.Anything, "id-derived", catalog.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
 			}
-			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived").Return(nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
 
 			tableId, err := svc.DeriveTable(context.Background(), c.query, "derived")
 

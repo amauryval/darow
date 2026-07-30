@@ -2,7 +2,6 @@ package mocks
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/stretchr/testify/mock"
 
@@ -11,43 +10,19 @@ import (
 	"gogeoserver/internal/storage/data"
 )
 
-// Storage is a testify mock implementing storage.Storage plus
-// catalog.MetadataManager and data.TableResolver — the full surface
+// Storage is a testify mock implementing catalog.MetadataManager,
+// storage.TableCreator and data.TableResolver — the full surface
 // core.NewServices wires up, kept as one mock since service-layer tests
-// exercise data, catalogue, and resolver methods interchangeably.
+// exercise catalogue and resolver methods interchangeably.
 type Storage struct {
 	mock.Mock
 }
 
 var (
-	_ storage.Storage         = (*Storage)(nil)
 	_ catalog.MetadataManager = (*Storage)(nil)
+	_ storage.TableCreator    = (*Storage)(nil)
 	_ data.TableResolver      = (*Storage)(nil)
 )
-
-func (m *Storage) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	callArgs := m.Called(ctx, query, args)
-	rows, _ := callArgs.Get(0).(*sql.Rows)
-	return rows, callArgs.Error(1)
-}
-
-func (m *Storage) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
-	callArgs := m.Called(ctx, query, args)
-	row, _ := callArgs.Get(0).(*sql.Row)
-	return row
-}
-
-func (m *Storage) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	callArgs := m.Called(ctx, query, args)
-	res, _ := callArgs.Get(0).(sql.Result)
-	return res, callArgs.Error(1)
-}
-
-func (m *Storage) Begin(ctx context.Context) (*sql.Tx, error) {
-	callArgs := m.Called(ctx)
-	tx, _ := callArgs.Get(0).(*sql.Tx)
-	return tx, callArgs.Error(1)
-}
 
 func (m *Storage) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
 	callArgs := m.Called(ctx, sort)
@@ -92,140 +67,20 @@ func (m *Storage) UpdateMetadata(ctx context.Context, tableId string, patch cata
 	return m.Called(ctx, tableId, patch).Error(0)
 }
 
-func (m *Storage) RefreshDerivedMetadata(ctx context.Context, tableId string) error {
-	return m.Called(ctx, tableId).Error(0)
+func (m *Storage) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
+	return m.Called(ctx, tableId, touchesGeometry).Error(0)
 }
 
 // Table resolves meta into a data.TableRepository — the entrypoint
-// RowService/SchemaService/GeoService use instead of the per-call
-// TableManager/GeoTableManager methods below (§4.2's "resolve once per
-// request"). Matched on the full meta value, unlike those methods, since a
-// test controls the returned TableRepository's behavior (via a
-// mocks.TableRepository), which must reflect the same Metadata the
-// production resolver would have seen.
+// RowService/SchemaService/GeoService use to reach a table's data. Matched
+// on the full meta value, unlike catalogue methods, since a test controls
+// the returned TableRepository's behavior (via a mocks.TableRepository),
+// which must reflect the same Metadata the production resolver would have
+// seen.
 func (m *Storage) Table(meta catalog.Metadata) (data.TableRepository, error) {
 	callArgs := m.Called(meta)
 	repo, _ := callArgs.Get(0).(data.TableRepository)
 	return repo, callArgs.Error(1)
-}
-
-// Every TableReader/TableWriter/GeoTableManager method below is called by
-// production code with a catalog.Metadata value (§4.2), but records and
-// matches its mock.Called expectation on meta.TableId — a bare string is
-// far simpler for test setup to match on (mock.Anything or an exact ID)
-// than a catalog.Metadata value, and every test in this codebase only
-// ever cares which tableId a call targeted.
-
-func (m *Storage) Columns(ctx context.Context, meta catalog.Metadata) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId)
-	cols, _ := callArgs.Get(0).([]string)
-	return cols, callArgs.Error(1)
-}
-
-func (m *Storage) ColumnType(ctx context.Context, meta catalog.Metadata, column string) (string, error) {
-	callArgs := m.Called(ctx, meta.TableId, column)
-	return callArgs.String(0), callArgs.Error(1)
-}
-
-func (m *Storage) ColumnsWithTypes(ctx context.Context, meta catalog.Metadata) ([]storage.ColumnInfo, error) {
-	callArgs := m.Called(ctx, meta.TableId)
-	cols, _ := callArgs.Get(0).([]storage.ColumnInfo)
-	return cols, callArgs.Error(1)
-}
-
-func (m *Storage) RowsCount(ctx context.Context, meta catalog.Metadata) (int64, error) {
-	callArgs := m.Called(ctx, meta.TableId)
-	count, _ := callArgs.Get(0).(int64)
-	return count, callArgs.Error(1)
-}
-
-func (m *Storage) GetPkeys(ctx context.Context, meta catalog.Metadata, sort []storage.SortField, offset, limit int64) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, sort, offset, limit)
-	pkeys, _ := callArgs.Get(0).([]string)
-	return pkeys, callArgs.Error(1)
-}
-
-func (m *Storage) GetRowsByPkey(ctx context.Context, meta catalog.Metadata, pKeys []string) ([]storage.Row, error) {
-	callArgs := m.Called(ctx, meta.TableId, pKeys)
-	rows, _ := callArgs.Get(0).([]storage.Row)
-	return rows, callArgs.Error(1)
-}
-
-func (m *Storage) GetRowsWithFilter(ctx context.Context, meta catalog.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
-	callArgs := m.Called(ctx, meta.TableId, filter, args, limit)
-	rows, _ := callArgs.Get(0).([]storage.Row)
-	return rows, callArgs.Error(1)
-}
-
-func (m *Storage) GetDistinctValues(ctx context.Context, meta catalog.Metadata, column string, offset, limit int) ([]any, error) {
-	callArgs := m.Called(ctx, meta.TableId, column, offset, limit)
-	values, _ := callArgs.Get(0).([]any)
-	return values, callArgs.Error(1)
-}
-
-func (m *Storage) AddColumn(ctx context.Context, meta catalog.Metadata, colName, colType string) error {
-	return m.Called(ctx, meta.TableId, colName, colType).Error(0)
-}
-
-func (m *Storage) Update(ctx context.Context, meta catalog.Metadata, pkeys []string, updates map[string]any) error {
-	return m.Called(ctx, meta.TableId, pkeys, updates).Error(0)
-}
-
-func (m *Storage) RemoveRows(ctx context.Context, meta catalog.Metadata, pKeys []string) error {
-	return m.Called(ctx, meta.TableId, pKeys).Error(0)
-}
-
-func (m *Storage) InsertRow(ctx context.Context, meta catalog.Metadata, values map[string]any) (string, error) {
-	callArgs := m.Called(ctx, meta.TableId, values)
-	return callArgs.String(0), callArgs.Error(1)
-}
-
-func (m *Storage) BulkInsert(ctx context.Context, meta catalog.Metadata, rows []map[string]any) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, rows)
-	pkeys, _ := callArgs.Get(0).([]string)
-	return pkeys, callArgs.Error(1)
-}
-
-func (m *Storage) Tile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
-	callArgs := m.Called(ctx, meta.TableId, zoom, x, y, attrs, q)
-	tile, _ := callArgs.Get(0).([]byte)
-	return tile, callArgs.Error(1)
-}
-
-func (m *Storage) GetFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
-	callArgs := m.Called(ctx, meta.TableId, pkeys, bbox, attrs, q, limit, offset)
-	features, _ := callArgs.Get(0).([]storage.GeoFeature)
-	return features, callArgs.Error(1)
-}
-
-func (m *Storage) GetFeaturesTile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
-	callArgs := m.Called(ctx, meta.TableId, zoom, x, y, attrs, q, limit, offset)
-	features, _ := callArgs.Get(0).([]storage.GeoFeature)
-	return features, callArgs.Error(1)
-}
-
-func (m *Storage) FilterByBbox(ctx context.Context, meta catalog.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, bbox, offset, limit)
-	pkeys, _ := callArgs.Get(0).([]string)
-	return pkeys, callArgs.Error(1)
-}
-
-func (m *Storage) FilteredExtent(ctx context.Context, meta catalog.Metadata, q storage.GeoQuery) (string, error) {
-	callArgs := m.Called(ctx, meta.TableId, q)
-	bbox, _ := callArgs.Get(0).(string)
-	return bbox, callArgs.Error(1)
-}
-
-func (m *Storage) GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error) {
-	callArgs := m.Called(ctx, meta.TableId, pkeys)
-	result, _ := callArgs.Get(0).(map[string]string)
-	return result, callArgs.Error(1)
-}
-
-func (m *Storage) GeometryTypes(ctx context.Context, meta catalog.Metadata) ([]string, error) {
-	callArgs := m.Called(ctx, meta.TableId)
-	types, _ := callArgs.Get(0).([]string)
-	return types, callArgs.Error(1)
 }
 
 func (m *Storage) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {

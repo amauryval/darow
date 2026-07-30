@@ -63,6 +63,31 @@ func Test_Catalog_DeleteTable_CascadesToRegisteredRepositories(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func Test_Catalog_DeleteTable_DropsPhysicalTable(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.Create(ctx, "widgets", false, "")
+	require.NoError(t, err)
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	dbq := c.conn.(dbQuerier)
+	_, err = dbq.db.ExecContext(ctx, "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY)")
+	require.NoError(t, err)
+
+	require.NoError(t, c.DeleteTable(ctx, tableId))
+
+	exists, err := c.TableExists(ctx, tableId)
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	var count int
+	err = dbq.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", meta.PhysicalName).Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count, "physical table must be dropped alongside the metadata row")
+}
+
 func Test_Catalog_DeleteTable_RollsBackOnChildError(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()

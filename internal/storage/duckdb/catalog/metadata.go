@@ -209,23 +209,6 @@ func (r *Repository) Create(ctx context.Context, tableName string, isGeo bool, g
 	return tableId, nil
 }
 
-// Remove deletes a logical table's metadata and drops its physical table.
-func (r *Repository) Remove(ctx context.Context, tableId string) error {
-	meta, err := r.GetMetadata(ctx, tableId)
-	if err != nil {
-		return err
-	}
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return err
-	}
-
-	if _, err := r.conn.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
-		return err
-	}
-	_, err = r.conn.Exec(ctx, `DELETE FROM metadata WHERE tableId = ?`, tableId)
-	return err
-}
-
 // UpdateMetadata patches config fields of a logical table's metadata. Every
 // non-nil field of patch is written; nil fields leave their column
 // unchanged. A zero-value patch is a no-op.
@@ -268,9 +251,11 @@ func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch c
 	return err
 }
 
-// RefreshDerivedMetadata recomputes rowCount and bbox from the underlying
-// table and bumps updatedAt (règle 9).
-func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string) error {
+// RefreshDerivedMetadata recomputes rowCount and bumps updatedAt from the
+// underlying table. Bbox is only recomputed when touchesGeometry — an
+// aggregation over the whole geometry column — otherwise the existing bbox
+// is left untouched.
+func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
 	meta, err := r.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
@@ -284,8 +269,8 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string)
 		return err
 	}
 
-	bbox := ""
-	if meta.IsGeo {
+	bbox := meta.Bbox
+	if meta.IsGeo && touchesGeometry {
 		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
 		if err != nil {
 			return err

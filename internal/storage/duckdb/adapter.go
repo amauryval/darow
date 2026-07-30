@@ -15,12 +15,11 @@ import (
 	"gogeoserver/internal/storage/duckdb/catalog"
 )
 
-var _ storage.Storage = (*Adapter)(nil)
-
-// Adapter implements storage.Storage on top of DuckDB. It serializes every
-// write through writeMu (règle 21): DuckDB allows only one active writer per
-// process, though concurrent writes without conflicts and concurrent reads
-// are both safe across the pooled connections opened against db.
+// Adapter implements catalog.MetadataManager, storage.TableCreator and
+// data.TableResolver on top of DuckDB. It serializes every write through
+// writeMu: DuckDB allows only one active writer per process, though
+// concurrent writes without conflicts and concurrent reads are both safe
+// across the pooled connections opened against db.
 type Adapter struct {
 	db      *sql.DB
 	writeMu sync.Mutex
@@ -155,9 +154,10 @@ func (a *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geom
 	return a.catalog.Create(ctx, tableName, isGeo, geometryColumn)
 }
 
-// Remove deletes a logical table's metadata and drops its physical table.
+// Remove deletes a logical table's metadata and drops its physical table,
+// in a single transaction.
 func (a *Adapter) Remove(ctx context.Context, tableId string) error {
-	return a.catalog.Remove(ctx, tableId)
+	return a.catalog.DeleteTable(ctx, tableId)
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata.
@@ -165,8 +165,8 @@ func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, patch cata
 	return a.catalog.UpdateMetadata(ctx, tableId, patch)
 }
 
-// RefreshDerivedMetadata recomputes rowCount and bbox from the underlying
-// table and bumps updatedAt (règle 9).
-func (a *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string) error {
-	return a.catalog.RefreshDerivedMetadata(ctx, tableId)
+// RefreshDerivedMetadata recomputes rowCount and bumps updatedAt from the
+// underlying table, recomputing bbox too when touchesGeometry.
+func (a *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
+	return a.catalog.RefreshDerivedMetadata(ctx, tableId, touchesGeometry)
 }

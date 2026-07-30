@@ -91,7 +91,7 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 
-	if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {
+	if err := s.metadata.RefreshDerived(ctx, tableId, true); err != nil {
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 	return tableId, nil

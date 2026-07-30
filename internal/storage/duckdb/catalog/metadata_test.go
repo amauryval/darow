@@ -103,23 +103,3 @@ func Test_Repository_BySource(t *testing.T) {
 		assert.NotEqual(t, derivedId, bySource[key])
 	}
 }
-
-func Test_Repository_Remove(t *testing.T) {
-	r := newTestRepository(t)
-	ctx := context.Background()
-
-	tableId, err := r.Create(ctx, "widgets", false, "")
-	require.NoError(t, err)
-	meta, err := r.GetMetadata(ctx, tableId)
-	require.NoError(t, err)
-
-	dbq := r.conn.(dbQuerier)
-	_, err = dbq.db.ExecContext(ctx, "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY)")
-	require.NoError(t, err)
-
-	require.NoError(t, r.Remove(ctx, tableId))
-
-	exists, err := r.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
-}

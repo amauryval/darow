@@ -6,6 +6,9 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	"fmt"
+
+	"gogeoserver/internal/storage"
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes
@@ -65,11 +68,23 @@ func (c *Catalog) Register(d Deleter) {
 	c.children = append(c.children, d)
 }
 
-// DeleteTable deletes tableId's metadata row and cascades to every
-// registered repository, all inside one transaction — a partial cascade
-// (some dependents deleted, others not) can never be observed.
+// DeleteTable drops tableId's physical table, cascades to every registered
+// repository, and deletes its metadata row, all inside one transaction — a
+// partial deletion (physical table gone but metadata row surviving, or
+// only some dependents deleted) can never be observed.
 func (c *Catalog) DeleteTable(ctx context.Context, tableId string) error {
+	meta, err := c.GetMetadata(ctx, tableId)
+	if err != nil {
+		return err
+	}
+	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return err
+	}
+
 	return c.tx.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
+			return err
+		}
 		for _, child := range c.children {
 			if err := child.DeleteTx(ctx, tx, tableId); err != nil {
 				return err

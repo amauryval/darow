@@ -37,7 +37,7 @@ func convertValue(colType string, value any) any {
 // metadataRefresher is what RowService needs from MetadataService: refresh
 // derived fields after a write (règle 9).
 type metadataRefresher interface {
-	RefreshDerived(ctx context.Context, tableId string) error
+	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
 }
 
 // tableResolver is what RowService/SchemaService/GeoService need from
@@ -74,27 +74,29 @@ func NewRowService(storage tableResolver, metadata metadataRefresher, schema col
 	return &RowService{storage: storage, metadata: metadata, schema: schema}
 }
 
-func (s *RowService) convertRow(ctx context.Context, meta catalog.Metadata, row storage.Row) (storage.Row, error) {
-	types, err := s.schema.Types(ctx, meta)
-	if err != nil {
-		return storage.Row{}, err
-	}
-
+func convertRow(types map[string]string, row storage.Row) storage.Row {
 	converted := storage.Row{Pkey: row.Pkey, Values: make(map[string]any, len(row.Values))}
 	for col, val := range row.Values {
 		converted.Values[col] = convertValue(types[col], val)
 	}
-	return converted, nil
+	return converted
 }
 
+// convertRows resolves meta's column types once (PERF-1) rather than once
+// per row, then converts every row's values to native JSON types.
 func (s *RowService) convertRows(ctx context.Context, meta catalog.Metadata, rows []storage.Row) ([]storage.Row, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	types, err := s.schema.Types(ctx, meta)
+	if err != nil {
+		return nil, err
+	}
+
 	converted := make([]storage.Row, 0, len(rows))
 	for _, row := range rows {
-		c, err := s.convertRow(ctx, meta, row)
-		if err != nil {
-			return nil, err
-		}
-		converted = append(converted, c)
+		converted = append(converted, convertRow(types, row))
 	}
 	return converted, nil
 }
@@ -189,11 +191,11 @@ func (s *RowService) GetRow(ctx context.Context, meta catalog.Metadata, pkey str
 		return nil, nil
 	}
 
-	converted, err := s.convertRow(ctx, meta, rows[0])
+	converted, err := s.convertRows(ctx, meta, rows)
 	if err != nil {
 		return nil, err
 	}
-	return &converted, nil
+	return &converted[0], nil
 }
 
 // ListRowsWithFilter returns rows matching filter, produced exclusively by
@@ -253,7 +255,7 @@ func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys
 	}
 
 	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
-		if err := s.metadata.RefreshDerived(ctx, meta.TableId); err != nil {
+		if err := s.metadata.RefreshDerived(ctx, meta.TableId, true); err != nil {
 			return err
 		}
 	}
@@ -261,7 +263,8 @@ func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys
 	return nil
 }
 
-// InsertRow inserts a single row and refreshes derived metadata (règle 9).
+// InsertRow inserts a single row and refreshes derived metadata (règle 9),
+// recomputing bbox only if values sets the geometry column.
 func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, values map[string]any) (string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -271,14 +274,16 @@ func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, value
 	if err != nil {
 		return "", err
 	}
-	if err := s.metadata.RefreshDerived(ctx, meta.TableId); err != nil {
+	_, touchesGeometry := values[meta.GeometryColumn]
+	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
 		return "", err
 	}
 	return pkey, nil
 }
 
 // BulkInsertRows inserts every row in a single transaction and refreshes
-// derived metadata (règle 6, règle 9).
+// derived metadata (règle 6, règle 9), recomputing bbox only if at least
+// one row sets the geometry column.
 func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, rows []map[string]any) ([]string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -288,14 +293,22 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.metadata.RefreshDerived(ctx, meta.TableId); err != nil {
+	touchesGeometry := false
+	for _, row := range rows {
+		if _, ok := row[meta.GeometryColumn]; ok {
+			touchesGeometry = true
+			break
+		}
+	}
+	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
 		return nil, err
 	}
 	return pkeys, nil
 }
 
 // RemoveRows deletes the given rows and refreshes derived metadata
-// (règle 9).
+// (règle 9). A removed geo row can always have sat on the bbox's boundary,
+// so bbox is recomputed whenever the table is geo.
 func (s *RowService) RemoveRows(ctx context.Context, meta catalog.Metadata, pkeys []string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -304,5 +317,5 @@ func (s *RowService) RemoveRows(ctx context.Context, meta catalog.Metadata, pkey
 	if err := repo.Rows().Delete(ctx, pkeys); err != nil {
 		return err
 	}
-	return s.metadata.RefreshDerived(ctx, meta.TableId)
+	return s.metadata.RefreshDerived(ctx, meta.TableId, meta.IsGeo)
 }

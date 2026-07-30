@@ -1,11 +1,11 @@
 // Package storagetest holds the storage layer's conformance suites: two
 // batteries of behavioral tests — one for the catalogue
-// (catalog.MetadataManager), one for data tables (storage.Storage) —
-// runnable against any adapter, so a future PostGISAdapter (or any other)
-// can prove it satisfies the same contracts DuckDBAdapter does, without
-// duplicating these tests per backend. The two are independent: an
-// adapter can hold the data contract without reimplementing the
-// catalogue, and vice versa (docs/plan-repository-data.md §5).
+// (catalog.MetadataManager), one for data tables (data.TableResolver plus
+// storage.TableCreator) — runnable against any adapter, so a future
+// PostGISAdapter (or any other) can prove it satisfies the same contracts
+// DuckDBAdapter does, without duplicating these tests per backend. The two
+// are independent: an adapter can hold the data contract without
+// reimplementing the catalogue, and vice versa.
 package storagetest
 
 import (
@@ -20,16 +20,18 @@ import (
 
 	"gogeoserver/internal/storage"
 	"gogeoserver/internal/storage/catalog"
+	"gogeoserver/internal/storage/data"
 )
 
-// DataHarness is storage.Storage plus catalog.MetadataManager: the data
-// suite's own fixtures need a catalogue to produce the Metadata each table
-// operation resolves against (docs/plan-repository-data.md §0.2 — a data
+// DataHarness is data.TableResolver plus storage.TableCreator and
+// catalog.MetadataManager: the data suite's own fixtures need a catalogue to
+// produce the Metadata each table operation resolves against (a data
 // adapter always consumes Metadata a catalogue produced, whether or not
-// it's the same backend), but the suite only ever calls storage.Storage
-// methods on the table under test.
+// it's the same backend), but the suite only ever resolves a table via
+// Table and calls its TableRepository methods.
 type DataHarness interface {
-	storage.Storage
+	data.TableResolver
+	storage.TableCreator
 	catalog.MetadataManager
 }
 
@@ -40,8 +42,8 @@ type NewData func(t *testing.T) DataHarness
 // RunDataSuite runs every data-table conformance subtest against a fresh
 // instance from newData. Every table it creates goes through
 // CreateFromFile — the one way to materialize a physical table that is
-// part of the storage.Storage contract itself, so the suite never depends
-// on a backend-specific way to create a table (e.g. raw SQL DDL).
+// part of the storage.TableCreator contract itself, so the suite never
+// depends on a backend-specific way to create a table (e.g. raw SQL DDL).
 func RunDataSuite(t *testing.T, newData NewData) {
 	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newData) })
 	t.Run("Rows_EmptyPkeysNoOp", func(t *testing.T) { testRowsEmptyPkeysNoOp(t, newData) })
@@ -112,69 +114,78 @@ func newGeoTable(t *testing.T, s DataHarness) (meta catalog.Metadata, pkeys []st
 	require.NoError(t, err)
 	require.True(t, isGeo)
 	require.NoError(t, s.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
-	require.NoError(t, s.RefreshDerivedMetadata(ctx, tableId))
+	require.NoError(t, s.RefreshDerivedMetadata(ctx, tableId, true))
 
 	meta, err = s.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
-	pkeys, err = s.GetPkeys(ctx, meta, nil, 0, 10)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	pkeys, err = repo.Rows().Pkeys(ctx, nil, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, pkeys, 2)
 	return meta, pkeys
 }
 
 // An empty pkey list must no-op rather than build "IN ()", a SQL syntax
-// error in most engines (audit 3.10).
+// error in most engines.
 func testRowsEmptyPkeysNoOp(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
 
-	rows, err := s.GetRowsByPkey(ctx, meta, nil)
+	rows, err := repo.Rows().ByPkey(ctx, nil)
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 
-	require.NoError(t, s.RemoveRows(ctx, meta, nil))
+	require.NoError(t, repo.Rows().Delete(ctx, nil))
 }
 
 func testRowsInsertGetUpdateRemove(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	rows := repo.Rows()
 
-	pkey, err := s.InsertRow(ctx, meta, map[string]any{"name": "c"})
+	pkey, err := rows.Insert(ctx, map[string]any{"name": "c"})
 	require.NoError(t, err)
 	require.NotEmpty(t, pkey)
 
-	rows, err := s.GetRowsByPkey(ctx, meta, []string{pkey})
+	got, err := rows.ByPkey(ctx, []string{pkey})
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "c", rows[0].Values["name"])
+	require.Len(t, got, 1)
+	assert.Equal(t, "c", got[0].Values["name"])
 
-	require.NoError(t, s.Update(ctx, meta, []string{pkey}, map[string]any{"name": "c-updated"}))
-	rows, err = s.GetRowsByPkey(ctx, meta, []string{pkey})
+	require.NoError(t, rows.Update(ctx, []string{pkey}, map[string]any{"name": "c-updated"}))
+	got, err = rows.ByPkey(ctx, []string{pkey})
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "c-updated", rows[0].Values["name"])
+	require.Len(t, got, 1)
+	assert.Equal(t, "c-updated", got[0].Values["name"])
 
-	require.NoError(t, s.RemoveRows(ctx, meta, []string{pkey}))
-	rows, err = s.GetRowsByPkey(ctx, meta, []string{pkey})
+	require.NoError(t, rows.Delete(ctx, []string{pkey}))
+	got, err = rows.ByPkey(ctx, []string{pkey})
 	require.NoError(t, err)
-	assert.Empty(t, rows)
+	assert.Empty(t, got)
 }
 
 func testRowsBulkInsert(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, existing := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
 
-	pkeys, err := s.BulkInsert(ctx, meta, []map[string]any{
+	pkeys, err := repo.Rows().InsertMany(ctx, []map[string]any{
 		{"name": "bulk-1"}, {"name": "bulk-2"}, {"name": "bulk-3"},
 	})
 	require.NoError(t, err)
 	assert.Len(t, pkeys, 3)
 
-	count, err := s.RowsCount(ctx, meta)
+	count, err := repo.Count(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, len(existing)+3, count)
 }
@@ -183,19 +194,21 @@ func testRowsGetPkeysPagination(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
-	_, err := s.BulkInsert(ctx, meta, []map[string]any{
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	_, err = repo.Rows().InsertMany(ctx, []map[string]any{
 		{"name": "c"}, {"name": "d"}, {"name": "e"},
 	})
 	require.NoError(t, err)
 
-	all, err := s.GetPkeys(ctx, meta, nil, 0, 100)
+	all, err := repo.Rows().Pkeys(ctx, nil, 0, 100)
 	require.NoError(t, err)
 	require.Len(t, all, 5)
 	for i := 1; i < len(all); i++ {
-		assert.LessOrEqual(t, all[i-1], all[i], "GetPkeys must order deterministically")
+		assert.LessOrEqual(t, all[i-1], all[i], "Pkeys must order deterministically")
 	}
 
-	page, err := s.GetPkeys(ctx, meta, nil, 2, 2)
+	page, err := repo.Rows().Pkeys(ctx, nil, 2, 2)
 	require.NoError(t, err)
 	assert.Equal(t, all[2:4], page)
 }
@@ -204,12 +217,14 @@ func testRowsGetPkeysSort(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, existing := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
 
-	pkeys, err := s.GetPkeys(ctx, meta, []storage.SortField{{Column: "name", Desc: true}}, 0, 100)
+	pkeys, err := repo.Rows().Pkeys(ctx, []storage.SortField{{Column: "name", Desc: true}}, 0, 100)
 	require.NoError(t, err)
 	require.Len(t, pkeys, len(existing))
 
-	rows, err := s.GetRowsByPkey(ctx, meta, pkeys)
+	rows, err := repo.Rows().ByPkey(ctx, pkeys)
 	require.NoError(t, err)
 	byPkey := make(map[string]string, len(rows))
 	for _, r := range rows {
@@ -221,7 +236,7 @@ func testRowsGetPkeysSort(t *testing.T, newData NewData) {
 	}
 	assert.True(t, sort.IsSorted(sort.Reverse(sort.StringSlice(names))), "expected names sorted descending, got %v", names)
 
-	_, err = s.GetPkeys(ctx, meta, []storage.SortField{{Column: "no-such-column"}}, 0, 10)
+	_, err = repo.Rows().Pkeys(ctx, []storage.SortField{{Column: "no-such-column"}}, 0, 10)
 	assert.Error(t, err)
 }
 
@@ -229,28 +244,32 @@ func testRowsGetDistinctValues(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
-	_, err := s.InsertRow(ctx, meta, map[string]any{"name": "a"})
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	_, err = repo.Rows().Insert(ctx, map[string]any{"name": "a"})
 	require.NoError(t, err)
 
-	values, err := s.GetDistinctValues(ctx, meta, "name", 0, 10)
+	values, err := repo.Rows().Distinct(ctx, "name", 0, 10)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []any{"a", "b"}, values)
 }
 
-// GetDistinctValues is paginated (règle 18): a high-cardinality column can't
-// return unbounded rows in one call. Ordering by the column itself makes
-// paging deterministic, so a limit-1 page followed by an offset-1 page
-// covers the same two values as one unpaginated call, in order.
+// Distinct is paginated: a high-cardinality column can't return unbounded
+// rows in one call. Ordering by the column itself makes paging
+// deterministic, so a limit-1 page followed by an offset-1 page covers the
+// same two values as one unpaginated call, in order.
 func testRowsGetDistinctValuesPagination(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
 
-	page1, err := s.GetDistinctValues(ctx, meta, "name", 0, 1)
+	page1, err := repo.Rows().Distinct(ctx, "name", 0, 1)
 	require.NoError(t, err)
 	require.Len(t, page1, 1)
 
-	page2, err := s.GetDistinctValues(ctx, meta, "name", 1, 1)
+	page2, err := repo.Rows().Distinct(ctx, "name", 1, 1)
 	require.NoError(t, err)
 	require.Len(t, page2, 1)
 
@@ -262,6 +281,8 @@ func testRowsGetRowsWithFilter(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
 
 	filter, args, err := storage.BuildFilter(
 		[]storage.FilterCondition{{Column: "name", Operator: "=", Value: "a"}},
@@ -269,7 +290,7 @@ func testRowsGetRowsWithFilter(t *testing.T, newData NewData) {
 	)
 	require.NoError(t, err)
 
-	rows, err := s.GetRowsWithFilter(ctx, meta, filter, args, 10)
+	rows, err := repo.Rows().Filtered(ctx, data.RowQuery{Filter: filter, Args: args}, 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "a", rows[0].Values["name"])
@@ -279,65 +300,79 @@ func testSchemaAddColumn(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, _ := newGeoTable(t, s)
-
-	require.NoError(t, s.AddColumn(ctx, meta, "score", "DOUBLE"))
-
-	cols, err := s.Columns(ctx, meta)
+	repo, err := s.Table(meta)
 	require.NoError(t, err)
-	assert.Contains(t, cols, "score")
 
-	colType, err := s.ColumnType(ctx, meta, "score")
+	require.NoError(t, repo.AddColumn(ctx, "score", "DOUBLE"))
+
+	schema, err := repo.Schema(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "DOUBLE", colType)
+	names := make([]string, len(schema))
+	for i, col := range schema {
+		names[i] = col.Name
+	}
+	assert.Contains(t, names, "score")
+
+	types, err := repo.Types(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "DOUBLE", types["score"])
 }
 
 func testGeoTileAndBboxAndTypes(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
-	tableId, pkeys := newGeoTable(t, s)
+	meta, pkeys := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
 
-	mvt, err := s.Tile(ctx, tableId, 0, 0, 0, nil, storage.GeoQuery{})
+	mvt, err := geo.Tile(ctx, 0, 0, 0, nil, storage.GeoQuery{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, mvt)
 
 	// Fixture points are reprojected to Web Mercator meters at load time
 	// (CreateFromFile), so the bbox here is in that same space, not raw
 	// lon/lat — roughly 111km per degree at the equator. pkeys aren't in
-	// file order (GetPkeys sorts by pkey), so identify the matched row by
+	// file order (Pkeys sorts by pkey), so identify the matched row by
 	// its "name" property rather than assuming which pkey it is.
-	inBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{0, 0, 200000, 200000}, 0, 10)
+	inBbox, err := geo.PkeysInBbox(ctx, [4]float64{0, 0, 200000, 200000}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, inBbox, 1)
 	assert.Contains(t, pkeys, inBbox[0])
-	matched, err := s.GetRowsByPkey(ctx, tableId, inBbox)
+	matched, err := repo.Rows().ByPkey(ctx, inBbox)
 	require.NoError(t, err)
 	require.Len(t, matched, 1)
 	assert.Equal(t, "a", matched[0].Values["name"])
 
-	outsideBbox, err := s.FilterByBbox(ctx, tableId, [4]float64{5000000, 5000000, 6000000, 6000000}, 0, 10)
+	outsideBbox, err := geo.PkeysInBbox(ctx, [4]float64{5000000, 5000000, 6000000, 6000000}, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, outsideBbox)
 
-	types, err := s.GeometryTypes(ctx, tableId)
+	types, err := geo.Types(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT"}, types)
 }
 
-// FilterByBbox is paginated (règle 18): a world-spanning bbox on a large
-// table can't materialize every intersecting pkey in one call. Ordering by
-// pkey makes paging deterministic, so a limit-1 page followed by an
-// offset-1 page covers the same two pkeys as one unpaginated call, in order.
+// PkeysInBbox is paginated: a world-spanning bbox on a large table can't
+// materialize every intersecting pkey in one call. Ordering by pkey makes
+// paging deterministic, so a limit-1 page followed by an offset-1 page
+// covers the same two pkeys as one unpaginated call, in order.
 func testGeoFilterByBboxPagination(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
 	meta, pkeys := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
 	bothPoints := [4]float64{-2000000, -2000000, 2000000, 2000000}
 
-	page1, err := s.FilterByBbox(ctx, meta, bothPoints, 0, 1)
+	page1, err := geo.PkeysInBbox(ctx, bothPoints, 0, 1)
 	require.NoError(t, err)
 	require.Len(t, page1, 1)
 
-	page2, err := s.FilterByBbox(ctx, meta, bothPoints, 1, 1)
+	page2, err := geo.PkeysInBbox(ctx, bothPoints, 1, 1)
 	require.NoError(t, err)
 	require.Len(t, page2, 1)
 
@@ -348,9 +383,13 @@ func testGeoFilterByBboxPagination(t *testing.T, newData NewData) {
 func testGeoGetGeometryGeoJSON(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
-	tableId, pkeys := newGeoTable(t, s)
+	meta, pkeys := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
 
-	geojson, err := s.GetGeometryGeoJSON(ctx, tableId, pkeys)
+	geojson, err := geo.GeoJSONByPkey(ctx, pkeys)
 	require.NoError(t, err)
 	for _, pkey := range pkeys {
 		assert.Contains(t, geojson[pkey], `"Point"`)
@@ -360,24 +399,28 @@ func testGeoGetGeometryGeoJSON(t *testing.T, newData NewData) {
 func testGeoGetFeatures(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
-	tableId, pkeys := newGeoTable(t, s)
+	meta, pkeys := newGeoTable(t, s)
+	repo, err := s.Table(meta)
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
 
-	all, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 10, 0)
+	all, err := geo.Features(ctx, data.FeatureQuery{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	for _, f := range all {
 		assert.Contains(t, f.GeoJSON, `"Point"`)
 	}
 
-	one, err := s.GetFeatures(ctx, tableId, pkeys[:1], nil, nil, storage.GeoQuery{}, 10, 0)
+	one, err := geo.Features(ctx, data.FeatureQuery{Pkeys: pkeys[:1], Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, one, 1)
 	assert.Equal(t, pkeys[0], one[0].Pkey)
 
-	firstPage, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 1, 0)
+	firstPage, err := geo.Features(ctx, data.FeatureQuery{Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, firstPage, 1)
-	secondPage, err := s.GetFeatures(ctx, tableId, nil, nil, nil, storage.GeoQuery{}, 1, 1)
+	secondPage, err := geo.Features(ctx, data.FeatureQuery{Limit: 1, Offset: 1})
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 	assert.NotEqual(t, firstPage[0].Pkey, secondPage[0].Pkey, "offset must skip the first page's row")
@@ -393,9 +436,9 @@ func testCreateListLayers(t *testing.T, newData NewData) {
 	assert.Len(t, layers, 1)
 }
 
-// GEO-1: the source CRS must be detected (or overridable) rather than
-// always assumed WGS84 — a Lambert-93 (EPSG:2154) source, ultra-common for
-// French datasets, must still land at the correct Web Mercator position.
+// The source CRS must be detected (or overridable) rather than always
+// assumed WGS84 — a Lambert-93 (EPSG:2154) source, ultra-common for French
+// datasets, must still land at the correct Web Mercator position.
 func testCreateFromFileDetectsNonWGS84CRS(t *testing.T, newData NewData) {
 	s := newData(t)
 	ctx := context.Background()
@@ -429,9 +472,14 @@ func testCreateFromQuery(t *testing.T, newData NewData) {
 
 	_, _, err = s.CreateFromQuery(ctx, derivedMeta.PhysicalName, "SELECT * FROM "+sourceMeta.PhysicalName)
 	require.NoError(t, err)
-	require.NoError(t, s.RefreshDerivedMetadata(ctx, derivedMeta.TableId))
+	require.NoError(t, s.RefreshDerivedMetadata(ctx, derivedMeta.TableId, true))
 
-	count, err := s.RowsCount(ctx, derivedMeta)
+	derivedMeta, err = s.GetMetadata(ctx, derivedId)
+	require.NoError(t, err)
+	repo, err := s.Table(derivedMeta)
+	require.NoError(t, err)
+
+	count, err := repo.Count(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }

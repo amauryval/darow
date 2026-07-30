@@ -90,7 +90,7 @@ func Test_ImportService_ImportFromFile(t *testing.T) {
 			m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
 			m.On("CreateFromFile", mock.Anything, "t_id1", "/data/buildings.geojson", "", 0).Return("geom", c.isGeo, c.srid, nil).Once()
 			m.On("UpdateMetadata", mock.Anything, "id-1", patch).Return(nil).Once()
-			m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 
 			tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
@@ -120,7 +120,7 @@ func Test_ImportService_ImportFromFile_ForwardsSridOverride(t *testing.T) {
 	m.On("UpdateMetadata", mock.Anything, "id-1", catalog.MetadataPatch{
 		SourceName: &sourceName, SourceLayer: &sourceLayer, IsGeo: &isGeo, GeometryColumn: &geom, Srid: &srid,
 	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
+	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 
 	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
 
@@ -170,7 +170,7 @@ func Test_ImportService_ImportFromFile_ForwardsLayer(t *testing.T) {
 	m.On("UpdateMetadata", mock.Anything, "id-1", catalog.MetadataPatch{
 		SourceName: &sourceName, SourceLayer: &sourceLayer, IsGeo: &isGeo, GeometryColumn: &geom, Srid: &srid,
 	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
+	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 
 	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes", 0)
 

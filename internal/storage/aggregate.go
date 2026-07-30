@@ -20,22 +20,3 @@ type TableCreator interface {
 	// before loading (authCode 0 if undetectable).
 	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
 }
-
-// Storage aggregates every data-table capability a storage adapter
-// exposes, implemented by DuckDBAdapter (and, later, PostGISAdapter). The
-// catalogue (catalog.MetadataManager) is a separate component, injected
-// alongside Storage rather than aggregated into it — a data adapter and
-// the catalogue evolve independently, and a future PostGIS adapter still
-// shares DuckDB's catalogue rather than reimplementing it. No service
-// depends on Storage itself: each declares its own narrow interface over
-// the subset it actually calls, so its real dependency surface is visible
-// at the call site. SQLWrapper is deliberately not part of this aggregate:
-// raw Query/Exec/Begin access would let a service bypass identifier
-// validation (règle 1) by writing SQL directly instead of going through
-// the typed methods below — it stays an implementation detail of the
-// duckdb package.
-type Storage interface {
-	TableManager
-	GeoTableManager
-	TableCreator
-}

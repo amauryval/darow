@@ -81,12 +81,12 @@ func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error
 	return nil
 }
 
-// RefreshDerived recomputes tableId's derived metadata (RowCount, Bbox,
-// UpdatedAt — règle 9) and invalidates the cache. Called by RowService and
-// ImportService/DeriveService after any write that changes row count or
-// touches the geometry column.
-func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string) error {
-	if err := s.storage.RefreshDerivedMetadata(ctx, tableId); err != nil {
+// RefreshDerived recomputes tableId's RowCount and UpdatedAt, and its Bbox
+// too when touchesGeometry, then invalidates the cache. Called by
+// RowService and ImportService/DeriveService after any write that changes
+// row count or touches the geometry column.
+func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error {
+	if err := s.storage.RefreshDerivedMetadata(ctx, tableId, touchesGeometry); err != nil {
 		return err
 	}
 	s.invalidateMetadataCache(tableId)

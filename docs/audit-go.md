@@ -1,408 +1,431 @@
 # Audit de la partie Go — GeoAPI
 
-Audit du code Go du dépôt à l'état actuel de la branche `develop`. Il décrit ce que le code fait
-aujourd'hui, ce qui est solide, et ce qui pose problème. Chaque constat renvoie à un fichier et une
-ligne. Il ne propose pas de refonte globale : l'architecture en place est saine, les constats sont
-ciblés.
+Audit du code Go à l'état actuel de `develop`, après l'exécution des deux plans de refactoring
+(`plan-repository-metadata.md`, `plan-repository-data.md`). Il décrit ce que le code fait
+aujourd'hui. Chaque constat renvoie à un fichier et une ligne.
+
+`go vet` et `gofmt -l` sont propres, l'intégralité des tests passe (`mise run test`).
 
 ---
 
 ## 1. Synthèse
 
-**Verdict : base saine, bien testée, avec une dérive documentaire et quelques défauts de
-correction ciblés.**
+**Verdict : les deux refactorings ont abouti et la nouvelle couche est saine, mais l'ancienne n'a
+pas été retirée. Le dépôt porte aujourd'hui deux couches d'accès aux données complètes en
+parallèle, dont une entièrement morte en production.**
 
-L'architecture à trois couches (`router` → `service` → `storage`) est respectée sans fuite : aucun
-handler ne touche SQL, aucun service ne construit d'identifiant SQL. Le pattern « interface déclarée
-côté consommateur » (`handlers/ports.go`, `service/derive.go`, `core/core.go`) est appliqué
-systématiquement, ce qui rend chaque dépendance visible au point d'appel et chaque couche testable
-isolément. La discipline de sécurité SQL (`ValidateIdentifier` / `QuoteIdentifier` / paramètres liés)
-est tenue partout où j'ai vérifié, y compris sur les chemins générés dynamiquement (ORDER BY, SET,
-EXCLUDE, filtres). La validation de `/derive` par l'AST DuckDB (`json_serialize_sql`) plutôt que par
-blacklist de mots-clés est nettement au-dessus de la moyenne du genre.
+Les repositories (`storage/catalog`, `storage/data`, `duckdb/catalog`, `duckdb/data`) sont bien
+faits : contrats backend-agnostiques séparés de DuckDB, résolution et validation des identifiants
+une fois pour toutes dans `data.Resolve`, suites de conformité partagées. Les services consomment
+déjà exclusivement cette nouvelle couche.
 
-Les problèmes sont de trois ordres :
+Trois familles de problèmes :
 
-1. **Un N+1 systématique sur le schéma** (`ColumnType` fait un `DESCRIBE` complet par colonne), en
-   contradiction directe avec le commentaire qui prétend l'inverse.
-2. **Une classification d'erreurs incomplète** : plusieurs erreurs client remontent en 500, et une
-   panne base remonte en 404.
-3. **Une couche « catalogue » (`metadata`) diluée dans l'adapter DuckDB** — sans repository, sans
-   migration réellement utilisable, avec pagination et jointures faites en Go. C'est ce point qui
-   justifie le plan séparé (`docs/plan-repository-metadata.md`).
+1. **Dette de migration non soldée** (§2) — l'ancienne surface `storage.TableManager` /
+   `GeoTableManager` et ses ~20 méthodes d'adaptateur ne sont plus appelées que par les mocks et la
+   suite de conformité ; l'agrégat `catalog.Catalog` (cascade transactionnelle) est écrit mais
+   jamais branché.
+2. **Défauts de correction ciblés** (§3) — suppression de table non transactionnelle, incohérence
+   de CRS sur `POST /bbox`, ETag pouvant être malformé, classifications d'erreurs qui renvoient 400
+   ou 500 à tort.
+3. **Performance** (§4) — deux points chauds réels : `RefreshDerivedMetadata` recalculé
+   intégralement après chaque écriture d'une seule ligne, et `SchemaService.Types` reconstruit une
+   map par ligne convertie.
+
+Et une quatrième, transverse, traitée à part : **les commentaires renvoient massivement à un
+référentiel externe** (`règle N`, `NEW-BUG-N`, `PERF-N`, `audit §3.12`…) au lieu de décrire le code
+(§6).
 
 ### Métriques
 
-| Indicateur | Valeur |
+| | |
 |---|---|
-| Fichiers Go (hors `docs/`, `node_modules`) | 87 |
-| Lignes Go (idem) | ~13 300 |
-| `go vet` | ✅ propre |
-| `gofmt -l` | ✅ propre |
-| `go test ./...` | ✅ tous les paquets passent |
-| Couverture `router` | 98,8 % |
-| Couverture `router/validation` | 100 % |
-| Couverture `router/handlers` | 91,4 % |
-| Couverture `config` | 93,3 % |
-| Couverture `core` | 87,1 % |
-| Couverture `storage/duckdb` | 80,2 % |
-| Couverture `service` | 77,4 % |
-| Couverture `storage` | 74,1 % |
-| Couverture `router/response` | 32,0 % |
+| Fichiers Go (hors `docs/`, `web/node_modules/`) | 118 |
+| Lignes Go | ~15 300 |
+| Paquets | 15 |
+| Références `règle N` / tags d'audit dans les commentaires | 194, sur 53 fichiers |
+| Méthodes d'adaptateur mortes en production | ~20 |
 
 ---
 
-## 2. Ce qui est solide
+## 2. Dette de migration : deux couches d'accès en parallèle
 
-- **Sécurité SQL.** Deux primitives distinctes avec des rôles clairement séparés et documentés
-  (`internal/storage/identifier.go`) : `ValidateIdentifier` pour les identifiants générés côté
-  serveur, `QuoteIdentifier` pour tout nom de colonne pouvant venir d'un fichier importé. Les deux
-  sont appelées avant *chaque* interpolation. Aucune valeur n'est interpolée : `BuildFilter`
-  (`storage/filter.go`) whiteliste colonne et opérateur, et lie systématiquement la valeur.
-- **Validation de `/derive` par le parseur DuckDB.** `validateDeriveQuery`
-  (`storage/duckdb/derive.go:44`) sérialise la requête en AST et la parcourt pour rejeter toute
-  `TABLE_FUNCTION` et toute `BASE_TABLE` non enregistrée dans `metadata`. C'est la bonne approche :
-  un `read_csv`, un `read_text` ou un `duckdb_settings` ne peut pas passer, là où une regex aurait
-  échoué. Le regex `selectOnlyRe` (`service/derive.go:12`) n'est qu'un fail-fast, et le code le dit.
-- **Séparation ports/adapters cohérente.** `handlers/ports.go` déclare six interfaces étroites avec
-  des assertions de conformité en bas de fichier ; `core/core.go` fait de même pour l'adapter. Les
-  handlers ne connaissent jamais un type de service concret — sauf `ExportHandler` (voir 4.6).
-- **Suite de conformité storage.** `storage/storagetest/suite.go` est une batterie de tests
-  comportementaux exécutable contre n'importe quel adapter, branchée sur DuckDB via
-  `duckdb/conformance_test.go`. C'est exactement ce qu'il faut pour qu'un futur adapter PostGIS
-  prouve qu'il tient le même contrat.
-- **Gestion du cycle de vie.** `cmd/server/main.go` gère `SIGINT`/`SIGTERM`, drain gracieux borné,
-  et remonte les erreurs de `ListenAndServe`. `core.Setup` ferme la connexion sur chaque chemin
-  d'échec.
-- **Export en flux borné.** `ExportService.forEachPage` (`service/export.go:104`) pagine, et
-  `ExportHandler` neutralise explicitement `WriteTimeout` avant de streamer
-  (`handlers/export.go:72`), avec la route sortie du groupe `middleware.Timeout`
-  (`router/routes.go:153`). Ce couple de subtilités est correctement traité et commenté.
-- **Cohérence CRS.** La géométrie est stockée en EPSG:3857, reprojetée une fois à l'import, et
-  reconvertie en `OGC:CRS84` (et non EPSG:4326, dont l'ordre d'axes officiel est lat/lon) sur chaque
-  sortie GeoJSON et sur `bbox`. Le piège est identifié et commenté aux quatre endroits concernés.
+### 2.1 `storage.TableManager` / `GeoTableManager` sont morts en production
+
+`internal/storage/metadata.go` déclare toujours `TableManager`, `TableReader`, `TableWriter` et
+`GeoTableManager` — les contrats « une `Metadata` par appel » d'avant le refactoring.
+`duckdb/table.go`, `duckdb/features.go` et `duckdb/mvt.go` (293 lignes) les implémentent, mais
+uniquement en déléguant : chacune des 20 méthodes fait `repo, err := a.Table(meta)` puis un appel de
+repository.
+
+**Aucun service, aucun handler n'appelle plus une seule de ces méthodes.** Elles ne sont maintenues
+en vie que par :
+
+- `core/core.go:26-27` — `storageAdapter` embarque encore `storage.TableManager` et
+  `storage.GeoTableManager`, ce qui force tout futur adaptateur (et le mock) à les implémenter ;
+- `storage/mocks/storage_mock.go` — 250 lignes de mock pour une surface non appelée ;
+- `storage/storagetest/data_suite.go` — la suite de conformité « données » teste `storage.Storage`
+  au lieu de `data.TableResolver`.
+
+Conséquence pratique : chaque méthode de délégation **refait un `data.Open` (donc un
+`ValidateIdentifier` + `QuoteIdentifier`) à chaque appel**, exactement le coût que `TableResolver`
+devait supprimer. Le commentaire de `duckdb/table.go:14-16` décrit d'ailleurs lui-même ces méthodes
+comme celles que les services n'utilisent plus.
+
+**Action.** Supprimer `duckdb/table.go`, `duckdb/features.go`, `duckdb/mvt.go`, les interfaces
+`TableManager`/`TableReader`/`TableWriter`/`GeoTableManager` de `storage/metadata.go` et l'agrégat
+`storage.Storage` de `aggregate.go` ; réduire `core.storageAdapter` à
+`catalog.MetadataManager + data.TableResolver + storage.TableCreator` ; réécrire `data_suite.go`
+contre `data.TableResolver` et amputer `storage_mock.go` d'autant. `storage.Row`, `ColumnInfo`,
+`GeoFeature`, `GeoQuery` et `SortField` restent — la nouvelle couche les utilise.
+
+Gain : ~700 lignes de production et de mock supprimées, une seule façon d'accéder à une table.
+
+### 2.2 `catalog.Catalog` : la cascade transactionnelle n'est pas branchée
+
+`duckdb/catalog/catalog.go:36-77` définit `Deleter`, `Catalog.Register` et `Catalog.DeleteTable` —
+la suppression d'une table et de tous ses dépendants dans une transaction unique. **Rien n'appelle
+`DeleteTable` ni `Register`.**
+
+`Adapter.Remove` (`duckdb/adapter.go:159`) délègue à `Repository.Remove`
+(`duckdb/catalog/metadata.go:213`), qui fait deux `Exec` indépendants :
+
+```
+DROP TABLE IF EXISTS <physicalName>    -- Exec 1
+DELETE FROM metadata WHERE tableId = ? -- Exec 2
+```
+
+Si le second échoue, la ligne de métadonnées survit à sa table physique : toute lecture ultérieure
+sur ce `tableId` échoue en 500 (« table t_… does not exist »), et la table n'est plus supprimable
+sans intervention manuelle. C'est précisément le scénario que `Catalog.DeleteTable` prévient.
+
+**Action.** Router `Adapter.Remove` vers `Catalog.DeleteTable` et y intégrer le `DROP TABLE` dans la
+même transaction — ou supprimer `Deleter`/`Register`/`DeleteTable` si le besoin de cascade n'existe
+pas. Ne pas laisser les deux.
+
+### 2.3 Fuites de couche résiduelles
+
+- `duckdb/derive.go:21` — `registeredPhysicalNames` fait un `SELECT physicalName FROM metadata` en
+  SQL brut depuis le paquet `duckdb`, alors que le catalogue a un repository dédié. Doit devenir une
+  méthode du `Repository` catalogue.
+- `duckdb/create.go:19` — `describeColumns` n'est qu'un alias d'une ligne sur `data.DescribeColumns`.
+  À supprimer, appeler directement.
+- `storage.SQLWrapper` n'a plus qu'un consommateur, le harnais de test
+  `storagetest/catalog_suite.go:22`. Son commentaire dans `aggregate.go:32-35` lui prête encore un
+  rôle de production qu'il n'a plus.
+- `catalog.MetadataReader.TableExists` n'a aucun appelant en production, seulement des tests. À
+  retirer du contrat ou à assumer explicitement.
+- `data.PkeysToArgs` et `data.Placeholders` sont exportés et testés mais ne servent qu'à
+  `PkeyInClause`, dans le même paquet. À rendre privés.
 
 ---
 
 ## 3. Défauts de correction
 
-### 3.1 `ColumnType` : un `DESCRIBE` complet par colonne (N+1)
+### 3.1 `POST /tables/{id}/bbox` interprète le bbox en EPSG:3857
 
-`SchemaService.Schema` (`internal/service/schema.go:41-58`) appelle `storage.Columns` puis
-`storage.ColumnType` pour **chaque** colonne. Or `Adapter.ColumnType`
-(`internal/storage/duckdb/table.go:68`) exécute un `DESCRIBE` complet et scanne le résultat jusqu'à
-trouver la colonne. Une table à 40 colonnes coûte donc **41 requêtes `DESCRIBE`** par miss de cache.
+`duckdb/data/geo.go:97-106` (`PkeysInBbox`) construit `ST_MakeEnvelope(?, ?, ?, ?)` **sans
+reprojection**, alors que la colonne géométrique est stockée en EPSG:3857. Le client doit donc
+fournir des mètres Web Mercator.
 
-Le commentaire de `SchemaService.Schema` affirme le contraire : « one DESCRIBE-driven population,
-not one per column, per cache miss ». La documentation décrit une intention non implémentée.
+Tous les autres bbox de l'API sont en OGC:CRS84 : `Metadata.Bbox`, `GeoRepository.Extent`
+(`geo.go:138`), et le chemin bbox de `Features` (`geo.go:256`) qui, lui, transforme bien
+l'enveloppe. Un client qui passe des degrés à `/bbox` reçoit silencieusement zéro résultat.
 
-C'est le défaut de performance le plus net du code : il frappe chaque expiration de cache schéma,
-sur un chemin emprunté par `/schema`, `/rows` (conversion de types), `/filter`, `/export`, et par
-`ValidateColumns` sur chaque tuile avec `attrs`.
+**Action.** Aligner `PkeysInBbox` sur `Features` :
+`ST_Transform(ST_MakeEnvelope(?,?,?,?), 'OGC:CRS84', 'EPSG:3857')`. C'est une rupture de contrat
+pour tout client existant — à annoncer.
 
-**Correctif :** exposer `Adapter.describeColumns` (déjà présent, `duckdb/create.go:18`) via une
-méthode `ColumnsWithTypes(ctx, meta) ([]ColumnSchema, error)` et faire de `Schema` un seul appel.
-`ColumnType` peut rester pour compatibilité mais ne devrait plus être sur le chemin chaud.
+### 3.2 L'ETag des tuiles peut être malformé
 
-### 3.2 Une panne base renvoie 404
+`handlers/geo.go:208-212` :
 
-`TableResolver.ResolveTable` (`internal/router/validation/resolver.go:41`) mappe **toute** erreur de
-`GetMetadata` en 404. `Adapter.GetMetadata` (`duckdb/adapter.go:207`) ne distingue `sql.ErrNoRows`
-que dans le message d'erreur, pas dans un type. Conséquence : une connexion DuckDB tombée, un
-timeout de contexte, ou une colonne manquante après migration ratée sont tous rapportés au client
-comme « table inexistante », et ne sont **pas loggués** (`WriteError` ne loggue qu'à partir de 500).
+```go
+return fmt.Sprintf(`"%s-%d-%d-%d-%d-%s-%s-%v"`, ..., q.Filter, q.Args)
+```
 
-**Correctif :** introduire un `storage.NotFoundError` retourné par `GetMetadata` sur `ErrNoRows`
-uniquement, et faire de `ResolveTable` un `response.MapServiceError(err)` comme partout ailleurs.
+`q.Args` contient des valeurs fournies par le client via `?filter=`. Une valeur contenant un
+guillemet double produit un `ETag` avec un guillemet non échappé au milieu — en-tête invalide
+(RFC 9110 §8.8.3), que les caches intermédiaires peuvent rejeter ou tronquer. Le même motif alimente
+la clé du cache applicatif (`service/geo.go:434`), où il est inoffensif.
 
-### 3.3 Erreurs client classées en 500
+**Action.** Hacher la clé (`fnv` ou `sha256` tronqué) plutôt que de l'interpoler telle quelle. Cela
+raccourcit aussi un ETag qui peut aujourd'hui faire plusieurs kilo-octets sur un filtre complexe.
 
-Plusieurs chemins renvoient une erreur DuckDB brute au mapping par défaut (500) alors que la faute
-est celle de l'appelant :
+### 3.3 `numberMatched` OGC est le compte de la page
 
-- `RowsHandler.AddRows` / `UpdateRow` : un nom de colonne inexistant ou un type incompatible
-  produit une erreur `Exec` → `MapServiceError` → 500. Aucune validation de colonnes n'est faite
-  côté handler, contrairement à `ListRows` qui, lui, appelle `ValidateColumns` sur le `sort`.
-- `TablesHandler.AddColumn` (`handlers/tables.go:221`) : le 400 est en dur, ce qui est le bon
-  choix ici — mais l'incohérence avec `AddRows` est arbitraire.
-- `WKT` invalide sur la colonne géométrique : `Adapter.Update`/`InsertRow` enveloppent l'erreur dans
-  un message mixte français/anglais (`"update failed (invalid WKT si colonne géométrique)"`,
-  `duckdb/table.go:332`) sans type dédié — donc 500, et le message n'atteint jamais le client.
+`handlers/features.go:252` renvoie `len(features)` pour `numberMatched` **et** `numberReturned`. La
+spécification OGC API - Features définit `numberMatched` comme le nombre total d'éléments
+correspondant à la requête, indépendamment de la pagination. Un client conforme qui s'en sert pour
+dimensionner sa pagination se trompe systématiquement.
 
-**Correctif :** valider les colonnes d'un insert/patch contre `ValidateColumns` (le validateur est
-déjà embarqué dans `RowsHandler`, il n'est simplement pas utilisé sur ces deux routes), et typer
-l'erreur WKT.
+**Action.** Soit ajouter un `COUNT(*)` sur les mêmes critères (`GeoRepository` a déjà tout ce qu'il
+faut pour le construire), soit omettre le champ — la spécification l'autorise quand le total est
+inconnu. Ne pas laisser une valeur fausse.
 
-### 3.4 `SourceService.Delete` : mutation partiellement hors verrou
+### 3.4 Statuts HTTP en dur là où l'erreur peut venir de l'autre côté
 
-`internal/service/source.go:387-429`. `found := s.sources[index]` copie la struct, puis le verrou est
-relâché. Ensuite :
+`response.WriteError` ne masque le message qu'à partir de 500 — délibéré et correct. Mais plusieurs
+handlers court-circuitent `MapServiceError` :
 
-- `found.Loaded = false` / `found.TableId = ""` (lignes 407-408) écrivent dans **la copie** — sans
-  effet, code mort.
-- `found.Layers[i].Loaded = false` (lignes 415-416) écrivent à travers le **slice partagé** avec
-  l'entrée vivante du cache, **sans détenir `mu`**.
+**Erreurs internes classées 400** (le message DuckDB, contenant le `physicalName`, part au client) :
 
-Le second point est une écriture concurrente réelle : un `List` simultané fait `cloneSources` sous
-verrou et lit `src.Layers[...]` pendant que `Delete` y écrit. `go test -race` ne l'attrape pas
-faute de test concurrent sur ce chemin.
+- `handlers/tables.go:240-241` — `AddColumn` : toute erreur devient 400, panne DuckDB comprise.
+- `handlers/tables.go:154-155` — `RenameTable` : idem sur `UpdateMetadata`.
 
-**Correctif :** ne rien muter hors verrou. Reprendre `mu` pour l'étape finale et faire la mise à
-jour d'état au même endroit que la suppression de l'entrée (qui, elle, est déjà correcte).
+**Erreurs clientes classées 500** :
 
-### 3.5 `numberMatched` OGC est faux
+- `handlers/rows.go:80-81` — `ListRows` : un `storage.InvalidSortError` (colonne de tri inconnue,
+  fournie par le client) remonte en 500 au lieu de 400.
+- `handlers/rows.go:158`, `:199`, `:243`, `:269` et `handlers/tables.go:161`, `:183`, `:205` —
+  mêmes 500 en dur, où un `NotFoundError` ou un `ValidationError` peut passer.
 
-`handlers/features.go:251` : `"numberMatched": len(features)`. Le standard OGC API - Features définit
-`numberMatched` comme le nombre total d'entités correspondant à la requête **indépendamment de la
-pagination**, et `numberReturned` comme le nombre renvoyé dans la page. Les deux sont ici la même
-valeur. Un client OGC conforme conclura toujours qu'il tient la totalité du jeu.
+**Action.** `response.MapServiceError(err)` partout ; c'est déjà le cas dans la majorité des
+handlers, ces occurrences sont des oublis.
 
-**Correctif :** soit un `COUNT(*)` sur le même prédicat (coûteux mais correct).
+### 3.5 `Filtered` ne trie pas
 
-### 3.6 `POST /tables/{id}/bbox` attend des coordonnées EPSG:3857
+`duckdb/data/rows.go:77-94` construit `SELECT … FROM … WHERE … LIMIT ?` sans `ORDER BY`, alors que
+toutes les autres lectures paginées ajoutent `__pkey` en départage. DuckDB ne garantit aucun ordre :
+deux appels identiques à `POST /tables/{id}/filter` peuvent renvoyer des lignes différentes dès que
+le résultat dépasse la limite.
 
-`Adapter.FilterByBbox` (`duckdb/mvt.go:103-106`) compare la géométrie (stockée en 3857) à un
-`ST_MakeEnvelope` **non reprojeté**, alors que `GetFeatures` (`duckdb/features.go:303-305`)
-transforme explicitement son bbox depuis `OGC:CRS84`. Deux endpoints bbox, deux CRS d'entrée
-différents, aucun des deux documenté côté API. Un appelant qui passe du lon/lat à `/bbox` obtient
-silencieusement zéro résultat.
+**Action.** Ajouter `ORDER BY __pkey`.
 
-**Correctif :** aligner sur `OGC:CRS84` (le CRS déjà utilisé par `Metadata.Bbox`, `filtered-extent`
-et OGC items), et le documenter dans l'annotation Swagger.
+### 3.6 `Update` et `GeoJSONByPkey` ne se protègent pas d'une liste de pkeys vide
 
-### 3.7 ETag potentiellement malformé
+`data/rows.go:217` (`Update`) et `data/geo.go:154` (`GeoJSONByPkey`) appellent `PkeyInClause` sans
+vérifier `len(pkeys) > 0`, produisant `__pkey IN ()` — erreur de syntaxe DuckDB. `ByPkey` et
+`Delete` ont le garde ; le contrat `data.RowRepository` ne le promet d'ailleurs que pour ces
+deux-là. Aucun appelant actuel ne déclenche le cas, mais `Features` avec `Pkeys: []string{}` non-nil
+y arrive.
 
-`tileETag` (`handlers/geo.go:207`) formate `q.Args` avec `%v` à l'intérieur de guillemets. Les args
-proviennent de valeurs de filtre fournies par le client (JSON). Une valeur contenant un `"` produit
-un en-tête `ETag` syntaxiquement invalide ; un caractère de contrôle produit un en-tête rejeté par
-`net/http`. Même remarque, sans impact protocolaire, pour la clé de cache `GeoService.GetTile`
-(`service/geo.go:41`).
+**Action.** Déplacer le garde dans `PkeyInClause` (renvoyer `FALSE` pour une liste vide), ce qui
+règle les quatre appelants d'un coup.
 
-**Correctif :** hacher (`fnv`/`sha256` tronqué) la concaténation des composants au lieu de les
-interpoler tels quels.
+### 3.7 Le cache de schéma n'est pas invalidé à la suppression d'une table
 
-### 3.8 `rowCount` est un `INTEGER` DuckDB
+`service/metadata.go:76-82` (`RemoveTable`) invalide le cache de métadonnées mais pas celui de
+`SchemaService`, indexé sur `tableId`. L'entrée survit jusqu'à son TTL (300 s par défaut). Sans
+conséquence fonctionnelle — les `tableId` sont des UUID, donc pas de collision — mais c'est une
+entrée retenue pour rien et une asymétrie avec l'invalidation faite par `AddColumn`.
 
-`duckdb/adapter.go:33` déclare `rowCount INTEGER` (32 bits signés) là où `storage.Metadata.RowCount`
-est un `int64` et où `RefreshDerivedMetadata` y écrit un `COUNT(*)`. Au-delà de 2,1 milliards de
-lignes l'écriture échoue. Peu probable à court terme, mais c'est une incohérence de type gratuite —
-`BIGINT` est le bon type.
+### 3.8 `clusterByHilbert` laisse une fenêtre où la table n'existe pas
 
-### 3.9 Requêtes de lecture sans borne
+`duckdb/create.go:122-153` fait `CREATE TABLE tmp AS …`, `DROP TABLE t_x`, `ALTER TABLE tmp RENAME
+TO t_x` en **trois `Exec` distincts**. Chacun prend et relâche `writeMu`, et les lectures ne
+prennent jamais ce verrou. Entre le `DROP` et le `RENAME`, une requête concurrente sur ce `tableId`
+(dont la ligne de métadonnées existe déjà, `Create` ayant été appelé en premier) échoue en 500.
 
-- `GetDistinctValues` (`duckdb/table.go:264`) : `SELECT DISTINCT` sans `LIMIT`. Une colonne à forte
-  cardinalité (un identifiant, une date) renvoie la colonne entière au client. Il faut paginer cela.
-- `FilterByBbox` (`duckdb/mvt.go:102`) : renvoie **tous** les pkeys intersectants, sans `LIMIT`. Il faut paginer cela.
-  Un bbox mondial sur une table à 5 M de lignes matérialise 5 M d'UUID en mémoire puis en JSON.
+La fenêtre est courte et suppose qu'un client interroge une table pendant son import, mais c'est
+atteignable via l'UI, où l'import et un rafraîchissement de liste sont concurrents.
 
-Les deux sont atteignables sans authentification. Ce sont les seuls chemins de lecture non bornés :
-tout le reste passe par `maxRowLimit` / `maxListLimit` / `defaultFeaturesLimit`.
+**Action.** Exécuter les trois instructions dans un seul `WithTx`.
 
-**Correctif :** Il faut paginer cela. mettre en place une pagination
+### 3.9 `Migrate` ne peut pas rattraper une base « à jour mais sans `schema_version` »
 
-### 3.10 `IN ()` sur liste vide
+`duckdb/catalog/migrations.go:30-70` : si la table `metadata` existe mais que `schema_version` est
+absente, la version est forcée à 0 et toutes les migrations sont rejouées. Pour une base créée par
+une version du code postérieure aux colonnes `sourceName`/`sourceLayer` mais antérieure à
+`schema_version`, le premier `ALTER TABLE metadata ADD COLUMN sourceName` échoue et **le serveur
+refuse de démarrer**.
 
-`GetRowsByPkey` et `RemoveRows` (`duckdb/table.go:196`, `:338`) construisent `IN (%s)` avec
-`placeholders(0)` si la liste est vide → `IN ()`, erreur de syntaxe DuckDB. Les handlers HTTP
-protègent aujourd'hui les deux chemins, mais les méthodes de service (`RowService.GetRowsByPkey`,
-`RemoveRows`) sont exportées et ne garantissent rien. Un garde en tête de méthode storage
-(retourner vide / no-op) supprime le piège pour tout appelant futur.
-
-### 3.11 Double validation morte
-
-`Adapter.InsertRow` (`duckdb/table.go:350-355`) valide `meta.PhysicalName` deux fois de suite.
-Sans conséquence, mais c'est du bruit qui suggère une fusion de patchs mal résolue.
-
-### 3.12 Les endpoints géo ne vérifient pas `IsGeo`
-
-`GeoHandler` n'appelle que `ResolveTable`, jamais un équivalent du `resolveGeoTable` que
-`FeaturesHandler` (`handlers/features.go:206`) applique correctement. Les quatre routes
-`/tiles/{z}/{x}/{y}`, `/tiles/{z}/{x}/{y}/features`, `/geometry-types`, `/bbox` et
-`/filtered-extent` acceptent donc un `tableId` de table non géo. Le `geometryColumn` vide descend
-jusqu'à `QuoteIdentifier("")`, qui rejette sur « empty identifier » → **500**, là où la réponse
-juste est 404 (la collection géo n'existe pas) ou 400.
-
-Le contrôle existe et est correct pour OGC et pour l'export (`handlers/export.go:54`) ; il manque
-exactement là où la géométrie est la seule raison d'être de l'endpoint.
-
-**Correctif :** à court terme, un `resolveGeoTable` partagé par `GeoHandler` et `FeaturesHandler`.
-À terme, c'est le genre d'invariant qui doit être structurel plutôt que répété par handler — voir
-`docs/plan-repository-data.md`.
+**Action.** Rendre les migrations tolérantes (tester la présence de la colonne avant l'`ALTER`, ou
+ignorer « column already exists »), ou déduire la version initiale de la présence des colonnes
+plutôt que de la seule existence de la table.
 
 ---
 
-## 4. Défauts structurels et de conception
+## 4. Performance
 
-### 4.1 Le catalogue `metadata` n'a pas de repository
+### 4.1 `RefreshDerivedMetadata` : recalcul complet après chaque écriture d'une ligne
 
-C'est le point le plus structurant, et il fait l'objet d'un plan dédié :
-**`docs/plan-repository-metadata.md`**. En résumé :
+C'est le point chaud principal. `duckdb/catalog/metadata.go:273-320` fait, à chaque appel :
 
-- Le DDL du catalogue (`metadataSchema`) est une constante dans `duckdb/adapter.go`, mélangée à
-  l'ouverture de connexion et aux méthodes de données.
-- Les écritures passent par `UpdateMetadata(map[string]any)` avec une allowlist de chaînes
-  reconstruite à chaque appel (`adapter.go:259-262`) — non typé, non vérifié à la compilation.
-- La liste des colonnes est répétée quatre fois (DDL, `SELECT` de `GetMetadata`, allowlist
-  d'`UpdateMetadata`, `metadataSortColumns`). Ajouter un champ, c'est modifier quatre endroits sans
-  filet.
-- La pagination de `/tables` est faite **en Go** : `ListTables` (`service/metadata.go:48`) charge
-  *tous* les `tableId` puis découpe la tranche, avec un `GetMetadata` par élément.
-- `LoadedSourceNames` (`service/metadata.go:133`) fait de même : un `SELECT` global + un
-  `GetMetadata` par table, à chaque `POST /sources/refresh`.
-- Le framework de migration existe (`duckdb/migrations.go`) mais `schemaMigrations` est **vide**,
-  alors que le schéma a déjà évolué : `sourceName`/`sourceLayer` ont été ajoutés hors migration, ce
-  que le commentaire d'`adapter.go:19-23` assume explicitement comme « limitation connue ». Toute
-  base créée avant ces colonnes est cassée.
+1. un `SELECT` de la ligne de métadonnées ;
+2. un `SELECT COUNT(*)` sur **toute** la table ;
+3. pour une table géo, un `MIN/MAX` sur `ST_Transform` de **toute** la colonne géométrique ;
+4. un `UPDATE` des métadonnées.
 
-### 4.2 `TableCreator` mélange création et introspection de fichiers
+Et il est appelé après chaque `InsertRow`, `RemoveRows` et `BulkInsertRows` (`service/rows.go:274`,
+`:291`, `:307`). Insérer une ligne dans une table d'un million de lignes déclenche donc une
+agrégation reprojetée sur le million ; supprimer une ligne aussi.
 
-`storage/aggregate.go:9` : l'interface porte `CreateFromFile`/`CreateFromQuery` (création) mais
-aussi `ListLayers`/`DetectCRS` (introspection d'un fichier source, sans rien créer). Un futur adapter
-devra implémenter les quatre même s'il ne lit pas de fichiers. Une interface `SourceInspector`
-séparée serait plus juste.
+DuckDB étant colonnaire, le `COUNT(*)` est bon marché ; le `ST_Transform` sur toute la colonne ne
+l'est pas du tout.
 
-### 4.3 `TableExists` est du code mort en production
+**Actions, par ordre de rapport/effort :**
 
-`storage/metadata.go:47`. Implémentée, testée, exposée dans l'interface publique et dans les mocks —
-aucun appelant hors tests. Soit un service en a besoin (`ResolveTable` pourrait l'utiliser), soit
-elle sort du contrat.
+- Ne recalculer le bbox que si l'écriture touche la géométrie. `UpdateRow` fait déjà cette
+  distinction (`service/rows.go:255`) ; `InsertRow`/`RemoveRows`/`BulkInsertRows` non. Un
+  `RefreshDerived(ctx, tableId, touchesGeometry bool)` suffit : un insert scalaire n'aura plus qu'un
+  `COUNT(*)` et un `UPDATE`.
+- Supprimer le `GetMetadata` en tête : le service a déjà la `Metadata` résolue, il peut la passer.
+- À terme, agréger le bbox en EPSG:3857 puis ne transformer que les 4 coordonnées du résultat, au
+  lieu de reprojeter chaque géométrie avant d'agréger. C'est le vrai gain : de O(lignes)
+  transformations à 1.
 
-### 4.4 `describeColumns` duplique `Columns` / `ColumnType`
+### 4.2 `SchemaService.Types` reconstruit une map par ligne
 
-`duckdb/create.go:18` et `duckdb/table.go:36`/`:68` font le même `DESCRIBE` avec le même scan
-générique, en trois implémentations. Un seul helper interne suffirait — et résoudrait au passage
-le N+1 de 3.1.
+`service/rows.go:77-88` : `convertRow` appelle `s.schema.Types(ctx, meta)` — et `convertRows` (`:90`)
+appelle `convertRow` **pour chaque ligne**. `SchemaService.Types` (`service/schema.go:67`) lit bien
+le cache, puis **reconstruit intégralement la map nom → type à chaque appel**.
 
-### 4.5 Le routeur dépend du type concret `*core.Services`
+Pour une page de 100 lignes × 30 colonnes : 100 allocations de map et 3 000 insertions pour un
+résultat identique 100 fois. Sur un export de 100 000 lignes par lots de 1 000, 100 000
+reconstructions.
 
-`router.NewRouter(svcs *core.Services, ...)` (`router/routes.go:39`). Le paquet `router` prend une
-dépendance sur `core` alors que chaque handler prend déjà des ports étroits. Passer les huit
-services en paramètres nommés, ou une interface `Services` déclarée côté `router`, restaurerait la
-symétrie du pattern appliqué partout ailleurs.
+**Action.** Résoudre les types une fois dans `convertRows` et les passer à `convertRow` — deux
+lignes de diff, gain proportionnel à la taille de page. Accessoirement, mettre la map elle-même en
+cache dans `SchemaService`.
 
-### 4.6 `ExportHandler` prend le type concret
+### 4.3 `ListRows` fait trois requêtes là où deux suffisent
 
-`handlers/export.go:19` : `exportService *service.ExportService`, alors que `ports.go` définit un
-port pour les cinq autres services. Incohérence isolée ; un `exportAPI` de deux méthodes suffit.
+`service/rows.go:105-135` : `Pkeys` (requête 1) → `ByPkey` (requête 2) → `Count` (requête 3). Le
+détour par les pkeys applique tri et pagination deux fois, et la seconde requête refait une
+recherche `IN (…)` sur 100 valeurs au lieu de lire des lignes déjà localisées.
 
-### 4.7 Cache schéma non invalidé à la suppression de table
+**Action.** Une seule requête `SELECT * EXCLUDE(geom) FROM t ORDER BY … LIMIT ? OFFSET ?` donne le
+même résultat. Garder `Pkeys` pour les appelants qui n'ont réellement besoin que des clés
+(`FilterByBbox`). Le `Count` reste séparé ; `ListRowsPage` (export) a déjà raison de ne pas le
+faire.
 
-`MetadataService.RemoveTable` invalide le cache métadonnées mais pas le cache schéma de
-`SchemaService` (qui est un autre paquet, avec son propre LRU). Les entrées orphelines expirent
-seules au TTL. Sans impact fonctionnel (le `tableId` est un UUID neuf à chaque création), mais c'est
-une fuite mémoire bornée et une entorse à la règle 11.
+### 4.4 Points mineurs
 
-### 4.8 Aucune authentification, autorisation, CORS ni rate limiting
+- `duckdb/adapter.go:46` — `db.SetMaxOpenConns(4)` est en dur. C'est le paramètre de tuning le plus
+  susceptible d'être ajusté par un exploitant : il doit vivre dans `config.DuckDBConfig`.
+- `handlers/geo.go:115` — `max-age=60` en dur, même remarque.
+- `data/geo.go:275` — quand `Attrs` est vide, la projection est
+  `SELECT __pkey, * EXCLUDE (geom), …` : `__pkey` est sélectionné **deux fois** et transite en double
+  sur chaque feature. `ScanFeatureRows` l'absorbe sans dommage, mais c'est de la bande passante
+  DuckDB → Go gratuite.
+- `handlers/features.go:218-229` — `featuresPaginationParams` n'applique **aucun plafond** au `limit`
+  client, contrairement à `RowsHandler.paginationParams`. `?limit=10000000` sur
+  `/ogc/collections/{id}/items` matérialise autant de features en mémoire. Le commentaire justifie
+  le choix par « c'est le bbox qui doit borner », mais le bbox est optionnel. Même chose pour
+  `GetTileFeatures` (`handlers/geo.go:185-190`). Un `maxFeaturesLimit` en config s'impose.
 
-Le serveur expose en écriture (`POST /rows`, `DELETE /tables/{id}`, `POST /derive`,
-`POST /sources/upload`) sans aucun contrôle d'accès. C'est cohérent avec le périmètre déclaré
-(règle 16) et ce n'est donc pas un bug — mais ce n'est écrit nulle part comme une décision assumée.
-Il faut que le spec le dise explicitement, faute de quoi le déploiement se fera par défaut.
+---
 
-### 4.9 `web/node_modules` contient un fichier Go dans le module
+## 5. Ce qui est solide
 
-`web/node_modules/flatted/golang/pkg/flatted/flatted.go` est compilé par `go vet ./...`,
-`go build ./...` et `go test ./...`. `node_modules` est gitignoré, donc la CI sur checkout frais ne
-le voit pas — mais en local, tout paquet Go déposé par npm entre dans le module. Un
-`web/node_modules/.../go.mod` factice, ou un `//go:build ignore`, ou simplement un `go.work`
-excluant `web/`, ferme le sujet.
+À conserver tel quel :
 
-### 4.10 Les tables de données n'ont pas non plus de repository
+- **La discipline SQL.** Tout identifiant interpolé passe par `ValidateIdentifier` ou
+  `QuoteIdentifier`, toute valeur est liée. Vérifié sur les chemins générés dynamiquement :
+  `ORDER BY`, `SET`, `EXCLUDE`, filtres, projections d'attributs, noms d'attributs MVT.
+- **La validation de `/derive` par l'AST DuckDB** (`duckdb/derive.go`) plutôt que par blacklist de
+  mots-clés, avec collecte des noms de CTE et rejet de toute `TABLE_FUNCTION`. Nettement au-dessus
+  de la moyenne du genre.
+- **Le pattern « interface déclarée côté consommateur »**, appliqué systématiquement
+  (`handlers/ports.go`, `service/derive.go`, `validation/`, `core/core.go`). Chaque dépendance est
+  visible au point d'appel.
+- **La séparation contrats / implémentation** apportée par les refactorings : `storage/catalog` et
+  `storage/data` sont dépourvus de toute référence à DuckDB, `storage/sort` est délibérément sans
+  dépendance pour casser le cycle. Un adaptateur PostGIS est réellement branchable.
+- **Les suites de conformité** (`storagetest/`) exécutées contre l'adaptateur DuckDB.
+- **La gestion du timeout d'export** — sortie du `Group` chi *et* effacement du `WriteDeadline` — et
+  le `maxBodyBytes` qui rejette sur `Content-Length` avant de lire le corps.
+- **La couverture de tests**, homogène : chaque handler, service et repository a son fichier.
 
-Symétrique de 4.1, côté données cette fois. Chaque méthode de `table.go`, `mvt.go` et `features.go`
-reçoit une `storage.Metadata` et recommence le même préambule : valider `physicalName`, guillemeter
-`geometryColumn`, assembler la requête par `fmt.Sprintf`. Le décompte est net :
+---
 
-| Motif | Occurrences |
+## 6. Nettoyage des commentaires
+
+Chantier le plus volumineux : **194 références à un référentiel externe, dans 53 fichiers.**
+
+### 6.1 Ce que le code contient
+
+| Forme | Occurrences | Statut |
+|---|---|---|
+| `règle N` | ~150 | Défini en `spec.md` §0 |
+| `§4.2`, `§5.1`, `§4.1`… | ~22 | Défini en `spec.md` (sections) |
+| `PERF-N`, `GEO-N`, `HTTP-2`, `NEW-SEC-1`, `NEW-BUG-N` | ~40 | Défini en `spec.md` §11 (glossaire) |
+| `audit §3.12`, `audit §3.10`, `audit §1.2`, `docs/audit.md §5` | 12 | **Pendantes** — `docs/audit.md` n'existe pas |
+| `§0.2`, `§1.3`, `§2.2` | 3 | **Pendantes** — ces sections n'existent pas |
+
+### 6.2 Le problème
+
+Ces références étaient un pont vers des documents d'audit successifs. Le pont n'a survécu que par un
+glossaire (`spec.md` §11) qui traduit des codes en phrases — ce qui prouve que les codes n'apportent
+rien que la phrase n'apporterait directement.
+
+Concrètement :
+
+```go
+// ListRows returns a page of rows ordered by sort, or deterministically by
+// pkey when empty (règle 8), with values converted to native JSON types
+// (règle 12) and the geometry column always excluded (règle 7).
+```
+
+Le lecteur — humain ou agent — doit ouvrir `spec.md`, chercher §0, compter jusqu'à trois règles
+distinctes, pour n'apprendre exactement que ce que la phrase disait déjà. La référence est du bruit
+pur, et elle vieillit mal : 15 occurrences pointent déjà vers un fichier ou une section supprimés.
+
+Plusieurs commentaires racontent en outre **l'histoire** plutôt que l'état : `create.go:84`
+(« vérifié contre un point connu (Paris) quand ceci a été corrigé pour la première fois »),
+`import.go:77`, `metadata.go:114`, `source.go:386`, `routes.go:79` et `:152`, `sources.go:113`
+(« ne fait pas partie de la table d'endpoints d'origine de `spec.md` »). Le `CLAUDE.md` du dépôt
+l'interdit explicitement : *« Instructions describe … the state of the related code. It does not
+contain information about the past or old choices. »*
+
+### 6.3 Action
+
+1. **Supprimer les 15 références pendantes** (`audit §…`, `docs/audit.md`, `§0.2`, `§1.3`, `§2.2`) —
+   sans discussion, elles ne pointent nulle part.
+2. **Supprimer les tags d'audit** (`NEW-BUG-N`, `NEW-SEC-1`, `PERF-N`, `GEO-N`, `HTTP-2`) en gardant
+   la phrase qui les entoure : elle est autoportante partout où j'ai vérifié. Supprimer ensuite le
+   glossaire `spec.md` §11, devenu sans objet.
+3. **Supprimer les `règle N` et les `§X.Y`**, en conservant l'énoncé. Les invariants qu'ils
+   désignent restent vrais : ils restent documentés dans `spec.md` §0 comme référence, et dans le
+   code comme phrase lisible sans détour. Un commentaire doit se suffire à lui-même.
+4. **Réécrire au présent les commentaires historiques** listés en §6.2.
+5. **Purger les commentaires qui mentent** une fois §2 fait — `duckdb/mvt.go:11-16` prétend rejeter
+   une table scalaire par un `NotFoundError` alors que le code fait `geo, _ := repo.Geo()` et
+   renvoie une interface nulle avec une erreur nulle (déréférencement nul garanti s'il était
+   appelé). Ce fichier étant mort (§2.1), sa suppression règle le cas.
+
+Le tout est mécanisable en une passe, sans impact fonctionnel : `mise run test` doit rester vert à
+l'octet près.
+
+---
+
+## 7. Dérive documentaire de `spec.md`
+
+`spec.md` §12 (« Écarts connus entre ce document et le code ») est lui-même périmé sur la moitié de
+ses entrées :
+
+| Entrée §12 | Réalité aujourd'hui |
 |---|---|
-| `ValidateIdentifier(meta.PhysicalName)` | 23 |
-| `QuoteIdentifier(meta.GeometryColumn)` | 10 |
-| Projection `EXCLUDE (<geom>)` réécrite | 4 |
-| Fonctions de scan génériques quasi identiques (`scanRows`, `scanFeatureRows`) | 2 |
-| Blocs de sélection d'attributs identiques (`features.go:30` et `:115`) | 2 |
+| « Migrations : la liste est vide » | **Faux** — `migrations.go` en contient 7 |
+| « `ColumnType` : un `DESCRIBE` par colonne » | **Faux** — `Types` fait un seul `DESCRIBE` |
+| « `GetDistinctValues`, `FilterByBbox` : sans plafond » | **Faux** — plafonnés par les handlers |
+| « `numberMatched` renvoie le compte de la page » | Toujours vrai (§3.3) |
+| « bbox de `POST /bbox` en EPSG:3857 » | Toujours vrai (§3.1) |
+| « `TableExists` sans appelant » | Toujours vrai (§2.3) |
 
-Conséquences concrètes, toutes déjà relevées ailleurs dans cet audit : la validation d'identifiant
-est une **convention répétée 23 fois** plutôt qu'un invariant (règle 1 tenue par discipline, pas par
-construction) ; rien n'empêche d'appeler une opération géo sur une table non géo (3.12) ; le N+1
-schéma (3.1) vient du fait qu'aucun objet ne porte le schéma d'une table ; les gardes de liste vide
-(3.10) et de plafond (3.9) manquent parce qu'il n'y a pas de point de passage unique où les mettre.
-
-Traité par **`docs/plan-repository-data.md`**, conçu pour se dérouler en parallèle de 4.1.
+Par ailleurs `spec.md` §4.4 décrit encore l'agrégat `Storage` (`TableManager` + `GeoTableManager` +
+`TableCreator`) comme le contrat vivant, alors que les services consomment `data.TableResolver`.
+`spec.md` doit être repassé après §2.
 
 ---
 
-## 5. Dérive documentaire
+## 8. Recommandations, par ordre de valeur
 
-`docs/spec.md` est déclaré source de vérité par son propre préambule (« Toute décision présentée ici
-est définitive ») et par la règle 0 du fichier. Il ne l'est plus. Écarts relevés, au-delà de la
-refonte prévue :
+| # | Action | § | Effort | Risque |
+|---|---|---|---|---|
+| 1 | Supprimer l'ancienne surface `TableManager`/`GeoTableManager` et ses implémentations | 2.1 | M | Faible — code mort |
+| 2 | Rendre la suppression de table transactionnelle (brancher ou retirer `Catalog.DeleteTable`) | 2.2 | S | Faible |
+| 3 | `RefreshDerived` : ne recalculer le bbox que si la géométrie a bougé | 4.1 | S | Faible |
+| 4 | Résoudre les types une fois par page dans `convertRows` | 4.2 | XS | Nul |
+| 5 | Corriger le CRS de `PkeysInBbox` | 3.1 | XS | **Rupture d'API** — à annoncer |
+| 6 | Passer les handlers restants à `MapServiceError` | 3.4 | S | Faible |
+| 7 | Nettoyer les 194 références de commentaires | 6 | M | Nul |
+| 8 | Hacher l'ETag ; `ORDER BY __pkey` sur `Filtered` ; garde pkeys vide dans `PkeyInClause` | 3.2/3.5/3.6 | S | Faible |
+| 9 | Plafonner `limit` sur les endpoints features ; `maxOpenConns` en config | 4.4 | S | Faible |
+| 10 | `ListRows` en une requête | 4.3 | M | Moyen — chemin très testé |
+| 11 | Rendre `Migrate` tolérant ; transaction sur `clusterByHilbert` | 3.9/3.8 | S | Faible |
+| 12 | Repasser `spec.md` §4.4, §11, §12 | 7 | S | Nul |
 
-| Spec | Code |
-|---|---|
-| §4.1 `metadata` : 10 colonnes | 12 colonnes (`sourceName`, `sourceLayer`) |
-| §4.1 index `WHERE isGeo = TRUE` | index sans clause `WHERE` |
-| §4.4 signatures sans `ctx`, sur `tableId` | toutes les méthodes prennent `ctx` puis `Metadata` |
-| §4.4 `Remove(tableId, pkeys)` | `RemoveRows` (renommée, la spec note le conflit ailleurs) |
-| §4.4 `Tile` sans `GeoQuery` | `Tile(..., attrs, q GeoQuery)` |
-| §4.4 pas de `GetFeaturesTile` | existe, avec son endpoint |
-| §4.4 `GetFeatures(..., limit)` | `(..., limit, offset)` |
-| §6.1 : pas de `/upload`, `/metadata`, `DELETE /sources/{name}` | les trois existent |
-| §6.1 : pas de `/filtered-extent`, `/tiles/.../features` | les deux existent |
-| §6.1 : pas de `/healthz`, `/readyz` | les deux existent |
-| §6.2 `middleware.Timeout` global | scopé au groupe `/api/v1`, export exclu |
-| §9 arborescence | `internal/core`, `internal/router/handlers`, `.../response`, `.../validation`, `internal/webui` absents |
-| §11 « plan d'implémentation » | entièrement réalisé — section obsolète par nature |
-| §4.1 « `CREATE TABLE IF NOT EXISTS` est le seul mécanisme de migration nécessaire » | `migrations.go` existe et contredit la phrase |
-| §10 exemples de tests | signatures périmées (pas de `ctx`, `cache.New`, `*Metadata`) |
-
-Par ailleurs, le code référence par tag des documents absents du dépôt : `docs/audit.md` (GEO-1,
-GEO-2) et `docs/audit2.md` (§4.5, NEW-BUG-*, NEW-SEC-1, PERF-*, HTTP-2). Ces tags apparaissent dans
-**~90 commentaires** ; un lecteur (humain ou LLM) ne peut pas les résoudre. Le nouveau `spec.md`
-doit fournir un glossaire de ces tags, sans quoi les commentaires du code sont des références
-mortes.
-
----
-
-## 6. Tests
-
-**Points forts.** Suite de conformité storage réutilisable ; mocks testify générés à la main mais
-complets ; tests HTTP par handler via `httptest` ; tests d'intégration DuckDB réels (pas de mock du
-moteur) ; `mise run test-race` disponible et la CI l'exécute.
-
-**Manques identifiés.**
-
-- **`router/response` à 32 %.** `MapServiceError` est le point de décision central pour le code de
-  statut de toute l'API, et il n'a pas de test exhaustif par type d'erreur. C'est le trou de
-  couverture le plus coûteux du dépôt, rapporté à ce que la fonction décide.
-- **Aucun test de concurrence sur `SourceService`.** Le verrou `mu` porte des invariants explicites
-  (le commentaire de la struct décrit le scénario de double `Load`), mais aucun test ne les
-  exerce — c'est pour cela que 3.4 passe inaperçu.
-- **Aucun test de migration réelle.** `migrations_test.go` teste le mécanisme sur une liste vide.
-  Rien ne vérifie qu'une base d'avant `sourceName` s'ouvre — et elle ne s'ouvre pas.
-- **Pas de test d'intégration bout-en-bout** (import fichier → tuile → export) sur un serveur monté
-  complet. `router_test.go` teste le câblage, pas un scénario.
-
----
-
-## 7. Recommandations, par ordre de valeur
-
-| # | Action | Effort | Réf. |
-|---|---|---|---|
-| 1 | Supprimer le N+1 `ColumnType` (une seule requête `DESCRIBE` par schéma) | S | 3.1 |
-| 2 | Typer `NotFoundError` côté storage, router en `MapServiceError` | S | 3.2 |
-| 3 | Corriger la mutation hors verrou de `SourceService.Delete` + test concurrent | S | 3.4, 6 |
-| 4 | Borner `GetDistinctValues` et `FilterByBbox` par config | S | 3.9 |
-| 5 | [DONE] Réécrire `docs/spec.md` sur le code réel, avec glossaire des tags | M | 5 |
-| 6 | Introduire le repository catalogue + migrations réelles | M/L | 4.1, plan dédié |
-| 7 | Valider les colonnes sur `AddRows`/`UpdateRow` (400 au lieu de 500) | S | 3.3 |
-| 8 | Aligner le CRS de `POST /bbox` sur `OGC:CRS84` | S | 3.6 |
-| 9 | Couvrir `MapServiceError` par type d'erreur | S | 6 |
-| 10 | Hacher ETag et clé de cache tuile | S | 3.7 |
-| 11 | `rowCount` en `BIGINT` (via une migration réelle) | S | 3.8, 4.1 |
-| 12 | Gardes liste vide sur `GetRowsByPkey`/`RemoveRows` | S | 3.10 |
-| 13 | Port `exportAPI`, découpler `router` de `*core.Services` | S | 4.5, 4.6 |
-| 14 | Statuer explicitement sur auth/CORS/rate limiting dans le spec | S | 4.8 |
-| 15 | Sortir `web/node_modules` du module Go | S | 4.9 |
-
-Les points 1 à 4 sont des correctifs isolés, sans dépendance entre eux, réalisables indépendamment.
-Le point 6 conditionne 11 et bénéficie de 2 ; il est décrit séparément.
+Les points 1 à 4 se tiennent ensemble : ils suppriment la moitié de la surface de code de la couche
+storage et les deux points chauds de performance, sans changer un seul comportement observable.

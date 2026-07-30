@@ -65,7 +65,7 @@ func testCatalogCreateAndRead(t *testing.T, newCatalog NewCatalog) {
 	ctx := context.Background()
 
 	tableId := newCatalogTable(t, h, 2)
-	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId))
+	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId, true))
 
 	ids, err := h.TableIds(ctx, nil)
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func testCatalogUpdateAndRefreshDerived(t *testing.T, newCatalog NewCatalog) {
 	h := newCatalog(t)
 	ctx := context.Background()
 	tableId := newCatalogTable(t, h, 2)
-	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId))
+	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId, true))
 
 	renamed := "renamed"
 	require.NoError(t, h.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{TableName: &renamed}))
@@ -116,7 +116,7 @@ func testCatalogUpdateAndRefreshDerived(t *testing.T, newCatalog NewCatalog) {
 
 	_, err = h.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE __pkey = ?`, meta.PhysicalName), "pk-0")
 	require.NoError(t, err)
-	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId))
+	require.NoError(t, h.RefreshDerivedMetadata(ctx, tableId, true))
 
 	meta, err = h.GetMetadata(ctx, tableId)
 	require.NoError(t, err)

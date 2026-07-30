@@ -35,7 +35,7 @@ type metadataStore interface {
 	GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error)
 	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error)
 	UpdateMetadata(ctx context.Context, tableId string, patch catalog.MetadataPatch) error
-	RefreshDerived(ctx context.Context, tableId string) error
+	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
 	Rollback(ctx context.Context, tableId string, cause error) error
 }
 
@@ -89,7 +89,7 @@ func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName str
 		}
 	}
 
-	if err := s.metadata.RefreshDerived(ctx, tableId); err != nil {
+	if err := s.metadata.RefreshDerived(ctx, tableId, true); err != nil {
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 	return tableId, nil

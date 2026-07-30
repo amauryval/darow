@@ -23,8 +23,6 @@ import (
 // Declared here, the consumer, so tests can satisfy it with a mock.
 type storageAdapter interface {
 	catalog.MetadataManager
-	storage.TableManager
-	storage.GeoTableManager
 	storage.TableCreator
 	data.TableResolver
 }

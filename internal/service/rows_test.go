@@ -182,11 +182,84 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			meta := catalog.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}
 			rowRepo.On("Update", mock.Anything, []string{"pk-1"}, updates).Return(nil).Once()
 			if c.wantRefresh {
-				m.On("RefreshDerivedMetadata", mock.Anything, "id-1").Return(nil).Once()
+				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 			}
 
 			err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates)
 			require.NoError(t, err)
+		})
+	}
+}
+
+func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
+	cases := []struct {
+		name            string
+		values          map[string]any
+		touchesGeometry bool
+	}{
+		{name: "scalar-only insert skips bbox recompute", values: map[string]any{"height": 1}},
+		{name: "insert setting geometry recomputes bbox", values: map[string]any{"geom": "POINT(1 1)"}, touchesGeometry: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, rowRepo, _ := setupRowService(t)
+			meta := catalog.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+
+			rowRepo.On("Insert", mock.Anything, c.values).Return("pk-1", nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
+
+			pkey, err := svc.InsertRow(context.Background(), meta, c.values)
+			require.NoError(t, err)
+			assert.Equal(t, "pk-1", pkey)
+		})
+	}
+}
+
+func Test_RowService_BulkInsertRows_RefreshesBboxOnlyIfAnyRowSetsGeometry(t *testing.T) {
+	cases := []struct {
+		name            string
+		rows            []map[string]any
+		touchesGeometry bool
+	}{
+		{name: "no row sets geometry", rows: []map[string]any{{"height": 1}, {"height": 2}}},
+		{name: "one row sets geometry", rows: []map[string]any{{"height": 1}, {"geom": "POINT(1 1)"}}, touchesGeometry: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, rowRepo, _ := setupRowService(t)
+			meta := catalog.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+
+			rowRepo.On("InsertMany", mock.Anything, c.rows).Return([]string{"pk-1", "pk-2"}, nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
+
+			pkeys, err := svc.BulkInsertRows(context.Background(), meta, c.rows)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"pk-1", "pk-2"}, pkeys)
+		})
+	}
+}
+
+func Test_RowService_RemoveRows_RefreshesBboxWhenTableIsGeo(t *testing.T) {
+	cases := []struct {
+		name            string
+		isGeo           bool
+		touchesGeometry bool
+	}{
+		{name: "scalar table", isGeo: false},
+		{name: "geo table", isGeo: true, touchesGeometry: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, rowRepo, _ := setupRowService(t)
+			meta := catalog.Metadata{TableId: "id-1", IsGeo: c.isGeo, GeometryColumn: "geom"}
+
+			rowRepo.On("Delete", mock.Anything, []string{"pk-1"}).Return(nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
+
+			require.NoError(t, svc.RemoveRows(context.Background(), meta, []string{"pk-1"}))
 		})
 	}
 }
