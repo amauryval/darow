@@ -158,15 +158,15 @@ module level and documents it; that is the exception, not the rule.
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
 | `useTiledFeatures` | GeoJSON loading split over the tile grid, reusing already seen tiles | present |
-| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel | absent — logic copied into 3 files (`todo.md` TODO-F4) |
+| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner | absent — inline in `App.vue` |
-| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | absent |
-| `useTableRows` | a table's rows: current page, sorting, editing, insertion, deletion | absent |
-| `useRowFilter` | filter tree, effective conditions, filtered results, filtered extent | absent |
-| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows | absent |
-| `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | absent |
-| `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode, symmetric add/remove, listeners | absent |
-| `useSources` | source list, upload, load with EPSG, deletion | absent |
+| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
+| `useTableRows` | a table's rows: current page, sorting, editing, insertion, deletion — built on `usePaginatedList` | present |
+| `useRowFilter` | filter tree, effective conditions, filtered results, filtered extent | present |
+| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref | present |
+| `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
+| `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; only `useMvtLayer` wires selection (WFS has no click support) | present |
+| `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 
 ---
 

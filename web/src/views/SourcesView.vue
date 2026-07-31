@@ -1,111 +1,47 @@
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, ref } from "vue";
+import { computed, h, ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import type { SortingState, Updater } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, getExpandedRowModel, useVueTable } from "@tanstack/vue-table";
-import { deleteSource, getSourceMetadata, listSources, loadSource, refreshSources, uploadSource } from "../client/sources";
 import type { Source } from "../client/types";
 import { errorMessage } from "../client/http";
-import { sortingToQuery } from "../utils/sort";
+import { layerKey, useSources } from "../composables/useSources";
+import { useToast } from "../composables/useToast";
 import { UploadCloud } from "@lucide/vue";
 import Badge from "../components/Badge.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
 import DataTable from "../components/DataTable.vue";
-import { useToast } from "../composables/useToast";
-
-// Display column ids that don't match the API's Source field names 1:1
-// ("size" formats sizeBytes+layerCount, "status" formats loaded).
-const sourceSortColumnMap: Record<string, string> = { size: "sizeBytes", status: "loaded" };
 
 const router = useRouter();
 const toast = useToast();
 
-const limit = 50;
-const sources = ref<Source[]>([]);
-const total = ref(0);
-const offset = ref(0);
-const loadingMore = ref(false);
-const loadedOnce = ref(false);
-const uploading = ref(false);
+// sources.sentinel stays nested rather than destructured: the template ref
+// bound via `:ref` needs the actual Ref object, but a top-level destructured
+// ref auto-unwraps when read inside the template.
+const sourcesState = useSources();
+const {
+  sources,
+  loading,
+  sorting,
+  setSorting,
+  refresh,
+  uploading,
+  upload,
+  epsgEditingKey,
+  epsgInput,
+  epsgDetecting,
+  loadingKey,
+  startLoad,
+  cancelLoad,
+  confirmLoad,
+  deletingName,
+  remove,
+} = sourcesState;
+
 const dragging = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
-// EPSG-editing state for the row/layer currently being loaded: null when
-// no row is mid-load. epsgInput is the editable value shown to the user,
-// pre-filled from getSourceMetadata's detection but always overridable —
-// required outright when detection comes back null.
-const epsgEditingKey = ref<string | null>(null);
-const epsgInput = ref("");
-const epsgDetecting = ref(false);
-const loadingName = ref<string | null>(null);
-const deletingName = ref<string | null>(null);
-const sorting = ref<SortingState>([]);
-
-function layerKey(source: Source, layerName: string): string {
-  return `${source.name}::${layerName}`;
-}
-
 function isValidEpsg(value: string): boolean {
   return /^[1-9]\d*$/.test(value.trim());
-}
-
-async function loadMore() {
-  if (loadingMore.value || (loadedOnce.value && sources.value.length >= total.value)) return;
-  loadingMore.value = true;
-  try {
-    const page = await listSources(offset.value, limit, sortingToQuery(sorting.value, sourceSortColumnMap));
-    sources.value = [...sources.value, ...page.sources];
-    total.value = page.total;
-    offset.value += page.sources.length;
-    loadedOnce.value = true;
-  } catch (e) {
-    toast.error(errorMessage(e, "Impossible de charger les sources"));
-  } finally {
-    loadingMore.value = false;
-  }
-}
-
-// A mutating action (load/delete/refresh) can change any already-fetched
-// page, and re-fetching only that one page from the server wouldn't
-// re-derive the running total correctly either — resetting to page 1 is
-// the simplest correct behavior, matching how infinite-scroll lists
-// commonly settle after a mutation.
-async function reload() {
-  sources.value = [];
-  total.value = 0;
-  offset.value = 0;
-  loadedOnce.value = false;
-  await loadMore();
-}
-
-// Like reload(), but fetches page 1 before touching sources.value, so the
-// table keeps showing its current rows instead of flashing empty while a
-// sort change's request is in flight.
-async function reloadSorted() {
-  loadingMore.value = true;
-  try {
-    const page = await listSources(0, limit, sortingToQuery(sorting.value, sourceSortColumnMap));
-    sources.value = page.sources;
-    total.value = page.total;
-    offset.value = page.sources.length;
-    loadedOnce.value = true;
-  } catch (e) {
-    toast.error(errorMessage(e, "Impossible de charger les sources"));
-  } finally {
-    loadingMore.value = false;
-  }
-}
-
-async function refresh() {
-  try {
-    const page = await refreshSources(0, limit, sortingToQuery(sorting.value, sourceSortColumnMap));
-    sources.value = page.sources;
-    total.value = page.total;
-    offset.value = page.sources.length;
-    loadedOnce.value = true;
-  } catch (e) {
-    toast.error(errorMessage(e, "Impossible de rafraîchir les sources"));
-  }
 }
 
 interface SourceRow {
@@ -140,77 +76,21 @@ const rows = computed<SourceRow[]>(() =>
   }),
 );
 
-async function startLoad(row: SourceRow) {
-  const key = row.layerName ? layerKey(row.source, row.layerName) : row.source.name;
-  epsgEditingKey.value = key;
-  epsgInput.value = "";
-  epsgDetecting.value = true;
-  try {
-    const crs = await getSourceMetadata(row.source.name, row.layerName);
-    if (epsgEditingKey.value === key) {
-      epsgInput.value = crs.srid ? String(crs.srid) : "";
-    }
-  } catch (e) {
-    toast.error(errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`));
-  } finally {
-    epsgDetecting.value = false;
-  }
-}
-
-function cancelLoad() {
-  epsgEditingKey.value = null;
-  epsgInput.value = "";
-}
-
-async function confirmLoad(row: SourceRow) {
-  const key = row.layerName ? layerKey(row.source, row.layerName) : row.source.name;
-  loadingName.value = key;
-  try {
-    await loadSource(row.source.name, row.layerName, Number(epsgInput.value));
-    epsgEditingKey.value = null;
-    await reload();
-    toast.success(`${key} chargé.`);
-  } catch (e) {
-    toast.error(errorMessage(e, `Impossible de charger ${key}`));
-  } finally {
-    loadingName.value = null;
-  }
-}
-
-async function onDelete(name: string) {
-  deletingName.value = name;
-  try {
-    await deleteSource(name);
-    await reload();
-    toast.success(`${name} supprimé.`);
-  } catch (e) {
-    toast.error(errorMessage(e, `Impossible de supprimer ${name}`));
-  } finally {
-    deletingName.value = null;
-  }
-}
-
 function triggerUpload() {
   fileInput.value?.click();
 }
 
 async function handleUpload(file: File) {
-  uploading.value = true;
   try {
-    const result = await uploadSource(file);
-    if ("tableId" in result) {
+    const result = await upload(file);
+    if (result) {
       toast.success(`${file.name} chargé.`);
       router.push(`/tables/${result.tableId}`);
     } else {
-      // Multi-layer GeoPackage: no layer was auto-selected — show it in the
-      // list so the user can load a specific layer.
-      await reload();
       toast.success(`${file.name} ajouté — choisissez une couche à charger.`);
     }
   } catch (e) {
     toast.error(errorMessage(e, `Impossible de charger ${file.name}`));
-  } finally {
-    uploading.value = false;
   }
 }
 
@@ -270,7 +150,7 @@ const columnDefs = [
           h(ConfirmButton, {
             label: "Supprimer le fichier",
             busy: deletingName.value === r.source.name,
-            onConfirm: () => onDelete(r.source.name),
+            onConfirm: () => remove(r.source.name),
           }),
         ]);
       }
@@ -293,10 +173,10 @@ const columnDefs = [
             "button",
             {
               class: "rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50",
-              disabled: epsgDetecting.value || !isValidEpsg(epsgInput.value) || loadingName.value === key,
-              onClick: () => confirmLoad(r),
+              disabled: epsgDetecting.value || !isValidEpsg(epsgInput.value) || loadingKey.value === key,
+              onClick: () => confirmLoad(r.source, r.layerName),
             },
-            loadingName.value === key ? "Chargement..." : "Confirmer",
+            loadingKey.value === key ? "Chargement..." : "Confirmer",
           ),
           h(
             "button",
@@ -313,7 +193,7 @@ const columnDefs = [
           "button",
           {
             class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-            onClick: () => startLoad(r),
+            onClick: () => startLoad(r.source, r.layerName),
           },
           "Charger",
         );
@@ -323,11 +203,11 @@ const columnDefs = [
           "button",
           {
             class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-            onClick: () => startLoad(r),
+            onClick: () => startLoad(r.source),
           },
           "Charger",
         ),
-        h(ConfirmButton, { label: "Supprimer", busy: deletingName.value === r.source.name, onConfirm: () => onDelete(r.source.name) }),
+        h(ConfirmButton, { label: "Supprimer", busy: deletingName.value === r.source.name, onConfirm: () => remove(r.source.name) }),
       ]);
     },
   }),
@@ -349,24 +229,8 @@ const table = useVueTable({
       return sorting.value;
     },
   },
-  onSortingChange: (updater: Updater<SortingState>) => {
-    sorting.value = typeof updater === "function" ? updater(sorting.value) : updater;
-    reloadSorted();
-  },
+  onSortingChange: setSorting,
 });
-
-const sentinel = ref<HTMLElement | null>(null);
-let observer: IntersectionObserver | null = null;
-
-onMounted(() => {
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) loadMore();
-  }, { rootMargin: "200px" });
-  if (sentinel.value) observer.observe(sentinel.value);
-  loadMore();
-});
-
-onUnmounted(() => observer?.disconnect());
 </script>
 
 <template>
@@ -378,7 +242,7 @@ onUnmounted(() => observer?.disconnect());
       </div>
       <button
         class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        :disabled="loadingMore"
+        :disabled="loading"
         @click="refresh"
       >
         Rafraîchir
@@ -404,10 +268,10 @@ onUnmounted(() => observer?.disconnect());
       </button>
     </div>
 
-    <DataTable :table="table" :loading="loadingMore" empty-message="Aucune source détectée.">
+    <DataTable :table="table" :loading="loading" empty-message="Aucune source détectée.">
       <template #footer>
-        <div ref="sentinel" class="h-px"></div>
-        <p v-if="loadingMore" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>
+        <div :ref="sourcesState.sentinel" class="h-px"></div>
+        <p v-if="loading" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>
       </template>
     </DataTable>
   </div>

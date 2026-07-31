@@ -26,14 +26,10 @@ instruction, not the patch — the code is written later, against the code as it
 
 | # | Gap | Rule |
 |---|---|---|
-| TODO-F1 | `TableDataPanel` (522 lines) is a view disguised as a component: loading, filters, selection, editing, add-row modal | §0.2, §0.6, §0.7 |
-| TODO-F2 | `MapView` (373 lines) carries all the MapLibre machinery — sources, layers, listeners, selection, MVT/WFS modes — inside the component | §0.2, §0.7 |
 | TODO-F3 | `SourcesView` (414 lines) and `TableDataPanel` build buttons, fields and badges with `h()` | §0.4 |
-| TODO-F4 | Pagination, server-side sorting and the `IntersectionObserver` sentinel are reimplemented identically in `TablesView`, `SourcesView` and `TableDataPanel` | §0.2, §4 |
 | TODO-F5 | `FilterPills` and `FilterConditionsEditor` each reimplement activation, removal and update of the filter tree, in two already diverging variants | §3 |
 | TODO-F6 | The class strings of primary and secondary buttons are copied into the views (≈14 occurrences); the "Dériver", "Ajouter une colonne" and "Ajouter une ligne" modals are inline markup | §0.8, §0.10, §5 |
-| TODO-F7 | 11 `as` assertions in the components (`meta as {…}`, `e.target as HTMLInputElement`, the `MapView` handle retyped by hand) | §0.9 |
-| TODO-F8 | No business composable beyond `useToast`/`useTiledFeatures`: the §4 table is almost entirely still to be written | §0.2 |
+| TODO-F7 | 11 `as` assertions in the components (`meta as {…}`, `e.target as HTMLInputElement`) | §0.9 |
 | TODO-F9 | `ColumnDTO` is declared in `client/tables.ts` instead of `client/types.ts` | §2 |
 | TODO-F10 | `TablesView`'s search filters partially loaded pages client-side: it cannot see the tables not paginated yet | §8.6 |
 | TODO-F11 | Every keystroke in a filter field triggers `filterRows` plus `filtered-extent` plus a map refresh, with no debounce | §8.10, §9 |

@@ -11,10 +11,10 @@
       "Bash(go vet:*)",
       "Bash(go mod tidy:*)",
       "Bash(gofmt:*)",
-      "Bash(go list:*)"
+      "Bash(go list:*)",
+      "Bash(npm run:)"
     ],
     "deny": [
-      "Bash(npm run start-dev)",
       "Bash(git merge:*)",
       "Bash(git stash:*)",
       "Bash(git push:*)",

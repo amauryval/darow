@@ -1,52 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { ref, toRef, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { addColumn, deleteTable, deriveTable, exportUrl, getSchema, getTable, renameTable } from "../client/tables";
-import type { ColumnSchema, Metadata } from "../client/types";
+import { exportUrl } from "../client/tables";
 import { errorMessage } from "../client/http";
 import Badge from "../components/Badge.vue";
 import ColumnsModal from "../components/ColumnsModal.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
 import Modal from "../components/Modal.vue";
 import TableDataPanel from "../components/TableDataPanel.vue";
+import { useTableMetadata } from "../composables/useTableMetadata";
 import { useToast } from "../composables/useToast";
 
 const props = defineProps<{ tableId: string }>();
 const router = useRouter();
 const toast = useToast();
 
-const table = ref<Metadata | null>(null);
-const columns = ref<ColumnSchema[]>([]);
+const { table, columns, editableColumns, rowColumns, loadTable, rename, remove, derive, addNewColumn } = useTableMetadata(
+  toRef(props, "tableId"),
+);
+
 const renaming = ref(false);
 const editingName = ref(false);
 const nameInput = ref("");
 
-// Columns actually writable by AddRows/UpdateRow: everything but the
-// server-generated pkey. The geometry column (if any) stays in this list —
-// InsertRow/UpdateRow accept WKT for it (règle 22) — but it's excluded from
-// GetRows/GetRowsWithFilter (règle 7), so it never has a value to display.
-const editableColumns = computed(() => columns.value.map((c) => c.name).filter((name) => name !== "__pkey"));
-const rowColumns = computed(() => editableColumns.value.filter((name) => name !== table.value?.geometryColumn));
-
 const visibleColumns = ref<string[]>([]);
 watch(rowColumns, (cols) => (visibleColumns.value = cols), { immediate: true });
-
-async function loadTable() {
-  table.value = await getTable(props.tableId);
-}
-
-async function loadSchema() {
-  const res = await getSchema(props.tableId);
-  columns.value = res.columns;
-}
-
-async function loadAll() {
-  try {
-    await Promise.all([loadTable(), loadSchema()]);
-  } catch (e) {
-    toast.error(errorMessage(e, "Impossible de charger la table"));
-  }
-}
 
 function startRename() {
   nameInput.value = table.value?.tableName ?? "";
@@ -57,7 +35,7 @@ async function confirmRename() {
   if (!nameInput.value.trim()) return;
   renaming.value = true;
   try {
-    table.value = await renameTable(props.tableId, nameInput.value.trim());
+    await rename(nameInput.value.trim());
     editingName.value = false;
   } catch (e) {
     toast.error(errorMessage(e, "Impossible de renommer la table"));
@@ -68,8 +46,9 @@ async function confirmRename() {
 
 async function onDeleteTable() {
   try {
-    await deleteTable(props.tableId);
-    toast.success(`Table "${table.value?.tableName}" supprimée.`);
+    const name = table.value?.tableName;
+    await remove();
+    toast.success(`Table "${name}" supprimée.`);
     router.push("/tables");
   } catch (e) {
     toast.error(errorMessage(e, "Impossible de supprimer la table"));
@@ -95,7 +74,7 @@ async function confirmDerive() {
   deriving.value = true;
   deriveError.value = null;
   try {
-    const result = await deriveTable(props.tableId, deriveQuery.value.trim(), deriveName.value.trim());
+    const result = await derive(deriveQuery.value.trim(), deriveName.value.trim());
     showDerive.value = false;
     toast.success("Table dérivée créée.");
     router.push(`/tables/${result.tableId}`);
@@ -128,9 +107,8 @@ async function confirmAddColumn() {
   addingColumn.value = true;
   addColumnError.value = null;
   try {
-    await addColumn(props.tableId, newColumnName.value.trim(), newColumnType.value.trim());
+    await addNewColumn(newColumnName.value.trim(), newColumnType.value.trim());
     showAddColumn.value = false;
-    await loadSchema();
     toast.success("Colonne ajoutée.");
   } catch (e) {
     addColumnError.value = errorMessage(e, "Impossible d'ajouter la colonne");
@@ -138,8 +116,6 @@ async function confirmAddColumn() {
     addingColumn.value = false;
   }
 }
-
-onMounted(loadAll);
 </script>
 
 <template>
