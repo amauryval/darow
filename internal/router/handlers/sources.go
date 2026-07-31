@@ -110,7 +110,7 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 }
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field
-// "file"). Not part of docs/spec.md's original endpoint table (section 6.1
+// "file"). Not part of spec/back/spec.md's original endpoint table (section 6.1
 // only lists refresh/load) — added as an explicit extension. Writes the
 // file into workDir via SourceService.Upload, then immediately loads it
 // into a table exactly like POST /sources/{name}/load would, so the

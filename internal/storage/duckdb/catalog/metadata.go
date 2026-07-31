@@ -297,7 +297,7 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string,
 		}
 		var minX, minY, maxX, maxY sql.NullFloat64
 		// The geometry column is stored reprojected to EPSG:3857 (section 7
-		// of docs/spec.md), but bbox is reported in lon/lat order so API
+		// of spec/back/spec.md), but bbox is reported in lon/lat order so API
 		// consumers — notably map clients, whose camera/bounds APIs take
 		// WGS84 degrees — never have to reproject it themselves. Target
 		// CRS must be OGC:CRS84, not EPSG:4326: the latter's official axis

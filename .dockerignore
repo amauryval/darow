@@ -6,3 +6,4 @@ internal/webui/dist/*
 !internal/webui/dist/index.html
 .git/
 .claude/
+spec/

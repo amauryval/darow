@@ -52,7 +52,7 @@ func NewRouter(
 	}
 }
 
-// Setup builds the chi router with every route from docs/spec.md section 6.1.
+// Setup builds the chi router with every route from spec/back/spec.md section 6.1.
 func (rt *Router) Setup() http.Handler {
 	r := chi.NewRouter()
 
