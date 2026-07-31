@@ -13,7 +13,6 @@ import (
 
 	"darow/internal/config"
 	"darow/internal/service"
-	"darow/internal/storage"
 	"darow/internal/storage/catalog"
 	"darow/internal/storage/data"
 	"darow/internal/storage/duckdb"
@@ -22,8 +21,8 @@ import (
 // storageAdapter is everything Services needs from the storage layer.
 // Declared here, the consumer, so tests can satisfy it with a mock.
 type storageAdapter interface {
-	catalog.MetadataManager
-	storage.TableCreator
+	Catalog() catalog.Catalog
+	data.TableLifecycle
 	data.TableResolver
 }
 
@@ -74,7 +73,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
 
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
-	metadataSvc := service.NewMetadataService(storageAdapter, metadataCache, schemaSvc)
+	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, schemaSvc)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, storageAdapter)
 	importSvc := service.NewImportService(metadataSvc, storageAdapter)

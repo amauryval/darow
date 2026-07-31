@@ -6,9 +6,8 @@ package catalog
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
-	"darow/internal/storage"
+	catalogcontract "darow/internal/storage/catalog"
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes
@@ -39,54 +38,59 @@ func New(conn Querier) *Repository {
 	return &Repository{conn: conn}
 }
 
-// Deleter is implemented by every catalog repository rattached to a
-// logical table's tableId (a future styles/tags/jobs repository, say), so
-// Catalog.DeleteTable can cascade to it without knowing its shape.
-type Deleter interface {
-	DeleteTx(ctx context.Context, tx *sql.Tx, tableId string) error
+// Dropper drops a physical table's storage within the *sql.Tx a delete
+// cascade runs in, as implemented by duckdb/data's table lifecycle.
+// Declared locally, narrowed to the one method Remove needs, rather than
+// importing duckdb/data — which itself depends on this package's
+// catalog.Catalog contract for /derive validation, so the dependency runs
+// the other way.
+type Dropper interface {
+	Drop(ctx context.Context, uow catalogcontract.UnitOfWork, physicalName string) error
 }
 
 // Catalog is the catalogue aggregate: the metadata repository plus the
 // registry of any repository rattached to tableId. Register attaches a
 // repository to the cascade once, at its construction — deleting a table
-// then never risks forgetting one of its dependents.
+// then never risks forgetting one of its dependents. It implements
+// catalog.Catalog.
 type Catalog struct {
 	*Repository
 	tx       TxRunner
-	children []Deleter
+	dropper  Dropper
+	children []catalogcontract.Attachment
 }
+
+var _ catalogcontract.Catalog = (*Catalog)(nil)
 
 // NewCatalog builds a Catalog whose metadata repository reads/writes
-// through conn, and whose cascading deletes run through tx.
-func NewCatalog(conn Querier, tx TxRunner) *Catalog {
-	return &Catalog{Repository: New(conn), tx: tx}
+// through conn, whose cascading deletes run through tx, and whose physical
+// table drop is obtained from dropper rather than formatted here.
+func NewCatalog(conn Querier, tx TxRunner, dropper Dropper) *Catalog {
+	return &Catalog{Repository: New(conn), tx: tx, dropper: dropper}
 }
 
-// Register rattaches d to the cascade: DeleteTable calls its DeleteTx
+// Register rattaches a to the cascade: Remove calls its DeleteAttached
 // before removing the metadata row itself.
-func (c *Catalog) Register(d Deleter) {
-	c.children = append(c.children, d)
+func (c *Catalog) Register(a catalogcontract.Attachment) {
+	c.children = append(c.children, a)
 }
 
-// DeleteTable drops tableId's physical table, cascades to every registered
-// repository, and deletes its metadata row, all inside one transaction — a
+// Remove drops tableId's physical table, cascades to every registered
+// attachment, and deletes its metadata row, all inside one transaction — a
 // partial deletion (physical table gone but metadata row surviving, or
 // only some dependents deleted) can never be observed.
-func (c *Catalog) DeleteTable(ctx context.Context, tableId string) error {
+func (c *Catalog) Remove(ctx context.Context, tableId string) error {
 	meta, err := c.GetMetadata(ctx, tableId)
 	if err != nil {
 		return err
 	}
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return err
-	}
 
 	return c.tx.WithTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, meta.PhysicalName)); err != nil {
+		if err := c.dropper.Drop(ctx, tx, meta.PhysicalName); err != nil {
 			return err
 		}
 		for _, child := range c.children {
-			if err := child.DeleteTx(ctx, tx, tableId); err != nil {
+			if err := child.DeleteAttached(ctx, tx, tableId); err != nil {
 				return err
 			}
 		}

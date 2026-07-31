@@ -17,56 +17,13 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 	return db
 }
 
-func columnType(t *testing.T, db *sql.DB, column string) string {
+func columnType(t *testing.T, db *sql.DB, table, column string) string {
 	var typ string
 	err := db.QueryRow(
-		`SELECT data_type FROM duckdb_columns() WHERE table_name = 'metadata' AND column_name = ?`, column,
+		`SELECT data_type FROM duckdb_columns() WHERE table_name = ? AND column_name = ?`, table, column,
 	).Scan(&typ)
 	require.NoError(t, err)
 	return typ
-}
-
-// Test_Migrate_AddsColumnsToExistingDatabase reproduces a database created
-// before sourceName/sourceLayer/rowCount BIGINT existed: metadataSchema's
-// CREATE TABLE IF NOT EXISTS alone would never add them. Migrate must apply
-// the pending ALTER TABLE statements against it instead.
-func Test_Migrate_AddsColumnsToExistingDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "existing.db")
-
-	oldDB := openTestDB(t, path)
-	_, err := oldDB.Exec(`
-        CREATE TABLE metadata (
-            tableId TEXT PRIMARY KEY,
-            physicalName TEXT NOT NULL UNIQUE,
-            tableName TEXT NOT NULL,
-            isGeo BOOLEAN DEFAULT FALSE,
-            createdAt TIMESTAMP DEFAULT NOW(),
-            updatedAt TIMESTAMP DEFAULT NOW(),
-            geometryColumn TEXT,
-            rowCount INTEGER DEFAULT 0,
-            bbox TEXT,
-            srid INTEGER DEFAULT 4326
-        )
-    `)
-	require.NoError(t, err)
-	_, err = oldDB.Exec(`INSERT INTO metadata (tableId, physicalName, tableName) VALUES ('id-1', 't_1', 'widgets')`)
-	require.NoError(t, err)
-	require.NoError(t, oldDB.Close())
-
-	db := openTestDB(t, path)
-	require.NoError(t, Migrate(db))
-
-	var sourceName, sourceLayer sql.NullString
-	err = db.QueryRow(`SELECT sourceName, sourceLayer FROM metadata WHERE tableId = 'id-1'`).Scan(&sourceName, &sourceLayer)
-	require.NoError(t, err)
-	assert.False(t, sourceName.Valid)
-	assert.False(t, sourceLayer.Valid)
-
-	assert.Equal(t, "BIGINT", columnType(t, db, "rowCount"))
-
-	var version int
-	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-	assert.Equal(t, len(schemaMigrations), version)
 }
 
 // Test_Migrate_FreshDatabase_SeedsAtLatestVersion checks that a brand-new
@@ -77,10 +34,10 @@ func Test_Migrate_FreshDatabase_SeedsAtLatestVersion(t *testing.T) {
 
 	require.NoError(t, Migrate(db))
 
-	assert.Equal(t, "BIGINT", columnType(t, db, "rowCount"))
+	assert.Equal(t, "BIGINT", columnType(t, db, "metadata", "rowCount"))
 
 	var version int
-	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'metadata'`).Scan(&version))
 	assert.Equal(t, len(schemaMigrations), version)
 }
 
@@ -98,45 +55,81 @@ func Test_Migrate_ReopeningDoesNotReapplyMigrations(t *testing.T) {
 	assert.NoError(t, Migrate(db))
 }
 
-// Test_Migrate_TableUpToDateButMissingSchemaVersion reproduces a database
-// created by a version of the code after sourceName/sourceLayer/rowCount
-// BIGINT existed but before schema_version tracking did: Migrate has no
-// recorded version to trust, assumes 0, and replays every migration —
-// including ADD COLUMN sourceName/sourceLayer, which would otherwise fail
-// with "column already exists" and leave the server refusing to start.
-func Test_Migrate_TableUpToDateButMissingSchemaVersion(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "uptodate-no-version.db")
+// Test_Migrate_ComponentsAreVersionedIndependently registers a second
+// component only after metadata is already migrated on a database, proving
+// a component added later — exactly the situation TODO-3/TODO-4's settings
+// and stored-filters tables will be in — is seeded on its own without
+// touching metadata's version or rows.
+func Test_Migrate_ComponentsAreVersionedIndependently(t *testing.T) {
+	registered := registry
+	t.Cleanup(func() { registry = registered })
 
-	oldDB := openTestDB(t, path)
-	_, err := oldDB.Exec(`
-        CREATE TABLE metadata (
-            tableId TEXT PRIMARY KEY,
-            physicalName TEXT NOT NULL UNIQUE,
-            tableName TEXT NOT NULL,
-            isGeo BOOLEAN DEFAULT FALSE,
-            createdAt TIMESTAMP DEFAULT NOW(),
-            updatedAt TIMESTAMP DEFAULT NOW(),
-            geometryColumn TEXT,
-            rowCount BIGINT DEFAULT 0,
-            bbox TEXT,
-            srid INTEGER DEFAULT 4326,
-            sourceName TEXT,
-            sourceLayer TEXT
-        )
-    `)
-	require.NoError(t, err)
-	_, err = oldDB.Exec(`INSERT INTO metadata (tableId, physicalName, tableName) VALUES ('id-1', 't_1', 'widgets')`)
-	require.NoError(t, err)
-	require.NoError(t, oldDB.Close())
-
-	db := openTestDB(t, path)
+	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
 
-	var version int
-	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
-	assert.Equal(t, len(schemaMigrations), version)
+	var metadataVersionBefore int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'metadata'`).Scan(&metadataVersionBefore))
 
-	var tableName string
-	require.NoError(t, db.QueryRow(`SELECT tableName FROM metadata WHERE tableId = 'id-1'`).Scan(&tableName))
-	assert.Equal(t, "widgets", tableName)
+	register(Component{
+		Name: "widgets_component",
+		CreateSchema: `CREATE TABLE IF NOT EXISTS widgets_component (
+            id TEXT PRIMARY KEY,
+            note TEXT,
+            extra TEXT
+        )`,
+		Migrations: []string{
+			`ALTER TABLE widgets_component ADD COLUMN extra TEXT`,
+		},
+	})
+	require.NoError(t, Migrate(db))
+
+	var widgetsVersion int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'widgets_component'`).Scan(&widgetsVersion))
+	assert.Equal(t, 1, widgetsVersion)
+	assert.Equal(t, "VARCHAR", columnType(t, db, "widgets_component", "extra"))
+
+	var metadataVersionAfter int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'metadata'`).Scan(&metadataVersionAfter))
+	assert.Equal(t, metadataVersionBefore, metadataVersionAfter, "adding a component must not touch metadata's own version")
+
+	require.NoError(t, Migrate(db))
+	var reappliedVersion int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'widgets_component'`).Scan(&reappliedVersion))
+	assert.Equal(t, 1, reappliedVersion, "re-migrating must not replay widgets_component's migration a second time")
+}
+
+// Test_Migrate_ReplaysPendingMigrationsForTrackedComponent covers the
+// ordinary post-1.0 case the registry exists for: a component already
+// tracked in schema_version, behind its registered Migrations, gets the
+// missing ones applied and its version brought up to date.
+func Test_Migrate_ReplaysPendingMigrationsForTrackedComponent(t *testing.T) {
+	registered := registry
+	t.Cleanup(func() { registry = registered })
+
+	register(Component{
+		Name: "widgets_component",
+		CreateSchema: `CREATE TABLE IF NOT EXISTS widgets_component (
+            id TEXT PRIMARY KEY,
+            note TEXT
+        )`,
+		Migrations: []string{
+			`ALTER TABLE widgets_component ADD COLUMN extra TEXT`,
+		},
+	})
+
+	db := openTestDB(t, ":memory:")
+	_, err := db.Exec(`CREATE TABLE widgets_component (id TEXT PRIMARY KEY, note TEXT)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE schema_version (component TEXT, version INTEGER NOT NULL)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO schema_version (component, version) VALUES ('widgets_component', 0)`)
+	require.NoError(t, err)
+
+	require.NoError(t, Migrate(db))
+
+	assert.Equal(t, "VARCHAR", columnType(t, db, "widgets_component", "extra"))
+
+	var version int
+	require.NoError(t, db.QueryRow(`SELECT version FROM schema_version WHERE component = 'widgets_component'`).Scan(&version))
+	assert.Equal(t, 1, version)
 }

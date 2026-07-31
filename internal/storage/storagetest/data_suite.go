@@ -1,7 +1,7 @@
 // Package storagetest holds the storage layer's conformance suites: two
 // batteries of behavioral tests — one for the catalogue
 // (catalog.MetadataManager), one for data tables (data.TableResolver plus
-// storage.TableCreator) — runnable against any adapter, so a future
+// data.TableLifecycle) — runnable against any adapter, so a future
 // PostGISAdapter (or any other) can prove it satisfies the same contracts
 // DuckDBAdapter does, without duplicating these tests per backend. The two
 // are independent: an adapter can hold the data contract without
@@ -23,16 +23,20 @@ import (
 	"darow/internal/storage/data"
 )
 
-// DataHarness is data.TableResolver plus storage.TableCreator and
+// DataHarness is data.TableResolver plus data.TableLifecycle and
 // catalog.MetadataManager: the data suite's own fixtures need a catalogue to
 // produce the Metadata each table operation resolves against (a data
 // adapter always consumes Metadata a catalogue produced, whether or not
 // it's the same backend), but the suite only ever resolves a table via
-// Table and calls its TableRepository methods.
+// Table and calls its TableRepository methods. storage.SQLWrapper is the
+// same raw-SQL escape hatch CatalogHarness uses, needed here to assert the
+// post-creation state (indexes) rule 19 requires directly against the
+// engine's own catalog, since no portable SQL can express that check.
 type DataHarness interface {
 	data.TableResolver
-	storage.TableCreator
+	data.TableLifecycle
 	catalog.MetadataManager
+	storage.SQLWrapper
 }
 
 // NewData builds a fresh, empty DataHarness for one subtest. The suite
@@ -42,7 +46,7 @@ type NewData func(t *testing.T) DataHarness
 // RunDataSuite runs every data-table conformance subtest against a fresh
 // instance from newData. Every table it creates goes through
 // CreateFromFile — the one way to materialize a physical table that is
-// part of the storage.TableCreator contract itself, so the suite never
+// part of the data.TableLifecycle contract itself, so the suite never
 // depends on a backend-specific way to create a table (e.g. raw SQL DDL).
 func RunDataSuite(t *testing.T, newData NewData) {
 	t.Run("Rows_InsertGetUpdateRemove", func(t *testing.T) { testRowsInsertGetUpdateRemove(t, newData) })
@@ -61,6 +65,55 @@ func RunDataSuite(t *testing.T, newData NewData) {
 	t.Run("Create_ListLayers", func(t *testing.T) { testCreateListLayers(t, newData) })
 	t.Run("Create_FromQuery", func(t *testing.T) { testCreateFromQuery(t, newData) })
 	t.Run("Create_FromFile_DetectsAndReprojectsFromNonWGS84CRS", func(t *testing.T) { testCreateFromFileDetectsNonWGS84CRS(t, newData) })
+	t.Run("Create_FromFile_IndexesGeoTable", func(t *testing.T) { testCreateFromFileIndexesGeoTable(t, newData) })
+	t.Run("Create_FromFile_IndexesScalarTable", func(t *testing.T) { testCreateFromFileIndexesScalarTable(t, newData) })
+}
+
+// hasIndex reports whether physicalName carries an index named indexName,
+// via DuckDB's own duckdb_indexes() catalog — the only place rule 19's
+// physical guarantees (the RTREE spatial index, the unique __pkey index)
+// are observable from outside the adapter.
+func hasIndex(t *testing.T, s DataHarness, indexName string) bool {
+	var count int
+	err := s.QueryRow(context.Background(), `SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name = ?`, indexName).Scan(&count)
+	require.NoError(t, err)
+	return count > 0
+}
+
+// A geo table materialized via CreateFromFile owes both indexes rule 19
+// requires: the RTREE spatial index over its geometry column, and the
+// unique index over __pkey recreated after Hilbert clustering rebuilds the
+// table (clustering itself is exercised directly against duckdb/data's
+// lifecycle, since no portable SQL observes physical row order).
+func testCreateFromFileIndexesGeoTable(t *testing.T, newData NewData) {
+	s := newData(t)
+	meta, _ := newGeoTable(t, s)
+
+	assert.True(t, hasIndex(t, s, "idx_"+meta.PhysicalName+"_geom"))
+	assert.True(t, hasIndex(t, s, "idx_"+meta.PhysicalName+"_pkey"))
+}
+
+// A non-geo table has no geometry column to index, but still owes the
+// unique __pkey index.
+func testCreateFromFileIndexesScalarTable(t *testing.T, newData NewData) {
+	s := newData(t)
+	ctx := context.Background()
+
+	tableId, err := s.Create(ctx, "widgets", false, "")
+	require.NoError(t, err)
+	meta, err := s.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "widgets.csv")
+	require.NoError(t, os.WriteFile(path, []byte("name\na\nb\n"), 0o644))
+
+	_, isGeo, _, err := s.CreateFromFile(ctx, meta.PhysicalName, path, "", 0)
+	require.NoError(t, err)
+	require.False(t, isGeo)
+
+	assert.False(t, hasIndex(t, s, "idx_"+meta.PhysicalName+"_geom"))
+	assert.True(t, hasIndex(t, s, "idx_"+meta.PhysicalName+"_pkey"))
 }
 
 // geoJSONFixture writes a two-point, one-property FeatureCollection to a

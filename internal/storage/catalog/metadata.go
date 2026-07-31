@@ -44,6 +44,34 @@ type MetadataManager interface {
 	MetadataWriter
 }
 
+// Catalog is the catalogue aggregate: metadata plus PhysicalNames (the
+// registered-table allowlist /derive validates against) and the extension
+// point through which a catalogue-attached repository joins the
+// whole-table delete cascade.
+type Catalog interface {
+	MetadataManager
+	// PhysicalNames lists every physicalName currently registered — the
+	// only tables a /derive query is allowed to reference.
+	PhysicalNames(ctx context.Context) (map[string]bool, error)
+	// Register rattaches a to the delete cascade. Construction-time only —
+	// deleting a table then never risks forgetting one of its dependents.
+	Register(a Attachment)
+}
+
+// UnitOfWork is the opaque handle of the transaction a delete cascade runs
+// in, owned entirely by the adapter (e.g. *sql.Tx in duckdb). It is an
+// alias for any so this contract package never names an engine-specific
+// type.
+type UnitOfWork = any
+
+// Attachment is implemented by any repository catalogue-attached to a
+// logical table's tableId (a future settings or stored-filters
+// repository), so Catalog's whole-table delete can cascade to it without
+// knowing its shape.
+type Attachment interface {
+	DeleteAttached(ctx context.Context, uow UnitOfWork, tableId string) error
+}
+
 // MetadataReader exposes read-only access to table metadata.
 type MetadataReader interface {
 	// TableIds lists every registered tableId, ordered by sort (multi-column,

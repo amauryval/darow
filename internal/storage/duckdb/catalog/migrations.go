@@ -4,86 +4,83 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 )
 
-// schemaMigrations are ALTER statements applied in order, once each,
-// against a database created before they existed — metadataSchema's
-// CREATE TABLE IF NOT EXISTS only ever benefits a brand-new database.
-// Append to this list, never edit or remove an entry: existing databases
-// have already applied everything before their recorded version.
-var schemaMigrations = []string{
-	`ALTER TABLE metadata ADD COLUMN sourceName TEXT`,
-	`ALTER TABLE metadata ADD COLUMN sourceLayer TEXT`,
-	`DROP INDEX IF EXISTS idx_metadata_geo`,
-	`DROP INDEX IF EXISTS idx_metadata_name`,
-	`ALTER TABLE metadata ALTER COLUMN rowCount SET DATA TYPE BIGINT`,
-	`CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo)`,
-	`CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName)`,
+// Component is one schema-owning piece of the catalogue — metadata today, a
+// future settings or stored-filters table tomorrow — contributing its own
+// creation DDL and its own ordered migration list, versioned independently
+// in schema_version so adding a component never touches another's history.
+type Component struct {
+	// Name identifies the component in schema_version. Stable, never
+	// reused once shipped.
+	Name string
+	// CreateSchema is applied on every startup — already at the latest
+	// column set, so a fresh component's table is created directly
+	// through it, at its latest version, without replaying Migrations.
+	CreateSchema string
+	// Migrations are ALTER statements applied once each, in order, to an
+	// existing component whose recorded version trails len(Migrations).
+	// Append to this list, never edit or remove an entry.
+	Migrations []string
 }
 
-// Migrate ensures the metadata table and schema_version tracking exist,
-// then applies every migration a database hasn't seen yet. A database that
-// didn't exist before this call gets metadataSchema's current definition
+// registry holds every Component contributed via register, in registration
+// order — Migrate iterates it to build and version each component's schema
+// independently.
+var registry []Component
+
+// register adds c to the registry. Called from each component's own file
+// at package init.
+func register(c Component) {
+	registry = append(registry, c)
+}
+
+// Migrate ensures schema_version exists, one row per component, and
+// applies every migration a database hasn't seen yet, for every registered
+// component. A component with no recorded version gets its CreateSchema
 // directly (already including every migrated column), so it's seeded at
-// the latest version rather than replaying migrations that would collide
+// its latest version rather than replaying migrations that would collide
 // with columns already present.
 func Migrate(db *sql.DB) error {
-	var metadataTableExisted bool
-	err := db.QueryRow(`SELECT COUNT(*) > 0 FROM duckdb_tables() WHERE table_name = 'metadata'`).Scan(&metadataTableExisted)
-	if err != nil {
-		return fmt.Errorf("checking existing schema: %w", err)
-	}
-
-	if _, err := db.Exec(metadataSchema); err != nil {
-		return fmt.Errorf("initializing metadata schema: %w", err)
-	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (component TEXT, version INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("initializing schema_version: %w", err)
+	}
+	for _, c := range registry {
+		if err := migrateComponent(db, c); err != nil {
+			return fmt.Errorf("migrating %s: %w", c.Name, err)
+		}
+	}
+	return nil
+}
+
+// migrateComponent applies c's CreateSchema, then seeds its version at
+// len(Migrations) if unrecorded, or replays its pending Migrations.
+func migrateComponent(db *sql.DB, c Component) error {
+	if _, err := db.Exec(c.CreateSchema); err != nil {
+		return fmt.Errorf("initializing schema: %w", err)
 	}
 
 	var version int
-	err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version)
+	err := db.QueryRow(`SELECT version FROM schema_version WHERE component = ?`, c.Name).Scan(&version)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		version = len(schemaMigrations)
-		if metadataTableExisted {
-			version = 0
-		}
-		if _, err := db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, version); err != nil {
+		version = len(c.Migrations)
+		if _, err := db.Exec(`INSERT INTO schema_version (component, version) VALUES (?, ?)`, c.Name, version); err != nil {
 			return fmt.Errorf("seeding schema_version: %w", err)
 		}
 	case err != nil:
 		return fmt.Errorf("reading schema_version: %w", err)
 	}
 
-	for i := version; i < len(schemaMigrations); i++ {
-		if err := execMigration(db, schemaMigrations[i]); err != nil {
+	for i := version; i < len(c.Migrations); i++ {
+		if _, err := db.Exec(c.Migrations[i]); err != nil {
 			return fmt.Errorf("applying migration %d: %w", i+1, err)
 		}
 	}
-	if len(schemaMigrations) > version {
-		if _, err := db.Exec(`UPDATE schema_version SET version = ?`, len(schemaMigrations)); err != nil {
+	if len(c.Migrations) > version {
+		if _, err := db.Exec(`UPDATE schema_version SET version = ? WHERE component = ?`, len(c.Migrations), c.Name); err != nil {
 			return fmt.Errorf("recording schema_version: %w", err)
 		}
 	}
 	return nil
-}
-
-// execMigration runs stmt, tolerating a duplicate-column error on an ADD
-// COLUMN statement: a database created after that column was added but
-// before schema_version tracking existed has no recorded version, so
-// Migrate assumes 0 and replays every migration — the column is already
-// there, and this is the one migration shape in schemaMigrations that
-// isn't otherwise idempotent (unlike DROP INDEX IF EXISTS, CREATE INDEX IF
-// NOT EXISTS, or re-setting a column to the type it already has).
-func execMigration(db *sql.DB, stmt string) error {
-	_, err := db.Exec(stmt)
-	if err == nil {
-		return nil
-	}
-	if strings.Contains(strings.ToUpper(stmt), "ADD COLUMN") && strings.Contains(strings.ToLower(err.Error()), "already exists") {
-		return nil
-	}
-	return err
 }

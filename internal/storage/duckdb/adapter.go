@@ -12,18 +12,21 @@ import (
 
 	"darow/internal/storage"
 	catalogcontract "darow/internal/storage/catalog"
+	datacontract "darow/internal/storage/data"
 	"darow/internal/storage/duckdb/catalog"
+	"darow/internal/storage/duckdb/data"
 )
 
-// Adapter implements catalog.MetadataManager, storage.TableCreator and
+// Adapter implements catalog.MetadataManager, data.TableLifecycle and
 // data.TableResolver on top of DuckDB. It serializes every write through
 // writeMu: DuckDB allows only one active writer per process, though
 // concurrent writes without conflicts and concurrent reads are both safe
 // across the pooled connections opened against db.
 type Adapter struct {
-	db      *sql.DB
-	writeMu sync.Mutex
-	catalog *catalog.Catalog
+	db        *sql.DB
+	writeMu   sync.Mutex
+	catalog   *catalog.Catalog
+	lifecycle datacontract.TableLifecycle
 }
 
 // New opens the DuckDB database at path, loads the spatial extension, and
@@ -57,7 +60,8 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	}
 
 	a := &Adapter{db: db}
-	a.catalog = catalog.NewCatalog(a, a)
+	a.catalog = catalog.NewCatalog(a, a, a)
+	a.lifecycle = data.NewLifecycle(a, a, a)
 	return a, nil
 }
 
@@ -158,7 +162,13 @@ func (a *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geom
 // Remove deletes a logical table's metadata and drops its physical table,
 // in a single transaction.
 func (a *Adapter) Remove(ctx context.Context, tableId string) error {
-	return a.catalog.DeleteTable(ctx, tableId)
+	return a.catalog.Remove(ctx, tableId)
+}
+
+// Catalog returns the catalogue aggregate — metadata, PhysicalNames, and
+// the attachment registry — as the contract storage/catalog declares.
+func (a *Adapter) Catalog() catalogcontract.Catalog {
+	return a.catalog
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata.

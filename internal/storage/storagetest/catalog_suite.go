@@ -13,12 +13,13 @@ import (
 )
 
 // CatalogHarness is what the catalogue suite needs from an adapter: the
-// catalog.MetadataManager contract itself, plus raw SQL access used only
-// to fabricate a throwaway physical table for RefreshDerivedMetadata's
-// COUNT/bbox math — materializing a real data table is storage.TableCreator's
-// job (exercised by the data suite instead), not the catalogue's.
+// catalog.Catalog aggregate itself (metadata, PhysicalNames, and the
+// attachment registry), plus raw SQL access used only to fabricate a
+// throwaway physical table for RefreshDerivedMetadata's COUNT/bbox math —
+// materializing a real data table is data.TableLifecycle's job (exercised
+// by the data suite instead), not the catalogue's.
 type CatalogHarness interface {
-	catalog.MetadataManager
+	catalog.Catalog
 	storage.SQLWrapper
 }
 
@@ -36,6 +37,19 @@ func RunCatalogSuite(t *testing.T, newCatalog NewCatalog) {
 	t.Run("UpdateAndRefreshDerived", func(t *testing.T) { testCatalogUpdateAndRefreshDerived(t, newCatalog) })
 	t.Run("ListPagination", func(t *testing.T) { testCatalogListPagination(t, newCatalog) })
 	t.Run("BySource", func(t *testing.T) { testCatalogBySource(t, newCatalog) })
+	t.Run("RemoveCascadesToAttachment", func(t *testing.T) { testCatalogRemoveCascadesToAttachment(t, newCatalog) })
+}
+
+// fakeAttachment records every DeleteAttached call it receives, proving a
+// registered attachment is reached by Remove's cascade regardless of the
+// backend implementing catalog.Catalog.
+type fakeAttachment struct {
+	calls []string
+}
+
+func (a *fakeAttachment) DeleteAttached(ctx context.Context, uow catalog.UnitOfWork, tableId string) error {
+	a.calls = append(a.calls, tableId)
+	return nil
 }
 
 // newCatalogTable registers a logical table via Create and gives it a
@@ -100,6 +114,18 @@ func testCatalogRemove(t *testing.T, newCatalog NewCatalog) {
 	exists, err := h.TableExists(ctx, tableId)
 	require.NoError(t, err)
 	assert.False(t, exists)
+}
+
+func testCatalogRemoveCascadesToAttachment(t *testing.T, newCatalog NewCatalog) {
+	h := newCatalog(t)
+	ctx := context.Background()
+	tableId := newCatalogTable(t, h, 1)
+
+	attachment := &fakeAttachment{}
+	h.Register(attachment)
+
+	require.NoError(t, h.Remove(ctx, tableId))
+	assert.Equal(t, []string{tableId}, attachment.calls)
 }
 
 func testCatalogUpdateAndRefreshDerived(t *testing.T, newCatalog NewCatalog) {

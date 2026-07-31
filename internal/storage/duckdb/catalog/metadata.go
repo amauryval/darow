@@ -13,9 +13,8 @@ import (
 	catalogcontract "darow/internal/storage/catalog"
 )
 
-// metadataSchema is the DDL applied to a brand-new database — already at
-// the latest column set, so a fresh database never replays schemaMigrations
-// (see Migrate).
+// metadataSchema is the DDL applied on every startup — already at the
+// latest column set (no accumulated pre-1.0 migration history: see LIM-7).
 const metadataSchema = `
 CREATE TABLE IF NOT EXISTS metadata (
     tableId TEXT PRIMARY KEY,
@@ -35,6 +34,20 @@ CREATE TABLE IF NOT EXISTS metadata (
 CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo);
 CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
 `
+
+// schemaMigrations are ALTER statements applied in order, once each, to an
+// existing metadata table whose recorded version trails this list — empty
+// today (LIM-7: no pre-1.0 database is migrated in place), populated once
+// the server has a first stable release to carry schema changes across.
+var schemaMigrations = []string{}
+
+func init() {
+	register(Component{
+		Name:         "metadata",
+		CreateSchema: metadataSchema,
+		Migrations:   schemaMigrations,
+	})
+}
 
 // metadataSortColumns maps a sort field's public name to its SQL column —
 // an allowlist, so a sort request can never interpolate an arbitrary

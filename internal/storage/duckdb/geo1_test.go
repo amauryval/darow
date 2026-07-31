@@ -103,21 +103,3 @@ func Test_Adapter_DetectCRS_NoRowsWhenLayerUnknown(t *testing.T) {
 	assert.Empty(t, authName)
 	assert.Zero(t, authCode, "an unresolvable layer reports no CRS rather than erroring")
 }
-
-func Test_Adapter_FindGeometryColumn_RejectsMultipleGeometryColumns(t *testing.T) {
-	a := setupAdapter(t)
-	tableId, err := a.Create(context.Background(), "multi_geom", false, "")
-	require.NoError(t, err)
-	meta, err := a.GetMetadata(context.Background(), tableId)
-	require.NoError(t, err)
-
-	_, err = a.Exec(context.Background(),
-		`CREATE TABLE `+meta.PhysicalName+` AS SELECT uuid()::TEXT AS __pkey, ST_Point(0, 0) AS geom_a, ST_Point(1, 1) AS geom_b`,
-	)
-	require.NoError(t, err)
-
-	_, err = a.findGeometryColumn(context.Background(), meta.PhysicalName)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multiple geometry columns")
-}

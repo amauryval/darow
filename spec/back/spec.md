@@ -109,12 +109,12 @@ identifier, storage knows neither HTTP nor the application caches.
 | `internal/router/validation` | `{tableId}` resolution, column-name validation |
 | `internal/router/response` | JSON writing, standard error body, error → status mapping |
 | `internal/service` | application logic, caches, orchestration |
-| `internal/storage` | engine-agnostic contracts and primitives (`TableCreator`, `Row`/`GeoFeature`, `BuildFilter`, identifiers) |
-| `internal/storage/catalog` | backend-agnostic catalogue contract (`Metadata`, `MetadataManager`) |
-| `internal/storage/data` | backend-agnostic data-table contract (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`) |
+| `internal/storage` | engine-agnostic contracts and primitives (`Row`/`GeoFeature`, `BuildFilter`, identifiers) |
+| `internal/storage/catalog` | backend-agnostic catalogue contract (`Metadata`, `MetadataManager`, `Catalog`) |
+| `internal/storage/data` | backend-agnostic data-table contract (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`, `TableLifecycle`) |
 | `internal/storage/duckdb` | the DuckDB implementation (sub-packages `catalog/` and `data/`) |
 | `internal/storage/storagetest` | conformance suite reusable by any adapter |
-| `internal/storage/mocks` | testify mocks of the `catalog`, `data` and `storage.TableCreator` contracts |
+| `internal/storage/mocks` | testify mocks of the `catalog` and `data` contracts |
 | `internal/webui` | `go:embed` of the Vue SPA's production build |
 
 **Interface pattern.** Each consumer declares the narrow interface it needs, in its own package,
@@ -314,7 +314,7 @@ from validation before interpolation, not from the allowed character set**.
 
 ### 4.4 Go contracts
 
-Files: `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`, `aggregate.go`,
+Files: `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`,
 `internal/storage/catalog/`, `internal/storage/data/`.
 
 The catalogue (`storage/catalog`) and the data tables (`storage/data`) are two distinct
@@ -324,19 +324,28 @@ backend-agnostic contracts, with no reference to DuckDB nor to each other:
 |---|---|---|
 | `MetadataReader` | `catalog` | `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource` |
 | `MetadataWriter` | `catalog` | `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata` |
+| `Catalog` | `catalog` | the catalogue aggregate — `MetadataManager` plus `PhysicalNames` (the registered-table allowlist `/derive` validates against) and `Register(Attachment)`, the construction-time extension point through which a catalogue-attached repository joins the whole-table delete cascade |
 | `TableResolver` | `data` | `Table(meta) (TableRepository, error)` — the only entry point to a resolved table |
 | `TableRepository` | `data` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
 | `RowRepository` | `data` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
 | `GeoRepository` | `data` | `Tile`, `Features`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
-| `TableCreator` | `storage` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS` |
+| `TableLifecycle` | `data` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS`, `Drop(ctx, uow, physicalName)` — materializes, indexes, clusters and drops a table's physical backing store; `TableResolver`/`TableRepository` assume a table already in that state |
 | `SQLWrapper` | `storage` | `Query`, `QueryRow`, `Exec`, `Begin` — an implementation detail of the `duckdb` package, used by the conformance suites, never by a service |
+
+`Catalog.Register` takes an `Attachment` (`DeleteAttached(ctx, uow UnitOfWork, tableId string) error`),
+its own contract in `storage/catalog`: `UnitOfWork` is an alias for `any`, the opaque handle of the
+transaction a delete cascade runs in, owned entirely by the adapter (`*sql.Tx` in `duckdb`).
+`TableLifecycle.Drop` takes the same `UnitOfWork` — the contract package itself never names an
+engine-specific type, and `duckdb/catalog.Catalog.Remove` obtains its physical `DROP` from a
+`Dropper` (declared locally in `duckdb/catalog`, implemented by `duckdb/data`'s lifecycle) rather
+than formatting the DDL itself.
 
 No service depends on these interfaces directly: each declares its own narrow interface over the
 subset it actually calls (`core.storageAdapter` documents the full surface an adapter must satisfy:
-`catalog.MetadataManager` + `storage.TableCreator` + `data.TableResolver`).
+an accessor returning `catalog.Catalog` + `data.TableLifecycle` + `data.TableResolver`).
 
 **Naming.** `MetadataWriter.Remove` deletes a whole table (metadata and physical table, in a single
-transaction through `duckdb/catalog.Catalog.DeleteTable`), `RowRepository.Delete` deletes rows.
+transaction through `duckdb/catalog.Catalog.Remove`), `RowRepository.Delete` deletes rows.
 
 **Cross-cutting data types.** `Row` (pkey + values, no geometry), `GeoFeature` (pkey + raw GeoJSON
 fragment + values), `GeoQuery` (`BuildFilter` clause + args + simplification tolerance + precision,
@@ -361,21 +370,26 @@ escapes.
 
 ### 4.6 The DuckDB adapter
 
-Files: `internal/storage/duckdb/` (`adapter.go`, `table.go`, `create.go`, `derive.go`), plus the
-sub-packages `duckdb/catalog/` (metadata, migrations, delete cascade) and `duckdb/data/` (table
-resolution, rows, geo — the implementation of the `storage/data` contracts).
+Files: `internal/storage/duckdb/` (`adapter.go`, `table.go`, `lifecycle.go` — the thin delegators to
+`duckdb/data`'s lifecycle), plus the sub-packages `duckdb/catalog/` (metadata, migrations, delete
+cascade) and `duckdb/data/` (table resolution, rows, geo, and `lifecycle.go` — materialization,
+indexing, clustering, drop, and `/derive` query validation — the implementation of the
+`storage/data` contracts, `TableLifecycle` included).
 
 - **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
   creation of the parent directory, then schema migration.
 - **Write serialization**: a single application-level mutex (`writeMu`) covers `Exec`. `BulkInsert`
-  and `Catalog.DeleteTable` take it themselves for the whole duration of their transaction, rather
-  than per statement.
-- **Migrations** (`duckdb/catalog/migrations.go`): an ordered list of `ALTER` statements, each
-  applied once, tracked by a `schema_version` table. A fresh database receives the current DDL
-  directly and is marked at the highest version; a pre-existing database without `schema_version` is
-  marked at 0 and replays everything — an `ADD COLUMN` on an already present column (a database
-  migrated after the column was added but before `schema_version`) is tolerated rather than failing
-  startup.
+  and `Catalog.Remove` take it themselves for the whole duration of their transaction, rather than
+  per statement.
+- **Migrations** (`duckdb/catalog/migrations.go`): a registry of `Component`s, one per
+  catalogue-owned table — `metadata` today (registered from `duckdb/catalog/metadata.go`'s `init`),
+  a future settings or stored-filters table tomorrow. Each `Component` carries its own creation DDL
+  and its own ordered list of `ALTER` statements, and `schema_version` tracks one `(component,
+  version)` row per component rather than a single whole-database integer, so adding a component
+  never touches another's history. Per component: a database with no recorded version for it gets
+  the current DDL directly and is marked at the highest version; a recorded version behind
+  `len(Migrations)` replays the missing statements and bumps the version. `metadata`'s own
+  `Migrations` list is empty today — see `limitations.md` LIM-7.
 - **Reprojection**: geometry is reprojected **once at import** to EPSG:3857, never per query. Every
   lon/lat output (bbox, GeoJSON) converts back to `OGC:CRS84`.
 
@@ -669,7 +683,7 @@ confinement of file paths to the `workDir` cache.
 
 ## 7. Loading a file
 
-The sequence of `CreateFromFile` (`storage/duckdb/create.go`), triggered by
+The sequence of `CreateFromFile` (`storage/duckdb/data/lifecycle.go`), triggered by
 `POST /sources/{name}/load` or `/sources/upload`:
 
 1. **CTAS from `ST_Read`** with `__pkey` generated in the projection. `ST_Read` only reads: the
@@ -740,16 +754,18 @@ internal/
     webui.go           SPA serving with history-mode fallback
   service/             one file per service + errors.go + formats.go
   storage/
-    catalog/           backend-agnostic catalogue contract (Metadata, MetadataManager)
+    catalog/           backend-agnostic catalogue contract (Metadata, MetadataManager, Catalog)
     data/              backend-agnostic data-table contract (TableResolver,
-                        TableRepository, RowRepository, GeoRepository)
+                        TableRepository, RowRepository, GeoRepository, TableLifecycle)
     sort/              SortField, dependency-free — breaks the catalog/data cycle
-    duckdb/            DuckDB adapter, creation, derivation
+    duckdb/            DuckDB adapter: connection, write serialization, wiring, thin
+                        delegators to catalog/ and data/
       catalog/         DuckDB implementation of the catalogue + migrations + delete cascade
-      data/            DuckDB implementation of the data tables
+      data/            DuckDB implementation of the data tables and of TableLifecycle
+                        (materialization, indexing, clustering, drop, /derive validation)
     storagetest/       reusable conformance suite, run against duckdb/
-    mocks/             testify mocks of the catalog, data and storage.TableCreator contracts
-    *.go               TableCreator, Row/GeoFeature/GeoQuery, BuildFilter, identifiers, SQLWrapper
+    mocks/             testify mocks of the catalog and data contracts
+    *.go               Row/GeoFeature/GeoQuery, BuildFilter, identifiers, SQLWrapper
   webui/               go:embed of the production build
 web/                   Vue 3 application (builds into internal/webui/dist) — see spec/front/
 spec/

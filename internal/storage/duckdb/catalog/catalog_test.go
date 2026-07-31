@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	catalogcontract "darow/internal/storage/catalog"
 )
 
 // dbTxRunner adapts a plain *sql.DB to TxRunner for tests — no writeMu to
@@ -27,35 +29,45 @@ func (r dbTxRunner) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error
 	return tx.Commit()
 }
 
-// fakeDeleter records every DeleteTx call it receives, optionally failing
-// with err, to prove Catalog.DeleteTable both cascades and rolls back.
-type fakeDeleter struct {
+// fakeAttachment records every DeleteAttached call it receives, optionally
+// failing with err, to prove Catalog.Remove both cascades and rolls back.
+type fakeAttachment struct {
 	err   error
 	calls []string
 }
 
-func (d *fakeDeleter) DeleteTx(ctx context.Context, tx *sql.Tx, tableId string) error {
-	d.calls = append(d.calls, tableId)
-	return d.err
+func (a *fakeAttachment) DeleteAttached(ctx context.Context, uow catalogcontract.UnitOfWork, tableId string) error {
+	a.calls = append(a.calls, tableId)
+	return a.err
+}
+
+// fakeDropper drops physicalName with raw DDL, standing in for
+// duckdb/data's lifecycle so this package's tests never depend on it.
+type fakeDropper struct{}
+
+func (fakeDropper) Drop(ctx context.Context, uow catalogcontract.UnitOfWork, physicalName string) error {
+	tx := uow.(*sql.Tx)
+	_, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS "+physicalName)
+	return err
 }
 
 func newTestCatalog(t *testing.T) *Catalog {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
-	return NewCatalog(dbQuerier{db}, dbTxRunner{db})
+	return NewCatalog(dbQuerier{db}, dbTxRunner{db}, fakeDropper{})
 }
 
-func Test_Catalog_DeleteTable_CascadesToRegisteredRepositories(t *testing.T) {
+func Test_Catalog_Remove_CascadesToRegisteredRepositories(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
 	tableId, err := c.Create(ctx, "widgets", false, "")
 	require.NoError(t, err)
 
-	child := &fakeDeleter{}
+	child := &fakeAttachment{}
 	c.Register(child)
 
-	require.NoError(t, c.DeleteTable(ctx, tableId))
+	require.NoError(t, c.Remove(ctx, tableId))
 
 	assert.Equal(t, []string{tableId}, child.calls)
 	exists, err := c.TableExists(ctx, tableId)
@@ -63,7 +75,7 @@ func Test_Catalog_DeleteTable_CascadesToRegisteredRepositories(t *testing.T) {
 	assert.False(t, exists)
 }
 
-func Test_Catalog_DeleteTable_DropsPhysicalTable(t *testing.T) {
+func Test_Catalog_Remove_DropsPhysicalTable(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
@@ -76,7 +88,7 @@ func Test_Catalog_DeleteTable_DropsPhysicalTable(t *testing.T) {
 	_, err = dbq.db.ExecContext(ctx, "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY)")
 	require.NoError(t, err)
 
-	require.NoError(t, c.DeleteTable(ctx, tableId))
+	require.NoError(t, c.Remove(ctx, tableId))
 
 	exists, err := c.TableExists(ctx, tableId)
 	require.NoError(t, err)
@@ -88,7 +100,7 @@ func Test_Catalog_DeleteTable_DropsPhysicalTable(t *testing.T) {
 	assert.Zero(t, count, "physical table must be dropped alongside the metadata row")
 }
 
-func Test_Catalog_DeleteTable_RollsBackOnChildError(t *testing.T) {
+func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
@@ -96,9 +108,9 @@ func Test_Catalog_DeleteTable_RollsBackOnChildError(t *testing.T) {
 	require.NoError(t, err)
 
 	failing := errors.New("child delete failed")
-	c.Register(&fakeDeleter{err: failing})
+	c.Register(&fakeAttachment{err: failing})
 
-	err = c.DeleteTable(ctx, tableId)
+	err = c.Remove(ctx, tableId)
 	require.ErrorIs(t, err, failing)
 
 	exists, err := c.TableExists(ctx, tableId)

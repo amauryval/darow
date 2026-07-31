@@ -10,19 +10,36 @@ import (
 	"darow/internal/storage/data"
 )
 
-// Storage is a testify mock implementing catalog.MetadataManager,
-// storage.TableCreator and data.TableResolver — the full surface
-// core.NewServices wires up, kept as one mock since service-layer tests
-// exercise catalogue and resolver methods interchangeably.
+// Storage is a testify mock implementing catalog.Catalog, data.TableLifecycle
+// and data.TableResolver — the full surface core.NewServices wires up, kept
+// as one mock since service-layer tests exercise catalogue and resolver
+// methods interchangeably.
 type Storage struct {
 	mock.Mock
 }
 
 var (
 	_ catalog.MetadataManager = (*Storage)(nil)
-	_ storage.TableCreator    = (*Storage)(nil)
+	_ catalog.Catalog         = (*Storage)(nil)
+	_ data.TableLifecycle     = (*Storage)(nil)
 	_ data.TableResolver      = (*Storage)(nil)
 )
+
+// Catalog returns m itself: Storage already implements catalog.Catalog, so
+// core.storageAdapter's accessor is satisfied without a separate type.
+func (m *Storage) Catalog() catalog.Catalog {
+	return m
+}
+
+func (m *Storage) PhysicalNames(ctx context.Context) (map[string]bool, error) {
+	callArgs := m.Called(ctx)
+	names, _ := callArgs.Get(0).(map[string]bool)
+	return names, callArgs.Error(1)
+}
+
+func (m *Storage) Register(a catalog.Attachment) {
+	m.Called(a)
+}
 
 func (m *Storage) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
 	callArgs := m.Called(ctx, sort)
@@ -102,4 +119,8 @@ func (m *Storage) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 func (m *Storage) DetectCRS(ctx context.Context, sourcePath, layer string) (string, int, error) {
 	callArgs := m.Called(ctx, sourcePath, layer)
 	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
+}
+
+func (m *Storage) Drop(ctx context.Context, uow catalog.UnitOfWork, physicalName string) error {
+	return m.Called(ctx, uow, physicalName).Error(0)
 }
