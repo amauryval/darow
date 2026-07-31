@@ -147,6 +147,21 @@ func Test_GeoService_GetFeatures_ProxiesToStorage(t *testing.T) {
 	assert.Equal(t, features, got)
 }
 
+func Test_GeoService_CountFeatures_ProxiesToStorage(t *testing.T) {
+	geoSvc, geoRepo := setupGeoService(t)
+	bbox := [4]float64{0, 0, 1, 1}
+	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+
+	geoRepo.On("CountFeatures", context.Background(), data.FeatureQuery{
+		Pkeys: []string{"pk-1"}, Bbox: &bbox, Query: q,
+	}).Return(int64(42), nil).Once()
+
+	got, err := geoSvc.CountFeatures(context.Background(), catalog.Metadata{TableId: "id-1"}, []string{"pk-1"}, &bbox, q)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 42, got)
+}
+
 func Test_GeoService_GetFeaturesTile_ProxiesToStorage(t *testing.T) {
 	geoSvc, geoRepo := setupGeoService(t)
 	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}

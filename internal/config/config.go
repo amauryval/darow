@@ -96,7 +96,7 @@ func defaultConfig() Config {
 		Sources: SourcesConfig{
 			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
-			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg"},
+			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg", ".parquet"},
 		},
 		API: APIConfig{
 			DefaultRowLimit:      100,

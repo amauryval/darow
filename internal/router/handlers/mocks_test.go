@@ -151,6 +151,11 @@ func (m *mockGeoAPI) GetFeatures(ctx context.Context, meta catalog.Metadata, pke
 	return features, args.Error(1)
 }
 
+func (m *mockGeoAPI) CountFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error) {
+	args := m.Called(ctx, meta, pkeys, bbox, q)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *mockGeoAPI) GetFeaturesTile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
 	args := m.Called(ctx, meta, zoom, x, y, attrs, q, limit, offset)
 	features, _ := args.Get(0).([]storage.GeoFeature)

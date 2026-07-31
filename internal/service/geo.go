@@ -89,6 +89,17 @@ func (g *GeoService) GetFeatures(ctx context.Context, meta catalog.Metadata, pke
 	})
 }
 
+// CountFeatures returns how many features match pkeys/bbox/q, ignoring
+// limit/offset — OGC API - Features' numberMatched, computed on demand and
+// never cached for the same reason as GetFeatures.
+func (g *GeoService) CountFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error) {
+	geo, err := g.geoRepo(meta)
+	if err != nil {
+		return 0, err
+	}
+	return geo.CountFeatures(ctx, data.FeatureQuery{Pkeys: pkeys, Bbox: bbox, Query: q})
+}
+
 // GetFeaturesTile returns up to limit GeoFeatures intersecting the given
 // MVT-style z/x/y tile, computed on demand and never cached,
 // same rationale as GetFeatures — attrs is bounded, but q.Filter/Args form

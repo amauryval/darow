@@ -22,6 +22,7 @@ var (
 	_ catalog.MetadataManager = (*Storage)(nil)
 	_ catalog.Catalog         = (*Storage)(nil)
 	_ data.TableLifecycle     = (*Storage)(nil)
+	_ data.SourceIntrospector = (*Storage)(nil)
 	_ data.TableResolver      = (*Storage)(nil)
 )
 

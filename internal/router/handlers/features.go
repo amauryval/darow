@@ -163,8 +163,13 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
+	numberMatched, err := fh.geoService.CountFeatures(req.Context(), meta, nil, bbox, q)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
 
-	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, itemsLinks(req, offset, limit, int64(len(features)))))
+	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, numberMatched, itemsLinks(req, offset, limit, int64(len(features)))))
 }
 
 // GetItem handles GET /ogc/collections/{tableId}/items/{featureId}.
@@ -244,7 +249,7 @@ func toFeatureDTO(f storage.GeoFeature) featureDTO {
 	return featureDTO{Type: "Feature", Id: f.Pkey, Geometry: json.RawMessage(f.GeoJSON), Properties: f.Values}
 }
 
-func toFeatureCollectionDTO(features []storage.GeoFeature, links []map[string]string) map[string]any {
+func toFeatureCollectionDTO(features []storage.GeoFeature, numberMatched int64, links []map[string]string) map[string]any {
 	items := make([]featureDTO, len(features))
 	for i, f := range features {
 		items[i] = toFeatureDTO(f)
@@ -252,7 +257,7 @@ func toFeatureCollectionDTO(features []storage.GeoFeature, links []map[string]st
 	return map[string]any{
 		"type":           "FeatureCollection",
 		"features":       items,
-		"numberMatched":  len(features),
+		"numberMatched":  numberMatched,
 		"numberReturned": len(features),
 		"links":          links,
 	}

@@ -45,7 +45,7 @@ func Test_Lifecycle_ClusterByHilbert(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			conn := openRepoTestDB(t)
-			l := NewLifecycle(conn, conn, fakePhysicalNames{}).(*lifecycle)
+			l := NewLifecycle(conn, conn, fakePhysicalNames{})
 			ctx := context.Background()
 
 			_, isGeo, _, err := l.CreateFromFile(ctx, "t_points", lifecycleFixture(t), "", 0)
@@ -88,7 +88,7 @@ func Test_Lifecycle_ClusterByHilbert(t *testing.T) {
 
 func Test_Lifecycle_FindGeometryColumn_RejectsMultipleGeometryColumns(t *testing.T) {
 	conn := openRepoTestDB(t)
-	l := NewLifecycle(conn, conn, fakePhysicalNames{}).(*lifecycle)
+	l := NewLifecycle(conn, conn, fakePhysicalNames{})
 	ctx := context.Background()
 
 	_, err := conn.Exec(ctx,
@@ -106,7 +106,7 @@ func Test_Lifecycle_ValidateDeriveQuery(t *testing.T) {
 	conn := openRepoTestDB(t)
 	_, err := conn.Exec(context.Background(), `CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
 	require.NoError(t, err)
-	l := NewLifecycle(conn, conn, fakePhysicalNames{"t_a1b2c3": true}).(*lifecycle)
+	l := NewLifecycle(conn, conn, fakePhysicalNames{"t_a1b2c3": true})
 
 	cases := []struct {
 		name    string
@@ -187,4 +187,28 @@ func Test_Lifecycle_Drop_RejectsInvalidPhysicalName(t *testing.T) {
 		return l.Drop(ctx, tx, "not valid; DROP TABLE x")
 	})
 	assert.Error(t, err)
+}
+
+func Test_ParseGeometryCRS(t *testing.T) {
+	cases := []struct {
+		colType  string
+		wantCRS  string
+		wantSRID int
+		wantOK   bool
+	}{
+		{colType: "GEOMETRY('EPSG:2154')", wantCRS: "EPSG:2154", wantSRID: 2154, wantOK: true},
+		{colType: "GEOMETRY('OGC:CRS84')", wantCRS: "OGC:CRS84", wantSRID: 4326, wantOK: true},
+		{colType: "GEOMETRY('BOGUS')", wantCRS: "BOGUS", wantSRID: 0, wantOK: true},
+		{colType: "GEOMETRY", wantCRS: "", wantSRID: 0, wantOK: false},
+		{colType: "VARCHAR", wantCRS: "", wantSRID: 0, wantOK: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.colType, func(t *testing.T) {
+			crs, srid, ok := parseGeometryCRS(c.colType)
+			assert.Equal(t, c.wantCRS, crs)
+			assert.Equal(t, c.wantSRID, srid)
+			assert.Equal(t, c.wantOK, ok)
+		})
+	}
 }

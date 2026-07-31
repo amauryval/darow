@@ -35,6 +35,7 @@ import (
 type DataHarness interface {
 	data.TableResolver
 	data.TableLifecycle
+	data.SourceIntrospector
 	catalog.MetadataManager
 	storage.SQLWrapper
 }

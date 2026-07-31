@@ -23,6 +23,7 @@ import (
 type storageAdapter interface {
 	Catalog() catalog.Catalog
 	data.TableLifecycle
+	data.SourceIntrospector
 	data.TableResolver
 }
 

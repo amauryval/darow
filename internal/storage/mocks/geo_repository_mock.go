@@ -29,6 +29,12 @@ func (m *GeoRepository) Features(ctx context.Context, q data.FeatureQuery) ([]st
 	return features, callArgs.Error(1)
 }
 
+func (m *GeoRepository) CountFeatures(ctx context.Context, q data.FeatureQuery) (int64, error) {
+	callArgs := m.Called(ctx, q)
+	count, _ := callArgs.Get(0).(int64)
+	return count, callArgs.Error(1)
+}
+
 func (m *GeoRepository) FeaturesInTile(ctx context.Context, zoom, x, y int, q data.FeatureQuery) ([]storage.GeoFeature, error) {
 	callArgs := m.Called(ctx, zoom, x, y, q)
 	features, _ := callArgs.Get(0).([]storage.GeoFeature)

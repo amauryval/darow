@@ -478,6 +478,34 @@ func Test_SourceService_DetectCRS(t *testing.T) {
 	assert.Equal(t, 2154, authCode)
 }
 
+// A non-Introspectable format (Parquet/GeoParquet) must never reach
+// storage's DetectCRS — it is never called through the same ST_Read_Meta
+// path every other format uses, which crashes outright on one. The mock
+// has no "DetectCRS" expectation set up at all, so a call through to it
+// would fail the test.
+func Test_SourceService_DetectCRS_SkipsNonIntrospectableFormat(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "widgets.parquet", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".parquet"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	authName, authCode, err := svc.DetectCRS(context.Background(), "widgets.parquet", "")
+
+	require.NoError(t, err)
+	assert.Empty(t, authName)
+	assert.Zero(t, authCode)
+}
+
 func Test_SourceService_DetectCRS_RejectsUnknownSource(t *testing.T) {
 	tableSvc, _ := setupImportService(t)
 	svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)

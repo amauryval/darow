@@ -366,11 +366,18 @@ func (s *SourceService) sourcePath(name, layer string) (string, error) {
 
 // DetectCRS reports the authority/code of a source's declared CRS (0 if
 // undetectable), so a caller can preview it before Load — the "editable
-// EPSG" flow. layer selects one layer of a multi-layer source.
+// EPSG" flow. layer selects one layer of a multi-layer source. A format
+// that isn't Introspectable (e.g. Parquet/GeoParquet, resolved instead at
+// Load time) reports no CRS rather than calling into storage — its
+// declared-CRS reader is never the same one ListLayers/DetectCRS use for
+// every other format, and must never be reached with the wrong file type.
 func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error) {
 	path, err := s.sourcePath(name, layer)
 	if err != nil {
 		return "", 0, err
+	}
+	if format, ok := lookupSourceFormat(filepath.Ext(name)); ok && !format.Introspectable {
+		return "", 0, nil
 	}
 	return s.tableService.DetectCRS(ctx, path, layer)
 }

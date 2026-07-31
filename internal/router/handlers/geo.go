@@ -201,7 +201,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, itemsLinks(req, int64(offset), int64(limit), int64(len(features)))))
+	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), itemsLinks(req, int64(offset), int64(limit), int64(len(features)))))
 }
 
 // tileETag derives an ETag for a tile from its table's UpdatedAt: any write

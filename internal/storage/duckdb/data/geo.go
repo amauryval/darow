@@ -254,6 +254,35 @@ func (g *geoRepository) Features(ctx context.Context, q contract.FeatureQuery) (
 		args = append(args, *q.Query.Precision)
 	}
 
+	where, args := featuresWhereClause(g.t, q, args)
+	args = append(args, q.Limit, q.Offset)
+
+	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
+	// column is stored reprojected to EPSG:3857 — same axis-order-safe
+	// transform as the bbox filter above and RefreshDerivedMetadata's
+	// bbox, just in the opposite direction.
+	query := fmt.Sprintf(
+		`SELECT __pkey, %s, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) AS __geojson FROM %s%s ORDER BY __pkey LIMIT ? OFFSET ?`,
+		attrSelect, geomExpr, g.t.PhysicalName, where,
+	)
+
+	rows, err := g.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return ScanFeatureRows(rows)
+}
+
+// featuresWhereClause builds the WHERE clause and bound args shared by
+// Features and CountFeatures from q.Pkeys/q.Bbox/q.Query.Filter, appending
+// to baseArgs (already holding any geomExpr args Features needs ahead of
+// the WHERE clause's own).
+func featuresWhereClause(t Table, q contract.FeatureQuery, baseArgs []any) (string, []any) {
+	quotedGeom := t.QuotedGeometryColumn
+	args := baseArgs
+
 	whereClauses := []string{}
 	if q.Pkeys != nil {
 		pkeyIn, pkeyArgs := PkeyInClause(q.Pkeys)
@@ -280,24 +309,19 @@ func (g *geoRepository) Features(ctx context.Context, q contract.FeatureQuery) (
 	if len(whereClauses) > 0 {
 		where = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
-	args = append(args, q.Limit, q.Offset)
+	return where, args
+}
 
-	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
-	// column is stored reprojected to EPSG:3857 — same axis-order-safe
-	// transform as the bbox filter above and RefreshDerivedMetadata's
-	// bbox, just in the opposite direction.
-	query := fmt.Sprintf(
-		`SELECT __pkey, %s, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) AS __geojson FROM %s%s ORDER BY __pkey LIMIT ? OFFSET ?`,
-		attrSelect, geomExpr, g.t.PhysicalName, where,
-	)
+// CountFeatures returns how many rows match q.Pkeys/q.Bbox/q.Query.Filter,
+// ignoring q.Limit/q.Offset — Features' WHERE clause without the geometry
+// projection, tolerance/precision, or paging.
+func (g *geoRepository) CountFeatures(ctx context.Context, q contract.FeatureQuery) (int64, error) {
+	where, args := featuresWhereClause(g.t, q, nil)
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s%s`, g.t.PhysicalName, where)
 
-	rows, err := g.conn.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return ScanFeatureRows(rows)
+	var count int64
+	err := g.conn.QueryRow(ctx, query, args...).Scan(&count)
+	return count, err
 }
 
 // FeaturesInTile is Features scoped to a single MVT-style z/x/y tile: the

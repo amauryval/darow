@@ -111,7 +111,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | `internal/service` | application logic, caches, orchestration |
 | `internal/storage` | engine-agnostic contracts and primitives (`Row`/`GeoFeature`, `BuildFilter`, identifiers) |
 | `internal/storage/catalog` | backend-agnostic catalogue contract (`Metadata`, `MetadataManager`, `Catalog`) |
-| `internal/storage/data` | backend-agnostic data-table contract (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`, `TableLifecycle`) |
+| `internal/storage/data` | backend-agnostic data-table contract (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`, `TableLifecycle`, `SourceIntrospector`) |
 | `internal/storage/duckdb` | the DuckDB implementation (sub-packages `catalog/` and `data/`) |
 | `internal/storage/storagetest` | conformance suite reusable by any adapter |
 | `internal/storage/mocks` | testify mocks of the `catalog` and `data` contracts |
@@ -164,7 +164,7 @@ directory.
 |---|---|---|
 | `workDir` | `./data/sources` | `GEOAPI_SOURCES_WORKDIR` |
 | `maxSizeBytes` | 104,857,600 (100 MiB) | `GEOAPI_SOURCES_MAX_SIZE_BYTES` |
-| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
+| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
 which takes priority over everything else (§2.6).
@@ -216,14 +216,19 @@ A `Source` carries: file name, extension, size, modification date, loaded state,
 loaded, and for a multi-layer format the list of its layers (each with its own loaded state and its
 `tableId`).
 
-Recognized formats (`internal/service/formats.go`):
+Recognized formats (`internal/service/formats.go`): Multi-layer decides whether `Load` requires a
+`layer` and whether `Refresh` populates `Source.Layers` via `ListLayers`. Introspectable decides
+whether `GetSourceMetadata` (`/sources/{name}/metadata`) calls `DetectCRS` at all — false for a
+format whose reader (`read_parquet` for `.parquet`, §7.2) has no `ST_Read_Meta`-based CRS preview
+to offer, and must never be reached with a file `ST_Read_Meta` cannot safely open.
 
-| Extension | Multi-layer |
-|---|---|
-| `.geojson` | no |
-| `.shp` | no |
-| `.csv` | no |
-| `.gpkg` | yes |
+| Extension | Multi-layer | Introspectable |
+|---|---|---|
+| `.geojson` | no | yes |
+| `.shp` | no | yes |
+| `.csv` | no | yes |
+| `.gpkg` | yes | yes |
+| `.parquet` | no | no |
 
 A file whose extension is not in `allowedExtensions`, or whose size exceeds `maxSizeBytes`, is
 **silently excluded** from the scan — it is not an error.
@@ -328,8 +333,9 @@ backend-agnostic contracts, with no reference to DuckDB nor to each other:
 | `TableResolver` | `data` | `Table(meta) (TableRepository, error)` — the only entry point to a resolved table |
 | `TableRepository` | `data` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
 | `RowRepository` | `data` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
-| `GeoRepository` | `data` | `Tile`, `Features`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
-| `TableLifecycle` | `data` | `CreateFromFile`, `CreateFromQuery`, `ListLayers`, `DetectCRS`, `Drop(ctx, uow, physicalName)` — materializes, indexes, clusters and drops a table's physical backing store; `TableResolver`/`TableRepository` assume a table already in that state |
+| `GeoRepository` | `data` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
+| `TableLifecycle` | `data` | `CreateFromFile`, `CreateFromQuery`, `Drop(ctx, uow, physicalName)` — materializes (from a source file or a derived SELECT), indexes, clusters and drops a table's physical backing store; `TableResolver`/`TableRepository` assume a table already in that state |
+| `SourceIntrospector` | `data` | `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists (layers it exposes, its declared CRS), used to preview a source rather than to materialize one |
 | `SQLWrapper` | `storage` | `Query`, `QueryRow`, `Exec`, `Begin` — an implementation detail of the `duckdb` package, used by the conformance suites, never by a service |
 
 `Catalog.Register` takes an `Attachment` (`DeleteAttached(ctx, uow UnitOfWork, tableId string) error`),
@@ -338,11 +344,15 @@ transaction a delete cascade runs in, owned entirely by the adapter (`*sql.Tx` i
 `TableLifecycle.Drop` takes the same `UnitOfWork` — the contract package itself never names an
 engine-specific type, and `duckdb/catalog.Catalog.Remove` obtains its physical `DROP` from a
 `Dropper` (declared locally in `duckdb/catalog`, implemented by `duckdb/data`'s lifecycle) rather
-than formatting the DDL itself.
+than formatting the DDL itself. `duckdb/data.Lifecycle` is the single concrete type implementing
+both `TableLifecycle` and `SourceIntrospector` — `CreateFromFile` still reads a source file for
+materialization, but the file-level questions unrelated to any created table (layers, CRS) are a
+separate contract a caller can depend on without pulling in table materialization.
 
 No service depends on these interfaces directly: each declares its own narrow interface over the
 subset it actually calls (`core.storageAdapter` documents the full surface an adapter must satisfy:
-an accessor returning `catalog.Catalog` + `data.TableLifecycle` + `data.TableResolver`).
+an accessor returning `catalog.Catalog` + `data.TableLifecycle` + `data.SourceIntrospector` +
+`data.TableResolver`).
 
 **Naming.** `MetadataWriter.Remove` deletes a whole table (metadata and physical table, in a single
 transaction through `duckdb/catalog.Catalog.Remove`), `RowRepository.Delete` deletes rows.
@@ -493,9 +503,9 @@ The only service that caches a rendering result. The cache key includes: `tableI
 `UpdatedAt` (rule 20), the requested attributes (sorted), and the filter clause with its arguments —
 since all of them change the tile's contents for a given table version.
 
-Everything else is computed on demand and **never cached**: `GetFeatures`, `GetFeaturesTile`,
-`FilteredExtent`, `GeometryTypes`. The reason: filter, bbox, tolerance and attributes form an
-unbounded key space, unlike a tile's z/x/y.
+Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
+`GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`. The reason: filter, bbox, tolerance and
+attributes form an unbounded key space, unlike a tile's z/x/y.
 
 ### 5.6 `ExportService` — export is domain, not transport
 
@@ -601,10 +611,9 @@ consistent with the all-JSON style of the rest of the API.
 - `datetime` is not supported: the model has no notion of a temporal column.
 - The `next` link is emitted only if the returned page is full — the only "there may be more" signal
   available without a separate counting query.
-
-> **Known gap.** `numberMatched` returns the number of features **on the page**, not the total
-> matching the query: computing it would require an extra counting query per page
-> (`internal/router/handlers/features.go`).
+- `numberMatched` is the total count of features matching the query (`bbox`/`filter`, ignoring
+  `limit`/`offset`), from a `COUNT(*)` query run alongside the page query
+  (`GeoRepository.CountFeatures`); `numberReturned` is the page size.
 
 ### 6.3 Router and middlewares
 
@@ -683,8 +692,13 @@ confinement of file paths to the `workDir` cache.
 
 ## 7. Loading a file
 
-The sequence of `CreateFromFile` (`storage/duckdb/data/lifecycle.go`), triggered by
-`POST /sources/{name}/load` or `/sources/upload`:
+`CreateFromFile` (`storage/duckdb/data/lifecycle.go`), triggered by `POST /sources/{name}/load` or
+`/sources/upload`, dispatches on `sourcePath`'s extension into one of two readers before running
+the shared reprojection/clustering/indexing tail (steps 5-7 below): every GDAL-readable format
+(GeoJSON, Shapefile, CSV, GeoPackage) through `ST_Read`; `.parquet` (Parquet and GeoParquet) through
+`read_parquet` instead (§7.2) — `ST_Read` cannot open a Parquet file at all, and `ST_Read_Meta`
+(which backs `DetectCRS`/`ListLayers` for every `ST_Read` format) crashes the process outright on
+one, so a Parquet source is never routed through either.
 
 1. **CTAS from `ST_Read`** with `__pkey` generated in the projection. `ST_Read` only reads: the
    resulting table is materialized (rule 13), never a view.
@@ -708,6 +722,20 @@ The sequence of `CreateFromFile` (`storage/duckdb/data/lifecycle.go`), triggered
 
 A `.gpkg` is **never** loaded as a whole. `ListLayers` enumerates its layers, each loads
 independently into its own table, and its loaded state is tracked individually (§3.2).
+
+### 7.2 Parquet and GeoParquet
+
+`.parquet` materializes via `CREATE TABLE ... AS SELECT uuid()::TEXT AS __pkey, * FROM
+read_parquet(?)` — DuckDB's native Parquet reader, not `ST_Read`. Step 3 (geometry detection) is
+unchanged, but step 4 (CRS resolution) has no `DetectCRS`/`ST_Read_Meta` call at all: a GeoParquet
+file's declared CRS is already exposed by `read_parquet`'s own schema, as the DuckDB `GEOMETRY`
+column type's parameter (`GEOMETRY('EPSG:2154')`, or `GEOMETRY('OGC:CRS84')` for an unset/WGS84
+CRS) — `parseGeometryCRS` reads it directly off the `DESCRIBE` output, and an explicit `srid` still
+overrides it exactly as it overrides `ST_Read`'s `DetectCRS`. Steps 5-7 are identical to the
+`ST_Read` path. `.parquet` is always single-layer (`ListLayers` is never called against one) and
+never `Introspectable` (`service/formats.go`): `GetSourceMetadata` (`/sources/{name}/metadata`)
+reports no CRS to preview before `Load` for it, rather than risk `ST_Read_Meta` reaching a Parquet
+path from anywhere.
 
 ---
 
@@ -756,7 +784,8 @@ internal/
   storage/
     catalog/           backend-agnostic catalogue contract (Metadata, MetadataManager, Catalog)
     data/              backend-agnostic data-table contract (TableResolver,
-                        TableRepository, RowRepository, GeoRepository, TableLifecycle)
+                        TableRepository, RowRepository, GeoRepository, TableLifecycle,
+                        SourceIntrospector)
     sort/              SortField, dependency-free — breaks the catalog/data cycle
     duckdb/            DuckDB adapter: connection, write serialization, wiring, thin
                         delegators to catalog/ and data/

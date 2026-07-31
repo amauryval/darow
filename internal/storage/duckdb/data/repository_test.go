@@ -348,3 +348,19 @@ func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, tile)
 }
+
+func Test_GeoRepository_CountFeatures(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	total, err := geo.CountFeatures(ctx, contract.FeatureQuery{Limit: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+
+	filtered, err := geo.CountFeatures(ctx, contract.FeatureQuery{Pkeys: []string{"1"}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, filtered)
+}

@@ -14,6 +14,10 @@ type GeoRepository interface {
 	// optional filter clause.
 	Tile(ctx context.Context, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error)
 	Features(ctx context.Context, q FeatureQuery) ([]storage.GeoFeature, error)
+	// CountFeatures returns how many rows match q.Pkeys/q.Bbox/q.Query,
+	// ignoring q.Limit/q.Offset — the total behind Features' page, used for
+	// OGC API - Features' numberMatched.
+	CountFeatures(ctx context.Context, q FeatureQuery) (int64, error)
 	// FeaturesInTile is Features scoped to a single MVT-style z/x/y tile
 	// instead of an arbitrary bbox.
 	FeaturesInTile(ctx context.Context, zoom, x, y int, q FeatureQuery) ([]storage.GeoFeature, error)

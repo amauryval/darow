@@ -52,6 +52,7 @@ type geoAPI interface {
 	GeometryTypes(ctx context.Context, meta catalog.Metadata) ([]string, error)
 	FilterByBbox(ctx context.Context, meta catalog.Metadata, bbox [4]float64, offset, limit int) ([]string, error)
 	GetFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
+	CountFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error)
 	GetFeaturesTile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 }
 

@@ -12,21 +12,21 @@ import (
 
 	"darow/internal/storage"
 	catalogcontract "darow/internal/storage/catalog"
-	datacontract "darow/internal/storage/data"
 	"darow/internal/storage/duckdb/catalog"
 	"darow/internal/storage/duckdb/data"
 )
 
-// Adapter implements catalog.MetadataManager, data.TableLifecycle and
-// data.TableResolver on top of DuckDB. It serializes every write through
-// writeMu: DuckDB allows only one active writer per process, though
-// concurrent writes without conflicts and concurrent reads are both safe
-// across the pooled connections opened against db.
+// Adapter implements catalog.MetadataManager, data.TableLifecycle,
+// data.SourceIntrospector and data.TableResolver on top of DuckDB. It
+// serializes every write through writeMu: DuckDB allows only one active
+// writer per process, though concurrent writes without conflicts and
+// concurrent reads are both safe across the pooled connections opened
+// against db.
 type Adapter struct {
 	db        *sql.DB
 	writeMu   sync.Mutex
 	catalog   *catalog.Catalog
-	lifecycle datacontract.TableLifecycle
+	lifecycle *data.Lifecycle
 }
 
 // New opens the DuckDB database at path, loads the spatial extension, and

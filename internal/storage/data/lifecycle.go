@@ -6,6 +6,22 @@ import (
 	"darow/internal/storage/catalog"
 )
 
+// SourceIntrospector answers questions about a source file before any
+// table exists — the layers it exposes, and its declared CRS — used to
+// preview a source (SourceService/ImportService) rather than to
+// materialize one. An adapter that does not read files through a
+// GDAL-style layer/CRS reader still has to implement this, but no longer
+// has to implement table materialization to do so.
+type SourceIntrospector interface {
+	// ListLayers returns the names of every layer sourcePath exposes, for
+	// formats that can hold more than one.
+	ListLayers(ctx context.Context, sourcePath string) ([]string, error)
+	// DetectCRS reports the authority/code of a source layer's declared
+	// CRS, as declared by the source file itself (authCode 0 if
+	// undetectable).
+	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
+}
+
 // TableLifecycle materializes a logical table's physical backing store —
 // from a source file or a derived SELECT query — applying the indexing and
 // clustering rule 19 requires (an RTREE spatial index, a unique __pkey
@@ -25,13 +41,6 @@ type TableLifecycle interface {
 	// SELECT query, already restricted by the caller to already-registered
 	// tables.
 	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
-	// ListLayers returns the names of every layer sourcePath exposes, for
-	// formats that can hold more than one.
-	ListLayers(ctx context.Context, sourcePath string) ([]string, error)
-	// DetectCRS reports the authority/code of a source layer's declared
-	// CRS, as declared by the source file itself (authCode 0 if
-	// undetectable).
-	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
 	// Drop removes physicalName's physical table within uow, the unit of
 	// work a delete cascade runs in (catalog.Catalog.Remove's transaction).
 	Drop(ctx context.Context, uow catalog.UnitOfWork, physicalName string) error

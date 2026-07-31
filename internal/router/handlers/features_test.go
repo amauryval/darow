@@ -111,6 +111,7 @@ func Test_FeaturesHandler_GetItems(t *testing.T) {
 		query      string
 		schemaErr  error
 		featErr    error
+		countErr   error
 		wantStatus int
 	}{
 		{name: "returns features", isGeo: true, wantStatus: http.StatusOK},
@@ -120,6 +121,7 @@ func Test_FeaturesHandler_GetItems(t *testing.T) {
 		{name: "invalid filter returns 400", isGeo: true, query: "?filter=not-json", wantStatus: http.StatusBadRequest},
 		{name: "valid bbox and simplify apply", isGeo: true, query: "?bbox=0,0,1,1&simplify=5&limit=10&offset=1", wantStatus: http.StatusOK},
 		{name: "storage failure returns 500", isGeo: true, featErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		{name: "count failure returns 500", isGeo: true, countErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
 
 	for _, c := range cases {
@@ -132,6 +134,8 @@ func Test_FeaturesHandler_GetItems(t *testing.T) {
 				if c.query != "?filter=not-json" {
 					geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), mock.Anything, []string(nil), mock.Anything, mock.Anything, mock.Anything).
 						Return([]storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, c.featErr).Maybe()
+					geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), mock.Anything, mock.Anything).
+						Return(int64(1), c.countErr).Maybe()
 				}
 			}
 
@@ -166,6 +170,8 @@ func Test_FeaturesHandler_GetItems_PagingLinks(t *testing.T) {
 			}
 			geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), storage.GeoQuery{}, 1, 0).
 				Return(features, nil).Once()
+			geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), storage.GeoQuery{}).
+				Return(int64(len(features)), nil).Once()
 
 			rec := doHandlerRequest(fh.GetItems, http.MethodGet, "/api/v1/ogc/collections/t1/items?limit=1", nil, map[string]string{"tableId": "t1"})
 
