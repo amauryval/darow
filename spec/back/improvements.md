@@ -13,3 +13,4 @@ Each entry carries a stable identifier (`IMP-n`); a retired identifier is never 
 | # | Lead | Motivation | Reference |
 |---|---|---|---|
 | IMP-1 | `catalog.MetadataReader.TableExists`: give it a caller or drop it from the contract | Present as a cheap existence primitive, with no production caller today — a contract carries what is used | `spec.md` §4.4 |
+| IMP-2 | Give table creation the same transactional composition deletion already has: today the catalogue cascades on delete only, while the create sequence relies on `MetadataService.Rollback`'s compensating action | With attached repositories (TODO-3, TODO-4) the create path gains one more thing to undo per attachment, each a chance to leave a half-created table behind — deletion's guarantee comes from a transaction, creation's from remembering to compensate | `spec.md` §5.1, §5.4 |
