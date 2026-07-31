@@ -1,6 +1,6 @@
-# GeoAPI — Specification
+# Darow — Specification
 
-This document describes the **current state** of the GeoAPI cartographic server: its architecture,
+This document describes the **current state** of the Darow cartographic server: its architecture,
 its contracts, its invariants. It is written to be read by an AI agent that has to work on the code
 without having read all of it.
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // metadataDTO is the JSON representation of a table's metadata.

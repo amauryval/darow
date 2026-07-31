@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/mocks"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/mocks"
 )
 
 type schemaInvalidatorSpy struct{ invalidated []string }

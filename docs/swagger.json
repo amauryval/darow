@@ -1,8 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT, dérivation.",
-        "title": "GeoAPI",
+        "description": "Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources, tables, rows, tuiles MVT, dérivation.",
+        "title": "Darow",
         "contact": {},
         "version": "1.0"
     },

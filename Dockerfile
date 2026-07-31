@@ -28,11 +28,11 @@ RUN CGO_ENABLED=1 go build -o /out/server ./cmd/server
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -u 1000 geoapi
+    && useradd -r -u 1000 darow
 WORKDIR /app
 COPY --from=build /out/server ./server
 COPY config.yaml ./config.yaml
-RUN mkdir -p /app/data/sources && chown -R geoapi:geoapi /app
-USER geoapi
+RUN mkdir -p /app/data/sources && chown -R darow:darow /app
+USER darow
 EXPOSE 8080
 ENTRYPOINT ["./server"]

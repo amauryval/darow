@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/router/validation"
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/router/validation"
+	"darow/internal/service"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 func Test_newExportHandler(t *testing.T) {

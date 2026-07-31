@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	contract "gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	contract "darow/internal/storage/data"
 )
 
 // dbConn adapts a plain *sql.DB to Querier and TxRunner for tests — no

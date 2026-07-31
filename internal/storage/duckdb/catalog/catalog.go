@@ -8,7 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes

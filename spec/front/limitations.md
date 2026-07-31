@@ -1,4 +1,4 @@
-# GeoAPI — Accepted limitations (Vue 3 UI)
+# Darow — Accepted limitations (Vue 3 UI)
 
 > **Role** — what the `web/` admin application deliberately does not do. These are not defects to
 > fix but scope decisions. A limitation that is lifted leaves this file and becomes an entry of

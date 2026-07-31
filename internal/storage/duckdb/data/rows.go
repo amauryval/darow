@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"gogeoserver/internal/storage"
-	contract "gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	contract "darow/internal/storage/data"
 )
 
 // rowRepository implements contract.RowRepository for a single resolved

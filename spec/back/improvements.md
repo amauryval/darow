@@ -1,4 +1,4 @@
-# GeoAPI — Possible improvements (Go server)
+# Darow — Possible improvements (Go server)
 
 > **Role** — undecided leads for the Go server: what would deserve doing, without the decision
 > being made. Nothing here is planned. A lead taken up leaves this file and becomes an entry of

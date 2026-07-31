@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"gogeoserver/internal/router/response"
+	"darow/internal/router/response"
 )
 
 // maxBodyBytes caps the request body so a handler that decodes it into

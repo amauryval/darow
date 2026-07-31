@@ -3,7 +3,7 @@ package data
 import (
 	"context"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
 )
 
 // GeoRepository exposes geospatial operations on a single resolved geo

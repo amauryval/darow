@@ -10,9 +10,9 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 
-	"gogeoserver/internal/storage"
-	catalogcontract "gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/duckdb/catalog"
+	"darow/internal/storage"
+	catalogcontract "darow/internal/storage/catalog"
+	"darow/internal/storage/duckdb/catalog"
 )
 
 // Adapter implements catalog.MetadataManager, storage.TableCreator and

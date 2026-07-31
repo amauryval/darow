@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/router/validation"
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/config"
+	"darow/internal/router/validation"
+	"darow/internal/service"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 func Test_newRowsHandler(t *testing.T) {

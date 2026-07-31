@@ -18,9 +18,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
 )
 
 // DataHarness is data.TableResolver plus storage.TableCreator and

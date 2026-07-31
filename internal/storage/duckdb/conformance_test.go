@@ -3,7 +3,7 @@ package duckdb
 import (
 	"testing"
 
-	"gogeoserver/internal/storage/storagetest"
+	"darow/internal/storage/storagetest"
 )
 
 // Test_Adapter_ConformsToCatalogSuite runs the backend-agnostic

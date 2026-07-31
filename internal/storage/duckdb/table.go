@@ -1,9 +1,9 @@
 package duckdb
 
 import (
-	"gogeoserver/internal/storage/catalog"
-	datacontract "gogeoserver/internal/storage/data"
-	"gogeoserver/internal/storage/duckdb/data"
+	"darow/internal/storage/catalog"
+	datacontract "darow/internal/storage/data"
+	"darow/internal/storage/duckdb/data"
 )
 
 // Table resolves meta into a datacontract.TableRepository, validating its

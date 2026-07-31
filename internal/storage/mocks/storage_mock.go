@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
 )
 
 // Storage is a testify mock implementing catalog.MetadataManager,

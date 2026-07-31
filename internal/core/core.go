@@ -11,12 +11,12 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
-	"gogeoserver/internal/storage/duckdb"
+	"darow/internal/config"
+	"darow/internal/service"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
+	"darow/internal/storage/duckdb"
 )
 
 // storageAdapter is everything Services needs from the storage layer.

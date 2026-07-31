@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"gogeoserver/internal/storage/sort"
+	"darow/internal/storage/sort"
 )
 
 // Metadata holds config fields (set once, changed only via UpdateMetadata)

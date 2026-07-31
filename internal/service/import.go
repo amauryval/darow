@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage/catalog"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:

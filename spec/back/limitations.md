@@ -1,4 +1,4 @@
-# GeoAPI — Accepted limitations (Go server)
+# Darow — Accepted limitations (Go server)
 
 > **Role** — what the Go server deliberately does not do. These are not defects to fix but scope
 > decisions, listed here so that a caller knows where it stands. A limitation that is lifted leaves

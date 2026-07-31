@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/config"
+	"darow/internal/storage/catalog"
 )
 
 func writeFixture(t *testing.T, dir, name string, size int) {

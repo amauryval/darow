@@ -62,9 +62,9 @@ definitions:
     type: object
 info:
   contact: {}
-  description: Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT,
-    dérivation.
-  title: GeoAPI
+  description: 'Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique
+    : sources, tables, rows, tuiles MVT, dérivation.'
+  title: Darow
   version: "1.0"
 paths:
   /api/v1/ogc/:

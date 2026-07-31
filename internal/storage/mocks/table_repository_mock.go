@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/data"
 )
 
 // TableRepository is a testify mock implementing data.TableRepository,

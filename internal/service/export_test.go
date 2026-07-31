@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 type fakeRowLister struct {

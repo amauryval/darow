@@ -4,8 +4,8 @@
 package data
 
 import (
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // Table is a catalog.Metadata resolved once into the identifiers its

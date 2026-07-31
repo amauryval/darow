@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/service"
+	"darow/internal/storage/catalog"
 )
 
 // SchemaGetter is the port ColumnValidator needs to look up a table's schema.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-GeoAPI — a Go cartographic server backed by DuckDB (spatial extension). Serves sources, tables,
+Darow — a Go cartographic server backed by DuckDB (spatial extension). Serves sources, tables,
 rows, MVT tiles, and SQL-derived tables over a REST API, plus a Vue3 admin UI embedded in the
 binary.
 

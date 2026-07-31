@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	catalogcontract "gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	catalogcontract "darow/internal/storage/catalog"
 )
 
 // dbQuerier adapts a plain *sql.DB to Querier for tests that don't need

@@ -7,8 +7,8 @@ import (
 	"math"
 	"strings"
 
-	"gogeoserver/internal/storage"
-	contract "gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	contract "darow/internal/storage/data"
 )
 
 // geoRepository implements contract.GeoRepository for a single resolved

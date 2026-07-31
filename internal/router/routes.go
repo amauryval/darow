@@ -10,10 +10,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	httpSwagger "github.com/swaggo/http-swagger"
 
-	_ "gogeoserver/docs"
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/core"
-	"gogeoserver/internal/router/handlers"
+	_ "darow/docs"
+	"darow/internal/config"
+	"darow/internal/core"
+	"darow/internal/router/handlers"
 )
 
 // Router wires the HTTP layer to the service layer. Each family of

@@ -1,4 +1,4 @@
-# GeoAPI — Identified debt (Vue 3 UI)
+# Darow — Identified debt (Vue 3 UI)
 
 > **Role** — the chantiers to run on `web/`: gaps between the rules of
 > [spec.md](spec.md) and the state of the code. Each row is a chantier, not a tolerated

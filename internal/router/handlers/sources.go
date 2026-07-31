@@ -6,10 +6,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
+	"darow/internal/config"
+	"darow/internal/router/response"
+	"darow/internal/service"
+	"darow/internal/storage"
 )
 
 // SourcesHandler serves workDir source-file endpoints: listing, refreshing,

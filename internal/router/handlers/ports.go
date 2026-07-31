@@ -4,9 +4,9 @@ import (
 	"context"
 	"io"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/service"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // metadataAPI is everything the router calls on *service.MetadataService.

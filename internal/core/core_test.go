@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/storage/mocks"
+	"darow/internal/config"
+	"darow/internal/storage/mocks"
 )
 
 func Test_Setup(t *testing.T) {

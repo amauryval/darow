@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/service"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 type mockMetadataAPI struct{ mock.Mock }

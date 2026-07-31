@@ -5,7 +5,7 @@
 // without touching this package.
 package data
 
-import "gogeoserver/internal/storage"
+import "darow/internal/storage"
 
 // RowQuery narrows a RowRepository.Filtered call: Filter/Args must already
 // be a storage.BuildFilter clause.

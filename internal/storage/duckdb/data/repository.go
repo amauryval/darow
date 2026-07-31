@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	contract "gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	contract "darow/internal/storage/data"
 )
 
 // tableRepository implements contract.TableRepository for a single

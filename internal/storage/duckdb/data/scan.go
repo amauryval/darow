@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
 )
 
 // scanInto is the single row-scanning loop shared by ScanRows and

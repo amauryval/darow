@@ -8,10 +8,10 @@ import type { ErrorResponse } from "./types";
 const API_BASE = "/api/v1";
 
 // Defaults to "" (paths resolve relative to the page's own origin), which
-// is what the admin UI needs since it's served by the same GeoAPI instance
+// is what the admin UI needs since it's served by the same Darow instance
 // it talks to. Any other caller — a different web app, a different
-// framework — points the client at a remote GeoAPI by calling this once
-// at startup.
+// framework — points the client at a remote Darow instance by calling this
+// once at startup.
 let baseUrl = "";
 
 export function configureApiClient(options: { baseUrl?: string }): void {

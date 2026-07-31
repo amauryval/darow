@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/router/validation"
-	"gogeoserver/internal/service"
+	"darow/internal/router/response"
+	"darow/internal/router/validation"
+	"darow/internal/service"
 )
 
 // ExportHandler serves table export, streaming rows in CSV or GeoJSON.

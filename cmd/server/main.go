@@ -1,9 +1,9 @@
-// Package main starts the GeoAPI server: it loads configuration, bootstraps
+// Package main starts the Darow server: it loads configuration, bootstraps
 // the storage and service layers via core.Bootstrap, wires the router, and
 // listens, shutting down gracefully on SIGINT/SIGTERM.
 //
-// @title GeoAPI
-// @description Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT, dérivation.
+// @title Darow
+// @description Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources, tables, rows, tuiles MVT, dérivation.
 // @version 1.0
 // @BasePath /
 package main
@@ -22,10 +22,10 @@ import (
 	"syscall"
 	"time"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/core"
-	"gogeoserver/internal/router"
-	"gogeoserver/internal/webui"
+	"darow/internal/config"
+	"darow/internal/core"
+	"darow/internal/router"
+	"darow/internal/webui"
 )
 
 func main() {
@@ -70,7 +70,7 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		slog.Info("GeoAPI listening", "addr", srv.Addr)
+		slog.Info("Darow listening", "addr", srv.Addr)
 		serveErr <- srv.ListenAndServe()
 	}()
 

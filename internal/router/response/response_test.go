@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
+	"darow/internal/service"
+	"darow/internal/storage"
 )
 
 // MapServiceError is the single decision point for every error status the

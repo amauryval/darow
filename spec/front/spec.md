@@ -1,6 +1,6 @@
-# GeoAPI — Front-end specification
+# Darow — Front-end specification
 
-This document describes GeoAPI's **Vue 3 admin application** (`web/`): its layered architecture, its
+This document describes Darow's **Vue 3 admin application** (`web/`): its layered architecture, its
 contracts, its invariants. It is written to be read by an AI agent that has to work on the code
 without having read all of it.
 
@@ -111,7 +111,7 @@ A typed REST client, reusable outside this application: it depends neither on Vu
 
 - `http.ts` — transport. Prefixes `/api/v1` on every application route (`apiUrl`), bare root for the
   probes (`getRoot`, used by `ops.ts` alone). `configureApiClient({ baseUrl })` allows pointing at a
-  remote GeoAPI instance; by default the page's origin, which is what the embedded SPA needs.
+  remote Darow instance; by default the page's origin, which is what the embedded SPA needs.
   `ApiError` carries the HTTP status and the server message; `errorMessage` is the only error → user
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,

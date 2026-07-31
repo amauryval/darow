@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
 )
 
 // RowsPage is a paginated slice of rows, as returned by ListRows.

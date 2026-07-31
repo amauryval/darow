@@ -8,11 +8,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/router/validation"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/config"
+	"darow/internal/router/response"
+	"darow/internal/router/validation"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // TablesHandler serves table-level endpoints: metadata, schema, columns,

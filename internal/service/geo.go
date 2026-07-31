@@ -8,9 +8,9 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
 )
 
 // GeoService provides tile and geospatial query access on top of the

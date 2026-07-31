@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/mocks"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/mocks"
 )
 
 func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage, *mocks.TableRepository) {

@@ -47,8 +47,8 @@ const statusDotClass: Record<Status, string> = {
           <MapPinned :size="16" />
         </span>
         <div class="leading-tight">
-          <p class="text-sm font-semibold tracking-tight text-slate-900">GeoAPI</p>
-          <p class="text-[11px] text-slate-400">Console d'administration</p>
+          <p class="text-sm font-semibold tracking-tight text-slate-900">Darow — get your Ducks in A ROW</p>
+          <p class="text-[11px] text-slate-400">Backed by DuckDB · Console d'administration</p>
         </div>
       </div>
 

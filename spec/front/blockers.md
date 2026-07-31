@@ -1,4 +1,4 @@
-# GeoAPI — Blockers (Vue 3 UI)
+# Darow — Blockers (Vue 3 UI)
 
 > **Role** — what prevents a correct use of the `web/` admin application: wrong data shown, a
 > feature broken in a supported configuration. Fixed **before** any new feature.

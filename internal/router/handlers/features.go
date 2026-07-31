@@ -8,11 +8,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/router/validation"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/config"
+	"darow/internal/router/response"
+	"darow/internal/router/validation"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 const ogcCRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
@@ -55,7 +55,7 @@ func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geo
 // @Router /api/v1/ogc/ [get]
 func (fh *FeaturesHandler) LandingPage(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusOK, map[string]any{
-		"title":       "GeoAPI",
+		"title":       "Darow",
 		"description": "OGC API - Features (Core)",
 		"links": []map[string]string{
 			{"rel": "self", "type": "application/json", "href": "/api/v1/ogc/"},

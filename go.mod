@@ -1,4 +1,4 @@
-module gogeoserver
+module darow
 
 go 1.26.4
 

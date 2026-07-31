@@ -1,6 +1,6 @@
 package storage
 
-import "gogeoserver/internal/storage/sort"
+import "darow/internal/storage/sort"
 
 // SortField is one column of a multi-column ORDER BY. Re-exported from the
 // dependency-free sort package so both storage and catalog can use the

@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/router/response"
+	"darow/internal/storage/catalog"
 )
 
 // MetadataGetter is the port TableResolver needs to look up a table.

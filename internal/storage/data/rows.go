@@ -3,7 +3,7 @@ package data
 import (
 	"context"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
 )
 
 // RowRepository reads and writes the rows of a single resolved data table

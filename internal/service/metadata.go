@@ -6,8 +6,8 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // MetadataService is the single owner of the metadata cache:

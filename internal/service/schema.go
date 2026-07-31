@@ -5,7 +5,7 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage/catalog"
 )
 
 // ColumnSchema describes a single column's name and DuckDB type.

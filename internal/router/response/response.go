@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage"
+	"darow/internal/service"
+	"darow/internal/storage"
 )
 
 // WriteJSON writes v as a JSON response with the given status code, always

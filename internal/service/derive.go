@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage/catalog"
 )
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)

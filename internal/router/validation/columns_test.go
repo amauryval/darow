@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/service"
+	"darow/internal/storage/catalog"
 )
 
 func Test_NewColumnValidator(t *testing.T) {

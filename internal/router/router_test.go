@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/core"
-	"gogeoserver/internal/router/response"
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/mocks"
+	"darow/internal/config"
+	"darow/internal/core"
+	"darow/internal/router/response"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/mocks"
 )
 
 type routerDeps struct {

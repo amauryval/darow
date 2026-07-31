@@ -33,17 +33,19 @@ document states its contracts. It changes only when the repository changes.
 
 | Item | Current value |
 |---|---|
-| Product name | GeoAPI |
-| Go module | `gogeoserver` |
+| Product name | Darow |
+| Go module | `darow` |
 | Git remote | `github.com/amauryval/gogeoserver` |
-| npm package (UI) | `geoapi-web` |
-| API title (Swagger) | GeoAPI |
-| UI title and header | GeoAPI |
+| npm package (UI) | `darow-web` |
+| API title (Swagger) | Darow |
+| UI title and header | Darow |
 | Licence | BSD 3-Clause, © 2026 amauryval |
 
-The intended name is **Darow** — from "ducks in a row": DuckDB putting your tabular and spatial
-data *in a row*. The transition is recorded as a chantier in [todo.md](todo.md), not here: this
-table states what the repository says today.
+The name is **Darow** — from "ducks in a row": DuckDB putting your tabular and spatial data *in a
+row*. It never ships bare: wherever it first appears to a reader — the `README` title, the
+Swagger description, the UI header — it carries the tagline "Darow — get your Ducks in A ROW",
+immediately followed by the statement that the server is backed by DuckDB. The git remote still
+carries the previous name; renaming it is out of scope for the repository itself.
 
 ## 2. Repository layout
 
@@ -60,8 +62,7 @@ table states what the repository says today.
 | `Dockerfile`, `.dockerignore` | the multi-stage image build |
 | `.github/workflows/ci.yml` | continuous integration |
 | `.claude/` | agent instructions, skills and reviewers |
-
-There is no root `README`.
+| `README.md` | the repository's entry point: what the product does, how to run it, how to contribute |
 
 ## 3. Toolchain
 
@@ -99,9 +100,9 @@ is a blocker, recorded in the domain it belongs to.
 
 Three audiences, three places:
 
--   **The user** — what the product does, how to run it, how to configure it. Currently only
-    `config.yaml` and the Swagger UI served under `/swagger`; there is no prose entry point.
--   **The contributor** — layout, tasks, conventions. Currently `.claude/CLAUDE.md` and this tree.
+-   **The user** — what the product does, how to run it, how to configure it. The root `README`
+    is the prose entry point; `config.yaml` and the Swagger UI served under `/swagger` complete it.
+-   **The contributor** — layout, tasks, conventions. The root `README` and `.claude/CLAUDE.md`.
 -   **The agent** — `.claude/CLAUDE.md`, the skills under `.claude/skills/`, and `spec/`.
 
 `spec/` never documents the past: each file states the present, and a landed chantier leaves it.

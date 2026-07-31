@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/duckdb/data"
+	"darow/internal/storage"
+	"darow/internal/storage/duckdb/data"
 )
 
 // findGeometryColumn inspects physicalName's schema and returns the name of

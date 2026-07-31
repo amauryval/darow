@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
 )
 
 func Test_RowToJSON(t *testing.T) {

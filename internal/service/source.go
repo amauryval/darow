@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"gogeoserver/internal/config"
-	"gogeoserver/internal/storage"
+	"darow/internal/config"
+	"darow/internal/storage"
 )
 
 // layerSeparator joins a source file name and layer name into the composite

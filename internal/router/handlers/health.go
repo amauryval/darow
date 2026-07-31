@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"gogeoserver/internal/router/response"
+	"darow/internal/router/response"
 )
 
 // OpsHandler serves the liveness/readiness probes used by an orchestrator.

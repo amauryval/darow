@@ -3,8 +3,8 @@ package data
 import (
 	"context"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
 )
 
 // TableRepository groups every operation on a single resolved data table.

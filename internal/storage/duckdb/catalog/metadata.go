@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"gogeoserver/internal/storage"
-	catalogcontract "gogeoserver/internal/storage/catalog"
+	"darow/internal/storage"
+	catalogcontract "darow/internal/storage/catalog"
 )
 
 // metadataSchema is the DDL applied to a brand-new database — already at

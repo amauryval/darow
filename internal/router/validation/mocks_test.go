@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"gogeoserver/internal/service"
-	"gogeoserver/internal/storage/catalog"
+	"darow/internal/service"
+	"darow/internal/storage/catalog"
 )
 
 type mockMetadataGetter struct{ mock.Mock }

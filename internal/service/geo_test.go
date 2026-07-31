@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
-	"gogeoserver/internal/storage/catalog"
-	"gogeoserver/internal/storage/data"
-	"gogeoserver/internal/storage/mocks"
+	"darow/internal/storage"
+	"darow/internal/storage/catalog"
+	"darow/internal/storage/data"
+	"darow/internal/storage/mocks"
 )
 
 // setupGeoService wires m.Table(...) to always resolve tableRepo, and
