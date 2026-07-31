@@ -24,3 +24,5 @@ instruction, not the patch — the code is written later, against the code as it
 | # | Chantier | Current effect | Reference |
 |---|---|---|---|
 | TODO-1 | `numberMatched` (OGC API - Features) returns the page count, not the total number of items matching the query | A client using it to size its pagination gets it wrong | `spec.md` §6.2 |
+|---|---|---|---|
+| TODO-2 | `support tabular format: like csv, xls (possible?) | `spec.md` §6.2 |
