@@ -12,6 +12,4 @@ Each entry carries a stable identifier (`BLK-n`); a retired identifier is never 
 
 | # | Blocker | Effect | Reference |
 |---|---|---|---|
-| — | — | — | — |
-
-_No blocker identified to date._
+| BLK-1 | `POST /tables/{tableId}/columns` accepts any column type that passes `ValidateIdentifier` — there is no type allowlist, in the handler, in `SchemaService.AddColumn` or in the repository | A caller can add a `GEOMETRY` column: on a geo table that produces the second geometry column the whole domain assumes cannot exist, on a non-geo table a geometry the catalogue never learns about (`isGeo` stays false). Conversely a legitimate parameterized type (`VARCHAR(255)`, `DECIMAL(10,2)`) is rejected, since the pattern forbids parentheses and commas | `spec.md` §5.3, §7 |
