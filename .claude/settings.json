@@ -12,7 +12,7 @@
       "Bash(go mod tidy:*)",
       "Bash(gofmt:*)",
       "Bash(go list:*)",
-      "Bash(npm run:)"
+      "Bash(npm run build)"
     ],
     "deny": [
       "Bash(git merge:*)",

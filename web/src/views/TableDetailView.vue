@@ -6,8 +6,10 @@ import { errorMessage } from "../client/http";
 import Badge from "../components/Badge.vue";
 import ColumnsModal from "../components/ColumnsModal.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
-import Modal from "../components/Modal.vue";
 import TableDataPanel from "../components/TableDataPanel.vue";
+import DeriveTableModal from "../components/DeriveTableModal.vue";
+import AddColumnModal from "../components/AddColumnModal.vue";
+import BaseButton from "../components/ui/BaseButton.vue";
 import { useTableMetadata } from "../composables/useTableMetadata";
 import { useToast } from "../composables/useToast";
 
@@ -15,7 +17,7 @@ const props = defineProps<{ tableId: string }>();
 const router = useRouter();
 const toast = useToast();
 
-const { table, columns, editableColumns, rowColumns, loadTable, rename, remove, derive, addNewColumn } = useTableMetadata(
+const { table, columns, editableColumns, rowColumns, loadTable, rename, remove } = useTableMetadata(
   toRef(props, "tableId"),
 );
 
@@ -25,6 +27,13 @@ const nameInput = ref("");
 
 const visibleColumns = ref<string[]>([]);
 watch(rowColumns, (cols) => (visibleColumns.value = cols), { immediate: true });
+
+const showColumns = ref(false);
+const showDerive = ref(false);
+const showAddColumn = ref(false);
+
+const deriveModalRef = ref<InstanceType<typeof DeriveTableModal>>();
+const addColumnModalRef = ref<InstanceType<typeof AddColumnModal>>();
 
 function startRename() {
   nameInput.value = table.value?.tableName ?? "";
@@ -55,66 +64,22 @@ async function onDeleteTable() {
   }
 }
 
-// --- Derive table modal ---
-const showDerive = ref(false);
-const deriveQuery = ref("");
-const deriveName = ref("");
-const deriving = ref(false);
-const deriveError = ref<string | null>(null);
-
 function openDerive() {
-  deriveQuery.value = table.value ? `SELECT * FROM "${table.value.physicalName}"` : "SELECT * FROM ";
-  deriveName.value = "";
-  deriveError.value = null;
   showDerive.value = true;
+  deriveModalRef.value?.openModal();
 }
 
-async function confirmDerive() {
-  if (!deriveQuery.value.trim() || !deriveName.value.trim()) return;
-  deriving.value = true;
-  deriveError.value = null;
-  try {
-    const result = await derive(deriveQuery.value.trim(), deriveName.value.trim());
-    showDerive.value = false;
-    toast.success("Table dérivée créée.");
-    router.push(`/tables/${result.tableId}`);
-  } catch (e) {
-    deriveError.value = errorMessage(e, "Impossible de dériver la table");
-  } finally {
-    deriving.value = false;
-  }
+async function onDeriveSuccess(result: { tableId: string }) {
+  await router.push(`/tables/${result.tableId}`);
 }
-
-// --- Columns modal (visibility + distinct values) ---
-const showColumns = ref(false);
-
-// --- Add column modal ---
-const showAddColumn = ref(false);
-const newColumnName = ref("");
-const newColumnType = ref("VARCHAR");
-const addingColumn = ref(false);
-const addColumnError = ref<string | null>(null);
 
 function openAddColumn() {
-  newColumnName.value = "";
-  newColumnType.value = "VARCHAR";
-  addColumnError.value = null;
   showAddColumn.value = true;
+  addColumnModalRef.value?.openModal();
 }
 
-async function confirmAddColumn() {
-  if (!newColumnName.value.trim()) return;
-  addingColumn.value = true;
-  addColumnError.value = null;
-  try {
-    await addNewColumn(newColumnName.value.trim(), newColumnType.value.trim());
-    showAddColumn.value = false;
-    toast.success("Colonne ajoutée.");
-  } catch (e) {
-    addColumnError.value = errorMessage(e, "Impossible d'ajouter la colonne");
-  } finally {
-    addingColumn.value = false;
-  }
+async function onAddColumnSuccess() {
+  await loadTable();
 }
 </script>
 
@@ -132,51 +97,27 @@ async function confirmAddColumn() {
             @keyup.enter="confirmRename"
             @keyup.esc="editingName = false"
           />
-          <button
-            class="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-            :disabled="renaming || !nameInput.trim()"
-            @click="confirmRename"
-          >
+          <BaseButton size="sm" variant="primary" :busy="renaming" :disabled="renaming || !nameInput.trim()" @click="confirmRename">
             {{ renaming ? "..." : "Enregistrer" }}
-          </button>
-          <button
-            class="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            @click="editingName = false"
-          >
-            Annuler
-          </button>
+          </BaseButton>
+          <BaseButton size="sm" variant="secondary" @click="editingName = false">Annuler</BaseButton>
         </div>
         <h1 v-else class="group flex items-center gap-2 text-lg font-semibold text-slate-900">
           {{ table.tableName }}
           <button class="text-xs font-medium text-slate-400 hover:text-indigo-600" @click="startRename">Renommer</button>
         </h1>
         <p class="flex items-center gap-2 text-sm text-slate-500">
-          <Badge :tone="table.isGeo ? 'indigo' : 'slate'">{{ table.isGeo ? "Géo" : "Standard" }}</Badge>
+          <Badge :tone="table.isGeo ? 'primary' : 'neutral'">{{ table.isGeo ? "Géo" : "Standard" }}</Badge>
           {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
         </p>
       </div>
       <div class="flex gap-2">
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          @click="showColumns = true"
-        >
-          Colonnes
-        </button>
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          @click="openAddColumn"
-        >
-          Ajouter une colonne
-        </button>
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          @click="openDerive"
-        >
-          Dériver
-        </button>
+        <BaseButton variant="secondary" @click="showColumns = true">Colonnes</BaseButton>
+        <BaseButton variant="secondary" @click="openAddColumn">Ajouter une colonne</BaseButton>
+        <BaseButton variant="secondary" @click="openDerive">Dériver</BaseButton>
         <a
           :href="exportUrl(table.tableId, table.isGeo ? 'geojson' : 'csv')"
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          class="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           Exporter
         </a>
@@ -197,40 +138,14 @@ async function confirmAddColumn() {
       @mutated="loadTable"
     />
 
-    <Modal v-if="showDerive" title="Dériver une table" wide @close="showDerive = false">
-      <p class="mb-3 text-xs text-slate-500">
-        Requête <code class="rounded bg-slate-100 px-1 py-0.5">SELECT</code> exécutée sur les tables existantes ; le résultat est
-        matérialisé dans une nouvelle table.
-      </p>
-      <textarea
-        v-model="deriveQuery"
-        rows="4"
-        spellcheck="false"
-        class="w-full resize-y rounded-md border border-slate-300 px-3 py-2 font-mono text-xs focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-      />
-      <input
-        v-model="deriveName"
-        type="text"
-        placeholder="Nom de la nouvelle table"
-        class="mt-3 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-      />
-      <p v-if="deriveError" class="mt-2 text-xs text-red-600">{{ deriveError }}</p>
-      <div class="mt-4 flex justify-end gap-2">
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          @click="showDerive = false"
-        >
-          Annuler
-        </button>
-        <button
-          class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          :disabled="deriving || !deriveQuery.trim() || !deriveName.trim()"
-          @click="confirmDerive"
-        >
-          {{ deriving ? "Création…" : "Créer" }}
-        </button>
-      </div>
-    </Modal>
+    <DeriveTableModal
+      v-if="showDerive && table"
+      ref="deriveModalRef"
+      :table-id="table.tableId"
+      :physical-name="table.physicalName"
+      @derived="onDeriveSuccess"
+      @close="showDerive = false"
+    />
 
     <ColumnsModal
       v-if="showColumns && table"
@@ -241,40 +156,12 @@ async function confirmAddColumn() {
       @close="showColumns = false"
     />
 
-    <Modal v-if="showAddColumn" title="Ajouter une colonne" @close="showAddColumn = false">
-      <label class="mb-3 block">
-        <span class="mb-1 block text-xs font-medium text-slate-500">Nom</span>
-        <input
-          v-model="newColumnName"
-          type="text"
-          class="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-        />
-      </label>
-      <label class="block">
-        <span class="mb-1 block text-xs font-medium text-slate-500">Type DuckDB</span>
-        <input
-          v-model="newColumnType"
-          type="text"
-          placeholder="VARCHAR, INTEGER, DOUBLE…"
-          class="w-full rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-        />
-      </label>
-      <p v-if="addColumnError" class="mt-3 text-xs text-red-600">{{ addColumnError }}</p>
-      <div class="mt-4 flex justify-end gap-2">
-        <button
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          @click="showAddColumn = false"
-        >
-          Annuler
-        </button>
-        <button
-          class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          :disabled="addingColumn || !newColumnName.trim()"
-          @click="confirmAddColumn"
-        >
-          {{ addingColumn ? "Ajout…" : "Ajouter" }}
-        </button>
-      </div>
-    </Modal>
+    <AddColumnModal
+      v-if="showAddColumn && table"
+      ref="addColumnModalRef"
+      :table-id="table.tableId"
+      @added="onAddColumnSuccess"
+      @close="showAddColumn = false"
+    />
   </div>
 </template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, reactive, ref, toRef } from "vue";
+import { computed, defineAsyncComponent, h, ref, toRef } from "vue";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import type { ColumnSchema, Row, RowValue } from "../client/types";
@@ -7,11 +7,13 @@ import { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useRowFilter } from "../composables/useRowFilter";
 import { useTableRows } from "../composables/useTableRows";
 import { PencilLine, Plus, SlidersHorizontal } from "@lucide/vue";
-import ConfirmButton from "./ConfirmButton.vue";
 import DataTable from "./DataTable.vue";
 import FilterConditionsEditor from "./FilterConditionsEditor.vue";
 import FilterPills from "./FilterPills.vue";
-import Modal from "./Modal.vue";
+import AddRowModal from "./AddRowModal.vue";
+import TableRowEditCell from "./tables/TableRowEditCell.vue";
+import TableRowActions from "./tables/TableRowActions.vue";
+import BaseButton from "./ui/BaseButton.vue";
 
 // MapLibre GL is the largest dependency in the bundle — load it only when
 // a geo table's data panel is actually rendered.
@@ -65,15 +67,15 @@ const filterTable = useVueTable({
 
 // --- Add row modal ---
 const showAddRow = ref(false);
-const newRowValues = reactive<Record<string, string>>({});
+const addRowModalRef = ref<InstanceType<typeof AddRowModal>>();
 
 function openAddRow() {
-  for (const col of props.editableColumns) newRowValues[col] = "";
   showAddRow.value = true;
+  addRowModalRef.value?.openModal();
 }
 
-async function confirmAddRow() {
-  if (await rowsState.addRow(newRowValues)) showAddRow.value = false;
+async function onAddRow(values: Record<string, string>) {
+  await rowsState.addRow(values);
 }
 
 const rowsColumnHelper = createColumnHelper<Row>();
@@ -83,15 +85,14 @@ const rowsColumnDefs = computed(() => {
       id: col,
       header: col,
       cell: (info) => {
-        if (rowsState.editingPkey.value === info.row.original.pkey) {
-          return h("input", {
-            type: "text",
-            value: rowsState.editValues[col],
-            onInput: (e: Event) => (rowsState.editValues[col] = (e.target as HTMLInputElement).value),
-            class: "w-full rounded-md border border-slate-300 px-2 py-1 text-sm",
+        const isEditing = rowsState.editingPkey.value === info.row.original.pkey;
+        const v = info.getValue();
+        if (isEditing) {
+          return h(TableRowEditCell, {
+            modelValue: rowsState.editValues[col] ?? "",
+            'onUpdate:modelValue': (val: string) => (rowsState.editValues[col] = val),
           });
         }
-        const v = info.getValue();
         return v === null || v === undefined ? "" : String(v);
       },
     }),
@@ -104,39 +105,16 @@ const rowsColumnDefs = computed(() => {
         meta: { align: "right" },
         cell: (info) => {
           const row = info.row.original;
-          if (rowsState.editingPkey.value === row.pkey) {
-            return h("div", { class: "flex justify-end gap-2" }, [
-              h(
-                "button",
-                {
-                  class: "rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50",
-                  disabled: rowsState.savingRow.value,
-                  onClick: rowsState.saveEditRow,
-                },
-                rowsState.savingRow.value ? "…" : "Enregistrer",
-              ),
-              h(
-                "button",
-                {
-                  class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-                  onClick: rowsState.cancelEditRow,
-                },
-                "Annuler",
-              ),
-            ]);
-          }
-          return h("div", { class: "flex justify-end gap-2" }, [
-            h(
-              "button",
-              { class: "text-xs font-medium text-indigo-600 hover:text-indigo-700", onClick: () => rowsState.startEditRow(row) },
-              "Modifier",
-            ),
-            h(ConfirmButton, {
-              label: "Supprimer",
-              busy: rowsState.deletingPkey.value === row.pkey,
-              onConfirm: () => rowsState.deleteRow(row.pkey),
-            }),
-          ]);
+          return h(TableRowActions, {
+            isEditing: rowsState.editingPkey.value === row.pkey,
+            isSaving: rowsState.savingRow.value,
+            isDeletingPkey: rowsState.deletingPkey.value ?? undefined,
+            deletingPkey: row.pkey,
+            onSave: rowsState.saveEditRow,
+            onCancel: rowsState.cancelEditRow,
+            onEdit: () => rowsState.startEditRow(row),
+            onDelete: () => rowsState.deleteRow(row.pkey),
+          });
         },
       }),
     );
@@ -186,15 +164,12 @@ const rowsTable = useVueTable({
 <template>
   <div class="flex min-h-0 flex-1 flex-col gap-4">
     <div class="flex shrink-0 flex-wrap items-center gap-2">
-      <button
-        class="flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        @click="showFilterPanel = !showFilterPanel"
-      >
+      <BaseButton variant="secondary" class="flex items-center gap-1.5" @click="showFilterPanel = !showFilterPanel">
         <SlidersHorizontal :size="14" /> Filtres
         <span v-if="filter.appliedConditions.value.length > 0" class="rounded-full bg-indigo-600 px-1.5 text-xs font-semibold text-white">
           {{ filter.appliedConditions.value.length }}
         </span>
-      </button>
+      </BaseButton>
       <FilterPills :nodes="filter.conditions.value" @update:nodes="filter.conditions.value = $event" />
     </div>
 
@@ -221,13 +196,9 @@ const rowsTable = useVueTable({
             <button class="font-medium text-slate-400 hover:text-red-600" @click="selection.clear">Vider</button>
           </span>
         </div>
-        <button
-          v-if="rowsState.editMode.value"
-          class="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-          @click="openAddRow"
-        >
+        <BaseButton v-if="rowsState.editMode.value" variant="primary" class="flex items-center gap-1.5" @click="openAddRow">
           <Plus :size="14" /> Ajouter une ligne
-        </button>
+        </BaseButton>
       </div>
 
       <DataTable
@@ -265,35 +236,12 @@ const rowsTable = useVueTable({
     </div>
   </Teleport>
 
-  <Modal v-if="showAddRow" title="Ajouter une ligne" @close="showAddRow = false">
-    <div class="flex max-h-96 flex-col gap-3 overflow-y-auto pr-1">
-      <label v-for="col in editableColumns" :key="col" class="block">
-        <span class="mb-1 block text-xs font-medium text-slate-500">
-          {{ col }} <span v-if="col === geometryColumn">(WKT)</span>
-        </span>
-        <input
-          v-model="newRowValues[col]"
-          type="text"
-          :placeholder="col === geometryColumn ? 'POINT(2.35 48.85)' : ''"
-          class="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-        />
-      </label>
-    </div>
-    <p v-if="rowsState.addRowError.value" class="mt-3 text-xs text-red-600">{{ rowsState.addRowError.value }}</p>
-    <div class="mt-4 flex justify-end gap-2">
-      <button
-        class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        @click="showAddRow = false"
-      >
-        Annuler
-      </button>
-      <button
-        class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        :disabled="rowsState.addingRow.value"
-        @click="confirmAddRow"
-      >
-        {{ rowsState.addingRow.value ? "Ajout…" : "Ajouter" }}
-      </button>
-    </div>
-  </Modal>
+  <AddRowModal
+    v-if="showAddRow"
+    ref="addRowModalRef"
+    :editable-columns="editableColumns"
+    :geometry-column="geometryColumn"
+    @add="onAddRow"
+    @close="showAddRow = false"
+  />
 </template>

@@ -22,24 +22,19 @@ the file, and a wrong line sends the reader to the wrong place with confidence. 
 search and stays true. What stays out is **code itself**: no snippet, no template fragment, no diff. Write the
 instruction, not the patch — the code is written later, against the code as it is then.
 
+# Rules
+
+- Responsivity is mandatory
+
 ## 1. Architecture and code
 
-| # | Gap | Rule |
-|---|---|---|
-| TODO-F3 | `SourcesView` (414 lines) and `TableDataPanel` build buttons, fields and badges with `h()` | §0.4 |
-| TODO-F5 | `FilterPills` and `FilterConditionsEditor` each reimplement activation, removal and update of the filter tree, in two already diverging variants | §3 |
-| TODO-F6 | The class strings of primary and secondary buttons are copied into the views (≈14 occurrences); the "Dériver", "Ajouter une colonne" and "Ajouter une ligne" modals are inline markup | §0.8, §0.10, §5 |
-| TODO-F7 | 11 `as` assertions in the components (`meta as {…}`, `e.target as HTMLInputElement`) | §0.9 |
-| TODO-F9 | `ColumnDTO` is declared in `client/tables.ts` instead of `client/types.ts` | §2 |
-| TODO-F10 | `TablesView`'s search filters partially loaded pages client-side: it cannot see the tables not paginated yet | §8.6 |
-| TODO-F11 | Every keystroke in a filter field triggers `filterRows` plus `filtered-extent` plus a map refresh, with no debounce | §8.10, §9 |
-| TODO-F12 | `Badge` exposes tones named after their colour (`indigo`, `emerald`) rather than their meaning | §5 |
-| TODO-F13 | `route.meta.title` is read without a declared type, and is hardcoded to "Table" on the detail view | §6 |
+*All items complete.*
 
 ## 2. User experience
 
 | # | Gap | Rule |
 |---|---|---|
+| TODO-F13 | make the layout better, avoid blank space, main space area must take all the space as possible | |
 | TODO-F14 | A modal closes on a backdrop click even when the form is filled in: the input is lost without confirmation | §8.3 |
 | TODO-F15 | Neither initial focus, nor a focus trap, nor focus restoration in `Modal` and in the filter side panel; `Enter` does not submit modal forms | §8.5, §8.7 |
 | TODO-F16 | Icon-only buttons with no accessible name (close cross, filter-node removal, pill removal); a pill's cross is a clickable icon nested inside a button | §8.7 |

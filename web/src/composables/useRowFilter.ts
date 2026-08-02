@@ -1,4 +1,5 @@
-import { computed, ref, watch, type Ref } from "vue";
+import { computed, ref, type Ref } from "vue";
+import { watchDebounced } from "@vueuse/core";
 import { getFilteredExtent } from "../client/geo";
 import { filterRows } from "../client/tables";
 import type { ColumnSchema, FilterCondition, Row } from "../client/types";
@@ -37,14 +38,18 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
     }
   }
 
-  watch([appliedConditions, filterLimit], () => {
-    if (filterActive.value) {
-      loadFilterResults();
-    } else {
-      filterResults.value = null;
-      filterError.value = null;
-    }
-  });
+  watchDebounced(
+    [appliedConditions, filterLimit],
+    () => {
+      if (filterActive.value) {
+        loadFilterResults();
+      } else {
+        filterResults.value = null;
+        filterError.value = null;
+      }
+    },
+    { debounce: 300 },
+  );
 
   // Re-centers the map on the filter's own results rather than the whole
   // table's extent, every time the filter is created/edited — cleared back
@@ -60,7 +65,7 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
     filteredBbox.value = bbox || null;
   }
 
-  watch(appliedConditions, refreshFilteredBbox, { immediate: true });
+  watchDebounced(appliedConditions, refreshFilteredBbox, { debounce: 300, immediate: true });
 
   return { conditions, appliedConditions, filterActive, filterLimit, filtering, filterError, filterResults, filteredBbox };
 }

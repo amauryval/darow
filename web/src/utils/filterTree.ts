@@ -40,3 +40,22 @@ export function pruneActive(nodes: DraftNode[], coerce: (column: string, value: 
   }
   return result;
 }
+
+// Tree manipulation utilities — centralize all node updates here.
+// Root-level nodes are independent filters (only one active at a time).
+// Nested nodes (inside a group) toggle independently.
+export function toggleNode(nodes: DraftNode[], id: number, isRoot: boolean): DraftNode[] {
+  if (!isRoot) {
+    return nodes.map((n) => (n.id === id ? { ...n, active: !n.active } : n));
+  }
+  const target = nodes.find((n) => n.id === id);
+  return nodes.map((n) => ({ ...n, active: n.id === id ? !target?.active : false }));
+}
+
+export function removeNode(nodes: DraftNode[], id: number): DraftNode[] {
+  return nodes.filter((n) => n.id !== id);
+}
+
+export function updateChildren(nodes: DraftNode[], groupId: number, children: DraftNode[]): DraftNode[] {
+  return nodes.map((n) => (n.id === groupId ? { ...n, children } : n));
+}

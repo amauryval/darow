@@ -1,37 +1,20 @@
 <script setup lang="ts">
 import { X } from "@lucide/vue";
-import type { DraftNode } from "../utils/filterTree";
+import { type DraftNode, toggleNode, removeNode as removeNodeUtil, updateChildren as updateChildrenUtil } from "../utils/filterTree";
 
 const props = withDefaults(defineProps<{ nodes: DraftNode[]; root?: boolean }>(), { root: true });
 const emit = defineEmits<{ "update:nodes": [nodes: DraftNode[]] }>();
 
-// Root-level nodes are independent filters — only one can be active at a
-// time. Nested nodes (inside a group) combine via that group's AND/OR
-// instead, so they toggle independently of their siblings.
 function toggleActive(node: DraftNode) {
-  if (!props.root) {
-    emit(
-      "update:nodes",
-      props.nodes.map((n) => (n.id === node.id ? { ...n, active: !n.active } : n)),
-    );
-    return;
-  }
-  emit(
-    "update:nodes",
-    props.nodes.map((n) => ({ ...n, active: n.id === node.id ? !node.active : false })),
-  );
+  emit("update:nodes", toggleNode(props.nodes, node.id, props.root));
 }
+
 function removeNode(id: number) {
-  emit(
-    "update:nodes",
-    props.nodes.filter((n) => n.id !== id),
-  );
+  emit("update:nodes", removeNodeUtil(props.nodes, id));
 }
+
 function updateChildren(group: DraftNode, children: DraftNode[]) {
-  emit(
-    "update:nodes",
-    props.nodes.map((n) => (n.id === group.id ? { ...n, children } : n)),
-  );
+  emit("update:nodes", updateChildrenUtil(props.nodes, group.id, children));
 }
 </script>
 

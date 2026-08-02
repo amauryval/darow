@@ -10,6 +10,22 @@ defineProps<{
 }>();
 
 defineEmits<{ rowClick: [row: Row<TData>] }>();
+
+function getCellMetaAlign(meta: unknown): string | undefined {
+  if (typeof meta === 'object' && meta !== null) {
+    const obj = meta as Record<string, unknown>;
+    return obj.align === 'right' ? 'text-right' : undefined;
+  }
+  return undefined;
+}
+
+function getCellMetaClass(meta: unknown): string | undefined {
+  if (typeof meta === 'object' && meta !== null) {
+    const obj = meta as Record<string, unknown>;
+    return typeof obj.class === 'string' ? obj.class : undefined;
+  }
+  return undefined;
+}
 </script>
 
 <template>
@@ -42,10 +58,7 @@ defineEmits<{ rowClick: [row: Row<TData>] }>();
               v-for="cell in row.getVisibleCells()"
               :key="cell.id"
               class="whitespace-nowrap px-4 py-2.5 text-slate-700"
-              :class="[
-                (cell.column.columnDef.meta as { align?: string; class?: string } | undefined)?.align === 'right' ? 'text-right' : '',
-                (cell.column.columnDef.meta as { align?: string; class?: string } | undefined)?.class,
-              ]"
+              :class="[getCellMetaAlign(cell.column.columnDef.meta), getCellMetaClass(cell.column.columnDef.meta)]"
             >
               <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
             </td>

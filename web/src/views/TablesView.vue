@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref } from "vue";
+import { h, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import type { Row } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, getFilteredRowModel, useVueTable } from "@tanstack/vue-table";
@@ -14,16 +14,22 @@ import DataTable from "../components/DataTable.vue";
 const router = useRouter();
 const toast = useToast();
 
-// sentinel stays nested under `list` rather than destructured: template
-// refs bound via `:ref` need the actual Ref object, but a top-level
-// destructured ref auto-unwraps when read inside the template.
 const list = usePaginatedList<Metadata>({
   initialSorting: [{ id: "updatedAt", desc: true }],
   fetchPage: (offset, limit, sort) => listTables(offset, limit, sort).then((page) => ({ items: page.tables, total: page.total })),
   onError: (e) => toast.error(errorMessage(e, "Impossible de charger les tables")),
 });
-const { items: tables, loading, sorting, setSorting } = list;
+const { items: tables, total, loading, sorting, setSorting, loadMore } = list;
 const globalFilter = ref("");
+
+// When search is active, load all remaining pages to filter across the full
+// dataset: client-side filtering on partial pages violates §8.6 (a silent
+// partial result is a lie).
+watch(globalFilter, async (filter) => {
+  if (filter.trim() && tables.value.length < total.value) {
+    await loadMore();
+  }
+});
 
 function onRowClick(row: Row<Metadata>) {
   router.push(`/tables/${row.original.tableId}`);
@@ -43,7 +49,7 @@ const columnDefs = [
     header: "Type",
     enableGlobalFilter: false,
     enableSorting: false,
-    cell: ({ row }) => h(Badge, { tone: row.original.isGeo ? "indigo" : "slate" }, () => (row.original.isGeo ? "Géo" : "Standard")),
+    cell: ({ row }) => h(Badge, { tone: row.original.isGeo ? "primary" : "neutral" }, () => (row.original.isGeo ? "Géo" : "Standard")),
   }),
   columnHelper.accessor("rowCount", {
     header: "Lignes",

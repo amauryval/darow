@@ -1,5 +1,5 @@
 import { apiUrl, del, get, patch, post } from "./http";
-import type { FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse, TablesPage } from "./types";
+import type { ColumnDTO, FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse, TablesPage } from "./types";
 
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
   const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
@@ -24,11 +24,6 @@ export function getSchema(tableId: string): Promise<SchemaResponse> {
 
 export function addColumn(tableId: string, name: string, type: string): Promise<ColumnDTO> {
   return post(`/tables/${tableId}/columns`, { name, type });
-}
-
-export interface ColumnDTO {
-  name: string;
-  type: string;
 }
 
 export function listRows(tableId: string, offset: number, limit: number, sort?: string): Promise<RowsPage> {

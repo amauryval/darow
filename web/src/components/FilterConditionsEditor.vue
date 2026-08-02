@@ -1,55 +1,56 @@
 <script setup lang="ts">
 import { Plus, X } from "@lucide/vue";
-import { type DraftNode, nextNodeId } from "../utils/filterTree";
+import { type DraftNode, nextNodeId, toggleNode, removeNode as removeNodeUtil, updateChildren as updateChildrenUtil } from "../utils/filterTree";
 
 const operators = ["=", "!=", ">", "<", ">=", "<=", "LIKE"];
 
 const props = withDefaults(defineProps<{ columns: string[]; nodes: DraftNode[]; root?: boolean }>(), { root: true });
 const emit = defineEmits<{ "update:nodes": [nodes: DraftNode[]] }>();
 
+function getSelectValue(event: Event): string {
+  const target = event.target;
+  return target instanceof HTMLSelectElement ? target.value : "";
+}
+
+function getInputValue(event: Event): string {
+  const target = event.target;
+  return target instanceof HTMLInputElement ? target.value : "";
+}
+
 function updateNode(id: number, patch: Partial<DraftNode>) {
   emit(
     "update:nodes",
-    props.nodes.map((n) => (n.id === id ? ({ ...n, ...patch } as DraftNode) : n)),
+    props.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n) as DraftNode),
   );
 }
-// Root-level nodes are independent filters — only one can be active at a
-// time. Nested nodes (inside a group) combine via that group's AND/OR
-// instead, so they toggle independently of their siblings.
+
 function toggleActive(node: DraftNode) {
-  if (!props.root) {
-    updateNode(node.id, { active: !node.active });
-    return;
-  }
-  emit(
-    "update:nodes",
-    props.nodes.map((n) => ({ ...n, active: n.id === node.id ? !node.active : false })),
-  );
+  emit("update:nodes", toggleNode(props.nodes, node.id, props.root));
 }
+
 function removeNode(id: number) {
-  emit(
-    "update:nodes",
-    props.nodes.filter((n) => n.id !== id),
-  );
+  emit("update:nodes", removeNodeUtil(props.nodes, id));
 }
+
 function updateChildren(group: DraftNode, children: DraftNode[]) {
-  updateNode(group.id, { children } as Partial<DraftNode>);
+  emit("update:nodes", updateChildrenUtil(props.nodes, group.id, children));
 }
-// A newly added root filter becomes the selected one (only one root filter
-// is ever active at a time) — nested group children stay independently
-// active alongside their siblings instead.
+
 function deactivateSiblings(): DraftNode[] {
   return props.root ? props.nodes.map((n) => ({ ...n, active: false })) : props.nodes;
 }
+
 function addLeaf() {
   emit("update:nodes", [
     ...deactivateSiblings(),
     { id: nextNodeId(), kind: "leaf", column: props.columns[0] ?? "", operator: operators[0], value: "", active: true },
   ]);
 }
+
 function addGroup() {
   emit("update:nodes", [...deactivateSiblings(), { id: nextNodeId(), kind: "group", bool: "AND", children: [], active: true }]);
 }
+
 function clearAll() {
   emit("update:nodes", []);
 }
@@ -75,14 +76,14 @@ function clearAll() {
           <select
             :value="node.column"
             class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs"
-            @change="updateNode(node.id, { column: ($event.target as HTMLSelectElement).value })"
+            @change="updateNode(node.id, { column: getSelectValue($event) })"
           >
             <option v-for="col in columns" :key="col" :value="col">{{ col }}</option>
           </select>
           <select
             :value="node.operator"
             class="rounded-md border border-slate-300 px-2 py-1 text-xs"
-            @change="updateNode(node.id, { operator: ($event.target as HTMLSelectElement).value })"
+            @change="updateNode(node.id, { operator: getSelectValue($event) })"
           >
             <option v-for="op in operators" :key="op" :value="op">{{ op }}</option>
           </select>
@@ -91,7 +92,7 @@ function clearAll() {
             type="text"
             placeholder="Valeur"
             class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs"
-            @input="updateNode(node.id, { value: ($event.target as HTMLInputElement).value })"
+            @input="updateNode(node.id, { value: getInputValue($event) })"
           />
           <button class="shrink-0 text-slate-400 hover:text-red-600" @click="removeNode(node.id)"><X :size="14" /></button>
         </div>
@@ -107,7 +108,7 @@ function clearAll() {
             <select
               :value="node.bool"
               class="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium"
-              @change="updateNode(node.id, { bool: ($event.target as HTMLSelectElement).value as 'AND' | 'OR' })"
+              @change="updateNode(node.id, { bool: getSelectValue($event) === 'OR' ? 'OR' : 'AND' })"
             >
               <option value="AND">ET</option>
               <option value="OR">OU</option>

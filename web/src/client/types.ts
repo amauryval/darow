@@ -82,6 +82,11 @@ export interface FilterCondition {
   conditions?: FilterCondition[];
 }
 
+export interface ColumnDTO {
+  name: string;
+  type: string;
+}
+
 export interface ErrorResponse {
   error: string;
   message: string;

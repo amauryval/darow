@@ -3,6 +3,12 @@ import SourcesView from "./views/SourcesView.vue";
 import TablesView from "./views/TablesView.vue";
 import TableDetailView from "./views/TableDetailView.vue";
 
+declare module "vue-router" {
+  interface RouteMeta {
+    title: string;
+  }
+}
+
 export const router = createRouter({
   history: createWebHistory("/ui/"),
   routes: [

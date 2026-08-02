@@ -95,7 +95,7 @@ async function handleUpload(file: File) {
 }
 
 async function onFileSelected(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
+  const file = event.target instanceof HTMLInputElement ? event.target.files?.[0] : undefined;
   if (fileInput.value) fileInput.value.value = "";
   if (!file) return;
   await handleUpload(file);
@@ -137,7 +137,7 @@ const columnDefs = [
     header: "Statut",
     enableSorting: true,
     cell: ({ row }) =>
-      row.original.layerCount !== undefined ? null : h(Badge, { tone: row.original.loaded ? "emerald" : "slate" }, () => (row.original.loaded ? "Chargée" : "Non chargée")),
+      row.original.layerCount !== undefined ? null : h(Badge, { tone: row.original.loaded ? "success" : "neutral" }, () => (row.original.loaded ? "Chargée" : "Non chargée")),
   }),
   columnHelper.display({
     id: "actions",
@@ -166,7 +166,11 @@ const columnDefs = [
             value: epsgInput.value,
             placeholder: epsgDetecting.value ? "Détection..." : "Code EPSG",
             disabled: epsgDetecting.value,
-            onInput: (e: Event) => (epsgInput.value = (e.target as HTMLInputElement).value),
+            onInput: (e: Event) => {
+              if (e.target instanceof HTMLInputElement) {
+                epsgInput.value = e.target.value;
+              }
+            },
             class: "w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:bg-slate-50",
           }),
           h(

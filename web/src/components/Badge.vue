@@ -1,11 +1,11 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ tone?: "indigo" | "emerald" | "slate" | "red" }>(), { tone: "slate" });
+withDefaults(defineProps<{ tone?: "primary" | "success" | "neutral" | "error" }>(), { tone: "neutral" });
 
 const classes: Record<string, string> = {
-  indigo: "badge-primary",
-  emerald: "badge-success",
-  slate: "badge-neutral",
-  red: "badge-error",
+  primary: "badge-primary",
+  success: "badge-success",
+  neutral: "badge-neutral",
+  error: "badge-error",
 };
 </script>
 
