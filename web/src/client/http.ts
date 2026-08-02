@@ -70,7 +70,7 @@ export function errorMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
     const phrase = statusPhrase(e.code);
     const base = phrase && e.message ? `${phrase} : ${e.message}` : (phrase || e.message);
-    return e.requestId ? `${base} (réf. ${e.requestId})` : base;
+    return base;
   }
   if (e instanceof Error) return `${fallback} : ${e.message}`;
   return fallback;
