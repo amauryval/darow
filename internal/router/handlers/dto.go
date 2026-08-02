@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"darow/internal/service"
 	"darow/internal/storage"
 )
 
@@ -76,6 +77,36 @@ func toCollectionDTO(m storage.Metadata) collectionDTO {
 	}
 	dto.Extent.Spatial.Bbox = [][4]float64{bbox}
 	return dto
+}
+
+// deriveSpecDTO is the body of POST /tables/{tableId}/derive-from-table:
+// a derivation described structurally rather than as SQL. Every field is
+// optional but the name — an empty spec derives the whole source table.
+type deriveSpecDTO struct {
+	NewTableName string                    `json:"newTableName"`
+	Columns      []string                  `json:"columns"`
+	Computed     []computedColumnDTO       `json:"computed"`
+	Conditions   []storage.FilterCondition `json:"conditions"`
+}
+
+// computedColumnDTO is one derived column: a free SQL scalar expression
+// under a caller-chosen name.
+type computedColumnDTO struct {
+	Alias      string `json:"alias"`
+	Expression string `json:"expression"`
+}
+
+func (d deriveSpecDTO) toSpec() service.DeriveSpec {
+	computed := make([]service.ComputedColumn, 0, len(d.Computed))
+	for _, col := range d.Computed {
+		computed = append(computed, service.ComputedColumn{Alias: col.Alias, Expression: col.Expression})
+	}
+	return service.DeriveSpec{
+		NewTableName: d.NewTableName,
+		Columns:      d.Columns,
+		Computed:     computed,
+		Conditions:   d.Conditions,
+	}
 }
 
 // rowToJSON flattens row under the reserved "pkey" key alongside its other

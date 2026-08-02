@@ -110,6 +110,27 @@ func Test_Materializer_CreateFromQuery_GroupBy(t *testing.T) {
 	assert.EqualValues(t, 2, rowCount(t, conn, "t_derived"))
 }
 
+// The guided derivation assembles its WHERE through BuildFilter, which
+// binds every value rather than interpolating it. DuckDB has to carry
+// those parameters through all three stages CreateFromQuery runs — the
+// json_serialize_sql validation, the DESCRIBE that looks for a projected
+// __pkey, and the CTAS itself — or a filtered derivation cannot keep its
+// values bound at all.
+func Test_Materializer_CreateFromQuery_BindsParameters(t *testing.T) {
+	conn := openRepoTestDB(t)
+	l := NewMaterializer(conn, conn, fakePhysicalNames{"t_points": true})
+	_, _, _, err := l.CreateFromFile(context.Background(), "t_points", pointsGeoJSONFixture(t), "", 0)
+	require.NoError(t, err)
+
+	_, _, err = l.CreateFromQuery(
+		context.Background(), "t_derived",
+		`SELECT "name" FROM t_points WHERE "name" = TRY_CAST(? AS VARCHAR)`, "a",
+	)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, rowCount(t, conn, "t_derived"))
+}
+
 func Test_Materializer_CreateFromQuery_RejectsUnregisteredTable(t *testing.T) {
 	conn := openRepoTestDB(t)
 	l := NewMaterializer(conn, conn, fakePhysicalNames{})

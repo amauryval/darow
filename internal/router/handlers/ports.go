@@ -42,6 +42,7 @@ type schemaAPI interface {
 // deriveAPI is everything the router calls on *service.DeriveService.
 type deriveAPI interface {
 	DeriveTable(ctx context.Context, query, newTableName string) (string, error)
+	DeriveFromTable(ctx context.Context, meta storage.Metadata, spec service.DeriveSpec) (string, error)
 }
 
 // geoAPI is everything the router calls on *service.GeoService.

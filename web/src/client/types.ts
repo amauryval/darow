@@ -84,6 +84,26 @@ export interface FilterCondition {
   conditions?: FilterCondition[];
 }
 
+// One column a guided derivation computes rather than carries over: a free
+// SQL scalar expression over the source table's columns, under a chosen
+// name. The expression is validated server-side (DuckDB's own parser), so
+// nothing checks it here beyond it being non-empty.
+export interface ComputedColumn {
+  alias: string;
+  expression: string;
+}
+
+// Matches service.DeriveSpec — a derivation from one source table, described
+// structurally instead of as SQL. Every field but newTableName is optional:
+// an empty spec derives the whole source table. The SQL is assembled
+// server-side, which is why no query string appears here.
+export interface DeriveSpec {
+  newTableName: string;
+  columns?: string[];
+  computed?: ComputedColumn[];
+  conditions?: FilterCondition[];
+}
+
 // A filter saved against a table, server-side. Its conditions are the same
 // tree an ad-hoc filter posts, validated against the table's real schema at
 // save time — so a stored filter is always applicable. Deleting the table

@@ -125,8 +125,11 @@ type TableMaterializer interface {
 	// neither detected nor overridden fails rather than being guessed.
 	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
 	// CreateFromQuery materializes physicalName from a caller-provided
-	// SELECT query, restricted to already-registered tables.
-	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
+	// SELECT query, restricted to already-registered tables. args binds
+	// sourceQuery's placeholders: a query the server assembles around a
+	// BuildFilter clause carries the filter's values as parameters, so
+	// rule 5 holds on the derivation path exactly as it does on a read.
+	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (geometryColumn string, isGeo bool, err error)
 	// ListLayers returns the names of every layer sourcePath exposes, for
 	// formats that can hold more than one.
 	ListLayers(ctx context.Context, sourcePath string) ([]string, error)

@@ -8,7 +8,7 @@ import Badge from "../components/Badge.vue";
 import ColumnsModal from "../components/ColumnsModal.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
 import TableDataPanel from "../components/TableDataPanel.vue";
-import DeriveTableModal from "../components/DeriveTableModal.vue";
+import DeriveTableModal from "../components/tables/DeriveTableModal.vue";
 import AddColumnModal from "../components/AddColumnModal.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseInput from "../components/ui/BaseInput.vue";
@@ -57,7 +57,6 @@ const showColumns = ref(false);
 const showDerive = ref(false);
 const showAddColumn = ref(false);
 
-const deriveModalRef = ref<InstanceType<typeof DeriveTableModal>>();
 const addColumnModalRef = ref<InstanceType<typeof AddColumnModal>>();
 
 function startRename() {
@@ -105,7 +104,6 @@ async function onExportTable() {
 
 function openDerive() {
   showDerive.value = true;
-  deriveModalRef.value?.openModal();
 }
 
 async function onDeriveSuccess(result: { tableId: string }) {
@@ -176,9 +174,10 @@ async function onAddColumnSuccess() {
 
     <DeriveTableModal
       v-if="showDerive && table"
-      ref="deriveModalRef"
       :table-id="table.tableId"
       :physical-name="table.physicalName"
+      :columns="columns"
+      :geometry-column="table.geometryColumn"
       @derived="onDeriveSuccess"
       @close="showDerive = false"
     />

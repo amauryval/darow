@@ -615,6 +615,32 @@ paths:
       summary: Derive a table from a SELECT query
       tags:
       - tables
+  /api/v1/tables/{tableId}/derive-from-table:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Source table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Derive a table from this table's columns, expressions and conditions
+      tags:
+      - tables
   /api/v1/tables/{tableId}/export:
     get:
       parameters:

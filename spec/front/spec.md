@@ -196,6 +196,7 @@ module level and documents it; that is the exception, not the rule.
 | `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
 | `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; only `useMvtLayer` wires selection (WFS has no click support) | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
+| `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 
 ---
@@ -290,8 +291,18 @@ single, link-less entry naming the page.
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `DeriveTableModal`, `AddColumnModal`, `AddRowModal`, `ColumnsModal` — one modal = one file, never
-  inline modal markup in a view.
+- `AddColumnModal`, `AddRowModal`, `ColumnsModal` — one modal = one file, never inline modal markup
+  in a view.
+- **Deriving is two modes in one modal**, in `components/tables/`. `DeriveTableModal` is the shell:
+  the tab pair, the new table's name, the submit, and the one `useDeriveTable` instance both tabs
+  work through. `DeriveFromTableForm` is the guided tab — the column picker, the computed-column
+  rows, and the condition tree, which reuses `FilterNodeEditor` rather than a second editor, plus a
+  "reprendre un filtre enregistré" select that **copies** a stored filter's conditions into the
+  draft (referencing it would suggest the derived table tracks it, and a derived table is a frozen
+  snapshot). `DeriveSqlForm` is the free-SQL tab, whose caption states that the query runs against
+  every registered table: it used to be the only mode, pre-filled with this table's name, which
+  stated a scope the endpoint never had. The geometry column and `__pkey` are absent from the
+  picker — the server carries the first over on its own and regenerates the second.
 
 **`SourcesView`**: the view holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the
 TanStack instance over `toSourceRows`; `components/sources/` holds the rest — `SourceUploadModal`

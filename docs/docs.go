@@ -798,6 +798,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tables/{tableId}/derive-from-table": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Derive a table from this table's columns, expressions and conditions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tables/{tableId}/export": {
             "get": {
                 "produces": [

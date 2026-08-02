@@ -112,6 +112,7 @@ func (rt *Router) Setup() http.Handler {
 					sub.Get("/schema", rt.tables.GetSchema)
 					sub.Post("/columns", rt.tables.AddColumn)
 					sub.Post("/derive", rt.tables.DeriveTable)
+					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
 
 					sub.Route("/filters", func(sub chi.Router) {

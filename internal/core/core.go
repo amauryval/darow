@@ -78,7 +78,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
 	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, schemaSvc)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
-	deriveSvc := service.NewDeriveService(metadataSvc, storageAdapter.Materializer())
+	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc, storageAdapter.Materializer())
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer())
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)

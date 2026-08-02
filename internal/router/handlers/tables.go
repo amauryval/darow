@@ -246,7 +246,9 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 }
 
 // DeriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
-// anything that isn't a SELECT.
+// anything that isn't a SELECT. Its query reads every registered table,
+// not only the one in the path — /derive-from-table below is the
+// single-source mode.
 //
 // @Summary Derive a table from a SELECT query
 // @Tags tables
@@ -271,6 +273,42 @@ func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableId, err := th.deriveService.DeriveTable(req.Context(), body.Query, body.NewTableName)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+
+	w.Header().Set("Location", "/tables/"+tableId)
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+}
+
+// DeriveFromTable handles POST /tables/{tableId}/derive-from-table: the
+// guided derivation, whose source is the resolved table and nothing else.
+// The caller sends a structure — columns, computed expressions, row
+// conditions — and the SQL is assembled server-side, so identifier quoting
+// and the filter DSL never leave this side.
+//
+// @Summary Derive a table from this table's columns, expressions and conditions
+// @Tags tables
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Source table ID"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/derive-from-table [post]
+func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	var body deriveSpecDTO
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	tableId, err := th.deriveService.DeriveFromTable(req.Context(), meta, body.toSpec())
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return

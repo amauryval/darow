@@ -40,27 +40,47 @@ type metadataStore interface {
 
 // queryMaterializer is what DeriveService needs from the storage layer.
 type queryMaterializer interface {
-	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
+	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (geometryColumn string, isGeo bool, err error)
+}
+
+// schemaReader is what DeriveService needs from SchemaService to build a
+// guided derivation's projection and validate its conditions against the
+// source table's real columns.
+type schemaReader interface {
+	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 }
 
 // DeriveService materializes new tables from caller-provided SELECT
-// queries.
+// queries, and from the guided per-table specification of
+// derive_from_table.go.
 type DeriveService struct {
 	metadata metadataStore
+	schema   schemaReader
 	storage  queryMaterializer
 }
 
 // NewDeriveService builds a DeriveService registering new tables via
-// metadata and materializing them via storage.
-func NewDeriveService(metadata metadataStore, storage queryMaterializer) *DeriveService {
-	return &DeriveService{metadata: metadata, storage: storage}
+// metadata, reading source structure via schema and materializing via
+// storage.
+func NewDeriveService(metadata metadataStore, schema schemaReader, storage queryMaterializer) *DeriveService {
+	return &DeriveService{metadata: metadata, schema: schema, storage: storage}
 }
 
 // DeriveTable materializes a new table from a caller-provided SELECT query
-// (anything else is rejected before reaching Exec). The derived
-// table is a frozen snapshot, never a view and never synced
-// with its source.
+// (anything else is rejected before reaching Exec). The query is free to
+// read **any** registered table, not only one: this is the free-SQL mode,
+// as opposed to DeriveFromTable's single-source one.
 func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
+	return s.materialize(ctx, query, nil, newTableName)
+}
+
+// materialize runs the create-rollback sequence both derivation modes
+// share: register the logical table, materialize its physical backing
+// store from query, then persist whatever the materialization resolved.
+// Any failure past the registration goes through Rollback, so no
+// catalogue row survives without a physical table. The derived table is a
+// frozen snapshot, never a view and never synced with its source.
+func (s *DeriveService) materialize(ctx context.Context, query string, args []any, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {
 		return "", err
 	}
@@ -75,7 +95,7 @@ func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName str
 		return "", s.metadata.Rollback(ctx, tableId, err)
 	}
 
-	geometryColumn, isGeo, err := s.storage.CreateFromQuery(ctx, meta.PhysicalName, query)
+	geometryColumn, isGeo, err := s.storage.CreateFromQuery(ctx, meta.PhysicalName, query, args...)
 	if err != nil {
 		return "", s.metadata.Rollback(ctx, tableId, NewDisplayError(fmt.Sprintf("unable to derive table %q from the given query", newTableName), err))
 	}

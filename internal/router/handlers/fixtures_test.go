@@ -124,6 +124,11 @@ func (m *mockDeriveAPI) DeriveTable(ctx context.Context, query, newTableName str
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockDeriveAPI) DeriveFromTable(ctx context.Context, meta storage.Metadata, spec service.DeriveSpec) (string, error) {
+	args := m.Called(ctx, meta, spec)
+	return args.String(0), args.Error(1)
+}
+
 type mockGeoAPI struct{ mock.Mock }
 
 var _ geoAPI = (*mockGeoAPI)(nil)

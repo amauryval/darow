@@ -603,7 +603,10 @@ SRID.
 
 `DeriveService` applies a cheap fail-fast on the query's shape (a single statement, starting with
 `SELECT`) — **this is not the authoritative check**: the real validation is done by DuckDB's parser
-on the storage side (§8).
+on the storage side (§8). It serves both derivation modes: `DeriveTable` takes the query as given,
+`DeriveFromTable` assembles one from a `DeriveSpec` (§8.1), and both then run the same
+`materialize` sequence. Building a spec's query needs the source table's structure, so this is the
+one service besides the router to hold a port onto `SchemaService`.
 
 ### 5.5 `GeoService` — tile cache
 
@@ -673,7 +676,8 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET | `/api/v1/tables/{tableId}/schema` | columns and types, geometry included |
 | POST | `/api/v1/tables/{tableId}/columns` | adds a column |
 | GET | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search` |
-| POST | `/api/v1/tables/{tableId}/derive` | creates a new table from a `SELECT` query |
+| POST | `/api/v1/tables/{tableId}/derive` | creates a new table from a free `SELECT` query, over **every** registered table — `{tableId}` is the route it is posted to, not a scope |
+| POST | `/api/v1/tables/{tableId}/derive-from-table` | creates a new table from `{tableId}` alone, described structurally (columns, computed expressions, row conditions) rather than as SQL (§8.1) |
 | POST | `/api/v1/tables/{tableId}/filter` | filters by conditions (`BuildFilter`) |
 | GET | `/api/v1/tables/{tableId}/filters` | lists the table's stored filters (§4.5.1), oldest first |
 | POST | `/api/v1/tables/{tableId}/filters` | saves a named filter, `201` with the stored filter |
@@ -889,8 +893,16 @@ path from anywhere.
 
 ## 8. Table derivation
 
-`POST /tables/{tableId}/derive` materializes a new table from a caller-supplied `SELECT` query. The
-derived table is a **frozen snapshot**: no synchronization with its source, in either direction.
+Two modes, one materialization path. Both produce a **frozen snapshot**: no synchronization with
+the source, in either direction.
+
+- **Free SQL** (`POST /tables/{tableId}/derive`) — the caller supplies the `SELECT`, which may read
+  any registered table. It ignores the `{tableId}` it is nested under (`improvements.md` IMP-6).
+- **Guided** (`POST /tables/{tableId}/derive-from-table`, §8.1) — the caller supplies a structure and
+  the server assembles the SQL; the source is `{tableId}` and nothing else.
+
+The rest of this section describes what both share, since the guided mode's assembled query is
+materialized through the very same `CreateFromQuery`.
 
 **Two-stage validation:**
 
@@ -912,6 +924,41 @@ exactly as at import. The query is therefore free to project whatever it wants �
 `SELECT *` on an already imported table), it is excluded from the wrapper rather than colliding —
 detected by describing the still unmaterialized query (`QueryColumns`, §4.8), the one shape the
 engine's catalogue cannot answer, since `* EXCLUDE (__pkey)` errors when no such column exists.
+
+**Bound parameters.** `CreateFromQuery` takes the query's parameters alongside it, and DuckDB
+carries them through all three stages unchanged — `json_serialize_sql` parses a `?` as part of the
+grammar, `DESCRIBE` and the CTAS bind them. That is what lets the guided mode keep its filter values
+bound (rule 5) instead of interpolating them into the assembled query.
+
+### 8.1 Guided derivation
+
+`service.DeriveSpec` (`internal/service/derive_from_table.go`) describes a derivation from one
+source table: the columns carried over, the columns computed, the conditions restricting the rows.
+It exists because free SQL says nothing about which table it starts from and requires knowing the
+physical schema — unusable from an interface that has a table in hand. It is **row-wise**: one
+source row produces at most one derived row, so it carries no grouping (`improvements.md` IMP-5).
+
+The SQL is assembled server-side, which is the point: identifier quoting and the filter DSL never
+leave this layer.
+
+- **Carried columns** are whitelisted against the source's real schema (`SchemaService.Schema`) and
+  quoted with `QuoteIdentifier`. An empty list means every column. `__pkey` is never projected —
+  `CreateFromQuery` regenerates one — and the geometry column is not offered as a carried column but
+  appended on its own when the source is geo, so a derived geo table stays geo without the caller
+  naming the column.
+- **Computed columns** are a free SQL scalar expression under a caller-chosen alias, rendered
+  parenthesized and aliased. The expression is deliberately **not** decomposed into an
+  operand/operator model: `CASE WHEN`, `COALESCE` and the spatial functions are what a derivation is
+  wanted for, and no widget form reaches them. It grants no reach the free-SQL mode does not already
+  have, and the assembled query goes through the same AST validation. An alias colliding with
+  another column is rejected rather than left to DuckDB's silent `<alias>_1` rename.
+- **Conditions** are the same `[]FilterCondition` tree a read filter posts, built by `BuildFilter`
+  (rule 5) against the schema minus the geometry column, its values bound.
+- A spec that projects nothing at all is rejected: an empty `SELECT` list is a broken query, not an
+  empty table.
+
+Every rejection above is a `ValidationError` raised **before** the catalogue row is created, so a
+malformed spec never reaches the rollback path.
 
 The rest of the sequence (geometry detection, clustering, indexes) is identical to §7, steps 3, 6, 7.
 

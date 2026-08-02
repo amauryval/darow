@@ -113,8 +113,11 @@ func (m *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, 
 	return callArgs.String(0), callArgs.Bool(1), callArgs.Int(2), callArgs.Error(3)
 }
 
-func (m *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
-	callArgs := m.Called(ctx, physicalName, sourceQuery)
+// CreateFromQuery flattens its bound parameters into the recorded call, so
+// an expectation states them positionally after the query — a call with no
+// parameter matches a three-argument expectation unchanged.
+func (m *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (string, bool, error) {
+	callArgs := m.Called(append([]any{ctx, physicalName, sourceQuery}, args...)...)
 	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
 }
 

@@ -18,8 +18,9 @@ import (
 func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
+	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
-	svc := NewDeriveService(metadata, m)
+	svc := NewDeriveService(metadata, NewSchemaService(m, schemaCache), m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
 }

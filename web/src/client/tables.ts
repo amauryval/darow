@@ -1,5 +1,15 @@
 import { del, get, getBlob, patch, post } from "./http";
-import type { ColumnDTO, FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse, TablesPage } from "./types";
+import type {
+  ColumnDTO,
+  DeriveSpec,
+  FilterCondition,
+  Metadata,
+  Row,
+  RowsPage,
+  RowValue,
+  SchemaResponse,
+  TablesPage,
+} from "./types";
 
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
   const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
@@ -56,8 +66,17 @@ export function deleteRow(tableId: string, pkey: string): Promise<void> {
   return del(`/tables/${tableId}/rows/${pkey}`);
 }
 
+// Free-SQL derivation: the query may read any registered table, not only
+// tableId — which is only the route it is posted to. deriveTableFromTable
+// below is the single-source mode.
 export function deriveTable(tableId: string, query: string, newTableName: string): Promise<{ tableId: string }> {
   return post(`/tables/${tableId}/derive`, { query, newTableName });
+}
+
+// Guided derivation: the source is tableId and nothing else, and the server
+// assembles the SQL from the spec.
+export function deriveTableFromTable(tableId: string, spec: DeriveSpec): Promise<{ tableId: string }> {
+  return post(`/tables/${tableId}/derive-from-table`, spec);
 }
 
 // Streams a table export and triggers a browser download through this
