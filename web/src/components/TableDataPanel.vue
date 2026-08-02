@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, ref, toRef, watch } from "vue";
-import { createFocusTrap } from "../composables/useFocusTrap";
+import { computed, defineAsyncComponent, h, ref, toRef, watch } from "vue";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import type { ColumnSchema, Row, RowValue } from "../client/types";
 import { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useRowFilter } from "../composables/useRowFilter";
 import { useTableRows } from "../composables/useTableRows";
-import { PencilLine, Plus, SlidersHorizontal } from "@lucide/vue";
+import { cellValue } from "../utils/rows";
+import { LayoutPanelLeft, Map as MapIcon, PencilLine, Plus, Table2 } from "@lucide/vue";
 import DataTable from "./DataTable.vue";
-import FilterConditionsEditor from "./FilterConditionsEditor.vue";
-import FilterPills from "./FilterPills.vue";
+import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
+import TableFilterBar from "./filters/TableFilterBar.vue";
 import AddRowModal from "./AddRowModal.vue";
 import TableRowEditCell from "./tables/TableRowEditCell.vue";
 import TableRowActions from "./tables/TableRowActions.vue";
 import BaseButton from "./ui/BaseButton.vue";
+import BaseCheckbox from "./ui/BaseCheckbox.vue";
 import ErrorState from "./ui/ErrorState.vue";
 import Skeleton from "./ui/Skeleton.vue";
 
@@ -44,51 +45,14 @@ const filter = useRowFilter(tableId, columns, isGeo);
 const selection = useFeatureSelection(tableId);
 const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), toRef(props, "editableColumns"), columns, () => emit("mutated"));
 
-const showFilterPanel = ref(false);
+// Table and map share the space 50/50 by default; either can be maximized to
+// take the whole width, restored back to 'split' from the same toggle group.
+const focusPanel = ref<"split" | "table" | "map">("split");
+watch(tableId, () => (focusPanel.value = "split"));
+
 // Re-centers the map on the filter's own results rather than the whole
 // table's extent, cleared back to the table's bbox once inactive.
 const mapBbox = computed(() => filter.filteredBbox.value ?? props.bbox);
-
-// Focus trap + restoration for the filter side panel (§8.7). The panel is
-// re-created by the Teleport's v-if on every open rather than the whole
-// component, so the trap is driven manually instead of by useFocusTrap's
-// mount/unmount hooks — nextTick waits for the panel to exist in the DOM
-// before focusing into it.
-const filterPanel = ref<HTMLElement | null>(null);
-const filterPanelTrap = createFocusTrap(filterPanel);
-watch(showFilterPanel, async (open) => {
-  if (open) {
-    await nextTick();
-    filterPanelTrap.activate();
-  } else {
-    filterPanelTrap.deactivate();
-  }
-});
-
-function onFilterPanelKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") showFilterPanel.value = false;
-}
-onMounted(() => document.addEventListener("keydown", onFilterPanelKeydown));
-onUnmounted(() => document.removeEventListener("keydown", onFilterPanelKeydown));
-
-function cellValue(row: Row, col: string): RowValue {
-  return rowsState.cellValue(row, col);
-}
-
-// --- Filtered results mode: flat, read-only, capped at filterLimit ---
-const filterColumnHelper = createColumnHelper<Row>();
-const filterColumnDefs = computed(() =>
-  props.visibleColumns.map((col) => filterColumnHelper.accessor((row) => cellValue(row, col), { id: col, header: col })),
-);
-const filterTable = useVueTable({
-  get data() {
-    return filter.filterResults.value ?? [];
-  },
-  get columns() {
-    return filterColumnDefs.value;
-  },
-  getCoreRowModel: getCoreRowModel(),
-});
 
 // --- Add row modal ---
 const showAddRow = ref(false);
@@ -157,7 +121,7 @@ const displayRows = computed(() => {
 });
 
 function rowClassFor(row: { original: Row }) {
-  return props.isGeo && selection.selectedPkeys.value.includes(row.original.pkey) ? "bg-amber-50 hover:bg-amber-100 cursor-pointer" : "";
+  return props.isGeo && selection.selectedPkeys.value.includes(row.original.pkey) ? "bg-warning/10 hover:bg-warning/20 cursor-pointer" : "";
 }
 
 function onRowClick(row: { original: Row }) {
@@ -184,87 +148,123 @@ const rowsTable = useVueTable({
   },
   onSortingChange: rowsState.setSorting,
 });
+
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col gap-4">
-    <div class="flex shrink-0 flex-wrap items-center gap-2">
-      <BaseButton variant="secondary" class="flex items-center gap-1.5" @click="showFilterPanel = !showFilterPanel">
-        <SlidersHorizontal :size="14" /> Filtres
-        <span v-if="filter.appliedConditions.value.length > 0" class="rounded-full bg-indigo-600 px-1.5 text-xs font-semibold text-white">
-          {{ filter.appliedConditions.value.length }}
-        </span>
-      </BaseButton>
-      <FilterPills :nodes="filter.conditions.value" @update:nodes="filter.conditions.value = $event" />
-    </div>
+    <div class="flex min-h-0 flex-1 flex-col gap-4">
+      <div class="flex shrink-0 flex-wrap items-center gap-2">
+        <TableFilterBar
+          :table-id="tableId"
+          :columns="columns"
+          @update:nodes="filter.conditions.value = $event"
+        />
 
-    <div v-if="isGeo" class="h-[50vh] shrink-0 overflow-hidden rounded-lg border border-slate-200">
-      <MapView
-        :table-id="tableId"
-        :bbox="mapBbox"
-        :conditions="filter.appliedConditions.value"
-        :selected-pkeys="selection.selectedPkeys.value"
-        @toggle-selection="selection.toggle"
-      />
-    </div>
-
-    <div class="flex min-h-0 flex-1 flex-col">
-      <div v-if="!filter.filterActive.value" class="mb-3 flex shrink-0 items-center justify-between">
-        <div class="flex items-center gap-4">
-          <label class="flex items-center gap-2 text-sm text-slate-600">
-            <input v-model="rowsState.editMode.value" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" />
-            <PencilLine :size="14" /> Mode édition
-          </label>
-          <span v-if="isGeo && selection.selectedPkeys.value.length > 0" class="flex items-center gap-2 text-xs text-slate-500">
-            <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-200"></span>
-            {{ selection.selectedPkeys.value.length }} sélectionnée(s)
-            <button class="font-medium text-slate-400 hover:text-red-600" @click="selection.clear">Vider</button>
-          </span>
+        <!-- Table and map default to half the width each; either can be
+             maximized when the data being read needs the room (§8.10). -->
+        <div v-if="isGeo" class="join ml-auto">
+          <BaseButton
+            class="join-item"
+            size="sm"
+            :variant="focusPanel === 'table' ? 'primary' : 'secondary'"
+            :icon="Table2"
+            :aria-pressed="focusPanel === 'table'"
+            @click="focusPanel = focusPanel === 'table' ? 'split' : 'table'"
+          >
+            Tableau
+          </BaseButton>
+          <BaseButton
+            class="join-item"
+            size="sm"
+            :variant="focusPanel === 'split' ? 'primary' : 'secondary'"
+            :icon="LayoutPanelLeft"
+            icon-only
+            aria-label="Partager la vue"
+            title="Partager la vue"
+            @click="focusPanel = 'split'"
+          />
+          <BaseButton
+            class="join-item"
+            size="sm"
+            :variant="focusPanel === 'map' ? 'primary' : 'secondary'"
+            :icon="MapIcon"
+            :aria-pressed="focusPanel === 'map'"
+            @click="focusPanel = focusPanel === 'map' ? 'split' : 'map'"
+          >
+            Carte
+          </BaseButton>
         </div>
-        <BaseButton v-if="rowsState.editMode.value" variant="primary" class="flex items-center gap-1.5" @click="openAddRow">
-          <Plus :size="14" /> Ajouter une ligne
-        </BaseButton>
       </div>
 
-      <DataTable
-        v-if="filter.filterActive.value"
-        :table="filterTable"
-        :row-class="rowClassFor"
-        empty-message="Aucun résultat."
-        @row-click="onRowClick"
-      />
-      <Skeleton v-else-if="rowsState.loading.value && !rowsState.loadedOnce.value" :rows="8" />
-      <ErrorState v-else-if="rowsState.error.value" :message="rowsState.error.value" @retry="rowsState.retry" />
-      <DataTable
-        v-else
-        :table="rowsTable"
-        :loading="rowsState.loading.value"
-        :row-class="rowClassFor"
-        empty-message="Aucune ligne."
-        @row-click="onRowClick"
-      >
-        <template #footer>
-          <div :ref="rowsState.sentinel" class="h-px"></div>
-          <p v-if="rowsState.loading.value" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>
-        </template>
-      </DataTable>
-    </div>
-  </div>
+      <div class="flex min-h-0 flex-1 gap-4">
+        <div
+          v-if="!isGeo || focusPanel !== 'map'"
+          class="flex min-h-0 flex-col"
+          :class="isGeo ? (focusPanel === 'table' ? 'w-full' : 'w-1/2') : 'w-full flex-1'"
+        >
+          <div v-if="!filter.filterActive.value" class="mb-3 flex shrink-0 items-center justify-between">
+            <div class="flex items-center gap-4">
+              <label class="flex items-center gap-2 text-sm">
+                <BaseCheckbox v-model="rowsState.editMode.value" />
+                <PencilLine :size="14" /> Mode édition
+              </label>
+              <span v-if="isGeo && selection.selectedPkeys.value.length > 0" class="flex items-center gap-2 text-xs text-base-content/60">
+                <span class="badge badge-warning badge-xs"></span>
+                {{ selection.selectedPkeys.value.length }} sélectionnée(s)
+                <BaseButton variant="ghost" size="xs" class="text-base-content/50 hover:text-error" @click="selection.clear">Vider</BaseButton>
+              </span>
+            </div>
+            <BaseButton v-if="rowsState.editMode.value" variant="primary" class="flex items-center gap-1.5" @click="openAddRow">
+              <Plus :size="14" /> Ajouter une ligne
+            </BaseButton>
+          </div>
 
-  <Teleport v-if="showFilterPanel" to="body">
-    <div class="fixed inset-0 z-30" @click="showFilterPanel = false" />
-    <div ref="filterPanel" class="fixed inset-y-0 right-0 z-40 w-80 overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-lg">
-      <div class="mb-2 flex justify-end">
-        <button class="btn btn-ghost btn-xs btn-circle" aria-label="Fermer le panneau de filtres" @click="showFilterPanel = false">✕</button>
+          <FilteredRowsPanel
+            v-if="filter.filterActive.value"
+            key="filter"
+            :visible-columns="visibleColumns"
+            :rows="filter.filterResults.value"
+            :loading="filter.filtering.value"
+            :error="filter.filterError.value"
+            :limit="filter.filterLimit.value"
+            :row-class="rowClassFor"
+            @update:limit="filter.filterLimit.value = $event"
+            @retry="filter.retry"
+            @row-click="onRowClick"
+          />
+          <Skeleton v-else-if="rowsState.loading.value && !rowsState.loadedOnce.value" :rows="8" />
+          <ErrorState v-else-if="rowsState.error.value" :message="rowsState.error.value" @retry="rowsState.retry" />
+          <DataTable
+            v-else
+            key="rows"
+            :table="rowsTable"
+            :loading="rowsState.loading.value"
+            :row-class="rowClassFor"
+            empty-message="Aucune ligne."
+            @row-click="onRowClick"
+          >
+            <template #footer>
+              <div :ref="rowsState.sentinel" class="h-px"></div>
+              <p v-if="rowsState.loading.value" class="px-4 py-3 text-center text-xs text-base-content/40">Chargement…</p>
+            </template>
+          </DataTable>
+        </div>
+
+        <div
+          v-if="isGeo && focusPanel !== 'table'"
+          class="card min-h-0 overflow-hidden rounded-lg border border-base-300"
+          :class="focusPanel === 'map' ? 'w-full' : 'w-1/2'"
+        >
+          <MapView
+            :table-id="tableId"
+            :bbox="mapBbox"
+            :conditions="filter.appliedConditions.value"
+            :selected-pkeys="selection.selectedPkeys.value"
+            @toggle-selection="selection.toggle"
+          />
+        </div>
       </div>
-      <FilterConditionsEditor :columns="rowColumns" :nodes="filter.conditions.value" @update:nodes="filter.conditions.value = $event" />
-      <div class="mt-4 flex items-center gap-2">
-        <label class="text-xs text-slate-500">Limite (tableau filtré)</label>
-        <input v-model.number="filter.filterLimit.value" type="number" min="1" class="w-20 rounded-md border border-slate-300 px-2 py-1 text-xs" />
-      </div>
-      <p v-if="filter.filterError.value" class="mt-2 text-xs text-red-600">{{ filter.filterError.value }}</p>
     </div>
-  </Teleport>
 
   <AddRowModal
     v-if="showAddRow"

@@ -78,8 +78,28 @@ export interface FilterCondition {
   column?: string;
   operator?: string;
   value?: RowValue;
+  // Negates the node, leaf or group alike.
+  not?: boolean;
   bool?: "AND" | "OR";
   conditions?: FilterCondition[];
+}
+
+// A filter saved against a table, server-side. Its conditions are the same
+// tree an ad-hoc filter posts, validated against the table's real schema at
+// save time — so a stored filter is always applicable. Deleting the table
+// deletes its filters.
+export interface SavedFilter {
+  filterId: string;
+  tableId: string;
+  name: string;
+  conditions: FilterCondition[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedFiltersPage {
+  filters: SavedFilter[];
+  total: number;
 }
 
 export interface ColumnDTO {

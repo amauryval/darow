@@ -1,8 +1,9 @@
 import { reactive, ref, type Ref } from "vue";
 import { addRows, deleteRow, listRows, updateRow } from "../client/tables";
-import type { ColumnSchema, Row, RowValue } from "../client/types";
+import type { ColumnSchema, Row } from "../client/types";
 import { errorMessage } from "../client/http";
 import { coerceByType, columnType } from "../utils/columnTypes";
+import { cellValue } from "../utils/rows";
 import { usePaginatedList } from "./usePaginatedList";
 import { useToast } from "./useToast";
 
@@ -33,10 +34,6 @@ export function useTableRows(
   // "pkey" (router.rowToJSON pulls it from storage.Row's dedicated Pkey
   // field rather than its Values map) — map the two back together for
   // display rather than showing a blank cell.
-  function cellValue(row: Row, col: string): RowValue {
-    return col === "__pkey" ? row.pkey : row[col];
-  }
-
   // --- Edit mode: toggling reveals a per-row "Modifier" action instead of
   // switching straight to a spreadsheet-like grid, matching the inline
   // edit/cancel pattern used everywhere else in this app (rename, EPSG). ---
@@ -127,7 +124,6 @@ export function useTableRows(
     sorting: list.sorting,
     sentinel: list.sentinel,
     setSorting: list.setSorting,
-    cellValue,
     editMode,
     editingPkey,
     editValues,

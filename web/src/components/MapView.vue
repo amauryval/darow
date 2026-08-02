@@ -5,6 +5,7 @@ import type { FilterCondition } from "../client/types";
 import { useMapLibre } from "../composables/useMapLibre";
 import { useMvtLayer } from "../composables/useMvtLayer";
 import { useWfsLayer } from "../composables/useWfsLayer";
+import BaseCheckbox from "./ui/BaseCheckbox.vue";
 
 const props = defineProps<{
   tableId: string;
@@ -60,10 +61,8 @@ watch(wfsEnabled, (enabled) => {
 
 <template>
   <div class="relative h-full w-full">
-    <label
-      class="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow"
-    >
-      <input v-model="wfsEnabled" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" />
+    <label class="card absolute top-2 left-2 z-10 flex flex-row items-center gap-1.5 bg-base-100 px-2.5 py-1.5 text-xs font-medium shadow">
+      <BaseCheckbox v-model="wfsEnabled" />
       Rendu WFS
     </label>
     <div ref="container" class="h-full w-full rounded-lg" />

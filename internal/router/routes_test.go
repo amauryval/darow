@@ -78,6 +78,7 @@ func Test_NewRouter(t *testing.T) {
 	assert.NotNil(t, rt.rows)
 	assert.NotNil(t, rt.geo)
 	assert.NotNil(t, rt.sources)
+	assert.NotNil(t, rt.filters)
 	assert.NotNil(t, rt.export)
 	assert.NotNil(t, rt.ops)
 	assert.Equal(t, apiCfg, rt.apiCfg)
@@ -144,6 +145,14 @@ func Test_Router_Setup(t *testing.T) {
 			method:     http.MethodGet,
 			path:       "/tables/id-1",
 			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:              "mounts the stored-filters routes under a table",
+			apiCfg:            config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
+			method:            http.MethodPut,
+			path:              "/api/v1/tables/id-1/filters",
+			wantStatus:        http.StatusMethodNotAllowed,
+			wantErrorContains: "not allowed",
 		},
 		{
 			name:              "an unmatched route answers with the JSON error envelope",

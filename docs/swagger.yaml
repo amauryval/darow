@@ -16,6 +16,23 @@ definitions:
       spatial:
         $ref: '#/definitions/handlers.spatialExtentDTO'
     type: object
+  handlers.filterDTO:
+    properties:
+      conditions:
+        items:
+          $ref: '#/definitions/storage.FilterCondition'
+        type: array
+      createdAt:
+        type: string
+      filterId:
+        type: string
+      name:
+        type: string
+      tableId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   handlers.metadataDTO:
     properties:
       bbox:
@@ -61,6 +78,22 @@ definitions:
         type: string
       requestId:
         type: string
+    type: object
+  storage.FilterCondition:
+    properties:
+      bool:
+        type: string
+      column:
+        type: string
+      conditions:
+        items:
+          $ref: '#/definitions/storage.FilterCondition'
+        type: array
+      not:
+        type: boolean
+      operator:
+        type: string
+      value: {}
     type: object
 info:
   contact: {}
@@ -658,6 +691,111 @@ paths:
       summary: Get the bounding box of rows matching a filter
       tags:
       - geo
+  /api/v1/tables/{tableId}/filters:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: List a table's stored filters
+      tags:
+      - filters
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.filterDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Save a named filter on a table
+      tags:
+      - filters
+  /api/v1/tables/{tableId}/filters/{filterId}:
+    delete:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Filter ID
+        in: path
+        name: filterId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Delete a stored filter
+      tags:
+      - filters
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Filter ID
+        in: path
+        name: filterId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.filterDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Update a stored filter's name and/or conditions
+      tags:
+      - filters
   /api/v1/tables/{tableId}/geometry-types:
     get:
       parameters:

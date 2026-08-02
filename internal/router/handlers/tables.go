@@ -312,9 +312,9 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	validColumns := make([]string, len(schema))
+	validColumns := make([]storage.ColumnInfo, len(schema))
 	for i, col := range schema {
-		validColumns[i] = col.Name
+		validColumns[i] = storage.ColumnInfo{Name: col.Name, Type: col.Type}
 	}
 
 	filter, args, err := storage.BuildFilter(body.Conditions, validColumns)

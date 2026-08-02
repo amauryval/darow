@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
+import { Columns3, Download, GitBranch, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { exportTable } from "../client/tables";
 import { errorMessage } from "../client/http";
 import Badge from "../components/Badge.vue";
@@ -10,9 +11,13 @@ import TableDataPanel from "../components/TableDataPanel.vue";
 import DeriveTableModal from "../components/DeriveTableModal.vue";
 import AddColumnModal from "../components/AddColumnModal.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
+import BaseInput from "../components/ui/BaseInput.vue";
+import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
 import { useTableMetadata } from "../composables/useTableMetadata";
 import { useToast } from "../composables/useToast";
 import { useDocumentTitle } from "../composables/useDocumentTitle";
+import Typography from "../components/ui/Typography.vue";
+
 
 const props = defineProps<{ tableId: string }>();
 const router = useRouter();
@@ -118,41 +123,41 @@ async function onAddColumnSuccess() {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
-    <RouterLink to="/tables" class="shrink-0 text-sm font-medium text-slate-500 hover:text-slate-700">&larr; Tables</RouterLink>
+  <div class="flex min-h-0 flex-1 flex-col gap-3 p-6">
+    <Breadcrumbs :items="[{ label: 'Tables', to: '/tables' }, { label: table?.tableName ?? '…' }]" />
 
-    <div v-if="table" class="mt-3 mb-4 flex shrink-0 items-start justify-between">
-      <div>
-        <div v-if="editingName" class="flex items-center gap-2">
-          <input
-            v-model="nameInput"
-            type="text"
-            class="rounded-md border border-slate-300 px-2 py-1 text-lg font-semibold text-slate-900"
-            @keyup.enter="confirmRename"
-            @keyup.esc="editingName = false"
-          />
-          <BaseButton size="sm" variant="primary" :busy="renaming" :disabled="renaming || !nameInput.trim()" @click="confirmRename">
-            {{ renaming ? "..." : "Enregistrer" }}
+    <div v-if="table" class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <template v-if="editingName">
+          <BaseInput v-model="nameInput" size="sm" class="w-64" @keyup.enter="confirmRename" @keyup.esc="editingName = false" />
+          <BaseButton size="xs" variant="primary" :busy="renaming" :disabled="renaming || !nameInput.trim()" @click="confirmRename">
+            Enregistrer
           </BaseButton>
-          <BaseButton size="sm" variant="secondary" @click="editingName = false">Annuler</BaseButton>
-        </div>
-        <h1 v-else class="group flex items-center gap-2 text-lg font-semibold text-slate-900">
-          {{ table.tableName }}
-          <button class="text-xs font-medium text-slate-400 hover:text-indigo-600" @click="startRename">Renommer</button>
-        </h1>
-        <p class="flex items-center gap-2 text-sm text-slate-500">
+          <BaseButton size="xs" variant="secondary" @click="editingName = false">Annuler</BaseButton>
+        </template>
+        <template v-else>
+          <BaseButton variant="ghost" size="xs" square :icon="Pencil" icon-only aria-label="Renommer la table" title="Renommer la table" @click="startRename" />
           <Badge :tone="table.isGeo ? 'primary' : 'neutral'">{{ table.isGeo ? "Géo" : "Standard" }}</Badge>
-          {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
-        </p>
+          <Typography variant="body-sm">
+            {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
+          </Typography>
+        </template>
       </div>
-      <div class="flex gap-2">
-        <BaseButton variant="secondary" @click="showColumns = true">Colonnes</BaseButton>
-        <BaseButton variant="secondary" @click="openAddColumn">Ajouter une colonne</BaseButton>
-        <BaseButton variant="secondary" @click="openDerive">Dériver</BaseButton>
-        <BaseButton variant="secondary" :busy="exporting" :disabled="exporting" @click="onExportTable">
+      <div class="flex flex-wrap gap-2">
+        <BaseButton variant="secondary" size="sm" :icon="Columns3" @click="showColumns = true">Colonnes</BaseButton>
+        <BaseButton variant="secondary" size="sm" :icon="Plus" @click="openAddColumn">Ajouter une colonne</BaseButton>
+        <BaseButton variant="secondary" size="sm" :icon="GitBranch" @click="openDerive">Dériver</BaseButton>
+        <BaseButton variant="secondary" size="sm" :icon="Download" :busy="exporting" :disabled="exporting" @click="onExportTable">
           {{ exporting ? "Export en cours…" : "Exporter" }}
         </BaseButton>
-        <ConfirmButton label="Supprimer" confirm-label="Supprimer la table" @confirm="onDeleteTable" />
+        <ConfirmButton
+          label="Supprimer"
+          size="sm"
+          :icon="Trash2"
+          confirm-label="Supprimer la table"
+          :message="`Supprimer « ${table.tableName} » ? Les tables dérivées de celle-ci seront également supprimées.`"
+          @confirm="onDeleteTable"
+        />
       </div>
     </div>
 

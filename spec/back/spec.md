@@ -109,7 +109,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | `internal/router/validation` | `{tableId}` resolution, column-name validation |
 | `internal/router/response` | JSON writing, standard error body, error → status mapping |
 | `internal/service` | application logic, caches, orchestration |
-| `internal/storage` | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer` |
+| `internal/storage` | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`/`StoredFilter`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer`, `FilterStore` |
 | `internal/storage/duckdb` | the single implementation (sub-packages `catalog/` and `data/`) |
 | `internal/storage/mocks` | testify doubles of `storage`'s interfaces (`Adapter`, the three repositories), one file per file of `storage` declaring them |
 | `internal/webui` | `go:embed` of the Vue SPA's production build |
@@ -399,19 +399,52 @@ A `FilterCondition` is either a leaf (`Column` + `Operator` + `Value`) or a bool
 being `AND` or `OR`, plus child `Conditions`) — never both.
 
 - The column is validated against the list of the table's real columns, **geometry excluded**.
-- The operator is validated against `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`.
+  `BuildFilter` receives `ColumnInfo` values (name **and** DuckDB type), not bare names: the type is
+  what shapes the comparison below.
+- The operator is validated against `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `IS NULL`,
+  `IS NOT NULL`. The last two bind **no** parameter — they test the column itself, and are the only
+  way to match a NULL at all, since SQL's `col = NULL` is never true.
 - The boolean connector is validated against `AND`, `OR`.
+- `Not` negates whatever the node produces — leaf or group alike, the clause is wrapped in
+  `NOT (…)`. That, plus `NOT LIKE` and `IS NOT NULL`, is the whole of negation: there is no `NOT`
+  boolean connector, since a negated group already expresses it.
 - The value is **always** a bound parameter.
 - Top-level conditions are joined by `AND`; groups are parenthesized.
+
+**A value the column's type cannot read narrows the result to nothing; it never aborts the query.**
+DuckDB raises a Conversion Error on a bare parameter comparison (`"abc"` against an `INTEGER`
+column) and a Binder Error on `LIKE` against a non-text column — both surfaced as a 500 on what is,
+from the client's side, an ordinary search. So the parameter is wrapped in `TRY_CAST(? AS <type>)`,
+which yields `NULL` instead of failing, and `LIKE` compares `CAST(col AS VARCHAR)` so it applies to
+any column. The cast target is the column's declared type, interpolated only when its base name is
+in `castableTypes` and anything following it is numeric parameters alone (`DECIMAL(10,2)`); any
+other declared type (`STRUCT`, `LIST`, an array suffix) falls back to a bare parameter.
 
 Whitelisting against the real schema is what makes the interpolation safe; `QuoteIdentifier` only
 escapes.
 
+### 4.5.1 Stored filters
+
+A filter can also be **saved against a table**, under a name, and reused. `storage.StoredFilter`
+(`internal/storage/storedfilter.go`) is a name plus the very `[]FilterCondition` tree an ad-hoc
+filter posts; `storage.FilterStore` is the read/write contract, implemented by
+`duckdb/catalog.Filters` over a `filters` table registered as its own migration `Component`.
+
+- The tree is persisted as **JSON**, read and written whole — it is never queried into.
+- `service.FilterService` validates a filter at **save** time by running it through `BuildFilter`
+  against the table's real schema, so a filter read back from the catalogue is always applicable.
+  It also trims the name, requires it non-empty and bounded, and requires at least one condition.
+- Every read, update and delete is scoped to the resolved table: a filter belonging to another
+  table is reported as missing rather than served across tables.
+- `Filters` is registered on the catalogue as an `Attachment`, so `Catalog.Remove` deletes a table's
+  filters inside the same transaction as its metadata row and its physical table.
+
 ### 4.6 The DuckDB adapter
 
 Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the three
-accessors (`Catalog`, `Materializer`, `Table`) the rest of the server reaches the engine through —
-plus the sub-packages `duckdb/catalog/` (metadata, migrations, delete cascade) and `duckdb/tables/`
+accessors (`Catalog`, `Materializer`, `Filters`, `Table`) the rest of the server reaches the engine
+through — plus the sub-packages `duckdb/catalog/` (metadata, stored filters, migrations, delete
+cascade) and `duckdb/tables/`
 (one file per family: table resolution, rows, geo, `introspection.go` — the engine catalogue reads
 (§4.8) — and the `Materializer` type split across `create_from_file.go`, `create_from_query.go`
 (`/derive` and its query validation), `crs.go` (detection and reprojection) and `indexes.go`
@@ -432,8 +465,9 @@ the two constructions run in that order rather than through a deferred closure.
   and `Catalog.Remove` take it themselves for the whole duration of their transaction, rather than
   per statement.
 - **Migrations** (`duckdb/catalog/migrations.go`): a registry of `Component`s, one per
-  catalogue-owned table — `metadata` today (registered from `duckdb/catalog/metadata.go`'s `init`),
-  a future settings or stored-filters table tomorrow. Each `Component` carries its own creation DDL
+  catalogue-owned table — `metadata` (registered from `duckdb/catalog/metadata.go`'s `init`) and
+  `filters` (from `duckdb/catalog/filters.go`'s), a future settings table tomorrow. Each `Component`
+  carries its own creation DDL
   and its own ordered list of `ALTER` statements, and `schema_version` tracks one `(component,
   version)` row per component rather than a single whole-database integer, so adding a component
   never touches another's history. Per component: a database with no recorded version for it gets
@@ -641,6 +675,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column |
 | POST | `/api/v1/tables/{tableId}/derive` | creates a new table from a `SELECT` query |
 | POST | `/api/v1/tables/{tableId}/filter` | filters by conditions (`BuildFilter`) |
+| GET | `/api/v1/tables/{tableId}/filters` | lists the table's stored filters (§4.5.1), oldest first |
+| POST | `/api/v1/tables/{tableId}/filters` | saves a named filter, `201` with the stored filter |
+| PATCH | `/api/v1/tables/{tableId}/filters/{filterId}` | patches a stored filter's name and/or conditions — an omitted field is left unchanged |
+| DELETE | `/api/v1/tables/{tableId}/filters/{filterId}` | deletes a stored filter, `204` |
 | GET | `/api/v1/tables/{tableId}/export` | streamed export, `?format=csv\|geojson` |
 
 **Rows**

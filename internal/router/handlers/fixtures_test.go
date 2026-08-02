@@ -257,3 +257,30 @@ func multipartFileRequest(t *testing.T, path, fieldName, filename, content strin
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
 }
+
+type mockFilterAPI struct{ mock.Mock }
+
+var _ filterAPI = (*mockFilterAPI)(nil)
+
+func (m *mockFilterAPI) List(ctx context.Context, meta storage.Metadata) ([]storage.StoredFilter, error) {
+	args := m.Called(ctx, meta)
+	filters, _ := args.Get(0).([]storage.StoredFilter)
+	return filters, args.Error(1)
+}
+
+func (m *mockFilterAPI) Create(ctx context.Context, meta storage.Metadata, name string, conditions []storage.FilterCondition) (storage.StoredFilter, error) {
+	args := m.Called(ctx, meta, name, conditions)
+	filter, _ := args.Get(0).(storage.StoredFilter)
+	return filter, args.Error(1)
+}
+
+func (m *mockFilterAPI) Update(ctx context.Context, meta storage.Metadata, filterId string, patch storage.StoredFilterPatch) (storage.StoredFilter, error) {
+	args := m.Called(ctx, meta, filterId, patch)
+	filter, _ := args.Get(0).(storage.StoredFilter)
+	return filter, args.Error(1)
+}
+
+func (m *mockFilterAPI) Delete(ctx context.Context, meta storage.Metadata, filterId string) error {
+	args := m.Called(ctx, meta, filterId)
+	return args.Error(0)
+}

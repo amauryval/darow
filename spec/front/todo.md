@@ -29,11 +29,12 @@ instruction, not the patch — the code is written later, against the code as it
 
 ## 1. Architecture and code
 
-*All items complete.*
+| # | Chantier |
+|---|---|
+| TODO-F27 | `components/` still mixes flat files with the per-feature directories §11 describes: `TableDataPanel.vue`, `Modal.vue`, `Badge.vue`, `DataTable.vue`, `ConfirmButton.vue`, `AddRowModal.vue`, `AddColumnModal.vue`, `ColumnsModal.vue`, `DeriveTableModal.vue` and `MapView.vue` sit at the root, while `filters/`, `tables/` and `ui/` are proper directories. `Modal`, `Badge`, `DataTable`, `ConfirmButton`, `Skeleton`-adjacent pieces belong in `ui/` (`Modal` and `Badge` are already listed there in §5's table, so the spec and the tree disagree today); the table-scoped modals belong in `tables/`; `MapView.vue` in `map/`. Move them and fix the import paths in one pass — nothing else changes. Watch the async import in `TableDataPanel.vue` (`defineAsyncComponent(() => import("./MapView.vue"))`), which is what keeps MapLibre out of the initial bundle |
+| TODO-F28 | `TableDetailView` is not split as §6 describes: it renders its own header inline and hands everything else to a single `TableDataPanel`, which is itself both the map panel and the rows panel. The target is `TableHeader`, `TableMapPanel` and `TableRowsPanel` as siblings. `TableDataPanel` sits at 278 lines, under the 300 cap but only just, and it owns three composables (`useRowFilter`, `useFeatureSelection`, `useTableRows`) plus two TanStack instances. The filter side is already extracted (`components/filters/`), so the remaining cut is the rows grid: its column definitions, its edit-mode header and its selection pinning move to `TableRowsPanel`, leaving `TableDataPanel` as the panel-splitting shell |
 
 ## 2. User experience
 
-| # | Gap | Rule |
-|---|---|---|
-| TODO-F13 | make the layout better, avoid blank space, main space area must take all the space as possible, use daysui eisting compoent https://daisyui.com/components/| |
+*All items complete.*
 

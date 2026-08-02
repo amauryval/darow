@@ -22,20 +22,29 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
   const filterActive = computed(() => appliedConditions.value.length > 0);
   const filterLimit = ref(50);
   const filtering = ref(false);
-  const filterError = ref<string | null>(null);
+  const filterError = ref<string>("");
   const filterResults = ref<Row[] | null>(null);
 
   async function loadFilterResults() {
     filtering.value = true;
-    filterError.value = null;
+    filterError.value = "";
     try {
       const res = await filterRows(tableId.value, appliedConditions.value, filterLimit.value);
       filterResults.value = res.rows;
     } catch (e) {
       filterError.value = errorMessage(e, "Impossible d'appliquer le filtre");
+      // A filter that fails leaves no result set: showing the previous one
+      // under a new filter would be a silent lie about what is on screen.
+      filterResults.value = null;
     } finally {
       filtering.value = false;
     }
+  }
+
+  // Re-runs the current filter after a failure, so the user retries without
+  // reloading the page (§8.1).
+  function retry() {
+    if (filterActive.value) loadFilterResults();
   }
 
   watchDebounced(
@@ -45,7 +54,7 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
         loadFilterResults();
       } else {
         filterResults.value = null;
-        filterError.value = null;
+        filterError.value = "";
       }
     },
     { debounce: 300 },
@@ -71,5 +80,5 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
 
   watchDebounced(appliedConditions, refreshFilteredBbox, { debounce: 300, immediate: true });
 
-  return { conditions, appliedConditions, filterActive, filterLimit, filtering, filterError, filterResults, filteredBbox };
+  return { conditions, appliedConditions, filterActive, filterLimit, filtering, filterError, filterResults, filteredBbox, retry };
 }

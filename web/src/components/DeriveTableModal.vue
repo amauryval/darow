@@ -5,6 +5,8 @@ import { deriveTable } from "../client/tables";
 import Modal from "./Modal.vue";
 import { useToast } from "../composables/useToast";
 import BaseButton from "./ui/BaseButton.vue";
+import BaseInput from "./ui/BaseInput.vue";
+import BaseTextarea from "./ui/BaseTextarea.vue";
 
 const props = defineProps<{ tableId: string; physicalName: string }>();
 const emit = defineEmits<{ close: []; derived: [{ tableId: string }] }>();
@@ -46,23 +48,13 @@ defineExpose({ openModal });
 
 <template>
   <Modal title="Dériver une table" wide :dirty="!!name.trim()" @close="onClose" @submit="confirmDerive">
-    <p class="mb-3 text-xs text-slate-500">
-      Requête <code class="rounded bg-slate-100 px-1 py-0.5">SELECT</code> exécutée sur les tables existantes ; le résultat est
+    <p class="mb-3 text-xs text-base-content/60">
+      Requête <code class="rounded bg-base-200 px-1 py-0.5">SELECT</code> exécutée sur les tables existantes ; le résultat est
       matérialisé dans une nouvelle table.
     </p>
-    <textarea
-      v-model="query"
-      rows="4"
-      spellcheck="false"
-      class="w-full resize-y rounded-md border border-slate-300 px-3 py-2 font-mono text-xs focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-    />
-    <input
-      v-model="name"
-      type="text"
-      placeholder="Nom de la nouvelle table"
-      class="mt-3 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-    />
-    <p v-if="error" class="mt-2 text-xs text-red-600">{{ error }}</p>
+    <BaseTextarea v-model="query" :rows="4" />
+    <BaseInput v-model="name" placeholder="Nom de la nouvelle table" class="mt-3" />
+    <p v-if="error" class="mt-2 text-xs text-error">{{ error }}</p>
     <div class="mt-4 flex justify-end gap-2">
       <BaseButton variant="secondary" @click="onClose">Annuler</BaseButton>
       <BaseButton

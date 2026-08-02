@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { useFocusTrap } from "../composables/useFocusTrap";
+import BaseButton from "./ui/BaseButton.vue";
+import Typography from "./ui/Typography.vue";
 
 // dirty: a modified form must not be lost by a stray click (§8.3). While
 // dirty, a backdrop click is a no-op and Escape asks for confirmation
@@ -50,15 +52,15 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
     <div class="modal modal-open">
       <div ref="box" class="modal-box" :class="props.wide ? 'max-w-2xl' : 'max-w-md'">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-sm font-semibold text-slate-900">{{ props.title }}</h2>
-          <button class="btn btn-ghost btn-xs btn-circle" aria-label="Fermer" @click="requestClose">✕</button>
+          <Typography variant="h4">{{ props.title }}</Typography>
+          <BaseButton variant="ghost" size="xs" square aria-label="Fermer" @click="requestClose">✕</BaseButton>
         </div>
         <slot />
-        <div v-if="confirmingClose" class="mt-3 flex items-center justify-between rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <div v-if="confirmingClose" role="alert" class="alert alert-warning alert-soft mt-3 flex items-center justify-between text-xs">
           <span>Fermer sans enregistrer les modifications ?</span>
           <div class="flex gap-2">
-            <button class="font-medium hover:underline" @click="emit('close')">Fermer</button>
-            <button class="font-medium hover:underline" @click="confirmingClose = false">Continuer</button>
+            <BaseButton variant="ghost" size="xs" @click="emit('close')">Fermer</BaseButton>
+            <BaseButton variant="ghost" size="xs" @click="confirmingClose = false">Continuer</BaseButton>
           </div>
         </div>
       </div>

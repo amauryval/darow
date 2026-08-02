@@ -24,6 +24,7 @@ import (
 type storageAdapter interface {
 	Catalog() storage.Catalog
 	Materializer() storage.TableMaterializer
+	Filters() storage.FilterStore
 	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
@@ -39,6 +40,7 @@ type Services struct {
 	Geo      *service.GeoService
 	Source   *service.SourceService
 	Export   *service.ExportService
+	Filter   *service.FilterService
 
 	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
 	// storage connection; Services built via NewServices alone (e.g. in
@@ -81,6 +83,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, cfg.API.ExportBatchSize)
+	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
 
 	return &Services{
 		Metadata: metadataSvc,
@@ -91,6 +94,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 		Geo:      geoSvc,
 		Source:   sourceSvc,
 		Export:   exportSvc,
+		Filter:   filterSvc,
 	}
 }
 

@@ -13,8 +13,8 @@ import (
 	"darow/internal/storage"
 )
 
-// Adapter is a testify mock of the storage engine: the same three
-// accessors *duckdb.Adapter exposes (Catalog, Materializer, Table), plus
+// Adapter is a testify mock of the storage engine: the same accessors
+// *duckdb.Adapter exposes (Catalog, Materializer, Filters, Table), plus
 // every method behind them. Kept as one mock since a service-layer test
 // exercises catalogue, materializer and resolver methods interchangeably.
 type Adapter struct {
@@ -24,6 +24,7 @@ type Adapter struct {
 var (
 	_ storage.Catalog           = (*Adapter)(nil)
 	_ storage.TableMaterializer = (*Adapter)(nil)
+	_ storage.FilterStore       = (*Adapter)(nil)
 )
 
 // Catalog returns m itself: Adapter already implements storage.Catalog, so
@@ -34,6 +35,11 @@ func (m *Adapter) Catalog() storage.Catalog {
 
 // Materializer returns m itself, for the same reason as Catalog.
 func (m *Adapter) Materializer() storage.TableMaterializer {
+	return m
+}
+
+// Filters returns m itself, for the same reason as Catalog.
+func (m *Adapter) Filters() storage.FilterStore {
 	return m
 }
 
@@ -121,4 +127,32 @@ func (m *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 func (m *Adapter) DetectCRS(ctx context.Context, sourcePath, layer string) (string, int, error) {
 	callArgs := m.Called(ctx, sourcePath, layer)
 	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
+}
+
+func (m *Adapter) ListFilters(ctx context.Context, tableId string) ([]storage.StoredFilter, error) {
+	callArgs := m.Called(ctx, tableId)
+	filters, _ := callArgs.Get(0).([]storage.StoredFilter)
+	return filters, callArgs.Error(1)
+}
+
+func (m *Adapter) GetFilter(ctx context.Context, filterId string) (storage.StoredFilter, error) {
+	callArgs := m.Called(ctx, filterId)
+	filter, _ := callArgs.Get(0).(storage.StoredFilter)
+	return filter, callArgs.Error(1)
+}
+
+func (m *Adapter) CreateFilter(ctx context.Context, tableId, name string, conditions []storage.FilterCondition) (storage.StoredFilter, error) {
+	callArgs := m.Called(ctx, tableId, name, conditions)
+	filter, _ := callArgs.Get(0).(storage.StoredFilter)
+	return filter, callArgs.Error(1)
+}
+
+func (m *Adapter) UpdateFilter(ctx context.Context, filterId string, patch storage.StoredFilterPatch) (storage.StoredFilter, error) {
+	callArgs := m.Called(ctx, filterId, patch)
+	filter, _ := callArgs.Get(0).(storage.StoredFilter)
+	return filter, callArgs.Error(1)
+}
+
+func (m *Adapter) DeleteFilter(ctx context.Context, filterId string) error {
+	return m.Called(ctx, filterId).Error(0)
 }

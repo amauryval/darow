@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, ref, watch } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import type { Row } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, getFilteredRowModel, useVueTable } from "@tanstack/vue-table";
 import { listTables } from "../client/tables";
@@ -14,6 +14,10 @@ import Badge from "../components/Badge.vue";
 import DataTable from "../components/DataTable.vue";
 import ErrorState from "../components/ui/ErrorState.vue";
 import Skeleton from "../components/ui/Skeleton.vue";
+import BaseInput from "../components/ui/BaseInput.vue";
+import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
+import Typography from "../components/ui/Typography.vue";
+import TableNameCell from "../components/tables/TableNameCell.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -45,14 +49,24 @@ function onRowClick(row: Row<Metadata>) {
   router.push(`/tables/${row.original.tableId}`);
 }
 
+// Patches the renamed row in place instead of reloading the whole list: a
+// rename from this page must not lose the operator's current scroll
+// position, page or search (§8.6).
+function onRenamed(renamed: Metadata) {
+  const index = tables.value.findIndex((t) => t.tableId === renamed.tableId);
+  if (index !== -1) tables.value[index] = renamed;
+}
+
 const columnHelper = createColumnHelper<Metadata>();
 const columnDefs = [
   columnHelper.accessor("tableName", {
     header: "Nom",
     cell: ({ row }) =>
-      h(RouterLink, { to: `/tables/${row.original.tableId}`, class: "font-medium text-indigo-600 hover:text-indigo-700" }, () =>
-        row.original.tableName,
-      ),
+      h(TableNameCell, {
+        tableId: row.original.tableId,
+        tableName: row.original.tableName,
+        onRenamed,
+      }),
   }),
   columnHelper.display({
     id: "type",
@@ -97,18 +111,10 @@ const table = useVueTable({
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
-    <div class="mb-4 flex shrink-0 items-center justify-between">
-      <div>
-        <h1 class="text-lg font-semibold text-slate-900">Tables</h1>
-        <p class="text-sm text-slate-500">Tables chargées ou dérivées dans le serveur.</p>
-      </div>
-      <input
-        v-model="globalFilter"
-        type="text"
-        placeholder="Rechercher une table…"
-        class="w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-      />
+  <div class="flex min-h-0 flex-1 flex-col gap-4 p-6">
+    <Breadcrumbs :items="[{ label: 'Tables disponibles' }]" />
+    <div class="flex shrink-0 items-center justify-between">
+      <BaseInput v-model="globalFilter" placeholder="Rechercher une table…" class="w-56" />
     </div>
 
     <Skeleton v-if="loading && !loadedOnce" />
@@ -116,14 +122,14 @@ const table = useVueTable({
     <DataTable
       v-else
       :table="table"
-      :row-class="() => 'cursor-pointer transition-colors hover:bg-slate-50'"
+      :row-class="() => 'cursor-pointer hover'"
       :loading="loading"
       :empty-message="tables.length === 0 ? 'Aucune table. Chargez une source depuis l\'onglet Sources.' : 'Aucun résultat.'"
       @row-click="onRowClick"
     >
       <template #footer>
         <div :ref="list.sentinel" class="h-px"></div>
-        <p v-if="loading" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>
+        <p v-if="loading" class="px-4 py-3 text-center text-xs text-base-content/40">Chargement…</p>
       </template>
     </DataTable>
   </div>

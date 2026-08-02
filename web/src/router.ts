@@ -14,7 +14,7 @@ export const router = createRouter({
   routes: [
     { path: "/", redirect: "/tables" },
     { path: "/sources", name: "sources", component: SourcesView, meta: { title: "Sources" } },
-    { path: "/tables", name: "tables", component: TablesView, meta: { title: "Tables" } },
+    { path: "/tables", name: "tables", component: TablesView, meta: { title: "Tables disponibles" } },
     { path: "/tables/:tableId", name: "table-detail", component: TableDetailView, props: true, meta: { title: "Table" } },
   ],
 });

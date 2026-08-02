@@ -42,13 +42,24 @@ reordered.
 7. **Size caps.** 300 lines per `.vue` file, 150 per composable, 100 per pure function. An overrun
    is resolved by splitting, never by growing.
 8. **Any repeated class sequence becomes a primitive.** On the second occurrence of a given styling
-   (button, field, panel), the matching `components/ui/` component is created.
+   (button, field, panel), the matching `components/ui/` component is created. The existing
+   primitive is always used once it exists — a bare `<button>`/`<input>`/`<select>`/`<textarea>`
+   carrying `btn`/`input`/`select`/`textarea` daisyUI classes is never hand-rolled where
+   `BaseButton`/`BaseInput`/`BaseSelect`/`BaseTextarea` already cover the case, including inside a
+   `h()` cell renderer. Standalone text — a heading, a description, a caption — goes through
+   `Typography` rather than a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked size/colour classes;
+   it is skipped only where the text is a fragment of a denser element that already owns its own
+   typography (a button's label, a table cell, a form field's own small caption).
 9. **No type assertion.** `as`, `!` and `typeof`/`Array.isArray` guards on route parameters are
    forbidden: they bypass the checker instead of using it. Cases are handled explicitly (`v-if`,
    default value, narrowing by predicate).
 10. **daisyUI is the visual base, but never used directly in a view.** Its classes are encapsulated
     in the `components/ui/` primitives; views use Tailwind for layout only (flex, grid, spacing,
-    widths).
+    widths). Before styling anything or adding a primitive, check
+    [daisyui.com/components](https://daisyui.com/components/) for a matching component (drawer,
+    menu, breadcrumbs, table, alert, skeleton…) rather than hand-rolling the equivalent in plain
+    Tailwind — daisyUI class names are copied from that page, never guessed or invented (there is no
+    `btn-quiet`, `btn-danger`; the real classes are `btn-ghost`, `btn-error`).
 11. **One composable = one subject.** It exposes `ref`/`computed` and actions, never a reactive
     object to be destructured. Its name starts with `use`, its file carries that name.
 12. **Remote state has a single owner.** A resource's data, its `loading` and its error are never
@@ -100,8 +111,11 @@ shared component never calls the client.
 | Components | `src/components/` | rendering. `ui/` = domain-free primitives; `<feature>/` = presentational domain components | network calls, router, toasts (outside `ui/Toast`) |
 | Views | `src/views/` | one per route, plus its sub-views; assemble composables and components | inline business logic, duplicated markup |
 
-The router (`src/router.ts`) knows only the views. `src/App.vue` is the application shell: side
-navigation, status banner, mounting of `RouterView` and of the toast queue.
+The router (`src/router.ts`) knows only the views. `src/App.vue` is the application shell: a daisyUI
+`drawer` holding the side navigation (persistent on screens ≥1024px, an overlay below), collapsible
+to an icon-only width — the choice is persisted (`useStorage`) as a display preference, not screen
+state, so it stays out of the URL (§9) — a header carrying the page title and the collapse toggle,
+status banner, mounting of `RouterView` and of the toast queue.
 
 ---
 
@@ -116,7 +130,7 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `ops.ts` — one function per endpoint, named
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts` — one function per endpoint, named
   after the action and not after the HTTP verb, explicit parameters, typed return. URLs built for a
   non-`fetch` use (export, tile template) go through `apiUrl` and are therefore subject to `baseUrl`
   like the rest.
@@ -136,11 +150,25 @@ One module per subject, no module state, no side effect:
 - `filterTree.ts` — the model of the UI's filter tree (`DraftNode`) and its projection to the server
   DSL (`pruneActive`), which prunes inactive nodes and groups that have become empty (`BuildFilter`
   rejects an empty boolean group — `spec.md` §4.5). **Every** manipulation of that tree (activation,
-  removal, replacement of children, addition) belongs to this module: the components that display it
-  do not reimplement it.
+  removal, duplication, replacement of children, addition, lookup) belongs to this module: the
+  components that display it do not reimplement it. Which filter is *applied* is not part of it: a
+  filter is a stored object, so `TableFilterBar` tracks it by identifier rather than by an `active`
+  flag walked through the tree. `createLeaf` is the one shape a fresh, empty condition takes. `draftOf`/`nodeOf` are the pair the editor modal works through: a root node is
+  presented as a boolean operator plus a list of conditions whatever its shape, and folded back to a
+  bare leaf when it holds exactly one, so the pill row reads `height > 10` rather than a one-child
+  group. `fromConditions` is `pruneActive`'s inverse, rebuilding an editable tree from a stored
+  filter's server DSL; `describeDraft` renders a predicate as the default name a filter is saved
+  under; `isComplete` is what the modal blocks submission on, and
+  `takesValue` is what tells it that `IS NULL`/`IS NOT NULL` need no value box. A node's `not` flag
+  negates it, leaf or group alike, mirroring the server's own `Not` (`spec.md` §4.5).
 - `columnTypes.ts` — resolution of a column's type and coercion of a text input to the JSON type the
   API expects.
+- `rows.ts` — `cellValue`, the one place a row's primary key is read: it is carried by `Row.pkey`,
+  not by a `__pkey` entry, so any column list including it has to go through here.
 - `sort.ts` — projection of TanStack's sorting state onto the API's `sort` parameter.
+- `sourceRows.ts` — the `SourceRow` view model of the sources tree (`toSourceRows`: a multi-layer
+  file becomes a parent row over its layers, a single-layer one stays flat) and `formatSize`. The
+  shape the cells read is defined once here, not rebuilt in the view and in each cell.
 
 ---
 
@@ -162,7 +190,8 @@ module level and documents it; that is the exception, not the rule.
 | `useServerStatus` | periodic `readyz` probe of the status banner | absent — inline in `App.vue` |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
 | `useTableRows` | a table's rows: current page, sorting, editing, insertion, deletion — built on `usePaginatedList` | present |
-| `useRowFilter` | filter tree, effective conditions, filtered results, filtered extent | present |
+| `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
+| `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
 | `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref | present |
 | `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
 | `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; only `useMvtLayer` wires selection (WFS has no click support) | present |
@@ -179,14 +208,17 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 
 | Primitive | Role |
 |---|---|
-| `BaseButton` | variants (primary, secondary, danger, quiet), sizes, busy/disabled state |
-| `BaseInput` / `BaseSelect` / `BaseTextarea` | field + label + error message, `v-model` |
+| `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
+| `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>` |
+| `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
+| `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths |
-| `ConfirmButton` | destructive action with inline confirmation (no native `confirm()`) |
+| `Drawer` | daisyUI `drawer`/`drawer-side` (`drawer-end` for the right edge) as a closeable side panel — `v-model`, wrapping the whole content region in its default slot (a `panel` slot holds the side panel's content), exactly as `App.vue`'s own nav drawer wraps the page. It is **not** shrink-wrapped around just a trigger button: `.drawer` is sized/laid out as the region it wraps (`display: grid`), so a caller keeps its own trigger as ordinary markup inside that default slot, wired to the same `v-model`. No feature uses it today — filtering, its former caller, moved to a modal — it stays as the primitive any future side panel builds on |
+| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size` and `icon` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
 | `Badge` | status pill, **semantic** tones (neutral, success, warning, error) — never colour names |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots |
-| `EmptyState` / `Spinner` | empty states and loadings, worded once |
+| `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
@@ -197,26 +229,72 @@ replaces the `h()` trees.
 
 ## 6. Views and sub-views (`src/views/`)
 
-One view per route; its sub-views live in a directory named after it.
+One view per route; its sub-views live in a directory named after it. Every view opens with a
+`Breadcrumbs` trail (§5) — `TableDetailView`'s is `Tables > {tableName}`, the two others are a
+single, link-less entry naming the page.
 
 | Route | View | Role |
 |---|---|---|
-| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll |
+| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
 - `TableHeader` — editable name, badges, counters, action bar.
-- `TableFilterPanel` — side panel editing the filter tree plus the active pills.
+- Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
+  discrete thing one creates or edits and then applies. `components/filters/` holds the whole
+  feature — `TableFilterBar` (the "Filtrer" button, the saved-filter menu, the pills, and the modal's
+  open state, the one place that owns `useSavedFilters`), `FilterEditorModal` (one root node, create
+  or edit), `FilterNodeEditor` (the condition/group rows, recursive), `SavedFilterMenu` (the full
+  catalogue: apply, edit, delete), `ActiveFilterPill` (the applied filter alone) and
+  `FilteredRowsPanel` (the flat, read-only result grid with its own four states and its row cap).
+  `FilterNodeEditor` renders the boolean connector as a **left-hand column**, not as a sentence
+  above the list: the first row reads "Où", the second carries the one editable ET/OU (a list joins
+  with a single connector), the rest repeat it as plain text, and a nested group indents under that
+  same column on a tinted background rather than nesting a second bordered box. Negation is a `NON`
+  toggle at the end of each row, on a condition or on a whole group alike; `IS NULL`/`IS NOT NULL`
+  drop the value box (`takesValue`).
+  **Every filter is persisted, and the catalogue is the single source of truth.** There is no draft
+  state and no opt-out, so `TableFilterBar` holds no parallel tree: it keeps only `activeFilterId`,
+  and *derives* the `DraftNode[]` it emits to the panel from the applied stored filter
+  (`fromConditions`). Two copies is what previously let editing a pill save a duplicate instead of
+  updating the filter it came from — a `DraftNode` carries no link back to its stored filter, so
+  nothing else can be relied on to tell an update from a creation. Only one filter applies at a
+  time: a second would silently AND with the first, which the pill row cannot show.
+  The name field fills itself from `describeDraft`'s rendering of the conditions — but only once the
+  predicate is complete, since a half-typed one would suggest a name that reads as a bug.
+  The toolbar shows the **applied** filter only, never the whole catalogue: `SavedFilterMenu`
+  already lists them all, so a pill row repeating it showed every filter twice, and a toolbar does
+  not scale past a handful of chips anyway. `ActiveFilterPill`'s ✕ **un-applies**; deleting lives in
+  the menu alone, a click away, since a ✕ one pixel from the apply target would destroy a stored
+  filter by accident.
+  `SavedFilterMenu` owns its open state rather than relying on daisyUI's `:focus-within` dropdown —
+  that variant only closes when focus leaves, so applying a filter left the panel hanging over the
+  toolbar and opening the editor put a modal behind a still-open menu. It is anchored to its
+  button's **left** edge: the toolbar starts at the left of the panel, so a right-aligned menu
+  (`dropdown-end`) ran off-screen and clipped every entry.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: MapLibre is the bundle's largest
-  dependency) and the MVT/WFS toggle.
-- `TableRowsPanel` — row grid: edit mode, pinned selection, infinite scroll.
+  dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
+  `Tableau / ⬛ / Carte` toggle group maximizes either one.
+- `TableRowsPanel` — row grid: edit mode, pinned selection, infinite scroll. Switching between the
+  filtered, read-only `DataTable` and the paginated one (`filter.filterActive`) carries a distinct
+  `key` on each — two entirely different TanStack Table instances patched in place, at the same
+  template position, left `<table-layout: auto>` column widths stale in Chromium until some
+  unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
 - `DeriveTableModal`, `AddColumnModal`, `AddRowModal`, `ColumnsModal` — one modal = one file, never
   inline modal markup in a view.
 
-**Target split of `SourcesView`**: `SourceDropzone` (drag-and-drop upload), `SourcesTable`
-(files/layers tree) and the matching cell components.
+**`SourcesView`**: the view holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the
+TanStack instance over `toSourceRows`; `components/sources/` holds the rest — `SourceUploadModal`
+(the drag-and-drop zone, in a modal opened by the import button rather than a permanent panel: the
+page is a catalogue, and an import is an occasional act that should not cost a third of the screen),
+`SourceNameCell` (file/layer icon, extension badge, layer indentation) and `SourceActionsCell`
+(load with its EPSG prompt, link to the loaded table, deletion). `SourceActionsCell` stays
+presentational: which row is being edited, loaded or deleted is decided by the view comparing
+`useSources`' keys, the cell only renders the state it is handed and emits intentions.
+
+**Target split of `SourcesView`**: `SourcesTable` (files/layers tree) still to extract.
 
 The title shown by the banner comes from `route.meta.title`, whose type is declared once
 (augmentation of `vue-router`'s `RouteMeta`) rather than read untyped.
@@ -276,11 +354,11 @@ height jump.
 
 ### 8.3 Destructive actions and the user's work
 
-- Deletion, replacement, overwrite: **inline** confirmation next to the action (never a native
-  `confirm()`, never a modal for a row deletion). The confirmation state falls back on its own after
-  a few seconds or as soon as a click lands elsewhere.
-- The confirmation label names what is about to disappear, and mentions cascade effects where there
-  are any (deleting a source deletes the tables derived from it).
+- Deletion, replacement, overwrite: confirmed through the shared `Modal` (never a native
+  `confirm()`) — `ConfirmButton` opens it uniformly, whether the action is rare (a table, a source)
+  or frequent (a row): the friction of an extra step is deliberate for all of them.
+- The confirmation message names what is about to disappear, and mentions cascade effects where
+  there are any (deleting a source deletes the tables derived from it).
 - **No input is lost by accident.** A modal holding a modified form does not close on a backdrop
   click; `Escape` asks for confirmation. A schema reload does not reset the visible columns the user
   chose, nor the filter in progress.

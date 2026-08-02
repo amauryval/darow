@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useToast } from "../composables/useToast";
+import BaseButton from "./ui/BaseButton.vue";
 
 const { toasts, dismiss } = useToast();
 </script>
@@ -16,7 +17,7 @@ const { toasts, dismiss } = useToast();
         :aria-live="t.kind === 'error' ? 'assertive' : 'polite'"
       >
         <span class="flex-1 [overflow-wrap:anywhere] select-text whitespace-pre-line">{{ t.message }}</span>
-        <button class="btn btn-ghost btn-xs shrink-0" aria-label="Fermer la notification" @click="dismiss(t.id)">✕</button>
+        <BaseButton variant="ghost" size="xs" class="shrink-0" aria-label="Fermer la notification" @click="dismiss(t.id)">✕</BaseButton>
       </div>
     </TransitionGroup>
   </div>

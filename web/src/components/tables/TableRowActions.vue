@@ -20,14 +20,21 @@ defineEmits<{
 <template>
   <div class="flex justify-end gap-2">
     <template v-if="isEditing">
-      <BaseButton size="sm" variant="primary" :busy="isSaving" :disabled="isSaving" @click="$emit('save')">
+      <!-- Same size as the read-mode pair: a larger edit-mode button resized
+           the actions column and shifted the whole row on every edit. -->
+      <BaseButton size="xs" variant="primary" :busy="isSaving" :disabled="isSaving" @click="$emit('save')">
         {{ isSaving ? "…" : "Enregistrer" }}
       </BaseButton>
-      <BaseButton size="sm" variant="secondary" @click="$emit('cancel')">Annuler</BaseButton>
+      <BaseButton size="xs" variant="secondary" @click="$emit('cancel')">Annuler</BaseButton>
     </template>
     <template v-else>
-      <button class="text-xs font-medium text-indigo-600 hover:text-indigo-700" @click="$emit('edit')">Modifier</button>
-      <ConfirmButton label="Supprimer" :busy="isDeletingPkey === deletingPkey" @confirm="$emit('delete')" />
+      <BaseButton variant="secondary" size="xs" @click="$emit('edit')">Modifier</BaseButton>
+      <ConfirmButton
+        label="Supprimer"
+        message="Supprimer définitivement cette ligne ?"
+        :busy="isDeletingPkey === deletingPkey"
+        @confirm="$emit('delete')"
+      />
     </template>
   </div>
 </template>

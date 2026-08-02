@@ -1,20 +1,26 @@
 <script setup lang="ts">
 import { computed, h, ref, watch } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { createColumnHelper, getCoreRowModel, getExpandedRowModel, useVueTable } from "@tanstack/vue-table";
-import type { Source } from "../client/types";
 import { errorMessage } from "../client/http";
 import { layerKey, useSources } from "../composables/useSources";
 import { useToast } from "../composables/useToast";
 import { useDocumentTitle } from "../composables/useDocumentTitle";
 import { parseSorting, stringifySorting } from "../utils/sort";
 import { queryString } from "../utils/routeQuery";
-import { UploadCloud } from "@lucide/vue";
+import { formatSize, toSourceRows } from "../utils/sourceRows";
+import type { SourceRow } from "../utils/sourceRows";
+import { RefreshCw, UploadCloud } from "@lucide/vue";
 import Badge from "../components/Badge.vue";
-import ConfirmButton from "../components/ConfirmButton.vue";
 import DataTable from "../components/DataTable.vue";
 import ErrorState from "../components/ui/ErrorState.vue";
 import Skeleton from "../components/ui/Skeleton.vue";
+import BaseButton from "../components/ui/BaseButton.vue";
+import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
+import Typography from "../components/ui/Typography.vue";
+import SourceActionsCell from "../components/sources/SourceActionsCell.vue";
+import SourceNameCell from "../components/sources/SourceNameCell.vue";
+import SourceUploadModal from "../components/sources/SourceUploadModal.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -28,6 +34,7 @@ useDocumentTitle(computed(() => "Sources"));
 const sourcesState = useSources(queryString(route.query.sort) ? parseSorting(queryString(route.query.sort)) : undefined);
 const {
   sources,
+  total,
   loading,
   loadedOnce,
   error,
@@ -54,59 +61,18 @@ watch(sorting, (sort) => {
   router.replace({ query: { ...route.query, sort: stringifySorting(sort) || undefined } });
 });
 
-const dragging = ref(false);
-const fileInput = ref<HTMLInputElement | null>(null);
+const uploadOpen = ref(false);
 
-// Stated before the attempt, not only in an error response (§8.5). Static
-// text matching the server's default config.yaml (sources.maxSizeBytes /
-// sources.allowedExtensions) — there is no endpoint exposing the running
-// deployment's actual values, so a custom config drifts from this hint.
-const ACCEPTED_EXTENSIONS = [".geojson", ".shp", ".csv", ".gpkg", ".parquet"];
-const MAX_UPLOAD_LABEL = "100 Mo";
+const rows = computed<SourceRow[]>(() => toSourceRows(sources.value));
 
-function isValidEpsg(value: string): boolean {
-  return /^[1-9]\d*$/.test(value.trim());
-}
-
-interface SourceRow {
-  name: string;
-  sizeBytes?: number;
-  loaded: boolean;
-  tableId?: string;
-  layerCount?: number;
-  source: Source;
-  layerName?: string;
-  subRows?: SourceRow[];
-}
-
-const rows = computed<SourceRow[]>(() =>
-  sources.value.map((source) => {
-    if (source.layers && source.layers.length > 0) {
-      return {
-        name: source.name,
-        loaded: false,
-        layerCount: source.layers.length,
-        source,
-        subRows: source.layers.map((layer) => ({
-          name: layer.name,
-          loaded: layer.loaded,
-          tableId: layer.tableId,
-          source,
-          layerName: layer.name,
-        })),
-      };
-    }
-    return { name: source.name, sizeBytes: source.sizeBytes, loaded: source.loaded, tableId: source.tableId, source };
-  }),
-);
-
-function triggerUpload() {
-  fileInput.value?.click();
-}
+// Counted on the loaded page only — the list is paginated, so this describes
+// what is on screen, not the whole workDir.
+const loadedCount = computed(() => sources.value.filter((source) => source.loaded).length);
 
 async function handleUpload(file: File) {
   try {
     const result = await upload(file);
+    uploadOpen.value = false;
     if (result) {
       toast.success(`${file.name} chargé.`);
       router.push(`/tables/${result.tableId}`);
@@ -118,24 +84,8 @@ async function handleUpload(file: File) {
   }
 }
 
-async function onFileSelected(event: Event) {
-  const file = event.target instanceof HTMLInputElement ? event.target.files?.[0] : undefined;
-  if (fileInput.value) fileInput.value.value = "";
-  if (!file) return;
-  await handleUpload(file);
-}
-
-async function onDrop(event: DragEvent) {
-  dragging.value = false;
-  const file = event.dataTransfer?.files?.[0];
-  if (!file) return;
-  await handleUpload(file);
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+function rowKey(row: SourceRow): string {
+  return row.layerName ? layerKey(row.source, row.layerName) : row.source.name;
 }
 
 const columnHelper = createColumnHelper<SourceRow>();
@@ -143,7 +93,12 @@ const columnDefs = [
   columnHelper.accessor("name", {
     header: "Nom",
     cell: ({ row, getValue }) =>
-      h("span", { class: row.depth > 0 ? "pl-8 text-slate-700" : "font-medium text-slate-800" }, getValue()),
+      h(SourceNameCell, {
+        name: getValue(),
+        isLayer: row.depth > 0,
+        layerCount: row.original.layerCount,
+        ext: row.original.source.ext,
+      }),
   }),
   columnHelper.display({
     id: "size",
@@ -151,9 +106,9 @@ const columnDefs = [
     enableSorting: true,
     cell: ({ row }) =>
       row.original.layerCount !== undefined
-        ? h("span", { class: "text-xs text-slate-400" }, `${row.original.layerCount} couches — ${formatSize(row.original.source.sizeBytes)}`)
+        ? h("span", { class: "text-xs text-base-content/50" }, `${row.original.layerCount} couches · ${formatSize(row.original.source.sizeBytes)}`)
         : row.original.sizeBytes !== undefined
-          ? h("span", { class: "text-slate-500" }, formatSize(row.original.sizeBytes))
+          ? h("span", { class: "text-base-content/60" }, formatSize(row.original.sizeBytes))
           : null,
   }),
   columnHelper.display({
@@ -161,83 +116,28 @@ const columnDefs = [
     header: "Statut",
     enableSorting: true,
     cell: ({ row }) =>
-      row.original.layerCount !== undefined ? null : h(Badge, { tone: row.original.loaded ? "success" : "neutral" }, () => (row.original.loaded ? "Chargée" : "Non chargée")),
+      row.original.layerCount !== undefined
+        ? null
+        : h(Badge, { tone: row.original.loaded ? "success" : "neutral" }, () => (row.original.loaded ? "Chargée" : "Non chargée")),
   }),
   columnHelper.display({
     id: "actions",
     header: "",
     meta: { align: "right" },
-    cell: ({ row }) => {
-      const r = row.original;
-      if (r.layerCount !== undefined) {
-        return h("div", { class: "flex justify-end" }, [
-          h(ConfirmButton, {
-            label: "Supprimer le fichier",
-            busy: deletingName.value === r.source.name,
-            onConfirm: () => remove(r.source.name),
-          }),
-        ]);
-      }
-      if (r.loaded && r.tableId) {
-        return h(RouterLink, { to: `/tables/${r.tableId}`, class: "text-sm font-medium text-indigo-600 hover:text-indigo-700" }, () => "Voir la table");
-      }
-      const key = r.layerName ? layerKey(r.source, r.layerName) : r.source.name;
-      if (epsgEditingKey.value === key) {
-        return h("div", { class: "flex items-center justify-end gap-2" }, [
-          h("input", {
-            type: "text",
-            inputmode: "numeric",
-            value: epsgInput.value,
-            placeholder: epsgDetecting.value ? "Détection..." : "Code EPSG",
-            disabled: epsgDetecting.value,
-            onInput: (e: Event) => {
-              if (e.target instanceof HTMLInputElement) {
-                epsgInput.value = e.target.value;
-              }
-            },
-            class: "w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:bg-slate-50",
-          }),
-          h(
-            "button",
-            {
-              class: "rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50",
-              disabled: epsgDetecting.value || !isValidEpsg(epsgInput.value) || loadingKey.value === key,
-              onClick: () => confirmLoad(r.source, r.layerName),
-            },
-            loadingKey.value === key ? "Chargement..." : "Confirmer",
-          ),
-          h(
-            "button",
-            {
-              class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-              onClick: cancelLoad,
-            },
-            "Annuler",
-          ),
-        ]);
-      }
-      if (r.layerName) {
-        return h(
-          "button",
-          {
-            class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-            onClick: () => startLoad(r.source, r.layerName),
-          },
-          "Charger",
-        );
-      }
-      return h("div", { class: "flex items-center justify-end gap-2" }, [
-        h(
-          "button",
-          {
-            class: "rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50",
-            onClick: () => startLoad(r.source),
-          },
-          "Charger",
-        ),
-        h(ConfirmButton, { label: "Supprimer", busy: deletingName.value === r.source.name, onConfirm: () => remove(r.source.name) }),
-      ]);
-    },
+    cell: ({ row }) =>
+      h(SourceActionsCell, {
+        row: row.original,
+        editingEpsg: epsgEditingKey.value === rowKey(row.original),
+        epsg: epsgInput.value,
+        detecting: epsgDetecting.value,
+        loadingRow: loadingKey.value === rowKey(row.original),
+        deleting: deletingName.value === row.original.source.name,
+        "onUpdate:epsg": (value: string) => (epsgInput.value = value),
+        onStartLoad: () => startLoad(row.original.source, row.original.layerName),
+        onCancelLoad: cancelLoad,
+        onConfirmLoad: () => confirmLoad(row.original.source, row.original.layerName),
+        onRemove: () => remove(row.original.source.name),
+      }),
   }),
 ];
 
@@ -262,48 +162,34 @@ const table = useVueTable({
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
-    <div class="mb-4 flex shrink-0 items-center justify-between">
-      <div>
-        <h1 class="text-lg font-semibold text-slate-900">Sources</h1>
-        <p class="text-sm text-slate-500">Fichiers détectés dans le répertoire de travail du serveur.</p>
-      </div>
-      <button
-        class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        :disabled="loading"
-        @click="refresh"
-      >
-        Rafraîchir
-      </button>
-    </div>
+  <div class="flex min-h-0 flex-1 flex-col gap-4 p-6">
+    <Breadcrumbs :items="[{ label: 'Sources' }]" />
 
-    <div
-      class="mb-4 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors"
-      :class="dragging ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'"
-      @dragover.prevent="dragging = true"
-      @dragleave.prevent="dragging = false"
-      @drop.prevent="onDrop"
-    >
-      <UploadCloud :size="32" class="text-slate-400" />
-      <p class="text-sm text-slate-600">Glissez un fichier ici, ou</p>
-      <input ref="fileInput" type="file" class="hidden" @change="onFileSelected" />
-      <button
-        class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        :disabled="uploading"
-        @click="triggerUpload"
-      >
-        {{ uploading ? "Envoi…" : "Parcourir" }}
-      </button>
-      <p class="text-xs text-slate-400">{{ ACCEPTED_EXTENSIONS.join(", ") }} — {{ MAX_UPLOAD_LABEL }} maximum</p>
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-col gap-1">
+        <Typography variant="body-sm">Fichiers détectés dans le répertoire de travail du serveur.</Typography>
+        <div v-if="loadedOnce" class="flex items-center gap-2">
+          <Badge tone="neutral">{{ total }} fichier{{ total > 1 ? "s" : "" }}</Badge>
+          <Badge v-if="loadedCount > 0" tone="success">{{ loadedCount }} chargé{{ loadedCount > 1 ? "s" : "" }}</Badge>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <BaseButton variant="secondary" size="sm" :icon="RefreshCw" :disabled="loading" @click="refresh">Rafraîchir</BaseButton>
+        <BaseButton variant="primary" size="sm" :icon="UploadCloud" :busy="uploading" :disabled="uploading" @click="uploadOpen = true">
+          Importer un fichier
+        </BaseButton>
+      </div>
     </div>
 
     <Skeleton v-if="loading && !loadedOnce" />
     <ErrorState v-else-if="error" :message="error" @retry="retry" />
-    <DataTable v-else :table="table" :loading="loading" empty-message="Aucune source détectée.">
+    <DataTable v-else :table="table" :loading="loading" empty-message="Aucune source détectée — importez un fichier pour commencer.">
       <template #footer>
         <div :ref="sourcesState.sentinel" class="h-px"></div>
-        <p v-if="loading" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>
+        <p v-if="loading" class="px-4 py-3 text-center text-xs text-base-content/40">Chargement…</p>
       </template>
     </DataTable>
+
+    <SourceUploadModal v-if="uploadOpen" :uploading="uploading" @close="uploadOpen = false" @upload="handleUpload" />
   </div>
 </template>

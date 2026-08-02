@@ -26,6 +26,7 @@ type Router struct {
 	geo      *handlers.GeoHandler
 	features *handlers.FeaturesHandler
 	sources  *handlers.SourcesHandler
+	filters  *handlers.FiltersHandler
 	export   *handlers.ExportHandler
 	ops      *handlers.OpsHandler
 	apiCfg   config.APIConfig
@@ -45,6 +46,7 @@ func NewRouter(
 		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
+		filters:  handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
 		ops:      handlers.NewOpsHandler(ready),
 		apiCfg:   apiCfg,
@@ -111,6 +113,13 @@ func (rt *Router) Setup() http.Handler {
 					sub.Post("/columns", rt.tables.AddColumn)
 					sub.Post("/derive", rt.tables.DeriveTable)
 					sub.Post("/filter", rt.tables.FilterRows)
+
+					sub.Route("/filters", func(sub chi.Router) {
+						sub.Get("/", rt.filters.ListFilters)
+						sub.Post("/", rt.filters.CreateFilter)
+						sub.Patch("/{filterId}", rt.filters.UpdateFilter)
+						sub.Delete("/{filterId}", rt.filters.DeleteFilter)
+					})
 					sub.Get("/columns/{col}/distinct", rt.tables.GetDistinctValues)
 
 					sub.Route("/rows", func(sub chi.Router) {

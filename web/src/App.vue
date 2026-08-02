@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { RouterLink, RouterView } from "vue-router";
-import { FolderOpen, LayoutGrid, MapPinned } from "@lucide/vue";
+import { useStorage } from "@vueuse/core";
+import { RouterLink, RouterView, useRoute } from "vue-router";
+import { FolderOpen, LayoutGrid, LogIn, MapPinned, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { readyz } from "./client/ops";
-import Header from "./components/Header.vue";
 import Toast from "./components/Toast.vue";
+import BaseButton from "./components/ui/BaseButton.vue";
+import Typography from "./components/ui/Typography.vue";
 
 type Status = "checking" | "ok" | "down";
 
+const route = useRoute();
 const status = ref<Status>("checking");
 let interval: ReturnType<typeof setInterval> | undefined;
 
@@ -32,61 +35,97 @@ const statusLabel: Record<Status, string> = {
   down: "Indisponible",
 };
 
-const statusDotClass: Record<Status, string> = {
-  checking: "bg-slate-300",
-  ok: "bg-emerald-500",
-  down: "bg-red-500",
+const statusBadgeTone: Record<Status, string> = {
+  checking: "badge-neutral",
+  ok: "badge-success",
+  down: "badge-error",
 };
+
+// Persisted so the operator's choice of a dense, icon-only sidebar survives a
+// reload — it is a display preference, not screen state, so it stays out of
+// the URL (§9).
+const collapsed = useStorage("darow-nav-collapsed", false);
+
+const links = [
+  { to: "/tables", label: "Tables disponibles", icon: LayoutGrid },
+  { to: "/sources", label: "Sources", icon: FolderOpen },
+];
 </script>
 
 <template>
-  <div class="flex h-screen bg-slate-50 text-slate-900">
-    <aside class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div class="flex items-center gap-2.5 px-5 py-5">
-        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
-          <MapPinned :size="16" />
-        </span>
-        <div class="leading-tight">
-          <p class="text-sm font-semibold tracking-tight text-slate-900">Darow — get your Ducks in A ROW</p>
-          <p class="text-[11px] text-slate-400">Backed by DuckDB · Console d'administration</p>
+  <div class="drawer lg:drawer-open h-screen bg-base-200">
+    <input id="nav-drawer" type="checkbox" class="drawer-toggle" />
+
+    <div class="drawer-content flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header class="navbar min-h-12 shrink-0 gap-1 border-b border-base-300 bg-base-100 px-4">
+        <div class="flex flex-1 items-center gap-1">
+          <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Ouvrir la navigation">
+            <LayoutGrid :size="18" />
+          </label>
+          <BaseButton
+            variant="ghost"
+            size="sm"
+            square
+            class="hidden lg:inline-flex"
+            :aria-label="collapsed ? 'Développer la navigation' : 'Réduire la navigation'"
+            :title="collapsed ? 'Développer la navigation' : 'Réduire la navigation'"
+            @click="collapsed = !collapsed"
+          >
+            <PanelLeftOpen v-if="collapsed" :size="18" />
+            <PanelLeftClose v-else :size="18" />
+          </BaseButton>
+          <Typography variant="h4" class="ml-1">{{ route.meta.title }}</Typography>
         </div>
-      </div>
+        <!-- No auth backend yet — placeholder for when the API gains one -->
+        <BaseButton variant="primary" size="sm" class="btn-outline gap-1.5" disabled title="Authentification bientôt disponible">
+          <LogIn :size="14" />
+          Se connecter
+        </BaseButton>
+      </header>
 
-      <nav class="flex flex-col gap-0.5 px-3">
-        <RouterLink
-          to="/tables"
-          class="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-          active-class="!bg-indigo-50 !text-indigo-700"
-        >
-          <LayoutGrid :size="16" class="shrink-0" />
-          Tables
-        </RouterLink>
-        <RouterLink
-          to="/sources"
-          class="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-          active-class="!bg-indigo-50 !text-indigo-700"
-        >
-          <FolderOpen :size="16" class="shrink-0" />
-          Sources
-        </RouterLink>
-      </nav>
+      <RouterView class="flex min-h-0 flex-1 flex-col" />
+    </div>
 
-      <div class="mt-auto flex items-center gap-2 border-t border-slate-100 px-5 py-3.5">
-        <span class="relative flex h-2 w-2">
-          <span
-            v-if="status === 'ok'"
-            class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 motion-reduce:animate-none"
-            :class="statusDotClass[status]"
-          />
-          <span class="relative inline-flex h-2 w-2 rounded-full" :class="statusDotClass[status]" />
-        </span>
-        <span class="text-xs font-medium text-slate-500">{{ statusLabel[status] }}</span>
-      </div>
-    </aside>
-    <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <Header />
-      <RouterView />
-    </main>
+    <div class="drawer-side z-30">
+      <label for="nav-drawer" aria-label="Fermer la navigation" class="drawer-overlay"></label>
+
+      <aside
+        class="flex h-full flex-col border-r border-base-300 bg-base-100 transition-[width] duration-150"
+        :class="collapsed ? 'w-16' : 'w-60'"
+      >
+        <div class="flex items-center gap-2.5 overflow-hidden px-4 py-4">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-content">
+            <MapPinned :size="16" />
+          </span>
+          <div v-show="!collapsed" class="leading-tight whitespace-nowrap">
+            <Typography variant="h4">Darow</Typography>
+            <Typography variant="caption">Console d'administration</Typography>
+          </div>
+        </div>
+
+        <ul class="menu menu-vertical w-full flex-1 gap-0.5 px-2" :class="collapsed && 'px-2'">
+          <li v-for="link in links" :key="link.to">
+            <RouterLink
+              :to="link.to"
+              active-class="menu-active"
+              :class="collapsed && 'tooltip tooltip-right justify-center px-0'"
+              :data-tip="collapsed ? link.label : undefined"
+              :aria-label="collapsed ? link.label : undefined"
+            >
+              <component :is="link.icon" :size="18" class="shrink-0" />
+              <span v-show="!collapsed">{{ link.label }}</span>
+            </RouterLink>
+          </li>
+        </ul>
+
+        <div class="flex items-center gap-2 border-t border-base-300 px-3 py-3" :class="collapsed && 'justify-center'">
+          <span class="badge badge-soft badge-sm" :class="statusBadgeTone[status]" :title="statusLabel[status]">
+            <span v-show="!collapsed">{{ statusLabel[status] }}</span>
+          </span>
+        </div>
+      </aside>
+    </div>
+
     <Toast />
   </div>
 </template>

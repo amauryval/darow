@@ -50,6 +50,46 @@ func Test_RowRepository_PkeysByPkeyFilteredDistinct(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []any{"a", "b"}, distinct)
 }
+
+// A filter value the column's type cannot read must narrow the result to
+// nothing rather than abort the query: DuckDB raises a Conversion Error on a
+// bare parameter and a Binder Error on LIKE against a non-text column, which
+// the API used to surface as a 500 on an otherwise legitimate search.
+func Test_RowRepository_Filtered_ValueIncompatibleWithColumnType(t *testing.T) {
+	conn := openRepoTestDB(t)
+	_, err := conn.db.Exec(`CREATE TABLE t_typed (__pkey TEXT PRIMARY KEY, name TEXT, qty INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`INSERT INTO t_typed VALUES ('1', 'a', 10), ('2', 'b', 20)`)
+	require.NoError(t, err)
+
+	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-typed", PhysicalName: "t_typed"})
+	require.NoError(t, err)
+	columns := []storage.ColumnInfo{{Name: "name", Type: "VARCHAR"}, {Name: "qty", Type: "INTEGER"}}
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		condition storage.FilterCondition
+		wantRows  int
+	}{
+		{"text value on an integer column", storage.FilterCondition{Column: "qty", Operator: "=", Value: "abc"}, 0},
+		{"LIKE on an integer column", storage.FilterCondition{Column: "qty", Operator: "LIKE", Value: "1%"}, 1},
+		{"numeric value on a text column", storage.FilterCondition{Column: "name", Operator: "=", Value: 12}, 0},
+		{"numeric value readable as the column type", storage.FilterCondition{Column: "qty", Operator: "=", Value: "10"}, 1},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			filter, args, err := storage.BuildFilter([]storage.FilterCondition{c.condition}, columns)
+			require.NoError(t, err)
+
+			got, err := repo.Rows().Filtered(ctx, storage.RowQuery{Filter: filter, Args: args}, 10)
+			require.NoError(t, err)
+			assert.Len(t, got, c.wantRows)
+		})
+	}
+}
+
 func Test_RowRepository_InsertUpdateDelete(t *testing.T) {
 	conn := openRepoTestDB(t)
 	repo, err := Open(conn, conn, newScalarTestTable(t, conn))

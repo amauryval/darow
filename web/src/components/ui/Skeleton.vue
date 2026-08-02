@@ -6,9 +6,9 @@ withDefaults(defineProps<{ rows?: number; columns?: number }>(), { rows: 6, colu
 </script>
 
 <template>
-  <div class="motion-reduce:animate-none animate-pulse divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+  <div class="divide-y divide-base-200 rounded-lg border border-base-300 bg-base-100">
     <div v-for="r in rows" :key="r" class="flex items-center gap-4 px-4 py-3">
-      <div v-for="c in columns" :key="c" class="h-3 flex-1 rounded bg-slate-200 first:max-w-[40%]" />
+      <div v-for="c in columns" :key="c" class="skeleton h-3 flex-1 first:max-w-[40%]" />
     </div>
   </div>
 </template>

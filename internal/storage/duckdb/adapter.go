@@ -32,6 +32,7 @@ type Adapter struct {
 	db           *sql.DB
 	writeMu      sync.Mutex
 	catalog      *catalog.Catalog
+	filters      *catalog.Filters
 	materializer *tables.Materializer
 }
 
@@ -73,6 +74,11 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	a := &Adapter{db: db}
 	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a))
 	a.materializer = tables.NewMaterializer(a, a, a.catalog)
+
+	// Registered at construction, so deleting a table can never forget the
+	// filters attached to it.
+	a.filters = catalog.NewFilters(a)
+	a.catalog.Register(a.filters)
 	return a, nil
 }
 
@@ -146,6 +152,12 @@ func (a *Adapter) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 // be exercised against storage/mocks.
 func (a *Adapter) Catalog() storage.Catalog {
 	return a.catalog
+}
+
+// Filters returns the stored-filters repository, attached to the catalogue's
+// delete cascade.
+func (a *Adapter) Filters() storage.FilterStore {
+	return a.filters
 }
 
 // Materializer returns the physical-table materializer — source

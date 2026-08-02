@@ -55,6 +55,15 @@ type geoAPI interface {
 	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 }
 
+// filterAPI is everything the router calls on *service.FilterService. Like
+// rowAPI, every method takes the caller's already-resolved storage.Metadata.
+type filterAPI interface {
+	List(ctx context.Context, meta storage.Metadata) ([]storage.StoredFilter, error)
+	Create(ctx context.Context, meta storage.Metadata, name string, conditions []storage.FilterCondition) (storage.StoredFilter, error)
+	Update(ctx context.Context, meta storage.Metadata, filterId string, patch storage.StoredFilterPatch) (storage.StoredFilter, error)
+	Delete(ctx context.Context, meta storage.Metadata, filterId string) error
+}
+
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
@@ -73,4 +82,5 @@ var (
 	_ deriveAPI   = (*service.DeriveService)(nil)
 	_ geoAPI      = (*service.GeoService)(nil)
 	_ sourceAPI   = (*service.SourceService)(nil)
+	_ filterAPI   = (*service.FilterService)(nil)
 )
