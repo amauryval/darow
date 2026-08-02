@@ -10,12 +10,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"darow/internal/router/response"
-	"darow/internal/storage/catalog"
+	"darow/internal/storage"
 )
 
 // MetadataGetter is the port TableResolver needs to look up a table.
 type MetadataGetter interface {
-	GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 }
 
 // TableResolver resolves the {tableId} path param via a MetadataGetter.
@@ -35,13 +35,13 @@ func NewTableResolver(metadataSvc MetadataGetter) TableResolver {
 // does not exist (storage.NotFoundError), 500 for any other failure (a
 // dropped connection, a cancelled context). Callers must stop handling the
 // request when ok is false.
-func (tr TableResolver) ResolveTable(w http.ResponseWriter, req *http.Request) (meta catalog.Metadata, ok bool) {
+func (tr TableResolver) ResolveTable(w http.ResponseWriter, req *http.Request) (meta storage.Metadata, ok bool) {
 	tableId := chi.URLParam(req, "tableId")
 
 	meta, err := tr.metadataService.GetMetadata(req.Context(), tableId)
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
-		return catalog.Metadata{}, false
+		return storage.Metadata{}, false
 	}
 	return meta, true
 }

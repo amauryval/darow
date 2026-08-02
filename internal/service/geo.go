@@ -9,8 +9,6 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
-	"darow/internal/storage/data"
 )
 
 // GeoService provides tile and geospatial query access on top of the
@@ -32,7 +30,7 @@ func NewGeoService(storage tableResolver, tileCache *expirable.LRU[string, []byt
 // of letting it reach the malformed-SQL failure an empty geometry column
 // would otherwise produce downstream — TableRepository.Geo's bool makes
 // this the one place every geo-only operation is guarded.
-func (g *GeoService) geoRepo(meta catalog.Metadata) (data.GeoRepository, error) {
+func (g *GeoService) geoRepo(meta storage.Metadata) (storage.GeoRepository, error) {
 	repo, err := g.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -54,7 +52,7 @@ func (g *GeoService) geoRepo(meta catalog.Metadata) (data.GeoRepository, error) 
 // filter adds is simply evicted under pressure rather than left unbounded.
 // meta is the caller's already-resolved metadata — no metadata read
 // happens here.
-func (g *GeoService) GetTile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
+func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery) ([]byte, error) {
 	sortedAttrs := slices.Clone(attrs)
 	slices.Sort(sortedAttrs)
 	key := fmt.Sprintf("tile_%s_%d_%d_%d_%d_%s_%s_%v", meta.TableId, zoom, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sortedAttrs, ","), q.Filter, q.Args)
@@ -79,12 +77,12 @@ func (g *GeoService) GetTile(ctx context.Context, meta catalog.Metadata, zoom, x
 // skipping offset matches, computed on demand and never cached —
 // filter, bbox, tolerance, and attrs together form an unbounded key space,
 // unlike a tile's bounded z/x/y.
-func (g *GeoService) GetFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+func (g *GeoService) GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
-	return geo.Features(ctx, data.FeatureQuery{
+	return geo.Features(ctx, storage.FeatureQuery{
 		Pkeys: pkeys, Bbox: bbox, Attrs: attrs, Query: q, Limit: limit, Offset: offset,
 	})
 }
@@ -92,24 +90,24 @@ func (g *GeoService) GetFeatures(ctx context.Context, meta catalog.Metadata, pke
 // CountFeatures returns how many features match pkeys/bbox/q, ignoring
 // limit/offset — OGC API - Features' numberMatched, computed on demand and
 // never cached for the same reason as GetFeatures.
-func (g *GeoService) CountFeatures(ctx context.Context, meta catalog.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error) {
+func (g *GeoService) CountFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return 0, err
 	}
-	return geo.CountFeatures(ctx, data.FeatureQuery{Pkeys: pkeys, Bbox: bbox, Query: q})
+	return geo.CountFeatures(ctx, storage.FeatureQuery{Pkeys: pkeys, Bbox: bbox, Query: q})
 }
 
 // GetFeaturesTile returns up to limit GeoFeatures intersecting the given
 // MVT-style z/x/y tile, computed on demand and never cached,
 // same rationale as GetFeatures — attrs is bounded, but q.Filter/Args form
 // an unbounded key space.
-func (g *GeoService) GetFeaturesTile(ctx context.Context, meta catalog.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
+func (g *GeoService) GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
-	return geo.FeaturesInTile(ctx, zoom, x, y, data.FeatureQuery{
+	return geo.FeaturesInTile(ctx, zoom, x, y, storage.FeatureQuery{
 		Attrs: attrs, Query: q, Limit: limit, Offset: offset,
 	})
 }
@@ -117,7 +115,7 @@ func (g *GeoService) GetFeaturesTile(ctx context.Context, meta catalog.Metadata,
 // FilterByBbox returns a page of up to limit pkeys of rows whose geometry
 // intersects bbox (lon/lat in OGC:CRS84, the same CRS Metadata.Bbox is
 // reported in), skipping offset matches first.
-func (g *GeoService) FilterByBbox(ctx context.Context, meta catalog.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
+func (g *GeoService) FilterByBbox(ctx context.Context, meta storage.Metadata, bbox [4]float64, offset, limit int) ([]string, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
@@ -128,7 +126,7 @@ func (g *GeoService) FilterByBbox(ctx context.Context, meta catalog.Metadata, bb
 // FilteredExtent returns the bounding box of every row matching q, computed
 // on demand and never cached — q.Filter/q.Args form an unbounded
 // key space.
-func (g *GeoService) FilteredExtent(ctx context.Context, meta catalog.Metadata, q storage.GeoQuery) (string, error) {
+func (g *GeoService) FilteredExtent(ctx context.Context, meta storage.Metadata, q storage.GeoQuery) (string, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return "", err
@@ -139,7 +137,7 @@ func (g *GeoService) FilteredExtent(ctx context.Context, meta catalog.Metadata, 
 // GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
 // fragment, keyed by pkey — used only by table export, the one exception
 // to never returning the geometry column.
-func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error) {
+func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
@@ -149,7 +147,7 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta catalog.Metada
 
 // GeometryTypes returns every distinct geometry type present in meta's
 // geometry column, computed on demand and never cached.
-func (g *GeoService) GeometryTypes(ctx context.Context, meta catalog.Metadata) ([]string, error) {
+func (g *GeoService) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err

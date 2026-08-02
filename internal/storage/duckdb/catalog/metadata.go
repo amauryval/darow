@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"darow/internal/storage"
-	catalogcontract "darow/internal/storage/catalog"
 )
 
 // metadataSchema is the DDL applied on every startup — already at the
@@ -108,19 +108,36 @@ func (r *Repository) TableIds(ctx context.Context, sort []storage.SortField) ([]
 	return ids, rows.Err()
 }
 
-// TableExists reports whether tableId is a registered logical table.
+// TableExists reports whether tableId is a registered logical table whose
+// physical table is really there. A metadata row left behind by an
+// interrupted rollback answers false, rather than reading as an existing
+// table until the first query against it fails.
 func (r *Repository) TableExists(ctx context.Context, tableId string) (bool, error) {
-	var count int
-	err := r.conn.QueryRow(ctx, `SELECT COUNT(*) FROM metadata WHERE tableId = ?`, tableId).Scan(&count)
+	var physicalName string
+	err := r.conn.QueryRow(ctx, `SELECT physicalName FROM metadata WHERE tableId = ? LIMIT 1`, tableId).Scan(&physicalName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+
+	existing, err := r.existing(ctx)
+	if err != nil {
+		return false, err
+	}
+	return existing[physicalName], nil
 }
 
-// PhysicalNames lists every physicalName currently registered — the only
-// tables a /derive query is allowed to reference.
+// PhysicalNames lists every physicalName currently registered and
+// physically present — the only tables a /derive query is allowed to
+// reference.
 func (r *Repository) PhysicalNames(ctx context.Context) (map[string]bool, error) {
+	existing, err := r.existing(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := r.conn.Query(ctx, `SELECT physicalName FROM metadata`)
 	if err != nil {
 		return nil, err
@@ -133,13 +150,15 @@ func (r *Repository) PhysicalNames(ctx context.Context) (map[string]bool, error)
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		names[name] = true
+		if existing[name] {
+			names[name] = true
+		}
 	}
 	return names, rows.Err()
 }
 
 // GetMetadata fetches the metadata row for tableId.
-func (r *Repository) GetMetadata(ctx context.Context, tableId string) (catalogcontract.Metadata, error) {
+func (r *Repository) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	row := r.conn.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM metadata WHERE tableId = ?`, metadataColumns), tableId)
 
 	m, err := scanMetadata(row)
@@ -159,8 +178,8 @@ const metadataColumns = `
     COALESCE(sourceName, ''), COALESCE(sourceLayer, '')
 `
 
-func scanMetadata(row interface{ Scan(...any) error }) (catalogcontract.Metadata, error) {
-	var m catalogcontract.Metadata
+func scanMetadata(row interface{ Scan(...any) error }) (storage.Metadata, error) {
+	var m storage.Metadata
 	err := row.Scan(
 		&m.TableId, &m.PhysicalName, &m.TableName, &m.IsGeo, &m.CreatedAt, &m.UpdatedAt,
 		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
@@ -170,7 +189,7 @@ func scanMetadata(row interface{ Scan(...any) error }) (catalogcontract.Metadata
 
 // List returns one page of metadata ordered by sort (or by tableId when
 // empty), plus the total number of registered tables.
-func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]catalogcontract.Metadata, int64, error) {
+func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
 	orderBy, err := metadataOrderBy(sort)
 	if err != nil {
 		return nil, 0, err
@@ -189,7 +208,7 @@ func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset,
 	}
 	defer rows.Close()
 
-	tables := []catalogcontract.Metadata{}
+	tables := []storage.Metadata{}
 	for rows.Next() {
 		m, err := scanMetadata(rows)
 		if err != nil {
@@ -202,7 +221,7 @@ func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset,
 
 // BySource maps every loaded table's source key to its tableId in a single
 // query. A table with no sourceName (e.g. created via /derive) is excluded.
-func (r *Repository) BySource(ctx context.Context) (map[catalogcontract.SourceKey]string, error) {
+func (r *Repository) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
 	rows, err := r.conn.Query(ctx, `
         SELECT tableId, sourceName, COALESCE(sourceLayer, '')
         FROM metadata WHERE sourceName IS NOT NULL AND sourceName != ''
@@ -212,10 +231,10 @@ func (r *Repository) BySource(ctx context.Context) (map[catalogcontract.SourceKe
 	}
 	defer rows.Close()
 
-	bySource := map[catalogcontract.SourceKey]string{}
+	bySource := map[storage.SourceKey]string{}
 	for rows.Next() {
 		var tableId string
-		var key catalogcontract.SourceKey
+		var key storage.SourceKey
 		if err := rows.Scan(&tableId, &key.SourceName, &key.SourceLayer); err != nil {
 			return nil, err
 		}
@@ -245,7 +264,7 @@ func (r *Repository) Create(ctx context.Context, tableName string, isGeo bool, g
 // UpdateMetadata patches config fields of a logical table's metadata. Every
 // non-nil field of patch is written; nil fields leave their column
 // unchanged. A zero-value patch is a no-op.
-func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch catalogcontract.MetadataPatch) error {
+func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error {
 	sets := make([]string, 0, 6)
 	args := make([]any, 0, 7)
 
@@ -297,18 +316,22 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string,
 		return err
 	}
 
-	var rowCount int64
-	if err := r.conn.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&rowCount); err != nil {
-		return err
-	}
-
 	bbox := meta.Bbox
-	if meta.IsGeo && touchesGeometry {
+	var rowCount int64
+	if !meta.IsGeo || !touchesGeometry {
+		if err := r.conn.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, meta.PhysicalName)).Scan(&rowCount); err != nil {
+			return err
+		}
+	} else {
 		quotedGeom, err := storage.QuoteIdentifier(meta.GeometryColumn)
 		if err != nil {
 			return err
 		}
 		var minX, minY, maxX, maxY sql.NullFloat64
+		// Count and extent are aggregated in a single scan: MIN/MAX skip the
+		// NULL geometries COUNT(*) still counts, so no WHERE clause has to
+		// split them into two passes over the same table.
+		//
 		// The geometry column is stored reprojected to EPSG:3857 (section 7
 		// of spec/back/spec.md), but bbox is reported in lon/lat order so API
 		// consumers — notably map clients, whose camera/bounds APIs take
@@ -316,13 +339,14 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string,
 		// CRS must be OGC:CRS84, not EPSG:4326: the latter's official axis
 		// order is (lat, lon), which would silently swap X/Y here.
 		query := fmt.Sprintf(`
-            SELECT MIN(ST_XMin(g)), MIN(ST_YMin(g)), MAX(ST_XMax(g)), MAX(ST_YMax(g))
+            SELECT COUNT(*), MIN(ST_XMin(g)), MIN(ST_YMin(g)), MAX(ST_XMax(g)), MAX(ST_YMax(g))
             FROM (
-                SELECT ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84') AS g
-                FROM %s WHERE %s IS NOT NULL
+                SELECT CASE WHEN %s IS NULL THEN NULL
+                            ELSE ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84') END AS g
+                FROM %s
             ) t
-        `, quotedGeom, meta.PhysicalName, quotedGeom)
-		if err := r.conn.QueryRow(ctx, query).Scan(&minX, &minY, &maxX, &maxY); err != nil {
+        `, quotedGeom, quotedGeom, meta.PhysicalName)
+		if err := r.conn.QueryRow(ctx, query).Scan(&rowCount, &minX, &minY, &maxX, &maxY); err != nil {
 			return err
 		}
 		if minX.Valid {

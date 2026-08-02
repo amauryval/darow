@@ -11,22 +11,28 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 
 	"darow/internal/storage"
-	catalogcontract "darow/internal/storage/catalog"
 	"darow/internal/storage/duckdb/catalog"
-	"darow/internal/storage/duckdb/data"
+	"darow/internal/storage/duckdb/tables"
 )
 
-// Adapter implements catalog.MetadataManager, data.TableLifecycle,
-// data.SourceIntrospector and data.TableResolver on top of DuckDB. It
+// spatialExtension is the DuckDB extension every geo route depends on,
+// loaded once when the connection opens and asserted by the readiness
+// probe.
+const spatialExtension = "spatial"
+
+// Adapter is the DuckDB storage engine: it owns the connection pool and
+// exposes the catalogue (Catalog), the physical-table materializer
+// (Materializer) and table resolution (Table), each implemented in a
+// sub-package. It
 // serializes every write through writeMu: DuckDB allows only one active
 // writer per process, though concurrent writes without conflicts and
 // concurrent reads are both safe across the pooled connections opened
 // against db.
 type Adapter struct {
-	db        *sql.DB
-	writeMu   sync.Mutex
-	catalog   *catalog.Catalog
-	lifecycle *data.Lifecycle
+	db           *sql.DB
+	writeMu      sync.Mutex
+	catalog      *catalog.Catalog
+	materializer *tables.Materializer
 }
 
 // New opens the DuckDB database at path, loads the spatial extension, and
@@ -49,7 +55,7 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	}
 	db.SetMaxOpenConns(maxOpenConns)
 
-	if _, err := db.Exec("INSTALL spatial; LOAD spatial;"); err != nil {
+	if _, err := db.Exec(fmt.Sprintf("INSTALL %s; LOAD %s;", spatialExtension, spatialExtension)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("loading spatial extension: %w", err)
 	}
@@ -59,9 +65,14 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 		return nil, err
 	}
 
+	// The catalogue takes its two links to duckdb/tables directly: dropping
+	// and listing the physical tables need a transaction and a connection,
+	// nothing the materializer holds. Only the materializer depends on a
+	// built catalogue (a derived query's physical-name allowlist), so the
+	// two constructions simply run in that order.
 	a := &Adapter{db: db}
-	a.catalog = catalog.NewCatalog(a, a, a)
-	a.lifecycle = data.NewLifecycle(a, a, a)
+	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a))
+	a.materializer = tables.NewMaterializer(a, a, a.catalog)
 	return a, nil
 }
 
@@ -70,10 +81,22 @@ func (a *Adapter) Close() error {
 	return a.db.Close()
 }
 
-// Ping checks that the underlying DuckDB connection is alive, for use by
-// a readiness probe.
+// Ping checks that the underlying DuckDB connection is alive and that the
+// spatial extension is loaded, for use by a readiness probe — every geo
+// route depends on an extension loaded once at open.
 func (a *Adapter) Ping(ctx context.Context) error {
-	return a.db.PingContext(ctx)
+	if err := a.db.PingContext(ctx); err != nil {
+		return err
+	}
+
+	loaded, err := tables.ExtensionLoaded(ctx, a, spatialExtension)
+	if err != nil {
+		return err
+	}
+	if !loaded {
+		return fmt.Errorf("the %s extension is not loaded", spatialExtension)
+	}
+	return nil
 }
 
 // Query runs a read-only query and returns its result set, interrupting it
@@ -95,17 +118,10 @@ func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Resu
 	return a.db.ExecContext(ctx, query, args...)
 }
 
-// Begin starts a transaction. Internal writers that need transactional
-// semantics (BulkInsert) take writeMu themselves around the whole
-// transaction rather than through this passthrough.
-func (a *Adapter) Begin(ctx context.Context) (*sql.Tx, error) {
-	return a.db.BeginTx(ctx, nil)
-}
-
 // WithTx runs fn inside a transaction held under writeMu for its whole
 // duration, committing on success and rolling back on
-// any error fn returns. Shared by catalog.Catalog (cascade delete) and
-// data.Open (BulkInsert), the two consumers that need transactional
+// any error fn returns. Shared by storage.Catalog (cascade delete) and
+// tables.Open (BulkInsert), the two consumers that need transactional
 // semantics beyond a single Exec.
 func (a *Adapter) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	a.writeMu.Lock()
@@ -123,61 +139,24 @@ func (a *Adapter) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// TableIds lists the tableId of every logical table currently registered,
-// ordered by sort or by tableId when sort is empty.
-func (a *Adapter) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
-	return a.catalog.TableIds(ctx, sort)
-}
-
-// TableExists reports whether tableId is a registered logical table.
-func (a *Adapter) TableExists(ctx context.Context, tableId string) (bool, error) {
-	return a.catalog.TableExists(ctx, tableId)
-}
-
-// GetMetadata fetches the metadata row for tableId.
-func (a *Adapter) GetMetadata(ctx context.Context, tableId string) (catalogcontract.Metadata, error) {
-	return a.catalog.GetMetadata(ctx, tableId)
-}
-
-// List returns one page of metadata ordered by sort (or by tableId when
-// empty), plus the total number of registered tables.
-func (a *Adapter) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]catalogcontract.Metadata, int64, error) {
-	return a.catalog.List(ctx, sort, offset, limit)
-}
-
-// BySource maps every loaded table's source key to its tableId in a single
-// query.
-func (a *Adapter) BySource(ctx context.Context) (map[catalogcontract.SourceKey]string, error) {
-	return a.catalog.BySource(ctx)
-}
-
-// Create registers a new logical table in metadata and returns its
-// generated tableId. It does not create the underlying physical table —
-// callers use TableCreator for that, then persist the resolved geometry
-// column via UpdateMetadata.
-func (a *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	return a.catalog.Create(ctx, tableName, isGeo, geometryColumn)
-}
-
-// Remove deletes a logical table's metadata and drops its physical table,
-// in a single transaction.
-func (a *Adapter) Remove(ctx context.Context, tableId string) error {
-	return a.catalog.Remove(ctx, tableId)
-}
-
-// Catalog returns the catalogue aggregate — metadata, PhysicalNames, and
-// the attachment registry — as the contract storage/catalog declares.
-func (a *Adapter) Catalog() catalogcontract.Catalog {
+// Catalog returns the catalogue aggregate — metadata, the physical-name
+// allowlist and the delete cascade. The concrete *catalog.Catalog stays
+// reachable here (Register attaches a catalogue-attached repository at
+// construction), but it is handed to callers as storage.Catalog so they can
+// be exercised against storage/mocks.
+func (a *Adapter) Catalog() storage.Catalog {
 	return a.catalog
 }
 
-// UpdateMetadata patches config fields of a logical table's metadata.
-func (a *Adapter) UpdateMetadata(ctx context.Context, tableId string, patch catalogcontract.MetadataPatch) error {
-	return a.catalog.UpdateMetadata(ctx, tableId, patch)
+// Materializer returns the physical-table materializer — source
+// introspection and the materialization of a table from a file or a
+// derived query.
+func (a *Adapter) Materializer() storage.TableMaterializer {
+	return a.materializer
 }
 
-// RefreshDerivedMetadata recomputes rowCount and bumps updatedAt from the
-// underlying table, recomputing bbox too when touchesGeometry.
-func (a *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
-	return a.catalog.RefreshDerivedMetadata(ctx, tableId, touchesGeometry)
+// Table resolves meta into a storage.TableRepository, validating its
+// identifiers once rather than on every subsequent call.
+func (a *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
+	return tables.Open(a, a, meta)
 }

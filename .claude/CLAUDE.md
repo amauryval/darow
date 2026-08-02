@@ -11,17 +11,21 @@ binary.
 -   `cmd/server` : entrypoint (`main.go`) — loads config, opens DuckDB, wires services, router, UI
 -   `internal/config` : YAML config (`config.yaml`), defaults, `--workdir` flag override
 -   `internal/core` : wiring — builds the services and the LRU caches from the config
--   `internal/storage` : engine-agnostic primitives — `ValidateIdentifier`/`QuoteIdentifier`,
-    `BuildFilter`, `Row`/`ColumnInfo`/`GeoFeature`/`GeoQuery`/`SortField`, `TableCreator`, typed
-    errors; `mocks/` (testify) and `storagetest/` (adapter conformance suites) alongside
--   `internal/storage/catalog` : backend-agnostic catalogue contract (`Metadata`,
-    `MetadataManager`)
--   `internal/storage/data` : backend-agnostic data-table contracts (`TableResolver`,
-    `TableRepository`, `RowRepository`, `GeoRepository`)
--   `internal/storage/duckdb` : the DuckDB implementation — `Adapter` (connection, `writeMu`
-    write serialization, `WithTx`), CTAS table creation with RTREE indexing and Hilbert
-    clustering, `/derive`; sub-packages `catalog/` (metadata, migrations, transactional cascade
-    delete) and `data/` (table resolution, rows, geo/MVT)
+-   `internal/storage` : the storage layer's types, primitives and interfaces —
+    `ValidateIdentifier`/`QuoteIdentifier`, `BuildFilter`, typed errors,
+    `Metadata`/`Row`/`ColumnInfo`/`GeoFeature`/`GeoQuery`/`SortField`, and the `Catalog`,
+    `TableRepository`/`RowRepository`/`GeoRepository` and `TableMaterializer` interfaces DuckDB
+    implements; `mocks/` (testify) alongside
+-   `internal/storage/duckdb` : the single implementation — `Adapter` (connection, `writeMu`
+    write serialization, `WithTx`, and the `Catalog()`/`Materializer()`/`Table()` accessors),
+    CTAS table creation with RTREE indexing and Hilbert clustering, `/derive`; sub-packages
+    `catalog/` (the `metadata` table, migrations, transactional cascade delete, `Register`) and
+    `tables/`, one file per family — `ref.go` (identifier resolution), `table.go`/`rows.go`/`geo.go`
+    (the three repositories), `clauses.go`/`scan.go` (shared SQL fragments and row scanning),
+    `materializer.go` split into `create_from_file.go`/`create_from_query.go`/`crs.go`/`indexes.go`
+    plus the stateless `drop.go`,
+    and `introspection.go` — the single place DuckDB's own catalogue functions
+    `duckdb_columns`/`duckdb_indexes`/`duckdb_tables`/`duckdb_extensions` are read
 -   `internal/service` : one service per concern (`MetadataService` owns the metadata cache,
     `SchemaService`, `RowService`, `GeoService` tile cache keyed on table `UpdatedAt`,
     `SourceService`, `ImportService`, `DeriveService`, `ExportService`)
@@ -72,7 +76,10 @@ binary.
     primitives; views use Tailwind for layout only and never re-type a button's or field's classes
 -   Git commands that change state (`commit`, `push`, `checkout`, `merge`, `rebase`, `reset`,
     `stash`, `worktree add/remove`, `branch -D`, ...) are forbidden unless explicitly requested.
--   Every new/changed struct, interface, method, or handler ships with its test in the same change
+-   Every new/changed struct, interface, method, or handler ships with its test in the same change,
+    in a test file named after the file under test (`rows.go` → `rows_test.go`); a package's shared
+    doubles and fixtures go in its `fixtures_test.go`, and each package's tests stand on their own
+    without a sibling package's help
     changes do not need accompanying vitest tests unless explicitly asked for.
 -   Any SQL identifier (table/column) interpolated into a query must go through
     `storage.ValidateIdentifier` first; values are always bound parameters, never interpolated.

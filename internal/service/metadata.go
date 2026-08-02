@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 // MetadataService is the single owner of the metadata cache:
@@ -16,8 +15,8 @@ import (
 // stays in one place. The cache is a size-bounded LRU with expiration,
 // never unbounded.
 type MetadataService struct {
-	storage catalog.MetadataManager
-	cache   *expirable.LRU[string, catalog.Metadata]
+	storage storage.Catalog
+	cache   *expirable.LRU[string, storage.Metadata]
 	schema  schemaInvalidator
 }
 
@@ -32,21 +31,21 @@ type schemaInvalidator interface {
 // NewMetadataService builds a MetadataService backed by storage, using c
 // to cache metadata reads and schema to drop a removed table's cached
 // schema.
-func NewMetadataService(s catalog.MetadataManager, c *expirable.LRU[string, catalog.Metadata], schema schemaInvalidator) *MetadataService {
+func NewMetadataService(s storage.Catalog, c *expirable.LRU[string, storage.Metadata], schema schemaInvalidator) *MetadataService {
 	return &MetadataService{storage: s, cache: c, schema: schema}
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
 // is a value type, so every caller already gets its own copy with no
 // extra step.
-func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error) {
+func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	if meta, ok := s.cache.Get(tableId); ok {
 		return meta, nil
 	}
 
 	meta, err := s.storage.GetMetadata(ctx, tableId)
 	if err != nil {
-		return catalog.Metadata{}, err
+		return storage.Metadata{}, err
 	}
 
 	s.cache.Add(tableId, meta)
@@ -56,7 +55,7 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (cata
 // ListTables returns one page of metadata, offset/limit over sort's
 // deterministic order (or ORDER BY tableId when empty), plus the total
 // number of registered tables.
-func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]catalog.Metadata, int64, error) {
+func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
 	return s.storage.List(ctx, sort, offset, limit)
 }
 
@@ -74,7 +73,7 @@ func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bo
 }
 
 // UpdateMetadata patches tableId's metadata and invalidates the cache.
-func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, patch catalog.MetadataPatch) error {
+func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error {
 	if err := s.storage.UpdateMetadata(ctx, tableId, patch); err != nil {
 		return err
 	}

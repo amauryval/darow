@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"darow/internal/storage/catalog"
+	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
 
-func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Storage) {
-	m := &mocks.Storage{}
-	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
+func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
+	m := &mocks.Adapter{}
+	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
 	svc := NewDeriveService(metadata, m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
@@ -89,11 +89,11 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 			}
 
 			m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-			m.On("GetMetadata", mock.Anything, "id-derived").Return(catalog.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
 			m.On("CreateFromQuery", mock.Anything, "t_derived", c.query).Return("geom", c.isGeo, nil).Once()
 			if c.isGeo {
 				wantIsGeo, wantGeom := true, "geom"
-				m.On("UpdateMetadata", mock.Anything, "id-derived", catalog.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
+				m.On("UpdateMetadata", mock.Anything, "id-derived", storage.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
 			}
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
 
@@ -111,7 +111,7 @@ func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t 
 	svc, m := setupDeriveService(t)
 
 	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-derived").Return(catalog.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
 	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, errors.New("unknown table")).Once()
 	m.On("Remove", mock.Anything, "id-derived").Return(nil).Once()
 

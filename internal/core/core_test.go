@@ -86,7 +86,7 @@ func Test_Services_Close(t *testing.T) {
 				svcs, err = Setup(cfg)
 				require.NoError(t, err)
 			} else {
-				svcs = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}, &mocks.Storage{})
+				svcs = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}, &mocks.Adapter{})
 			}
 
 			assert.NoError(t, svcs.Close())
@@ -122,7 +122,7 @@ func Test_Services_Ping(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { svcs.Close() })
 			} else {
-				svcs = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}, &mocks.Storage{})
+				svcs = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}, &mocks.Adapter{})
 			}
 
 			assert.NoError(t, svcs.Ping(context.Background()))
@@ -139,7 +139,7 @@ func Test_NewServices(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := &mocks.Storage{}
+			m := &mocks.Adapter{}
 			cfg := config.Config{
 				Sources: config.SourcesConfig{WorkDir: t.TempDir()},
 				API:     config.APIConfig{ExportBatchSize: 1000},

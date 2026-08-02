@@ -12,7 +12,6 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 // TablesHandler serves table-level endpoints: metadata, schema, columns,
@@ -151,7 +150,7 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, catalog.MetadataPatch{TableName: &body.TableName}); err != nil {
+	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, storage.MetadataPatch{TableName: &body.TableName}); err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}

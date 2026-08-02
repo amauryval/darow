@@ -12,7 +12,6 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 const ogcCRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
@@ -204,14 +203,14 @@ func (fh *FeaturesHandler) GetItem(w http.ResponseWriter, req *http.Request) {
 
 // resolveGeoTable resolves {tableId} and rejects non-geo tables, since an
 // OGC API - Features collection is meaningless for a table without geometry.
-func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Request) (catalog.Metadata, bool) {
+func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Request) (storage.Metadata, bool) {
 	meta, ok := fh.ResolveTable(w, req)
 	if !ok {
-		return catalog.Metadata{}, false
+		return storage.Metadata{}, false
 	}
 	if !meta.IsGeo {
 		response.WriteError(w, req, fmt.Errorf("table %q is not a geo table", meta.TableId), http.StatusNotFound)
-		return catalog.Metadata{}, false
+		return storage.Metadata{}, false
 	}
 	return meta, true
 }

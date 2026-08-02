@@ -13,7 +13,6 @@ import (
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 func Test_newTablesHandler(t *testing.T) {
@@ -52,7 +51,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 				apiCfg:          config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500},
 			}
 
-			tables := []catalog.Metadata{{TableId: "t1"}, {TableId: "t2"}}
+			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
 			if c.listErr != nil {
 				tables = nil
 			}
@@ -114,7 +113,7 @@ func Test_tablesHandler_getTableMetadata(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc)}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(catalog.Metadata{TableId: "t1"}, c.lookupErr).Once()
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 
 			rec := doHandlerRequest(th.GetTableMetadata, http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 
@@ -143,12 +142,12 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(catalog.Metadata{TableId: "t1"}, c.lookupErr).Once()
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil && c.body.(map[string]string)["tableName"] != "" {
 				newTableName := "new"
-				metadataSvc.On("UpdateMetadata", mock.Anything, "t1", catalog.MetadataPatch{TableName: &newTableName}).Return(c.updateErr).Once()
+				metadataSvc.On("UpdateMetadata", mock.Anything, "t1", storage.MetadataPatch{TableName: &newTableName}).Return(c.updateErr).Once()
 				if c.updateErr == nil {
-					metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(catalog.Metadata{TableId: "t1", TableName: "new"}, nil).Once()
+					metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1", TableName: "new"}, nil).Once()
 				}
 			}
 
@@ -177,7 +176,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(catalog.Metadata{TableId: "t1"}, c.lookupErr).Once()
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				metadataSvc.On("RemoveTable", mock.Anything, "t1").Return(c.removeErr).Once()
 			}
@@ -212,7 +211,7 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 				schemaService:   schemaSvc,
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, c.schemaErr).Once()
@@ -250,7 +249,7 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 				schemaService:   schemaSvc,
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				schemaSvc.On("AddColumn", mock.Anything, meta, "age", "INTEGER").Return(c.addErr).Once()
@@ -294,7 +293,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 			deriveSvc := &mockDeriveAPI{}
 			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(catalog.Metadata{TableId: "t1"}, c.lookupErr).Once()
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 			}
@@ -342,7 +341,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}}, c.schemaErr).Once()
@@ -392,7 +391,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			col := "status"
 			if c.name == "unknown column is rejected" {
 				col = "bogus"

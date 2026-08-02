@@ -13,18 +13,18 @@ import (
 
 	"darow/internal/config"
 	"darow/internal/service"
-	"darow/internal/storage/catalog"
-	"darow/internal/storage/data"
+	"darow/internal/storage"
 	"darow/internal/storage/duckdb"
 )
 
-// storageAdapter is everything Services needs from the storage layer.
-// Declared here, the consumer, so tests can satisfy it with a mock.
+// storageAdapter is everything Services needs from the storage layer: the
+// two aggregates it hands to the services, plus the table resolution every
+// per-table service goes through. Declared here, the consumer, so tests can
+// satisfy it with a mock.
 type storageAdapter interface {
-	Catalog() catalog.Catalog
-	data.TableLifecycle
-	data.SourceIntrospector
-	data.TableResolver
+	Catalog() storage.Catalog
+	Materializer() storage.TableMaterializer
+	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
 // Services groups every application service built on top of the storage
@@ -69,15 +69,15 @@ func (s *Services) Ping(ctx context.Context) error {
 // NewServices constructs every service, wiring caches from cfg.Cache and
 // sizing export batches from cfg.API.ExportBatchSize.
 func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
-	metadataCache := expirable.NewLRU[string, catalog.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
+	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
 	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
 
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
 	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, schemaSvc)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
-	deriveSvc := service.NewDeriveService(metadataSvc, storageAdapter)
-	importSvc := service.NewImportService(metadataSvc, storageAdapter)
+	deriveSvc := service.NewDeriveService(metadataSvc, storageAdapter.Materializer())
+	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer())
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, cfg.API.ExportBatchSize)

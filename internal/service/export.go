@@ -8,7 +8,6 @@ import (
 	"io"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 // ExportValidationError marks an Export failure caused by the request
@@ -23,21 +22,21 @@ func (e *ExportValidationError) Error() string { return e.msg }
 // bounded page at a time, without a per-page COUNT(*) it has no
 // use for.
 type rowLister interface {
-	ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error)
+	ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error)
 }
 
 // geometryFetcher is what ExportService needs to fetch each row's
 // geometry, exported as GeoJSON — the one export-only exception to
 // "never return the geometry column".
 type geometryFetcher interface {
-	GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error)
+	GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error)
 }
 
 // columnLister is what ExportService needs to know a table's column
 // names and order, so the CSV header can be written before any row is
 // fetched instead of being inferred by scanning every row into memory.
 type columnLister interface {
-	Schema(ctx context.Context, meta catalog.Metadata) ([]ColumnSchema, error)
+	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 }
 
 // ExportService renders a table's rows as CSV or GeoJSON — export is
@@ -69,7 +68,7 @@ func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLi
 // router must call this — and set the response header on success —
 // before calling Export, since Export streams directly to the response
 // body and can no longer change the status code once it starts writing.
-func (s *ExportService) ContentType(meta catalog.Metadata, format string) (string, error) {
+func (s *ExportService) ContentType(meta storage.Metadata, format string) (string, error) {
 	switch format {
 	case "csv":
 		return "text/csv", nil
@@ -86,7 +85,7 @@ func (s *ExportService) ContentType(meta catalog.Metadata, format string) (strin
 // Export streams every row of meta's table to w in format, fetching rows
 // batchSize at a time rather than loading the whole table into
 // memory. Callers must have already validated format via ContentType.
-func (s *ExportService) Export(ctx context.Context, w io.Writer, meta catalog.Metadata, format string) error {
+func (s *ExportService) Export(ctx context.Context, w io.Writer, meta storage.Metadata, format string) error {
 	switch format {
 	case "csv":
 		return s.exportCSV(ctx, w, meta)
@@ -102,7 +101,7 @@ func (s *ExportService) Export(ctx context.Context, w io.Writer, meta catalog.Me
 // shorter than batchSize is always the last one — GetPkeys never returns
 // more than the limit it was given — so this needs no separate total
 // count to know when to stop.
-func (s *ExportService) forEachPage(ctx context.Context, meta catalog.Metadata, fn func([]storage.Row) error) error {
+func (s *ExportService) forEachPage(ctx context.Context, meta storage.Metadata, fn func([]storage.Row) error) error {
 	var offset int64
 	for {
 		rows, err := s.rows.ListRowsPage(ctx, meta, offset, s.batchSize)
@@ -124,7 +123,7 @@ func (s *ExportService) forEachPage(ctx context.Context, meta catalog.Metadata, 
 
 // exportColumns returns meta's table's column names in schema order,
 // excluding the geometry column — rows never carry it either.
-func (s *ExportService) exportColumns(ctx context.Context, meta catalog.Metadata) ([]string, error) {
+func (s *ExportService) exportColumns(ctx context.Context, meta storage.Metadata) ([]string, error) {
 	schema, err := s.columns.Schema(ctx, meta)
 	if err != nil {
 		return nil, err
@@ -140,7 +139,7 @@ func (s *ExportService) exportColumns(ctx context.Context, meta catalog.Metadata
 	return cols, nil
 }
 
-func (s *ExportService) exportCSV(ctx context.Context, w io.Writer, meta catalog.Metadata) error {
+func (s *ExportService) exportCSV(ctx context.Context, w io.Writer, meta storage.Metadata) error {
 	cols, err := s.exportColumns(ctx, meta)
 	if err != nil {
 		return err
@@ -173,7 +172,7 @@ func (s *ExportService) exportCSV(ctx context.Context, w io.Writer, meta catalog
 	return writer.Error()
 }
 
-func (s *ExportService) exportGeoJSON(ctx context.Context, w io.Writer, meta catalog.Metadata) error {
+func (s *ExportService) exportGeoJSON(ctx context.Context, w io.Writer, meta storage.Metadata) error {
 	if _, err := io.WriteString(w, `{"type":"FeatureCollection","features":[`); err != nil {
 		return err
 	}

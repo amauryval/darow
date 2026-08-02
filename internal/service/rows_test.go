@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 	"darow/internal/storage/mocks"
 )
 
@@ -21,14 +20,14 @@ import (
 // own expectations for the storage calls they care about; m is still
 // needed directly for RefreshDerivedMetadata (via MetadataService) and
 // ColumnsWithTypes (via SchemaService).
-func setupRowService(t *testing.T) (svc *RowService, m *mocks.Storage, rowRepo *mocks.RowRepository, tableRepo *mocks.TableRepository) {
-	m = &mocks.Storage{}
+func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *mocks.RowRepository, tableRepo *mocks.TableRepository) {
+	m = &mocks.Adapter{}
 	tableRepo = &mocks.TableRepository{}
 	rowRepo = &mocks.RowRepository{}
 	m.On("Table", mock.Anything).Return(tableRepo, nil)
 	tableRepo.On("Rows").Return(rowRepo)
 
-	metadataCache := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
+	metadataCache := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
 	metadata := NewMetadataService(m, metadataCache, schema)
@@ -60,7 +59,7 @@ func Test_ConvertValue(t *testing.T) {
 
 func Test_RowService_ListRows(t *testing.T) {
 	svc, _, rowRepo, tableRepo := setupRowService(t)
-	meta := catalog.Metadata{TableId: "id-1"}
+	meta := storage.Metadata{TableId: "id-1"}
 
 	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]storage.Row{
 		{Pkey: "pk-1", Values: map[string]any{"createdAt": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}},
@@ -85,7 +84,7 @@ func Test_RowService_ListRows_ForwardsSort(t *testing.T) {
 	rowRepo.On("Page", mock.Anything, sort, int64(0), int64(10)).Return([]storage.Row{}, nil).Once()
 	tableRepo.On("Count", mock.Anything).Return(int64(0), nil).Once()
 
-	_, err := svc.ListRows(context.Background(), catalog.Metadata{TableId: "id-1"}, sort, 0, 10)
+	_, err := svc.ListRows(context.Background(), storage.Metadata{TableId: "id-1"}, sort, 0, 10)
 
 	require.NoError(t, err)
 }
@@ -98,7 +97,7 @@ func Test_RowService_ListRowsPage(t *testing.T) {
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "name", Type: "VARCHAR"}}, nil).Once()
 
-	rows, err := svc.ListRowsPage(context.Background(), catalog.Metadata{TableId: "id-1"}, 0, 10)
+	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -112,7 +111,7 @@ func Test_RowService_ListRowsPage_EmptyPage(t *testing.T) {
 
 	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return([]storage.Row{}, nil).Once()
 
-	rows, err := svc.ListRowsPage(context.Background(), catalog.Metadata{TableId: "id-1"}, 0, 10)
+	rows, err := svc.ListRowsPage(context.Background(), storage.Metadata{TableId: "id-1"}, 0, 10)
 
 	require.NoError(t, err)
 	assert.Empty(t, rows)
@@ -127,7 +126,7 @@ func Test_RowService_GetRowsByPkey(t *testing.T) {
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 
-	rows, err := svc.GetRowsByPkey(context.Background(), catalog.Metadata{TableId: "id-1"}, []string{"pk-1", "pk-2"})
+	rows, err := svc.GetRowsByPkey(context.Background(), storage.Metadata{TableId: "id-1"}, []string{"pk-1", "pk-2"})
 
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
@@ -140,7 +139,7 @@ func Test_RowService_GetRow_NotFound(t *testing.T) {
 
 	rowRepo.On("ByPkey", mock.Anything, []string{"missing"}).Return([]storage.Row{}, nil).Once()
 
-	row, err := svc.GetRow(context.Background(), catalog.Metadata{TableId: "id-1"}, "missing")
+	row, err := svc.GetRow(context.Background(), storage.Metadata{TableId: "id-1"}, "missing")
 
 	require.NoError(t, err)
 	assert.Nil(t, row)
@@ -155,7 +154,7 @@ func Test_RowService_GetDistinctValues(t *testing.T) {
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 
-	values, err := svc.GetDistinctValues(context.Background(), catalog.Metadata{TableId: "id-1"}, "createdAt", 0, 100)
+	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt", 0, 100)
 
 	require.NoError(t, err)
 	assert.Equal(t, []any{"2024-01-01", "2024-02-01"}, values)
@@ -177,7 +176,7 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			svc, m, rowRepo, _ := setupRowService(t)
 
 			updates := map[string]any{c.column: "value"}
-			meta := catalog.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}
+			meta := storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}
 			rowRepo.On("Update", mock.Anything, []string{"pk-1"}, updates).Return(nil).Once()
 			if c.wantRefresh {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
@@ -202,7 +201,7 @@ func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, rowRepo, _ := setupRowService(t)
-			meta := catalog.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+			meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
 
 			rowRepo.On("Insert", mock.Anything, c.values).Return("pk-1", nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
@@ -227,7 +226,7 @@ func Test_RowService_BulkInsertRows_RefreshesBboxOnlyIfAnyRowSetsGeometry(t *tes
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, rowRepo, _ := setupRowService(t)
-			meta := catalog.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+			meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
 
 			rowRepo.On("InsertMany", mock.Anything, c.rows).Return([]string{"pk-1", "pk-2"}, nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
@@ -252,7 +251,7 @@ func Test_RowService_RemoveRows_RefreshesBboxWhenTableIsGeo(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, rowRepo, _ := setupRowService(t)
-			meta := catalog.Metadata{TableId: "id-1", IsGeo: c.isGeo, GeometryColumn: "geom"}
+			meta := storage.Metadata{TableId: "id-1", IsGeo: c.isGeo, GeometryColumn: "geom"}
 
 			rowRepo.On("Delete", mock.Anything, []string{"pk-1"}).Return(nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()

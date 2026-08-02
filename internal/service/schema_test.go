@@ -10,12 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 	"darow/internal/storage/mocks"
 )
 
-func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage, *mocks.TableRepository) {
-	m := &mocks.Storage{}
+func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Adapter, *mocks.TableRepository) {
+	m := &mocks.Adapter{}
 	tableRepo := &mocks.TableRepository{}
 	c := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	svc := NewSchemaService(m, c)
@@ -25,7 +24,7 @@ func setupSchemaService(t *testing.T) (*SchemaService, *mocks.Storage, *mocks.Ta
 
 func Test_SchemaService_Schema(t *testing.T) {
 	svc, m, tableRepo := setupSchemaService(t)
-	meta := catalog.Metadata{TableId: "id-1"}
+	meta := storage.Metadata{TableId: "id-1"}
 
 	m.On("Table", meta).Return(tableRepo, nil).Once()
 	tableRepo.On("Schema", context.Background()).Return([]storage.ColumnInfo{
@@ -41,7 +40,7 @@ func Test_SchemaService_Schema(t *testing.T) {
 
 func Test_SchemaService_AddColumn(t *testing.T) {
 	svc, m, tableRepo := setupSchemaService(t)
-	meta := catalog.Metadata{TableId: "id-1"}
+	meta := storage.Metadata{TableId: "id-1"}
 
 	m.On("Table", meta).Return(tableRepo, nil).Once()
 	tableRepo.On("AddColumn", context.Background(), "height", "DOUBLE").Return(nil).Once()
@@ -64,7 +63,7 @@ func Test_SchemaService_InvalidateSchema(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, tableRepo := setupSchemaService(t)
-			meta := catalog.Metadata{TableId: "id-1"}
+			meta := storage.Metadata{TableId: "id-1"}
 
 			m.On("Table", meta).Return(tableRepo, nil).Once()
 			tableRepo.On("Schema", context.Background()).Return([]storage.ColumnInfo{{Name: "height", Type: "DOUBLE"}}, nil).Once()

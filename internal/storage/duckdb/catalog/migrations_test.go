@@ -10,13 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func openTestDB(t *testing.T, path string) *sql.DB {
-	db, err := sql.Open("duckdb", path)
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 func columnType(t *testing.T, db *sql.DB, table, column string) string {
 	var typ string
 	err := db.QueryRow(

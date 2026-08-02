@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"darow/internal/storage/catalog"
+	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
 
@@ -21,9 +21,9 @@ func (s *schemaInvalidatorSpy) InvalidateSchema(tableId string) {
 	s.invalidated = append(s.invalidated, tableId)
 }
 
-func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Storage, *schemaInvalidatorSpy) {
-	m := &mocks.Storage{}
-	c := expirable.NewLRU[string, catalog.Metadata](1000, nil, 5*time.Minute)
+func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Adapter, *schemaInvalidatorSpy) {
+	m := &mocks.Adapter{}
+	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schema := &schemaInvalidatorSpy{}
 	svc := NewMetadataService(m, c, schema)
 	t.Cleanup(func() { m.AssertExpectations(t) })
@@ -46,13 +46,13 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 			svc, m, _ := setupMetadataService(t)
 
 			if c.failStorage {
-				m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{}, errors.New("boom")).Once()
+				m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("boom")).Once()
 				_, err := svc.GetMetadata(context.Background(), "id-1")
 				assert.Error(t, err)
 				return
 			}
 
-			m.On("GetMetadata", mock.Anything, "id-1").Return(catalog.Metadata{TableId: "id-1"}, nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 			for i := 0; i < c.cacheHits; i++ {
 				meta, err := svc.GetMetadata(context.Background(), "id-1")
 				require.NoError(t, err)
@@ -64,7 +64,7 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 
 func Test_MetadataService_ListTables(t *testing.T) {
 	svc, m, _ := setupMetadataService(t)
-	want := []catalog.Metadata{{TableId: "id-1"}}
+	want := []storage.Metadata{{TableId: "id-1"}}
 	m.On("List", mock.Anything, mock.Anything, int64(0), int64(1)).Return(want, int64(2), nil).Once()
 
 	tables, total, err := svc.ListTables(context.Background(), nil, 0, 1)
@@ -81,7 +81,7 @@ func Test_MetadataService_ListTables(t *testing.T) {
 func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 	svc, m, _ := setupMetadataService(t)
 
-	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
 		{SourceName: "communes.geojson"}: "id-1",
 	}, nil).Once()
 
@@ -96,7 +96,7 @@ func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
 func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
 	svc, m, _ := setupMetadataService(t)
 
-	m.On("BySource", mock.Anything).Return(map[catalog.SourceKey]string{
+	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
 		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
 
@@ -120,7 +120,7 @@ func Test_MetadataService_RemoveTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, schema := setupMetadataService(t)
-			svc.cache.Add("id-1", catalog.Metadata{TableId: "id-1"})
+			svc.cache.Add("id-1", storage.Metadata{TableId: "id-1"})
 
 			var removeErr error
 			if c.failStorage {

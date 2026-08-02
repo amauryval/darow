@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 // metadataDTO is the JSON representation of a table's metadata.
@@ -23,7 +22,7 @@ type metadataDTO struct {
 	Srid           int    `json:"srid"`
 }
 
-func toMetadataDTO(m catalog.Metadata) metadataDTO {
+func toMetadataDTO(m storage.Metadata) metadataDTO {
 	return metadataDTO{
 		TableId:        m.TableId,
 		PhysicalName:   m.PhysicalName,
@@ -58,7 +57,7 @@ type spatialExtentDTO struct {
 // toCollectionDTO maps m's Bbox string ("minX,minY,maxX,maxY" in EPSG:4326)
 // to OGC's spatial-extent shape; a missing/malformed Bbox yields an empty
 // bbox list rather than an error, since extent is informational.
-func toCollectionDTO(m catalog.Metadata) collectionDTO {
+func toCollectionDTO(m storage.Metadata) collectionDTO {
 	dto := collectionDTO{Id: m.TableId, Title: m.TableName, ItemType: "feature", Extent: extentDTO{
 		Spatial: spatialExtentDTO{Crs: ogcCRS84},
 	}}

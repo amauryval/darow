@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
+	"darow/internal/storage"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
-
-	"darow/internal/storage/catalog"
 )
 
 // ColumnSchema describes a single column's name and DuckDB type.
@@ -37,7 +36,7 @@ func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSc
 // present: one DESCRIBE-driven population, not one per column, per cache
 // miss. meta is the caller's already-resolved metadata; only its TableId
 // is used as the cache key.
-func (s *SchemaService) Schema(ctx context.Context, meta catalog.Metadata) ([]ColumnSchema, error) {
+func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
 	if schema, ok := s.cache.Get(meta.TableId); ok {
 		return schema, nil
 	}
@@ -63,7 +62,7 @@ func (s *SchemaService) Schema(ctx context.Context, meta catalog.Metadata) ([]Co
 // Types returns meta's column-name-to-DuckDB-type map, from the same
 // cache as Schema, so converting row values (RowService.convertRow) never
 // issues one DESCRIBE call per column.
-func (s *SchemaService) Types(ctx context.Context, meta catalog.Metadata) (map[string]string, error) {
+func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[string]string, error) {
 	schema, err := s.Schema(ctx, meta)
 	if err != nil {
 		return nil, err
@@ -78,7 +77,7 @@ func (s *SchemaService) Types(ctx context.Context, meta catalog.Metadata) (map[s
 
 // AddColumn adds colName of type colType to meta's underlying table and
 // invalidates its cached schema.
-func (s *SchemaService) AddColumn(ctx context.Context, meta catalog.Metadata, colName, colType string) error {
+func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return err

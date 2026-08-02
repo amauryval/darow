@@ -1,0 +1,124 @@
+// Package mocks holds the testify doubles of storage's interfaces, one
+// file per file of storage that declares them. It is a normal package, not
+// a _test.go file, because Go cannot share test-only code across packages
+// and three of them need the same doubles (service, router, core); nothing
+// in cmd/server's import graph reaches it.
+package mocks
+
+import (
+	"context"
+
+	"github.com/stretchr/testify/mock"
+
+	"darow/internal/storage"
+)
+
+// Adapter is a testify mock of the storage engine: the same three
+// accessors *duckdb.Adapter exposes (Catalog, Materializer, Table), plus
+// every method behind them. Kept as one mock since a service-layer test
+// exercises catalogue, materializer and resolver methods interchangeably.
+type Adapter struct {
+	mock.Mock
+}
+
+var (
+	_ storage.Catalog           = (*Adapter)(nil)
+	_ storage.TableMaterializer = (*Adapter)(nil)
+)
+
+// Catalog returns m itself: Adapter already implements storage.Catalog, so
+// core.storageAdapter's accessor is satisfied without a separate type.
+func (m *Adapter) Catalog() storage.Catalog {
+	return m
+}
+
+// Materializer returns m itself, for the same reason as Catalog.
+func (m *Adapter) Materializer() storage.TableMaterializer {
+	return m
+}
+
+func (m *Adapter) PhysicalNames(ctx context.Context) (map[string]bool, error) {
+	callArgs := m.Called(ctx)
+	names, _ := callArgs.Get(0).(map[string]bool)
+	return names, callArgs.Error(1)
+}
+
+func (m *Adapter) TableIds(ctx context.Context, sort []storage.SortField) ([]string, error) {
+	callArgs := m.Called(ctx, sort)
+	ids, _ := callArgs.Get(0).([]string)
+	return ids, callArgs.Error(1)
+}
+
+func (m *Adapter) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
+	callArgs := m.Called(ctx, sort, offset, limit)
+	tables, _ := callArgs.Get(0).([]storage.Metadata)
+	total, _ := callArgs.Get(1).(int64)
+	return tables, total, callArgs.Error(2)
+}
+
+func (m *Adapter) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
+	callArgs := m.Called(ctx)
+	bySource, _ := callArgs.Get(0).(map[storage.SourceKey]string)
+	return bySource, callArgs.Error(1)
+}
+
+func (m *Adapter) TableExists(ctx context.Context, tableId string) (bool, error) {
+	callArgs := m.Called(ctx, tableId)
+	return callArgs.Bool(0), callArgs.Error(1)
+}
+
+func (m *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
+	callArgs := m.Called(ctx, tableId)
+	meta, _ := callArgs.Get(0).(storage.Metadata)
+	return meta, callArgs.Error(1)
+}
+
+func (m *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
+	callArgs := m.Called(ctx, tableName, isGeo, geometryColumn)
+	return callArgs.String(0), callArgs.Error(1)
+}
+
+func (m *Adapter) Remove(ctx context.Context, tableId string) error {
+	return m.Called(ctx, tableId).Error(0)
+}
+
+func (m *Adapter) UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error {
+	return m.Called(ctx, tableId, patch).Error(0)
+}
+
+func (m *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
+	return m.Called(ctx, tableId, touchesGeometry).Error(0)
+}
+
+// Table resolves meta into a storage.TableRepository — the entrypoint
+// RowService/SchemaService/GeoService use to reach a table's data. Matched
+// on the full meta value, unlike catalogue methods, since a test controls
+// the returned TableRepository's behavior (via a mocks.TableRepository),
+// which must reflect the same Metadata the production resolver would have
+// seen.
+func (m *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
+	callArgs := m.Called(meta)
+	repo, _ := callArgs.Get(0).(storage.TableRepository)
+	return repo, callArgs.Error(1)
+}
+
+func (m *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
+	callArgs := m.Called(ctx, physicalName, sourcePath, layer, sridOverride)
+	return callArgs.String(0), callArgs.Bool(1), callArgs.Int(2), callArgs.Error(3)
+}
+
+func (m *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
+	callArgs := m.Called(ctx, physicalName, sourceQuery)
+	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
+}
+
+func (m *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, error) {
+	callArgs := m.Called(ctx, sourcePath)
+	layers, _ := callArgs.Get(0).([]string)
+	return layers, callArgs.Error(1)
+}
+
+func (m *Adapter) DetectCRS(ctx context.Context, sourcePath, layer string) (string, int, error) {
+	callArgs := m.Called(ctx, sourcePath, layer)
+	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
+}

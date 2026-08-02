@@ -11,8 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
+
+// This package owns adapter.go alone: the connection, the write
+// serialization, and the three accessors wiring duckdb/catalog to
+// duckdb/tables. Its tests cover exactly that — each sub-package tests its
+// own behaviour against a plain *sql.DB.
 
 func setupAdapter(t *testing.T) *Adapter {
 	a, err := New(":memory:", 4)
@@ -21,28 +25,33 @@ func setupAdapter(t *testing.T) *Adapter {
 	return a
 }
 
-func createScalarTable(t *testing.T, a *Adapter) catalog.Metadata {
-	tableId, err := a.Create(context.Background(), "widgets", false, "")
+// newTable registers a logical table and materializes it from a two-point
+// GeoJSON source, going through both accessors the way a service does.
+func newTable(t *testing.T, a *Adapter) storage.Metadata {
+	ctx := context.Background()
+
+	path := filepath.Join(t.TempDir(), "points.geojson")
+	content := `{
+		"type": "FeatureCollection",
+		"features": [
+			{"type": "Feature", "properties": {"name": "a"}, "geometry": {"type": "Point", "coordinates": [2.35, 48.85]}},
+			{"type": "Feature", "properties": {"name": "b"}, "geometry": {"type": "Point", "coordinates": [4.83, 45.76]}}
+		]
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	tableId, err := a.Catalog().Create(ctx, "points", false, "")
+	require.NoError(t, err)
+	meta, err := a.Catalog().GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
-	meta, err := a.GetMetadata(context.Background(), tableId)
+	geometryColumn, isGeo, _, err := a.Materializer().CreateFromFile(ctx, meta.PhysicalName, path, "", 0)
 	require.NoError(t, err)
+	require.NoError(t, a.Catalog().UpdateMetadata(ctx, tableId, storage.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
 
-	_, err = a.Exec(context.Background(), "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY, name TEXT)")
+	meta, err = a.Catalog().GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 	return meta
-}
-
-func createGeoTable(t *testing.T, a *Adapter) (meta catalog.Metadata, geomCol string) {
-	tableId, err := a.Create(context.Background(), "buildings", true, "geom")
-	require.NoError(t, err)
-
-	meta, err = a.GetMetadata(context.Background(), tableId)
-	require.NoError(t, err)
-
-	_, err = a.Exec(context.Background(), "CREATE TABLE "+meta.PhysicalName+" (__pkey TEXT PRIMARY KEY, geom GEOMETRY)")
-	require.NoError(t, err)
-	return meta, "geom"
 }
 
 func Test_New_InitializesSchemaIdempotently(t *testing.T) {
@@ -51,7 +60,7 @@ func Test_New_InitializesSchemaIdempotently(t *testing.T) {
 	_, err := New(":memory:", 4)
 	require.NoError(t, err)
 
-	ids, err := a.TableIds(context.Background(), nil)
+	ids, err := a.Catalog().TableIds(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, ids)
 }
@@ -73,161 +82,89 @@ func Test_New_AllowsPooledConcurrentConnections(t *testing.T) {
 	assert.Equal(t, 4, a.db.Stats().MaxOpenConnections)
 }
 
-func Test_Adapter_CreateAndGetMetadata(t *testing.T) {
+// Table resolves a catalogue-produced Metadata into a working repository:
+// the third accessor, and the only path from a tableId to its rows.
+func Test_Adapter_Table_ResolvesCatalogueMetadata(t *testing.T) {
 	a := setupAdapter(t)
+	meta := newTable(t, a)
 
-	meta := createScalarTable(t, a)
-
-	refreshed, err := a.GetMetadata(context.Background(), meta.TableId)
-	require.NoError(t, err)
-	assert.Equal(t, "widgets", refreshed.TableName)
-	assert.False(t, refreshed.IsGeo)
-	assert.Contains(t, refreshed.PhysicalName, "t_")
-}
-
-func Test_Adapter_InsertRow_And_GetRowsByPkey(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
 	repo, err := a.Table(meta)
 	require.NoError(t, err)
 
-	pkey, err := repo.Rows().Insert(context.Background(), map[string]any{"name": "widget-1"})
+	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
+	assert.EqualValues(t, 2, count)
 
-	rows, err := repo.Rows().ByPkey(context.Background(), []string{pkey})
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, "widget-1", rows[0].Values["name"])
+	_, isGeo := repo.Geo()
+	assert.True(t, isGeo, "a table materialized from a geo source resolves as geo")
 }
 
-func Test_Adapter_BulkInsert_TransactionalAndConcurrencySafe(t *testing.T) {
+// Every write goes through the adapter's single writeMu, so concurrent
+// multi-row inserts neither interleave nor lose rows.
+func Test_Adapter_ConcurrentBulkInsertsAreSerialized(t *testing.T) {
 	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-	repo, err := a.Table(meta)
+	repo, err := a.Table(newTable(t, a))
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
-		go func(n int) {
+		go func() {
 			defer wg.Done()
 			_, err := repo.Rows().InsertMany(context.Background(), []map[string]any{
 				{"name": "a"}, {"name": "b"},
 			})
 			assert.NoError(t, err)
-		}(i)
+		}()
 	}
 	wg.Wait()
 
 	count, err := repo.Count(context.Background())
 	require.NoError(t, err)
-	assert.EqualValues(t, 20, count)
+	assert.EqualValues(t, 22, count)
 }
 
-func Test_Adapter_Update_GeometryColumn_InvalidWKT(t *testing.T) {
+// Catalog().Remove drops the physical table through the materializer the
+// adapter wired into it — the one behaviour neither sub-package can prove
+// on its own, since neither imports the other.
+func Test_Adapter_CatalogRemove_DropsThePhysicalTable(t *testing.T) {
 	a := setupAdapter(t)
-	meta, geomCol := createGeoTable(t, a)
-	repo, err := a.Table(meta)
-	require.NoError(t, err)
+	meta := newTable(t, a)
+	ctx := context.Background()
 
-	pkey, err := repo.Rows().Insert(context.Background(), map[string]any{})
-	require.NoError(t, err)
+	require.NoError(t, a.Catalog().Remove(ctx, meta.TableId))
 
-	err = repo.Rows().Update(context.Background(), []string{pkey}, map[string]any{geomCol: "not-a-valid-wkt"})
-	assert.Error(t, err)
-
-	err = repo.Rows().Update(context.Background(), []string{pkey}, map[string]any{geomCol: "POINT(1 2)"})
-	assert.NoError(t, err)
-}
-
-func Test_Adapter_GetPkeys_OrderedDeterministically(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-	repo, err := a.Table(meta)
-	require.NoError(t, err)
-
-	for i := 0; i < 5; i++ {
-		_, err := repo.Rows().Insert(context.Background(), map[string]any{"name": "x"})
-		require.NoError(t, err)
-	}
-
-	pkeys, err := repo.Rows().Pkeys(context.Background(), nil, 0, 100)
-	require.NoError(t, err)
-	assert.Len(t, pkeys, 5)
-	assert.True(t, sortedAscending(pkeys))
-}
-
-func Test_Adapter_GetPkeys_MultiColumnSort(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-	repo, err := a.Table(meta)
-	require.NoError(t, err)
-
-	pkA, err := repo.Rows().Insert(context.Background(), map[string]any{"name": "a"})
-	require.NoError(t, err)
-	pkB, err := repo.Rows().Insert(context.Background(), map[string]any{"name": "b"})
-	require.NoError(t, err)
-
-	pkeys, err := repo.Rows().Pkeys(context.Background(), []storage.SortField{{Column: "name", Desc: true}}, 0, 100)
-	require.NoError(t, err)
-	assert.Equal(t, []string{pkB, pkA}, pkeys)
-
-	_, err = repo.Rows().Pkeys(context.Background(), []storage.SortField{{Column: "no such column"}}, 0, 100)
-	assert.Error(t, err)
-}
-
-func Test_Adapter_TableIds_Sort(t *testing.T) {
-	a := setupAdapter(t)
-
-	id1, err := a.Create(context.Background(), "b-table", false, "")
-	require.NoError(t, err)
-	id2, err := a.Create(context.Background(), "a-table", false, "")
-	require.NoError(t, err)
-
-	ids, err := a.TableIds(context.Background(), []storage.SortField{{Column: "tableName"}})
-	require.NoError(t, err)
-	assert.Equal(t, []string{id2, id1}, ids)
-
-	_, err = a.TableIds(context.Background(), []storage.SortField{{Column: "bogus"}})
-	assert.Error(t, err)
-}
-
-func sortedAscending(s []string) bool {
-	for i := 1; i < len(s); i++ {
-		if s[i-1] > s[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func Test_Adapter_RemoveRows(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-	repo, err := a.Table(meta)
-	require.NoError(t, err)
-
-	pkey, err := repo.Rows().Insert(context.Background(), map[string]any{"name": "x"})
-	require.NoError(t, err)
-
-	require.NoError(t, repo.Rows().Delete(context.Background(), []string{pkey}))
-
-	rows, err := repo.Rows().ByPkey(context.Background(), []string{pkey})
-	require.NoError(t, err)
-	assert.Empty(t, rows)
-}
-
-func Test_Adapter_Remove_DropsTableAndMetadata(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-
-	require.NoError(t, a.Remove(context.Background(), meta.TableId))
-
-	exists, err := a.TableExists(context.Background(), meta.TableId)
+	exists, err := a.Catalog().TableExists(ctx, meta.TableId)
 	require.NoError(t, err)
 	assert.False(t, exists)
+
+	var physical int
+	require.NoError(t, a.QueryRow(ctx, `SELECT COUNT(*) FROM duckdb_tables() WHERE table_name = ?`, meta.PhysicalName).Scan(&physical))
+	assert.Zero(t, physical, "the metadata row and its physical table go together")
 }
 
+// The materializer validates a derived query against the catalogue's
+// physical-name allowlist the adapter wired into it — the other half of
+// the cross-package wiring.
+func Test_Adapter_CreateFromQuery_ResolvesAgainstTheCatalogue(t *testing.T) {
+	a := setupAdapter(t)
+	source := newTable(t, a)
+	ctx := context.Background()
+
+	derivedId, err := a.Catalog().Create(ctx, "derived", false, "")
+	require.NoError(t, err)
+	derived, err := a.Catalog().GetMetadata(ctx, derivedId)
+	require.NoError(t, err)
+
+	_, _, err = a.Materializer().CreateFromQuery(ctx, derived.PhysicalName, "SELECT name FROM "+source.PhysicalName)
+	require.NoError(t, err)
+
+	_, _, err = a.Materializer().CreateFromQuery(ctx, derived.PhysicalName, "SELECT * FROM t_not_registered")
+	assert.Error(t, err, "a table absent from the catalogue is not derivable")
+}
+
+// Ping backs /readyz: it answers for the spatial extension too, since
+// every geo route depends on an extension loaded once at open.
 func Test_Adapter_Ping(t *testing.T) {
 	a := setupAdapter(t)
 
@@ -240,20 +177,4 @@ func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
 	require.NoError(t, a.Close())
 
 	assert.Error(t, a.Ping(context.Background()))
-}
-
-func Test_Adapter_RefreshDerivedMetadata(t *testing.T) {
-	a := setupAdapter(t)
-	meta := createScalarTable(t, a)
-	repo, err := a.Table(meta)
-	require.NoError(t, err)
-
-	_, err = repo.Rows().Insert(context.Background(), map[string]any{"name": "x"})
-	require.NoError(t, err)
-
-	require.NoError(t, a.RefreshDerivedMetadata(context.Background(), meta.TableId, false))
-
-	refreshed, err := a.GetMetadata(context.Background(), meta.TableId)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, refreshed.RowCount)
 }

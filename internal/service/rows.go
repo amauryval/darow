@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
-	"darow/internal/storage/data"
 )
 
 // RowsPage is a paginated slice of rows, as returned by ListRows.
@@ -45,20 +43,20 @@ type metadataRefresher interface {
 // per request, validating its identifiers at construction, rather than
 // passing Metadata to each individual storage call.
 type tableResolver interface {
-	Table(meta catalog.Metadata) (data.TableRepository, error)
+	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
 // columnTyper is what RowService needs from SchemaService: the cached
 // column-name-to-type map, so converting a row's values never
 // issues one DESCRIBE per column.
 type columnTyper interface {
-	Types(ctx context.Context, meta catalog.Metadata) (map[string]string, error)
+	Types(ctx context.Context, meta storage.Metadata) (map[string]string, error)
 }
 
 // RowService provides row CRUD on top of the storage layer, converting
 // values to native JSON types and excluding the geometry
 // column from reads. Every method takes the caller's
-// already-resolved catalog.Metadata rather than a tableId, so it
+// already-resolved storage.Metadata rather than a tableId, so it
 // never re-fetches metadata the router's tableMiddleware already read
 // once for the request.
 type RowService struct {
@@ -84,7 +82,7 @@ func convertRow(types map[string]string, row storage.Row) storage.Row {
 
 // convertRows resolves meta's column types once rather than once
 // per row, then converts every row's values to native JSON types.
-func (s *RowService) convertRows(ctx context.Context, meta catalog.Metadata, rows []storage.Row) ([]storage.Row, error) {
+func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, rows []storage.Row) ([]storage.Row, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -104,7 +102,7 @@ func (s *RowService) convertRows(ctx context.Context, meta catalog.Metadata, row
 // ListRows returns a page of rows ordered by sort, or deterministically by
 // pkey when empty, with values converted to native JSON types
 // and the geometry column always excluded.
-func (s *RowService) ListRows(ctx context.Context, meta catalog.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
+func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -133,7 +131,7 @@ func (s *RowService) ListRows(ctx context.Context, meta catalog.Metadata, sort [
 // page-by-page streaming, which only needs to know whether a page
 // came back short (the last page) and has no use for a running total that
 // would otherwise mean one extra COUNT(*) per page.
-func (s *RowService) ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error) {
+func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -149,7 +147,7 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta catalog.Metadata, of
 // GetRowsByPkey fetches full rows for the given primary keys (order not
 // guaranteed to match pkeys), with values converted to native JSON types
 // and the geometry column excluded.
-func (s *RowService) GetRowsByPkey(ctx context.Context, meta catalog.Metadata, pkeys []string) ([]storage.Row, error) {
+func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -162,7 +160,7 @@ func (s *RowService) GetRowsByPkey(ctx context.Context, meta catalog.Metadata, p
 }
 
 // GetRow fetches a single row by pkey, or nil if it does not exist.
-func (s *RowService) GetRow(ctx context.Context, meta catalog.Metadata, pkey string) (*storage.Row, error) {
+func (s *RowService) GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -185,12 +183,12 @@ func (s *RowService) GetRow(ctx context.Context, meta catalog.Metadata, pkey str
 // ListRowsWithFilter returns rows matching filter, produced exclusively by
 // storage.BuildFilter, with values converted to native JSON
 // types.
-func (s *RowService) ListRowsWithFilter(ctx context.Context, meta catalog.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
+func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := repo.Rows().Filtered(ctx, data.RowQuery{Filter: filter, Args: args}, limit)
+	rows, err := repo.Rows().Filtered(ctx, storage.RowQuery{Filter: filter, Args: args}, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +198,7 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta catalog.Metada
 // GetDistinctValues returns a page of up to limit of column's distinct
 // values, skipping offset matches first, converted to native
 // JSON types the same way row reads are.
-func (s *RowService) GetDistinctValues(ctx context.Context, meta catalog.Metadata, column string, offset, limit int) ([]any, error) {
+func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -228,7 +226,7 @@ func (s *RowService) GetDistinctValues(ctx context.Context, meta catalog.Metadat
 // RefreshDerived, which recomputes bbox and bumps UpdatedAt — the signal
 // that invalidates GeoService's tile cache and MetadataService's cache.
 // Updating only scalar fields triggers neither.
-func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys []string, updates map[string]any) error {
+func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return err
@@ -248,7 +246,7 @@ func (s *RowService) UpdateRow(ctx context.Context, meta catalog.Metadata, pkeys
 
 // InsertRow inserts a single row and refreshes derived metadata,
 // recomputing bbox only if values sets the geometry column.
-func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, values map[string]any) (string, error) {
+func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return "", err
@@ -267,7 +265,7 @@ func (s *RowService) InsertRow(ctx context.Context, meta catalog.Metadata, value
 // BulkInsertRows inserts every row in a single transaction and refreshes
 // derived metadata, recomputing bbox only if at least
 // one row sets the geometry column.
-func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, rows []map[string]any) ([]string, error) {
+func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, err
@@ -292,7 +290,7 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta catalog.Metadata, 
 // RemoveRows deletes the given rows and refreshes derived metadata.
 // A removed geo row can always have sat on the bbox's boundary,
 // so bbox is recomputed whenever the table is geo.
-func (s *RowService) RemoveRows(ctx context.Context, meta catalog.Metadata, pkeys []string) error {
+func (s *RowService) RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return err

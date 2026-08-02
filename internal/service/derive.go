@@ -2,11 +2,10 @@ package service
 
 import (
 	"context"
+	"darow/internal/storage"
 	"fmt"
 	"regexp"
 	"strings"
-
-	"darow/internal/storage/catalog"
 )
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
@@ -32,9 +31,9 @@ func validateSelectOnly(query string) error {
 // materializing its physical table fails — declared here, the consumer,
 // rather than depending on the concrete *MetadataService.
 type metadataStore interface {
-	GetMetadata(ctx context.Context, tableId string) (catalog.Metadata, error)
+	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error)
-	UpdateMetadata(ctx context.Context, tableId string, patch catalog.MetadataPatch) error
+	UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error
 	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
 	Rollback(ctx context.Context, tableId string, cause error) error
 }
@@ -82,7 +81,7 @@ func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName str
 	}
 
 	if isGeo {
-		if err := s.metadata.UpdateMetadata(ctx, tableId, catalog.MetadataPatch{
+		if err := s.metadata.UpdateMetadata(ctx, tableId, storage.MetadataPatch{
 			IsGeo: &isGeo, GeometryColumn: &geometryColumn,
 		}); err != nil {
 			return "", s.metadata.Rollback(ctx, tableId, err)

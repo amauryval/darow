@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 func Test_NewTableResolver(t *testing.T) {
@@ -39,7 +38,7 @@ func Test_TableResolver_ResolveTable(t *testing.T) {
 			metadataSvc := &mockMetadataGetter{}
 			tr := TableResolver{metadataService: metadataSvc}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1", nil)

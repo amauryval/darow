@@ -2,60 +2,12 @@ package catalog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	catalogcontract "darow/internal/storage/catalog"
 )
-
-// dbTxRunner adapts a plain *sql.DB to TxRunner for tests — no writeMu to
-// serialize against, since these tests never run concurrent writes.
-type dbTxRunner struct{ db *sql.DB }
-
-func (r dbTxRunner) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// fakeAttachment records every DeleteAttached call it receives, optionally
-// failing with err, to prove Catalog.Remove both cascades and rolls back.
-type fakeAttachment struct {
-	err   error
-	calls []string
-}
-
-func (a *fakeAttachment) DeleteAttached(ctx context.Context, uow catalogcontract.UnitOfWork, tableId string) error {
-	a.calls = append(a.calls, tableId)
-	return a.err
-}
-
-// fakeDropper drops physicalName with raw DDL, standing in for
-// duckdb/data's lifecycle so this package's tests never depend on it.
-type fakeDropper struct{}
-
-func (fakeDropper) Drop(ctx context.Context, uow catalogcontract.UnitOfWork, physicalName string) error {
-	tx := uow.(*sql.Tx)
-	_, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS "+physicalName)
-	return err
-}
-
-func newTestCatalog(t *testing.T) *Catalog {
-	db := openTestDB(t, ":memory:")
-	require.NoError(t, Migrate(db))
-	return NewCatalog(dbQuerier{db}, dbTxRunner{db}, fakeDropper{})
-}
 
 func Test_Catalog_Remove_CascadesToRegisteredRepositories(t *testing.T) {
 	c := newTestCatalog(t)
@@ -106,6 +58,9 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 
 	tableId, err := c.Create(ctx, "widgets", false, "")
 	require.NoError(t, err)
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	materialize(t, c.conn.(dbQuerier), meta.PhysicalName)
 
 	failing := errors.New("child delete failed")
 	c.Register(&fakeAttachment{err: failing})

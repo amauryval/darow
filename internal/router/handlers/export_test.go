@@ -12,7 +12,6 @@ import (
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 func Test_newExportHandler(t *testing.T) {
@@ -23,7 +22,7 @@ func Test_newExportHandler(t *testing.T) {
 
 	assert.Same(t, exportSvc, eh.exportService)
 
-	meta := catalog.Metadata{TableId: "t1"}
+	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 	got, ok := eh.ResolveTable(httptest.NewRecorder(), req)
@@ -40,18 +39,18 @@ type fakeExportDeps struct {
 	rows   []storage.Row
 }
 
-func (f fakeExportDeps) Schema(ctx context.Context, meta catalog.Metadata) ([]service.ColumnSchema, error) {
+func (f fakeExportDeps) Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error) {
 	return f.schema, nil
 }
 
-func (f fakeExportDeps) ListRowsPage(ctx context.Context, meta catalog.Metadata, offset, limit int64) ([]storage.Row, error) {
+func (f fakeExportDeps) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
 	if offset > 0 {
 		return nil, nil
 	}
 	return f.rows, nil
 }
 
-func (f fakeExportDeps) GetGeometryGeoJSON(ctx context.Context, meta catalog.Metadata, pkeys []string) (map[string]string, error) {
+func (f fakeExportDeps) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
 
@@ -77,7 +76,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 			exportSvc := service.NewExportService(deps, deps, deps, 100)
 			eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
-			meta := catalog.Metadata{TableId: "t1", TableName: "t1", IsGeo: c.isGeo}
+			meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: c.isGeo}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 
 			target := "/api/v1/tables/t1/export"

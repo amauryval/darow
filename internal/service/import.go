@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
+	"darow/internal/storage"
 	"fmt"
 	"strings"
-
-	"darow/internal/storage/catalog"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:
@@ -81,7 +80,7 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 	if layer != "" {
 		sourceName = strings.TrimSuffix(name, layerSeparator+layer)
 	}
-	patch := catalog.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
+	patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
 	if isGeo {
 		patch.IsGeo = &isGeo
 		patch.GeometryColumn = &geometryColumn

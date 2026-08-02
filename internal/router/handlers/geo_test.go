@@ -14,7 +14,6 @@ import (
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 func Test_newGeoHandler(t *testing.T) {
@@ -26,7 +25,7 @@ func Test_newGeoHandler(t *testing.T) {
 
 	assert.Same(t, geoSvc, gh.geoService)
 
-	meta := catalog.Metadata{TableId: "t1"}
+	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1", nil, map[string]string{"tableId": "t1"})
 	got, ok := gh.ResolveTable(httptest.NewRecorder(), req)
@@ -94,7 +93,7 @@ func Test_parseTileAttrs(t *testing.T) {
 
 func Test_tileETag(t *testing.T) {
 	updatedAt := time.Now()
-	meta := catalog.Metadata{TableId: "t1", UpdatedAt: updatedAt}
+	meta := storage.Metadata{TableId: "t1", UpdatedAt: updatedAt}
 
 	etag1 := tileETag(meta, 1, 2, 3, []string{"b", "a"}, storage.GeoQuery{})
 	etag2 := tileETag(meta, 1, 2, 3, []string{"a", "b"}, storage.GeoQuery{})
@@ -109,7 +108,7 @@ func Test_tileETag(t *testing.T) {
 // A filter value containing a double quote must never produce a malformed
 // ETag header (RFC 9110 §8.8.3) — the material is hashed, not interpolated.
 func Test_tileETag_QuoteInFilterArgDoesNotBreakQuoting(t *testing.T) {
-	meta := catalog.Metadata{TableId: "t1", UpdatedAt: time.Now()}
+	meta := storage.Metadata{TableId: "t1", UpdatedAt: time.Now()}
 
 	etag := tileETag(meta, 1, 2, 3, nil, storage.GeoQuery{Filter: "name = ?", Args: []any{`va"lue`}})
 
@@ -150,7 +149,7 @@ func Test_geoHandler_getTile(t *testing.T) {
 				geoService:      geoSvc,
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.coords["z"] != "a" {
 				schemaSvc.On("Schema", mock.Anything, meta).Return(nil, c.schemaErr).Maybe()
@@ -191,7 +190,7 @@ func Test_geoHandler_getTile_NotModifiedWhenETagMatches(t *testing.T) {
 		geoService:      geoSvc,
 	}
 
-	meta := catalog.Metadata{TableId: "t1", UpdatedAt: time.Unix(1, 0)}
+	meta := storage.Metadata{TableId: "t1", UpdatedAt: time.Unix(1, 0)}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
 
@@ -236,7 +235,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 			geoSvc := &mockGeoAPI{}
 			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000})
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && c.coords["z"] != "a" {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status"}}, c.schemaErr).Maybe()
@@ -270,7 +269,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	geoSvc := &mockGeoAPI{}
 	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{DefaultFeaturesLimit: 1, MaxFeaturesLimit: 10000})
 
-	meta := catalog.Metadata{TableId: "t1"}
+	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
 	geoSvc.On("GetFeaturesTile", mock.Anything, meta, 1, 2, 3, []string(nil), mock.Anything, 1, 3).
@@ -308,7 +307,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 			geoSvc := &mockGeoAPI{}
 			gh := &GeoHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				geoSvc.On("GeometryTypes", mock.Anything, meta).Return([]string{"POLYGON"}, c.typesErr).Once()
@@ -348,7 +347,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 				apiCfg:        config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			bbox := [4]float64{1, 2, 3, 4}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -395,7 +394,7 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 				geoService:    geoSvc,
 			}
 
-			meta := catalog.Metadata{TableId: "t1"}
+			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), c.schemaErr).Once()

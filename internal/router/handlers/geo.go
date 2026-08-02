@@ -15,7 +15,6 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/storage"
-	"darow/internal/storage/catalog"
 )
 
 // GeoHandler serves geo-specific endpoints: MVT tiles, geometry types, and
@@ -212,7 +211,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 // directly: q.Args comes from a client-supplied "?filter=" and could
 // contain a double quote, which would otherwise produce a malformed
 // ETag header (RFC 9110 §8.8.3).
-func tileETag(meta catalog.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
+func tileETag(meta storage.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
 	sorted := slices.Clone(attrs)
 	slices.Sort(sorted)
 	material := fmt.Sprintf("%s-%d-%d-%d-%d-%s-%s-%v", meta.TableId, z, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sorted, ","), q.Filter, q.Args)

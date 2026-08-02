@@ -109,12 +109,9 @@ identifier, storage knows neither HTTP nor the application caches.
 | `internal/router/validation` | `{tableId}` resolution, column-name validation |
 | `internal/router/response` | JSON writing, standard error body, error → status mapping |
 | `internal/service` | application logic, caches, orchestration |
-| `internal/storage` | engine-agnostic contracts and primitives (`Row`/`GeoFeature`, `BuildFilter`, identifiers) |
-| `internal/storage/catalog` | backend-agnostic catalogue contract (`Metadata`, `MetadataManager`, `Catalog`) |
-| `internal/storage/data` | backend-agnostic data-table contract (`TableResolver`, `TableRepository`, `RowRepository`, `GeoRepository`, `TableLifecycle`, `SourceIntrospector`) |
-| `internal/storage/duckdb` | the DuckDB implementation (sub-packages `catalog/` and `data/`) |
-| `internal/storage/storagetest` | conformance suite reusable by any adapter |
-| `internal/storage/mocks` | testify mocks of the `catalog` and `data` contracts |
+| `internal/storage` | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer` |
+| `internal/storage/duckdb` | the single implementation (sub-packages `catalog/` and `data/`) |
+| `internal/storage/mocks` | testify doubles of `storage`'s interfaces (`Adapter`, the three repositories), one file per file of `storage` declaring them |
 | `internal/webui` | `go:embed` of the Vue SPA's production build |
 
 **Interface pattern.** Each consumer declares the narrow interface it needs, in its own package,
@@ -261,6 +258,43 @@ source by a coincidence of names.
 
 ## 4. Storage layer
 
+Four packages, and a single import direction — nothing under `duckdb/` is ever named above it:
+
+```mermaid
+graph TD
+    SVC["internal/service<br/>(narrow ports)"] --> ST
+    CORE["internal/core<br/>storageAdapter"] --> ST
+
+    subgraph ST["internal/storage — types + interfaces"]
+        C["Catalog"]
+        TR["TableRepository<br/>RowRepository · GeoRepository"]
+        TL["TableMaterializer"]
+    end
+
+    A["duckdb.Adapter<br/>pool · writeMu · WithTx"]
+    A -- "Catalog()" --> C
+    A -- "Table(meta)" --> TR
+    A -- "Materializer()" --> TL
+
+    DC["duckdb/catalog<br/>metadata · migrations · delete cascade"] -.implements.-> C
+    DD["duckdb/tables<br/>resolution · rows · geo/MVT · materialization · introspection"] -.implements.-> TR
+    DD -.implements.-> TL
+
+    A --> DC
+    A --> DD
+    DC -- "Dropper · ExistingTables (functions)" --> DD
+    DD -- "PhysicalNames" --> DC
+
+    MK["storage/mocks"] -.implements.-> C
+    MK -.implements.-> TR
+    MK -.implements.-> TL
+```
+
+A service holds an interface, never `*duckdb.Adapter`. `Adapter` owns the connection and hands out
+its three components; the two sub-packages implement the contracts and **never import each other** —
+each link between them is a one-method interface declared on the consumer's side and wired in `New`
+(§4.6).
+
 ### 4.1 The `metadata` catalogue
 
 A system table, one record per logical table. Columns:
@@ -295,7 +329,9 @@ replaces the primary key constraint, which DuckDB does not allow adding after a 
 
 For a geo table: an RTREE index on the geometry column (rule 19), and **Hilbert clustering** — rows
 are physically reordered along a Hilbert curve on the geometry, so that tile scans prune by spatial
-locality. Clustering rebuilds the table, so both indexes are created **after** it, never before.
+locality. Clustering rebuilds the table, so both indexes are created **after** it, never before, and
+their presence is then **asserted against `duckdb_indexes()`** (§4.8) rather than assumed: a missing
+RTREE index degrades every tile scan without failing anything, so the load fails instead.
 
 **Access contract (referred to as "§4.2" in the code).** Every storage method reading or writing
 data takes the `storage.Metadata` **already resolved** by the caller, never a `tableId`. The
@@ -319,47 +355,40 @@ from validation before interpolation, not from the allowed character set**.
 
 ### 4.4 Go contracts
 
-Files: `internal/storage/metadata.go`, `feature.go`, `geoquery.go`, `sort.go`,
-`internal/storage/catalog/`, `internal/storage/data/`.
+Files: `internal/storage/catalog.go`, `table.go`, `row.go`, `feature.go`, `geoquery.go`, `sort.go`.
 
-The catalogue (`storage/catalog`) and the data tables (`storage/data`) are two distinct
-backend-agnostic contracts, with no reference to DuckDB nor to each other:
+`storage` declares both the types crossing the layer and the interfaces its single engine
+implements. There is one implementation of each — DuckDB (LIM-9) — so they exist to keep the
+consumers off the concrete type and to be mockable (§10), not to make a second backend possible:
 
-| Interface | Package | Responsibility |
-|---|---|---|
-| `MetadataReader` | `catalog` | `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource` |
-| `MetadataWriter` | `catalog` | `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata` |
-| `Catalog` | `catalog` | the catalogue aggregate — `MetadataManager` plus `PhysicalNames` (the registered-table allowlist `/derive` validates against) and `Register(Attachment)`, the construction-time extension point through which a catalogue-attached repository joins the whole-table delete cascade |
-| `TableResolver` | `data` | `Table(meta) (TableRepository, error)` — the only entry point to a resolved table |
-| `TableRepository` | `data` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
-| `RowRepository` | `data` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
-| `GeoRepository` | `data` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
-| `TableLifecycle` | `data` | `CreateFromFile`, `CreateFromQuery`, `Drop(ctx, uow, physicalName)` — materializes (from a source file or a derived SELECT), indexes, clusters and drops a table's physical backing store; `TableResolver`/`TableRepository` assume a table already in that state |
-| `SourceIntrospector` | `data` | `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists (layers it exposes, its declared CRS), used to preview a source rather than to materialize one |
-| `SQLWrapper` | `storage` | `Query`, `QueryRow`, `Exec`, `Begin` — an implementation detail of the `duckdb` package, used by the conformance suites, never by a service |
+| Interface | Responsibility |
+|---|---|
+| `Catalog` | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone — an interrupted rollback — reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
+| `TableRepository` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
+| `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
+| `GeoRepository` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
+| `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized |
 
-`Catalog.Register` takes an `Attachment` (`DeleteAttached(ctx, uow UnitOfWork, tableId string) error`),
-its own contract in `storage/catalog`: `UnitOfWork` is an alias for `any`, the opaque handle of the
-transaction a delete cascade runs in, owned entirely by the adapter (`*sql.Tx` in `duckdb`).
-`TableLifecycle.Drop` takes the same `UnitOfWork` — the contract package itself never names an
-engine-specific type, and `duckdb/catalog.Catalog.Remove` obtains its physical `DROP` from a
-`Dropper` (declared locally in `duckdb/catalog`, implemented by `duckdb/data`'s lifecycle) rather
-than formatting the DDL itself. `duckdb/data.Lifecycle` is the single concrete type implementing
-both `TableLifecycle` and `SourceIntrospector` — `CreateFromFile` still reads a source file for
-materialization, but the file-level questions unrelated to any created table (layers, CRS) are a
-separate contract a caller can depend on without pulling in table materialization.
+The delete cascade is deliberately absent from these interfaces: `duckdb/catalog.Catalog.Remove`
+drops the physical table through a `Dropper` and cascades to every registered `Attachment`
+(`DeleteAttached(ctx, tx *sql.Tx, tableId string) error`), both declared in `duckdb/catalog` and
+both naming `*sql.Tx` directly. `Register(Attachment)` is a construction-time extension point on
+that concrete type — the point through which a catalogue-attached repository joins the whole-table
+delete cascade — not a method any service reaches through `storage.Catalog`.
 
-No service depends on these interfaces directly: each declares its own narrow interface over the
-subset it actually calls (`core.storageAdapter` documents the full surface an adapter must satisfy:
-an accessor returning `catalog.Catalog` + `data.TableLifecycle` + `data.SourceIntrospector` +
-`data.TableResolver`).
+No service depends on the interfaces above directly: each declares its own narrow interface over the
+subset it actually calls. `core.storageAdapter` documents the full surface an adapter must satisfy —
+`Catalog() storage.Catalog`, `Materializer() storage.TableMaterializer`, and `Table(meta) (TableRepository,
+error)`, three accessors rather than a flattened union of every storage method.
 
-**Naming.** `MetadataWriter.Remove` deletes a whole table (metadata and physical table, in a single
+**Naming.** `Catalog.Remove` deletes a whole table (metadata and physical table, in a single
 transaction through `duckdb/catalog.Catalog.Remove`), `RowRepository.Delete` deletes rows.
 
-**Cross-cutting data types.** `Row` (pkey + values, no geometry), `GeoFeature` (pkey + raw GeoJSON
-fragment + values), `GeoQuery` (`BuildFilter` clause + args + simplification tolerance + precision,
-all optional), `SortField` (column + direction, parsed from a `sort=a,-b` value).
+**Cross-cutting data types.** `Metadata` (+ `MetadataPatch`, `SourceKey`), `Row` (pkey + values, no
+geometry), `GeoFeature` (pkey + raw GeoJSON fragment + values), `GeoQuery` (`BuildFilter` clause +
+args + simplification tolerance + precision, all optional), `RowQuery`/`FeatureQuery` (a repository
+call's criteria grouped into one struct, so a new criterion is an added field and never an added
+parameter position), `SortField` (column + direction, parsed from a `sort=a,-b` value).
 
 ### 4.5 Filter construction
 
@@ -380,14 +409,25 @@ escapes.
 
 ### 4.6 The DuckDB adapter
 
-Files: `internal/storage/duckdb/` (`adapter.go`, `table.go`, `lifecycle.go` — the thin delegators to
-`duckdb/data`'s lifecycle), plus the sub-packages `duckdb/catalog/` (metadata, migrations, delete
-cascade) and `duckdb/data/` (table resolution, rows, geo, and `lifecycle.go` — materialization,
-indexing, clustering, drop, and `/derive` query validation — the implementation of the
-`storage/data` contracts, `TableLifecycle` included).
+Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the three
+accessors (`Catalog`, `Materializer`, `Table`) the rest of the server reaches the engine through —
+plus the sub-packages `duckdb/catalog/` (metadata, migrations, delete cascade) and `duckdb/tables/`
+(one file per family: table resolution, rows, geo, `introspection.go` — the engine catalogue reads
+(§4.8) — and the `Materializer` type split across `create_from_file.go`, `create_from_query.go`
+(`/derive` and its query validation), `crs.go` (detection and reprojection) and `indexes.go`
+(pkey/RTREE indexes, Hilbert clustering), with `materializer.go` holding the type alone and
+`drop.go` the stateless `DropTable`).
+`Adapter` forwards nothing: each accessor returns the sub-package type that implements the contract.
+The two sub-packages never import each other — `New` wires the catalogue's `Dropper` and its
+`ExistingTables` reader straight to `duckdb/tables.DropTable` and `tables.ExistingTables(conn)`,
+both function values needing nothing but a transaction or a connection, and the materializer's
+physical-name allowlist to the catalogue. Only that last link needs an already-built dependency, so
+the two constructions run in that order rather than through a deferred closure.
 
 - **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
   creation of the parent directory, then schema migration.
+- **Readiness**: `Ping` is the connection ping **plus** the assertion that `spatial` is loaded
+  (§4.8) — the extension is loaded once at open (rule 3) and every geo route depends on it.
 - **Write serialization**: a single application-level mutex (`writeMu`) covers `Exec`. `BulkInsert`
   and `Catalog.Remove` take it themselves for the whole duration of their transaction, rather than
   per statement.
@@ -409,7 +449,7 @@ indexing, clustering, drop, and `/derive` query validation — the implementatio
 
 ### 4.7 Rendering an MVT tile
 
-File: `internal/storage/duckdb/data/geo.go` (`Tile`).
+File: `internal/storage/duckdb/tables/geo.go` (`Tile`).
 
 A single query, in three steps: selection of the rows intersecting the tile envelope
 (`ST_TileEnvelope`), simplification, then `ST_AsMVTGeom` + `ST_AsMVT` aggregation. The decisions
@@ -434,6 +474,33 @@ that govern its cost:
   upstream duckdb-spatial defect (`duckdb/duckdb-spatial#792`) that produces corrupt clipped
   geometry on certain source/tile combinations. It can only discard an already broken feature, never
   a valid one.
+
+### 4.8 Reading DuckDB's own catalogue
+
+File: `internal/storage/duckdb/tables/introspection.go` — the **single** place DuckDB's catalogue
+functions are read. Their result columns are versioned with the engine, so a DuckDB upgrade is one
+file to check. LIM-9 makes this engine-specific access legitimate: there is no second backend to
+keep it portable for.
+
+| Function | Read through | Answers |
+|---|---|---|
+| `duckdb_columns()` | `TableColumns` | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
+| `duckdb_indexes()` | `TableIndexes` | the indexes really created on a table (rule 19's assertion, §4.2) |
+| `duckdb_tables()` | `PhysicalTableNames` | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone |
+| `duckdb_extensions()` | `ExtensionLoaded` | whether `spatial` is loaded, for `/readyz` |
+
+The table name is a **bound parameter** in every one of them: no physical name is interpolated to
+list a structure, so rule 1 is structurally satisfied there rather than validated after the fact.
+
+`DESCRIBE` survives in exactly one place, `QueryColumns`: the shape of a `SELECT` that has **not**
+been materialized, which by definition has no catalogue entry. It is what `/derive`'s `__pkey`
+collision check reads (§8). Separating the two — a table target goes to the catalogue, a query
+target to `DESCRIBE` — is what removes the interpolation from the common case.
+
+> Rule 4 is untouched by all this. The `/derive` AST validator rejects **every** table function
+> precisely because `duckdb_settings` and its siblings read system state. These functions are
+> server-side only, called with server-built SQL: the validator is never relaxed to admit them, and
+> no path hands a caller-supplied query to one.
 
 ---
 
@@ -537,7 +604,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path | Description |
 |---|---|---|
 | GET | `/healthz` | liveness — the process answers, regardless of the storage's state |
-| GET | `/readyz` | readiness — ping of the DuckDB connection; `503` if unreachable |
+| GET | `/readyz` | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
 
 **Sources**
 
@@ -692,7 +759,7 @@ confinement of file paths to the `workDir` cache.
 
 ## 7. Loading a file
 
-`CreateFromFile` (`storage/duckdb/data/lifecycle.go`), triggered by `POST /sources/{name}/load` or
+`CreateFromFile` (`storage/duckdb/tables/create_from_file.go`), triggered by `POST /sources/{name}/load` or
 `/sources/upload`, dispatches on `sourcePath`'s extension into one of two readers before running
 the shared reprojection/clustering/indexing tail (steps 5-7 below): every GDAL-readable format
 (GeoJSON, Shapefile, CSV, GeoPackage) through `ST_Read`; `.parquet` (Parquet and GeoParquet) through
@@ -703,11 +770,12 @@ one, so a Parquet source is never routed through either.
 1. **CTAS from `ST_Read`** with `__pkey` generated in the projection. `ST_Read` only reads: the
    resulting table is materialized (rule 13), never a view.
 2. **Unique index on `__pkey`.**
-3. **Detection of the geometry column** by introspecting the resulting schema. The name varies with
-   the format (`geom`, `wkb_geometry`…), it is never assumed fixed. **A table with several geometry
-   columns is rejected**: the whole rest of the domain assumes a single geometry, and silently
-   picking one would only be half right. With no geometry column, the table is non-geo and the
-   sequence stops here.
+3. **Detection of the geometry column** from the table's catalogue entry (§4.8): the column whose
+   declared type is `GEOMETRY`, with or without a CRS parameter. The name varies with the format
+   (`geom`, `wkb_geometry`…), it is never assumed fixed. **A table with several geometry columns is
+   rejected**: the whole rest of the domain assumes a single geometry, and silently picking one
+   would only be half right. With no geometry column, the table is non-geo and the sequence stops
+   here — after the same index assertion as step 7, minus the RTREE one.
 4. **Source CRS resolution**: an explicit `srid` if provided, otherwise detection from the file's
    metadata. **If neither succeeds, the load fails** rather than guessing — the caller must call
    again with an explicit `srid`.
@@ -716,7 +784,9 @@ one, so a Parquet source is never routed through either.
    content.
 6. **Hilbert clustering** on the geometry. It rebuilds the table, hence destroys the indexes — hence
    the order. A table with no non-NULL geometry is left as is (no reference extent).
-7. **Recreation of the `__pkey` index + creation of the RTREE index** (rule 19).
+7. **Recreation of the `__pkey` index + creation of the RTREE index** (rule 19), then **assertion
+   through `duckdb_indexes()` that both are really there** (§4.2, §4.8) — the load fails if either
+   is missing.
 
 ### 7.1 Multi-layer sources
 
@@ -730,8 +800,8 @@ read_parquet(?)` — DuckDB's native Parquet reader, not `ST_Read`. Step 3 (geom
 unchanged, but step 4 (CRS resolution) has no `DetectCRS`/`ST_Read_Meta` call at all: a GeoParquet
 file's declared CRS is already exposed by `read_parquet`'s own schema, as the DuckDB `GEOMETRY`
 column type's parameter (`GEOMETRY('EPSG:2154')`, or `GEOMETRY('OGC:CRS84')` for an unset/WGS84
-CRS) — `parseGeometryCRS` reads it directly off the `DESCRIBE` output, and an explicit `srid` still
-overrides it exactly as it overrides `ST_Read`'s `DetectCRS`. Steps 5-7 are identical to the
+CRS) — `parseGeometryCRS` reads it directly off the column's catalogue type (§4.8), and an explicit
+`srid` still overrides it exactly as it overrides `ST_Read`'s `DetectCRS`. Steps 5-7 are identical to the
 `ST_Read` path. `.parquet` is always single-layer (`ListLayers` is never called against one) and
 never `Introspectable` (`service/formats.go`): `GetSourceMetadata` (`/sources/{name}/metadata`)
 reports no CRS to preview before `Load` for it, rather than risk `ST_Read_Meta` reaching a Parquet
@@ -761,7 +831,9 @@ only reliable check, and the regex must never be considered sufficient.
 **`__pkey` generation.** The caller's query is **wrapped**: a fresh `__pkey` is always generated,
 exactly as at import. The query is therefore free to project whatever it wants — partial projection,
 `GROUP BY`, join — knowing nothing about `__pkey`. If it already projects one (typically a
-`SELECT *` on an already imported table), it is excluded from the wrapper rather than colliding.
+`SELECT *` on an already imported table), it is excluded from the wrapper rather than colliding —
+detected by describing the still unmaterialized query (`QueryColumns`, §4.8), the one shape the
+engine's catalogue cannot answer, since `* EXCLUDE (__pkey)` errors when no such column exists.
 
 The rest of the sequence (geometry detection, clustering, indexes) is identical to §7, steps 3, 6, 7.
 
@@ -782,19 +854,16 @@ internal/
     webui.go           SPA serving with history-mode fallback
   service/             one file per service + errors.go + formats.go
   storage/
-    catalog/           backend-agnostic catalogue contract (Metadata, MetadataManager, Catalog)
-    data/              backend-agnostic data-table contract (TableResolver,
-                        TableRepository, RowRepository, GeoRepository, TableLifecycle,
-                        SourceIntrospector)
-    sort/              SortField, dependency-free — breaks the catalog/data cycle
-    duckdb/            DuckDB adapter: connection, write serialization, wiring, thin
-                        delegators to catalog/ and data/
-      catalog/         DuckDB implementation of the catalogue + migrations + delete cascade
-      data/            DuckDB implementation of the data tables and of TableLifecycle
+    *.go               Metadata/Row/GeoFeature/GeoQuery/SortField, the Catalog,
+                        TableRepository and TableMaterializer interfaces, BuildFilter,
+                        identifiers
+    duckdb/            DuckDB adapter: connection, write serialization, wiring, and the
+                        Catalog/Materializer/Table accessors
+      catalog/         DuckDB implementation of the catalogue (the metadata table) +
+                        migrations + delete cascade
+      tables/          DuckDB implementation of the physical tables and of TableMaterializer
                         (materialization, indexing, clustering, drop, /derive validation)
-    storagetest/       reusable conformance suite, run against duckdb/
-    mocks/             testify mocks of the catalog and data contracts
-    *.go               Row/GeoFeature/GeoQuery, BuildFilter, identifiers, SQLWrapper
+    mocks/             testify mocks of storage's interfaces
   webui/               go:embed of the production build
 web/                   Vue 3 application (builds into internal/webui/dist) — see spec/front/
 spec/
@@ -812,15 +881,17 @@ Domain structs stay in their owning package: `Metadata`/`Row`/`GeoFeature` in `s
 
 ## 10. Tests
 
-Test files sit next to the code they test, in the same package.
+Test files sit next to the code they test, in the same package, and carry its name: `rows.go` is
+tested by `rows_test.go`. A package's shared test harness — the doubles and fixtures several of its
+test files build on — sits in `fixtures_test.go`, which tests nothing itself; it is the only
+`*_test.go` with no `.go` of the same name.
 
 | Level | Approach |
 |---|---|
 | `config` | loading with/without a file, environment overrides, invalid cases |
 | `storage` | unit tests of the primitives (`BuildFilter`, identifiers, sorting) |
-| `storage/duckdb` | integration tests against a **real** temporary DuckDB database — the engine is never mocked |
-| `storagetest` | behavioural conformance suite, runnable against any adapter; wired to DuckDB by `conformance_test.go`. It creates its tables only through `CreateFromFile`, never through backend-specific DDL |
-| `service` | testify mocks of the ports, no disk or database access |
+| `storage/duckdb` | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` alone (opening, pool, `writeMu`, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
+| `service` | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it |
 | `router/handlers` | `httptest` + light doubles of the ports declared in `ports.go` |
 | `router` | route and middleware wiring |
 
