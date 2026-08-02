@@ -26,6 +26,19 @@ function getCellMetaClass(meta: unknown): string | undefined {
   }
   return undefined;
 }
+
+// title only for plain scalar values: a rich cell (badge, button, link)
+// would otherwise get a redundant/nonsensical tooltip from its coerced text.
+function getCellTitle(value: unknown): string | undefined {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : undefined;
+}
+
+// A row is only a keyboard target when it actually looks clickable — most
+// rowClass callers only add "cursor-pointer" for rows that do something on
+// click (TableDataPanel's selected-row deselect isn't every row).
+function isRowClickable(rowClass: string | undefined): boolean {
+  return rowClass?.includes("cursor-pointer") ?? false;
+}
 </script>
 
 <template>
@@ -53,12 +66,22 @@ function getCellMetaClass(meta: unknown): string | undefined {
       </thead>
       <tbody class="divide-y divide-slate-100">
         <template v-for="row in table.getRowModel().rows" :key="row.id">
-          <tr :class="rowClass?.(row)" @click="$emit('rowClick', row)">
+          <!-- The row's own name link (or the parent's action button) is the
+               real, focusable control; this keydown is only the keyboard
+               equivalent of the row-wide mouse shortcut (§0.20, §8.7). -->
+          <tr
+            :class="rowClass?.(row)"
+            :tabindex="isRowClickable(rowClass?.(row)) ? 0 : undefined"
+            @click="$emit('rowClick', row)"
+            @keydown.enter="isRowClickable(rowClass?.(row)) && $emit('rowClick', row)"
+            @keydown.space.prevent="isRowClickable(rowClass?.(row)) && $emit('rowClick', row)"
+          >
             <td
               v-for="cell in row.getVisibleCells()"
               :key="cell.id"
-              class="whitespace-nowrap px-4 py-2.5 text-slate-700"
+              class="max-w-[280px] truncate px-4 py-2.5 text-slate-700"
               :class="[getCellMetaAlign(cell.column.columnDef.meta), getCellMetaClass(cell.column.columnDef.meta)]"
+              :title="getCellTitle(cell.getValue())"
             >
               <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
             </td>

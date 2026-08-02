@@ -1,4 +1,5 @@
 import { ref } from "vue";
+import type { SortingState } from "@tanstack/vue-table";
 import { deleteSource, getSourceMetadata, listSources, loadSource, refreshSources, uploadSource } from "../client/sources";
 import type { Source } from "../client/types";
 import { errorMessage } from "../client/http";
@@ -16,15 +17,16 @@ export function layerKey(source: Source, layerName: string): string {
 // workDir source list, upload, per-layer loading (with EPSG override) and
 // deletion. Built on usePaginatedList for the paging/sorting/scroll-sentinel
 // triplet (TODO-F4).
-export function useSources() {
+export function useSources(initialSorting?: SortingState) {
   const toast = useToast();
 
   const limit = 50;
   const list = usePaginatedList<Source>({
     limit,
+    initialSorting,
     sortColumnMap: sourceSortColumnMap,
     fetchPage: (offset, limit, sort) => listSources(offset, limit, sort).then((page) => ({ items: page.sources, total: page.total })),
-    onError: (e) => toast.error(errorMessage(e, "Impossible de charger les sources")),
+    describeError: (e) => errorMessage(e, "Impossible de charger les sources"),
   });
 
   // Distinct from reload(): re-scans workDir for new/removed files instead
@@ -118,6 +120,9 @@ export function useSources() {
     sources: list.items,
     total: list.total,
     loading: list.loading,
+    loadedOnce: list.loadedOnce,
+    error: list.error,
+    retry: list.retry,
     sorting: list.sorting,
     sentinel: list.sentinel,
     setSorting: list.setSorting,

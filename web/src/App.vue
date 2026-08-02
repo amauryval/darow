@@ -75,7 +75,7 @@ const statusDotClass: Record<Status, string> = {
         <span class="relative flex h-2 w-2">
           <span
             v-if="status === 'ok'"
-            class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60"
+            class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 motion-reduce:animate-none"
             :class="statusDotClass[status]"
           />
           <span class="relative inline-flex h-2 w-2 rounded-full" :class="statusDotClass[status]" />
@@ -83,7 +83,7 @@ const statusDotClass: Record<Status, string> = {
         <span class="text-xs font-medium text-slate-500">{{ statusLabel[status] }}</span>
       </div>
     </aside>
-    <main class="min-w-0 flex-1 overflow-y-auto">
+    <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <Header />
       <RouterView />
     </main>

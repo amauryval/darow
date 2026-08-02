@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import Modal from "./Modal.vue";
 import BaseButton from "./ui/BaseButton.vue";
 
@@ -7,6 +7,7 @@ const props = defineProps<{ editableColumns: string[]; geometryColumn?: string }
 const emit = defineEmits<{ close: []; add: [values: Record<string, string>] }>();
 
 const newRowValues = reactive<Record<string, string>>({});
+const isDirty = computed(() => Object.values(newRowValues).some((v) => v.trim() !== ""));
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 
@@ -33,7 +34,7 @@ defineExpose({ openModal });
 </script>
 
 <template>
-  <Modal title="Ajouter une ligne" @close="onClose">
+  <Modal title="Ajouter une ligne" :dirty="isDirty" @close="onClose" @submit="confirmAdd">
     <div class="flex max-h-96 flex-col gap-3 overflow-y-auto pr-1">
       <label v-for="col in editableColumns" :key="col" class="block">
         <span class="mb-1 block text-xs font-medium text-slate-500">

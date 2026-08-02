@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, ref, toRef } from "vue";
+import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, ref, toRef, watch } from "vue";
+import { createFocusTrap } from "../composables/useFocusTrap";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import type { ColumnSchema, Row, RowValue } from "../client/types";
@@ -14,6 +15,8 @@ import AddRowModal from "./AddRowModal.vue";
 import TableRowEditCell from "./tables/TableRowEditCell.vue";
 import TableRowActions from "./tables/TableRowActions.vue";
 import BaseButton from "./ui/BaseButton.vue";
+import ErrorState from "./ui/ErrorState.vue";
+import Skeleton from "./ui/Skeleton.vue";
 
 // MapLibre GL is the largest dependency in the bundle — load it only when
 // a geo table's data panel is actually rendered.
@@ -45,6 +48,28 @@ const showFilterPanel = ref(false);
 // Re-centers the map on the filter's own results rather than the whole
 // table's extent, cleared back to the table's bbox once inactive.
 const mapBbox = computed(() => filter.filteredBbox.value ?? props.bbox);
+
+// Focus trap + restoration for the filter side panel (§8.7). The panel is
+// re-created by the Teleport's v-if on every open rather than the whole
+// component, so the trap is driven manually instead of by useFocusTrap's
+// mount/unmount hooks — nextTick waits for the panel to exist in the DOM
+// before focusing into it.
+const filterPanel = ref<HTMLElement | null>(null);
+const filterPanelTrap = createFocusTrap(filterPanel);
+watch(showFilterPanel, async (open) => {
+  if (open) {
+    await nextTick();
+    filterPanelTrap.activate();
+  } else {
+    filterPanelTrap.deactivate();
+  }
+});
+
+function onFilterPanelKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") showFilterPanel.value = false;
+}
+onMounted(() => document.addEventListener("keydown", onFilterPanelKeydown));
+onUnmounted(() => document.removeEventListener("keydown", onFilterPanelKeydown));
 
 function cellValue(row: Row, col: string): RowValue {
   return rowsState.cellValue(row, col);
@@ -208,6 +233,8 @@ const rowsTable = useVueTable({
         empty-message="Aucun résultat."
         @row-click="onRowClick"
       />
+      <Skeleton v-else-if="rowsState.loading.value && !rowsState.loadedOnce.value" :rows="8" />
+      <ErrorState v-else-if="rowsState.error.value" :message="rowsState.error.value" @retry="rowsState.retry" />
       <DataTable
         v-else
         :table="rowsTable"
@@ -226,7 +253,10 @@ const rowsTable = useVueTable({
 
   <Teleport v-if="showFilterPanel" to="body">
     <div class="fixed inset-0 z-30" @click="showFilterPanel = false" />
-    <div class="fixed inset-y-0 right-0 z-40 w-80 overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-lg">
+    <div ref="filterPanel" class="fixed inset-y-0 right-0 z-40 w-80 overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-lg">
+      <div class="mb-2 flex justify-end">
+        <button class="btn btn-ghost btn-xs btn-circle" aria-label="Fermer le panneau de filtres" @click="showFilterPanel = false">✕</button>
+      </div>
       <FilterConditionsEditor :columns="rowColumns" :nodes="filter.conditions.value" @update:nodes="filter.conditions.value = $event" />
       <div class="mt-4 flex items-center gap-2">
         <label class="text-xs text-slate-500">Limite (tableau filtré)</label>

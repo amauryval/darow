@@ -94,7 +94,9 @@ function clearAll() {
             class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs"
             @input="updateNode(node.id, { value: getInputValue($event) })"
           />
-          <button class="shrink-0 text-slate-400 hover:text-red-600" @click="removeNode(node.id)"><X :size="14" /></button>
+          <button class="shrink-0 text-slate-400 hover:text-red-600" aria-label="Supprimer la condition" @click="removeNode(node.id)">
+            <X :size="14" aria-hidden="true" />
+          </button>
         </div>
 
         <div v-else class="rounded-md border border-slate-300 p-2">
@@ -114,7 +116,9 @@ function clearAll() {
               <option value="OR">OU</option>
             </select>
             <span class="text-xs text-slate-400">groupe</span>
-            <button class="ml-auto shrink-0 text-slate-400 hover:text-red-600" @click="removeNode(node.id)"><X :size="14" /></button>
+            <button class="ml-auto shrink-0 text-slate-400 hover:text-red-600" aria-label="Supprimer le groupe" @click="removeNode(node.id)">
+              <X :size="14" aria-hidden="true" />
+            </button>
           </div>
 
           <div class="border-l-2 border-slate-200 pl-3">

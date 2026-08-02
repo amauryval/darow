@@ -24,7 +24,8 @@ instruction, not the patch — the code is written later, against the code as it
 
 # Rules
 
-- Responsivity is mandatory
+- Responsivity is mandatory.
+- run `npm run build` to check if it build without any errors. If error, fix them.
 
 ## 1. Architecture and code
 
@@ -34,17 +35,5 @@ instruction, not the patch — the code is written later, against the code as it
 
 | # | Gap | Rule |
 |---|---|---|
-| TODO-F13 | make the layout better, avoid blank space, main space area must take all the space as possible | |
-| TODO-F14 | A modal closes on a backdrop click even when the form is filled in: the input is lost without confirmation | §8.3 |
-| TODO-F15 | Neither initial focus, nor a focus trap, nor focus restoration in `Modal` and in the filter side panel; `Enter` does not submit modal forms | §8.5, §8.7 |
-| TODO-F16 | Icon-only buttons with no accessible name (close cross, filter-node removal, pill removal); a pill's cross is a clickable icon nested inside a button | §8.7 |
-| TODO-F17 | Clickable table rows are `<tr>` with `@click`, with no keyboard equivalent — deselecting a feature and opening a table exist only with a mouse | §0.20, §8.7 |
-| TODO-F18 | Toasts are not announced (`role`/`aria-live` absent) | §8.7 |
-| TODO-F19 | A list loading error goes out as a 4 s toast and leaves an empty table indistinguishable from a genuinely empty one, with no way to retry | §8.1, §8.4 |
-| TODO-F20 | No initial loading state: the first render is an empty frame that fills in at once, with no skeleton | §8.1 |
-| TODO-F21 | The visible-column choice is reset on every schema reload — adding a column wipes the user's selection | §8.3 |
-| TODO-F22 | `ConfirmButton`'s inline confirmation stays on "Sûr ?" indefinitely: no automatic fallback, none on a click elsewhere either (the exposed `reset()` is never called) | §8.3 |
-| TODO-F23 | Search, sort and filter are not in the URL: a refresh or a shared link loses the whole screen state; `document.title` does not follow the route | §9 |
-| TODO-F24 | Upload announces neither the maximum size nor the accepted extensions before failing | §8.5 |
-| TODO-F25 | Cells are `whitespace-nowrap` with no truncation and no `title`: a long value stretches the table instead of being cut cleanly | §8.6 |
-| TODO-F26 | The status banner's `animate-ping` animation ignores `prefers-reduced-motion` | §8.7 |
+| TODO-F13 | make the layout better, avoid blank space, main space area must take all the space as possible, use daysui eisting compoent https://daisyui.com/components/| |
+

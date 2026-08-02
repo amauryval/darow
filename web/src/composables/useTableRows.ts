@@ -26,7 +26,7 @@ export function useTableRows(
     limit: pageSize,
     fetchPage: (offset, limit, sort) =>
       listRows(tableId.value, offset, limit, sort).then((page) => ({ items: page.rows, total: page.total })),
-    onError: (e) => toast.error(errorMessage(e, "Impossible de charger les lignes")),
+    describeError: (e) => errorMessage(e, "Impossible de charger les lignes"),
   });
 
   // The physical column is named "__pkey", but Row objects key it as
@@ -121,6 +121,9 @@ export function useTableRows(
     total: list.total,
     pageSize,
     loading: list.loading,
+    loadedOnce: list.loadedOnce,
+    error: list.error,
+    retry: list.retry,
     sorting: list.sorting,
     sentinel: list.sentinel,
     setSorting: list.setSorting,

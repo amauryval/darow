@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, toRef, watch } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { exportUrl } from "../client/tables";
 import { errorMessage } from "../client/http";
@@ -12,6 +12,7 @@ import AddColumnModal from "../components/AddColumnModal.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
 import { useTableMetadata } from "../composables/useTableMetadata";
 import { useToast } from "../composables/useToast";
+import { useDocumentTitle } from "../composables/useDocumentTitle";
 
 const props = defineProps<{ tableId: string }>();
 const router = useRouter();
@@ -21,12 +22,31 @@ const { table, columns, editableColumns, rowColumns, loadTable, rename, remove }
   toRef(props, "tableId"),
 );
 
+useDocumentTitle(computed(() => table.value?.tableName ?? "Table"));
+
 const renaming = ref(false);
 const editingName = ref(false);
 const nameInput = ref("");
 
+// The user's visible-column choice must survive a schema reload (§8.3): only
+// the first population is a straight assignment, later ones diff against the
+// previously known column list so a hidden column stays hidden, a removed
+// column drops out, and a newly added one defaults to visible.
 const visibleColumns = ref<string[]>([]);
-watch(rowColumns, (cols) => (visibleColumns.value = cols), { immediate: true });
+let knownRowColumns: string[] = [];
+watch(
+  rowColumns,
+  (cols) => {
+    if (knownRowColumns.length === 0) {
+      visibleColumns.value = cols;
+    } else {
+      const added = cols.filter((c) => !knownRowColumns.includes(c));
+      visibleColumns.value = [...visibleColumns.value.filter((c) => cols.includes(c)), ...added];
+    }
+    knownRowColumns = cols;
+  },
+  { immediate: true },
+);
 
 const showColumns = ref(false);
 const showDerive = ref(false);
@@ -54,6 +74,7 @@ async function confirmRename() {
 }
 
 async function onDeleteTable() {
+  console.log("asshole")
   try {
     const name = table.value?.tableName;
     await remove();
@@ -84,10 +105,10 @@ async function onAddColumnSuccess() {
 </script>
 
 <template>
-  <div class="mx-auto flex h-full max-w-5xl flex-col px-8 py-8">
+  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
     <RouterLink to="/tables" class="shrink-0 text-sm font-medium text-slate-500 hover:text-slate-700">&larr; Tables</RouterLink>
 
-    <div v-if="table" class="mt-2 mb-6 flex shrink-0 items-start justify-between">
+    <div v-if="table" class="mt-3 mb-4 flex shrink-0 items-start justify-between">
       <div>
         <div v-if="editingName" class="flex items-center gap-2">
           <input

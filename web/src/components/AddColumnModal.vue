@@ -45,7 +45,7 @@ defineExpose({ openModal });
 </script>
 
 <template>
-  <Modal title="Ajouter une colonne" @close="onClose">
+  <Modal title="Ajouter une colonne" :dirty="!!name.trim()" @close="onClose" @submit="confirmAdd">
     <label class="mb-3 block">
       <span class="mb-1 block text-xs font-medium text-slate-500">Nom</span>
       <input

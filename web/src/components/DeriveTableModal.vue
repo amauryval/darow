@@ -45,7 +45,7 @@ defineExpose({ openModal });
 </script>
 
 <template>
-  <Modal title="Dériver une table" wide @close="onClose">
+  <Modal title="Dériver une table" wide :dirty="!!name.trim()" @close="onClose" @submit="confirmDerive">
     <p class="mb-3 text-xs text-slate-500">
       Requête <code class="rounded bg-slate-100 px-1 py-0.5">SELECT</code> exécutée sur les tables existantes ; le résultat est
       matérialisé dans une nouvelle table.

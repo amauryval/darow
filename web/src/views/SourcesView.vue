@@ -1,26 +1,37 @@
 <script setup lang="ts">
-import { computed, h, ref } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { computed, h, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { createColumnHelper, getCoreRowModel, getExpandedRowModel, useVueTable } from "@tanstack/vue-table";
 import type { Source } from "../client/types";
 import { errorMessage } from "../client/http";
 import { layerKey, useSources } from "../composables/useSources";
 import { useToast } from "../composables/useToast";
+import { useDocumentTitle } from "../composables/useDocumentTitle";
+import { parseSorting, stringifySorting } from "../utils/sort";
+import { queryString } from "../utils/routeQuery";
 import { UploadCloud } from "@lucide/vue";
 import Badge from "../components/Badge.vue";
 import ConfirmButton from "../components/ConfirmButton.vue";
 import DataTable from "../components/DataTable.vue";
+import ErrorState from "../components/ui/ErrorState.vue";
+import Skeleton from "../components/ui/Skeleton.vue";
 
 const router = useRouter();
+const route = useRoute();
 const toast = useToast();
+
+useDocumentTitle(computed(() => "Sources"));
 
 // sources.sentinel stays nested rather than destructured: the template ref
 // bound via `:ref` needs the actual Ref object, but a top-level destructured
 // ref auto-unwraps when read inside the template.
-const sourcesState = useSources();
+const sourcesState = useSources(queryString(route.query.sort) ? parseSorting(queryString(route.query.sort)) : undefined);
 const {
   sources,
   loading,
+  loadedOnce,
+  error,
+  retry,
   sorting,
   setSorting,
   refresh,
@@ -37,8 +48,21 @@ const {
   remove,
 } = sourcesState;
 
+// The URL carries the screen state (§9): a refresh or a shared link keeps
+// the chosen sort.
+watch(sorting, (sort) => {
+  router.replace({ query: { ...route.query, sort: stringifySorting(sort) || undefined } });
+});
+
 const dragging = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+// Stated before the attempt, not only in an error response (§8.5). Static
+// text matching the server's default config.yaml (sources.maxSizeBytes /
+// sources.allowedExtensions) — there is no endpoint exposing the running
+// deployment's actual values, so a custom config drifts from this hint.
+const ACCEPTED_EXTENSIONS = [".geojson", ".shp", ".csv", ".gpkg", ".parquet"];
+const MAX_UPLOAD_LABEL = "100 Mo";
 
 function isValidEpsg(value: string): boolean {
   return /^[1-9]\d*$/.test(value.trim());
@@ -238,8 +262,8 @@ const table = useVueTable({
 </script>
 
 <template>
-  <div class="mx-auto flex h-full max-w-4xl flex-col px-8 py-8">
-    <div class="mb-6 flex shrink-0 items-center justify-between">
+  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
+    <div class="mb-4 flex shrink-0 items-center justify-between">
       <div>
         <h1 class="text-lg font-semibold text-slate-900">Sources</h1>
         <p class="text-sm text-slate-500">Fichiers détectés dans le répertoire de travail du serveur.</p>
@@ -254,7 +278,7 @@ const table = useVueTable({
     </div>
 
     <div
-      class="mb-6 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors"
+      class="mb-4 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors"
       :class="dragging ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'"
       @dragover.prevent="dragging = true"
       @dragleave.prevent="dragging = false"
@@ -270,9 +294,12 @@ const table = useVueTable({
       >
         {{ uploading ? "Envoi…" : "Parcourir" }}
       </button>
+      <p class="text-xs text-slate-400">{{ ACCEPTED_EXTENSIONS.join(", ") }} — {{ MAX_UPLOAD_LABEL }} maximum</p>
     </div>
 
-    <DataTable :table="table" :loading="loading" empty-message="Aucune source détectée.">
+    <Skeleton v-if="loading && !loadedOnce" />
+    <ErrorState v-else-if="error" :message="error" @retry="retry" />
+    <DataTable v-else :table="table" :loading="loading" empty-message="Aucune source détectée.">
       <template #footer>
         <div :ref="sourcesState.sentinel" class="h-px"></div>
         <p v-if="loading" class="px-4 py-3 text-center text-xs text-slate-400">Chargement…</p>

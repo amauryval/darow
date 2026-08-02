@@ -20,27 +20,36 @@ function updateChildren(group: DraftNode, children: DraftNode[]) {
 
 <template>
   <template v-for="node in nodes" :key="node.id">
-    <button
+    <span
       v-if="node.kind === 'leaf'"
-      class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+      class="flex items-center gap-1 rounded-full pr-1 pl-2.5 py-1 text-xs font-medium"
       :class="node.active ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'"
-      @click="toggleActive(node)"
     >
-      {{ node.column }} {{ node.operator }} {{ node.value }}
-      <X :size="12" @click.stop="removeNode(node.id)" />
-    </button>
+      <button type="button" class="py-0.5" @click="toggleActive(node)">{{ node.column }} {{ node.operator }} {{ node.value }}</button>
+      <button type="button" class="rounded-full p-0.5 hover:bg-black/10" aria-label="Supprimer le filtre" @click="removeNode(node.id)">
+        <X :size="12" aria-hidden="true" />
+      </button>
+    </span>
 
-    <div
+    <span
       v-else
-      class="flex items-center gap-1.5 rounded-lg border px-2 py-1"
+      class="flex items-center gap-1.5 rounded-lg border py-1 pr-1 pl-2"
       :class="node.active ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-slate-50 opacity-50'"
-      @click="toggleActive(node)"
     >
-      <span class="shrink-0 text-xs font-semibold text-slate-400">{{ node.bool === "AND" ? "ET" : "OU" }}</span>
-      <div class="flex flex-wrap items-center gap-1.5" @click.stop>
+      <button type="button" class="shrink-0 text-xs font-semibold text-slate-400" @click="toggleActive(node)">
+        {{ node.bool === "AND" ? "ET" : "OU" }}
+      </button>
+      <span class="flex flex-wrap items-center gap-1.5">
         <FilterPills :nodes="node.children" :root="false" @update:nodes="updateChildren(node, $event)" />
-      </div>
-      <X :size="12" class="shrink-0 text-slate-400 hover:text-red-600" @click.stop="removeNode(node.id)" />
-    </div>
+      </span>
+      <button
+        type="button"
+        class="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-black/5 hover:text-red-600"
+        aria-label="Supprimer le groupe de filtres"
+        @click="removeNode(node.id)"
+      >
+        <X :size="12" aria-hidden="true" />
+      </button>
+    </span>
   </template>
 </template>

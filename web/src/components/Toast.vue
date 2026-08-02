@@ -12,9 +12,11 @@ const { toasts, dismiss } = useToast();
         :key="t.id"
         class="alert max-w-sm text-sm shadow-lg"
         :class="t.kind === 'success' ? 'alert-success' : 'alert-error'"
+        :role="t.kind === 'error' ? 'alert' : 'status'"
+        :aria-live="t.kind === 'error' ? 'assertive' : 'polite'"
       >
         <span class="flex-1">{{ t.message }}</span>
-        <button class="btn btn-ghost btn-xs" @click="dismiss(t.id)">✕</button>
+        <button class="btn btn-ghost btn-xs" aria-label="Fermer la notification" @click="dismiss(t.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>

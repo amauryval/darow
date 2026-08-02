@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted, ref, type Ref } from "vue";
 import type { SortingState, Updater } from "@tanstack/vue-table";
+import { stringifySorting } from "../utils/sort";
 
 export interface Page<T> {
   items: T[];
@@ -11,7 +12,10 @@ export interface UsePaginatedListOptions<T> {
   initialSorting?: SortingState;
   sortColumnMap?: Record<string, string>;
   fetchPage: (offset: number, limit: number, sort: string) => Promise<Page<T>>;
-  onError: (e: unknown) => void;
+  // Turned into the persistent, retryable error state (§8.1) — never a
+  // toast on its own, since a failed list load leaves the screen with
+  // nothing to act on otherwise.
+  describeError: (e: unknown) => string;
 }
 
 // Infinite-scroll list backed by offset/limit + server-side sorting, the
@@ -28,9 +32,10 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
   const loading = ref(false);
   const loadedOnce = ref(false);
   const sorting = ref<SortingState>(options.initialSorting ?? []);
+  const error = ref<string | null>(null);
 
   function sortQuery(): string {
-    return sorting.value.map((s) => `${s.desc ? "-" : ""}${options.sortColumnMap?.[s.id] ?? s.id}`).join(",");
+    return stringifySorting(sorting.value, options.sortColumnMap);
   }
 
   async function loadMore() {
@@ -42,8 +47,9 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
       total.value = page.total;
       offset.value += page.items.length;
       loadedOnce.value = true;
+      error.value = null;
     } catch (e) {
-      options.onError(e);
+      error.value = options.describeError(e);
     } finally {
       loading.value = false;
     }
@@ -72,11 +78,19 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
       total.value = page.total;
       offset.value = page.items.length;
       loadedOnce.value = true;
+      error.value = null;
     } catch (e) {
-      options.onError(e);
+      error.value = options.describeError(e);
     } finally {
       loading.value = false;
     }
+  }
+
+  // Retries whichever load actually failed: the first page if nothing ever
+  // loaded, otherwise a fresh page 1 (matches reloadSorted's no-flicker
+  // behavior for a retry triggered while rows are still on screen).
+  function retry() {
+    return loadedOnce.value ? reloadSorted() : loadMore();
   }
 
   function setSorting(updater: Updater<SortingState>) {
@@ -110,5 +124,5 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
 
   onUnmounted(() => observer?.disconnect());
 
-  return { items, total, loading, loadedOnce, sorting, sentinel, loadMore, reload, reloadSorted, setSorting, replace, sortQuery };
+  return { items, total, loading, loadedOnce, error, sorting, sentinel, loadMore, reload, reloadSorted, retry, setSorting, replace, sortQuery };
 }
