@@ -1,129 +1,71 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import maplibregl, { Map } from "maplibre-gl";
+import { computed, ref, toRef, watch } from "vue";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { getGeometryTypes, tileUrl } from "../client/geo";
+import type { FilterCondition } from "../client/types";
+import { useMapLibre } from "../composables/useMapLibre";
+import { useMvtLayer } from "../composables/useMvtLayer";
+import { useWfsLayer } from "../composables/useWfsLayer";
 
 const props = defineProps<{
   tableId: string;
   bbox?: string;
+  conditions: FilterCondition[];
+  selectedPkeys: string[];
 }>();
 
+// Whoever owns selection (useFeatureSelection, in the parent) applies the
+// toggle — this component only reports the click, it never mutates
+// selection state itself.
+const emit = defineEmits<{ toggleSelection: [pkey: string] }>();
+
+// MVT and WFS are two independent rendering modes for the same table/
+// filter, toggled manually by the user — not tied to whether a filter is
+// active.
+const wfsEnabled = ref(false);
+
 const container = ref<HTMLDivElement | null>(null);
-let map: Map | null = null;
+const tableId = toRef(props, "tableId");
+const bbox = toRef(props, "bbox");
+const conditions = computed(() => props.conditions);
+const selectedPkeys = computed(() => props.selectedPkeys);
 
-// Metadata.bbox is reported as "minX,minY,maxX,maxY" in EPSG:4326 (the
-// server reprojects it from the geometry column's storage SRID) so it
-// can be handed to fitBounds directly.
-function parseBbox(bbox: string): [number, number, number, number] | null {
-  const parts = bbox.split(",").map(Number);
-  if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
-  return parts as [number, number, number, number];
-}
-
-// A geometry column can mix types (règle 10) — classify by substring so
-// POINT/MULTIPOINT, LINESTRING/MULTILINESTRING and POLYGON/MULTIPOLYGON
-// all match, and only the layer(s) matching what's actually present get
-// added, instead of always drawing fill+line+circle regardless of type.
-function classifyGeometryTypes(types: string[]) {
-  return {
-    hasPolygon: types.some((t) => t.includes("POLYGON")),
-    hasLine: types.some((t) => t.includes("LINESTRING")),
-    hasPoint: types.some((t) => t.includes("POINT")),
-  };
-}
-
-async function addTableLayer(m: Map) {
-  const sourceId = `table-${props.tableId}`;
-  const bounds = props.bbox ? parseBbox(props.bbox) : null;
-  m.addSource(sourceId, {
-    type: "vector",
-    tiles: [`${location.origin}${tileUrl(props.tableId)}`],
-    ...(bounds ? { bounds } : {}),
-  });
-
-  const { types } = await getGeometryTypes(props.tableId).catch(() => ({ types: [] as string[] }));
-  const { hasPolygon, hasLine, hasPoint } = classifyGeometryTypes(types);
-
-  if (hasPolygon) {
-    m.addLayer({
-      id: `${sourceId}-fill`,
-      type: "fill",
-      source: sourceId,
-      "source-layer": "layer",
-      paint: { "fill-color": "#6366f1", "fill-opacity": 0.35 },
-    });
+const { map } = useMapLibre(container, bbox, () => {
+  if (wfsEnabled.value) {
+    wfs.activate();
+  } else {
+    mvt.activate();
   }
-  if (hasPolygon || hasLine) {
-    m.addLayer({
-      id: `${sourceId}-line`,
-      type: "line",
-      source: sourceId,
-      "source-layer": "layer",
-      paint: { "line-color": "#4338ca", "line-width": 1.5 },
-    });
-  }
-  if (hasPoint) {
-    m.addLayer({
-      id: `${sourceId}-point`,
-      type: "circle",
-      source: sourceId,
-      "source-layer": "layer",
-      paint: { "circle-color": "#4338ca", "circle-radius": 4, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 },
-    });
-  }
-}
-
-onMounted(() => {
-  if (!container.value) return;
-
-  map = new maplibregl.Map({
-    container: container.value,
-    style: {
-      version: 8,
-      sources: {
-        osm: {
-          type: "raster",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          attribution: "© OpenStreetMap contributors",
-        },
-      },
-      layers: [{ id: "osm", type: "raster", source: "osm" }],
-    },
-    center: [0, 0],
-    zoom: 1,
-  });
-
-  map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-  map.on("load", () => {
-    if (!map) return;
-    addTableLayer(map);
-
-    const bounds = props.bbox ? parseBbox(props.bbox) : null;
-    if (bounds) {
-      map.fitBounds(bounds, { padding: 32, animate: false });
-    }
-  });
 });
 
-onUnmounted(() => {
-  map?.remove();
-  map = null;
+const mvt = useMvtLayer(map, tableId, bbox, conditions, {
+  selectedPkeys,
+  toggle: (pkey) => emit("toggleSelection", pkey),
 });
+const wfs = useWfsLayer(map, tableId, conditions);
 
-watch(
-  () => props.bbox,
-  (bbox) => {
-    const bounds = bbox ? parseBbox(bbox) : null;
-    if (bounds && map) {
-      map.fitBounds(bounds, { padding: 32, animate: false });
-    }
-  },
-);
+// MVT and WFS are mutually exclusive on the map — switching modes tears
+// down the previous mode's source/layers entirely rather than layering
+// both, so there is only ever one rendering of the table at a time.
+watch(wfsEnabled, (enabled) => {
+  if (!map.value) return;
+  if (enabled) {
+    mvt.deactivate();
+    wfs.activate();
+  } else {
+    wfs.deactivate();
+    mvt.activate();
+  }
+});
 </script>
 
 <template>
-  <div ref="container" class="h-full w-full rounded-lg" />
+  <div class="relative h-full w-full">
+    <label
+      class="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow"
+    >
+      <input v-model="wfsEnabled" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" />
+      Rendu WFS
+    </label>
+    <div ref="container" class="h-full w-full rounded-lg" />
+  </div>
 </template>

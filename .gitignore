@@ -11,4 +11,3 @@ internal/webui/dist/*
 data/geo.db
 data/sources/*.gpkg
 data/geo.db.wal
-

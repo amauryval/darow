@@ -1,14 +1,28 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"gogeoserver/internal/storage"
+	"darow/internal/storage"
+	"darow/internal/storage/mocks"
 )
+
+func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
+	m := &mocks.Adapter{}
+	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
+	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
+	svc := NewDeriveService(metadata, m)
+	t.Cleanup(func() { m.AssertExpectations(t) })
+	return svc, m
+}
 
 func Test_ValidateSelectOnly(t *testing.T) {
 	cases := []struct {
@@ -38,7 +52,7 @@ func Test_ValidateSelectOnly(t *testing.T) {
 	}
 }
 
-func Test_TableService_DeriveTable(t *testing.T) {
+func Test_DeriveService_DeriveTable(t *testing.T) {
 	cases := []struct {
 		name        string
 		query       string
@@ -66,24 +80,24 @@ func Test_TableService_DeriveTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m := setupTableService(t)
+			svc, m := setupDeriveService(t)
 
 			if c.wantErr {
-				_, err := svc.DeriveTable("id-src", c.query, "derived")
+				_, err := svc.DeriveTable(context.Background(), c.query, "derived")
 				assert.Error(t, err)
 				return
 			}
 
-			m.On("GetMetadata", "id-src").Return(&storage.Metadata{TableId: "id-src"}, nil).Once()
-			m.On("Create", "derived", false, "").Return("id-derived", nil).Once()
-			m.On("GetMetadata", "id-derived").Return(&storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-			m.On("CreateFromQuery", "t_derived", c.query).Return("geom", c.isGeo, nil).Once()
+			m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
+			m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+			m.On("CreateFromQuery", mock.Anything, "t_derived", c.query).Return("geom", c.isGeo, nil).Once()
 			if c.isGeo {
-				m.On("UpdateMetadata", "id-derived", map[string]any{"isGeo": true, "geometryColumn": "geom"}).Return(nil).Once()
+				wantIsGeo, wantGeom := true, "geom"
+				m.On("UpdateMetadata", mock.Anything, "id-derived", storage.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
 			}
-			m.On("RefreshDerivedMetadata", "id-derived").Return(nil).Once()
+			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
 
-			tableId, err := svc.DeriveTable("id-src", c.query, "derived")
+			tableId, err := svc.DeriveTable(context.Background(), c.query, "derived")
 
 			require.NoError(t, err)
 			assert.Equal(t, "id-derived", tableId)
@@ -91,12 +105,17 @@ func Test_TableService_DeriveTable(t *testing.T) {
 	}
 }
 
-func Test_TableService_DeriveTable_UnknownSourceTable(t *testing.T) {
-	svc, m := setupTableService(t)
+// A failure materializing the derived table must not leave an orphaned
+// metadata row: the Create above it must be rolled back (BUG-2).
+func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
+	svc, m := setupDeriveService(t)
 
-	m.On("GetMetadata", "id-src").Return((*storage.Metadata)(nil), errors.New("not found")).Once()
+	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
+	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, errors.New("unknown table")).Once()
+	m.On("Remove", mock.Anything, "id-derived").Return(nil).Once()
 
-	_, err := svc.DeriveTable("id-src", "SELECT * FROM t_source", "derived")
+	_, err := svc.DeriveTable(context.Background(), "SELECT * FROM t_source", "derived")
 
 	assert.Error(t, err)
 }

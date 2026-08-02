@@ -1,15 +1,22 @@
 basePath: /
 definitions:
-  router.ErrorResponse:
+  handlers.collectionDTO:
     properties:
-      code:
-        type: integer
-      error:
+      extent:
+        $ref: '#/definitions/handlers.extentDTO'
+      id:
         type: string
-      message:
+      itemType:
+        type: string
+      title:
         type: string
     type: object
-  router.metadataDTO:
+  handlers.extentDTO:
+    properties:
+      spatial:
+        $ref: '#/definitions/handlers.spatialExtentDTO'
+    type: object
+  handlers.metadataDTO:
     properties:
       bbox:
         type: string
@@ -32,42 +39,35 @@ definitions:
       updatedAt:
         type: string
     type: object
-  service.Source:
+  handlers.spatialExtentDTO:
     properties:
-      ext:
-        type: string
-      layers:
+      bbox:
         items:
-          $ref: '#/definitions/service.SourceLayer'
+          items:
+            format: float64
+            type: number
+          type: array
         type: array
-      loaded:
-        type: boolean
-      modTime:
-        type: string
-      name:
-        type: string
-      sizeBytes:
-        type: integer
-      tableId:
+      crs:
         type: string
     type: object
-  service.SourceLayer:
+  response.ErrorResponse:
     properties:
-      loaded:
-        type: boolean
-      name:
+      code:
+        type: integer
+      error:
         type: string
-      tableId:
+      message:
         type: string
     type: object
 info:
   contact: {}
-  description: Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT,
-    dérivation.
-  title: GeoAPI
+  description: 'Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique
+    : sources, tables, rows, tuiles MVT, dérivation.'
+  title: Darow
   version: "1.0"
 paths:
-  /sources:
+  /api/v1/ogc/:
     get:
       produces:
       - application/json
@@ -75,13 +75,190 @@ paths:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/service.Source'
-            type: array
+            additionalProperties: true
+            type: object
+      summary: OGC API - Features landing page
+      tags:
+      - features
+  /api/v1/ogc/collections:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List OGC API - Features collections
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.collectionDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}/items:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)
+        in: query
+        name: bbox
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      - description: Simplify tolerance override
+        in: query
+        name: simplify
+        type: string
+      - description: Coordinate precision grid size override
+        in: query
+        name: precision
+        type: string
+      - description: Max features returned
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: List features of an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/collections/{tableId}/items/{featureId}:
+    get:
+      parameters:
+      - description: Collection (table) ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Feature (row) primary key
+        in: path
+        name: featureId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get a single feature of an OGC API - Features collection
+      tags:
+      - features
+  /api/v1/ogc/conformance:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+      summary: Declared OGC API - Features conformance classes
+      tags:
+      - features
+  /api/v1/sources:
+    get:
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. name,-sizeBytes
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List cached sources
       tags:
       - sources
-  /sources/{name}/load:
+  /api/v1/sources/{name}:
+    delete:
+      parameters:
+      - description: Source file name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Delete a source file
+      tags:
+      - sources
+  /api/v1/sources/{name}/load:
     post:
       parameters:
       - description: Source file name
@@ -93,6 +270,10 @@ paths:
         in: query
         name: layer
         type: string
+      - description: Explicit source EPSG code, overriding auto-detection
+        in: query
+        name: srid
+        type: integer
       produces:
       - application/json
       responses:
@@ -105,28 +286,76 @@ paths:
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Load a source file into a new table
       tags:
       - sources
-  /sources/refresh:
-    post:
+  /api/v1/sources/{name}/metadata:
+    get:
+      parameters:
+      - description: Source file name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Layer name (for multi-layer sources)
+        in: query
+        name: layer
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/service.Source'
-            type: array
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Preview a source's detected CRS
+      tags:
+      - sources
+  /api/v1/sources/refresh:
+    post:
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. name,-sizeBytes
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Rescan workDir
       tags:
       - sources
-  /sources/upload:
+  /api/v1/sources/upload:
     post:
       consumes:
       - multipart/form-data
+      parameters:
+      - description: Explicit source EPSG code, overriding auto-detection
+        in: query
+        name: srid
+        type: integer
       produces:
       - application/json
       responses:
@@ -139,26 +368,42 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Upload a file and load it into a new table
       tags:
       - sources
-  /tables:
+  /api/v1/tables:
     get:
-      description: Liste toutes les tables avec leurs métadonnées
+      description: Liste les tables avec leurs métadonnées, paginées
+      parameters:
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - description: Comma-separated sort columns, e.g. tableName,-updatedAt
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/router.metadataDTO'
-            type: array
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List tables
       tags:
       - tables
-  /tables/{tableId}:
+  /api/v1/tables/{tableId}:
     delete:
       description: Supprime une table et ses données
       parameters:
@@ -173,7 +418,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a table
       tags:
       - tables
@@ -190,16 +435,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/router.metadataDTO'
+            $ref: '#/definitions/handlers.metadataDTO'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get table metadata
       tags:
       - tables
-  /tables/{tableId}/bbox:
-    post:
+    patch:
       consumes:
       - application/json
       parameters:
@@ -214,15 +458,37 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              items:
-                type: string
-              type: array
+            $ref: '#/definitions/handlers.metadataDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Rename a table
+      tags:
+      - tables
+  /api/v1/tables/{tableId}/bbox:
+    post:
+      consumes:
+      - application/json
+      description: bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
             type: object
       summary: Filter row pkeys by bounding box
       tags:
       - geo
-  /tables/{tableId}/columns:
+  /api/v1/tables/{tableId}/columns:
     post:
       consumes:
       - application/json
@@ -244,11 +510,47 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add a column
       tags:
       - tables
-  /tables/{tableId}/derive:
+  /api/v1/tables/{tableId}/columns/{col}/distinct:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Column name
+        in: path
+        name: col
+        required: true
+        type: string
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: List a column's distinct values
+      tags:
+      - tables
+  /api/v1/tables/{tableId}/derive:
     post:
       consumes:
       - application/json
@@ -270,11 +572,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Derive a table from a SELECT query
       tags:
       - tables
-  /tables/{tableId}/export:
+  /api/v1/tables/{tableId}/export:
     get:
       parameters:
       - description: Table ID
@@ -297,11 +599,64 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Export a table
       tags:
       - tables
-  /tables/{tableId}/geometry-types:
+  /api/v1/tables/{tableId}/filter:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Filter rows by column conditions
+      tags:
+      - tables
+  /api/v1/tables/{tableId}/filtered-extent:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get the bounding box of rows matching a filter
+      tags:
+      - geo
+  /api/v1/tables/{tableId}/geometry-types:
     get:
       parameters:
       - description: Table ID
@@ -323,7 +678,7 @@ paths:
       summary: List distinct geometry types present in a table
       tags:
       - geo
-  /tables/{tableId}/rows:
+  /api/v1/tables/{tableId}/rows:
     get:
       parameters:
       - description: Table ID
@@ -339,6 +694,10 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: Comma-separated sort columns, e.g. name,-createdAt
+        in: query
+        name: sort
+        type: string
       produces:
       - application/json
       responses:
@@ -347,6 +706,10 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List rows
       tags:
       - rows
@@ -373,11 +736,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add one or more rows
       tags:
       - rows
-  /tables/{tableId}/rows/{pkey}:
+  /api/v1/tables/{tableId}/rows/{pkey}:
     delete:
       parameters:
       - description: Table ID
@@ -419,7 +782,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get a row by pkey
       tags:
       - rows
@@ -448,11 +811,36 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/router.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Update a row
       tags:
       - rows
-  /tables/{tableId}/schema:
+  /api/v1/tables/{tableId}/rows/batch:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get multiple rows by pkey in one request
+      tags:
+      - rows
+  /api/v1/tables/{tableId}/schema:
     get:
       parameters:
       - description: Table ID
@@ -471,7 +859,7 @@ paths:
       summary: Get table schema
       tags:
       - tables
-  /tables/{tableId}/tiles/{z}/{x}/{y}:
+  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
     get:
       parameters:
       - description: Table ID
@@ -494,8 +882,16 @@ paths:
         name: "y"
         required: true
         type: integer
+      - description: Comma-separated non-geometry columns to embed in the tile
+        in: query
+        name: attrs
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
       produces:
-      - application/x-protobuf
+      - application/vnd.mapbox-vector-tile
       responses:
         "200":
           description: OK
@@ -504,4 +900,86 @@ paths:
       summary: Get an MVT tile
       tags:
       - geo
+  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features:
+    get:
+      parameters:
+      - description: Table ID
+        in: path
+        name: tableId
+        required: true
+        type: string
+      - description: Zoom level
+        in: path
+        name: z
+        required: true
+        type: integer
+      - description: Tile X
+        in: path
+        name: x
+        required: true
+        type: integer
+      - description: Tile Y
+        in: path
+        name: "y"
+        required: true
+        type: integer
+      - description: Comma-separated non-geometry columns to embed
+        in: query
+        name: attrs
+        type: string
+      - description: JSON-encoded []FilterCondition
+        in: query
+        name: filter
+        type: string
+      - description: Simplify tolerance override
+        in: query
+        name: simplify
+        type: string
+      - description: Coordinate precision grid size override
+        in: query
+        name: precision
+        type: string
+      - description: Max features returned
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Get features intersecting an MVT-style tile, as GeoJSON
+      tags:
+      - geo
+  /healthz:
+    get:
+      responses:
+        "200":
+          description: OK
+      summary: Liveness probe
+      tags:
+      - ops
+  /readyz:
+    get:
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/response.ErrorResponse'
+      summary: Readiness probe
+      tags:
+      - ops
 swagger: "2.0"

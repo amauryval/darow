@@ -1,0 +1,197 @@
+package tables
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+)
+
+// This file is the only place DuckDB's own catalogue functions
+// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions) are
+// read: their result columns are versioned with the engine, so a DuckDB
+// upgrade is a single file to check.
+
+// catalogColumn describes one column as DuckDB's catalogue reports it. Type is the
+// full declared type, parameters included — a geometry column carrying a
+// CRS reads as GEOMETRY('EPSG:2154').
+type catalogColumn struct {
+	Name     string
+	Type     string
+	Index    int
+	Nullable bool
+	Default  string
+}
+
+// IsGeometry reports whether the column holds spatial geometry, with or
+// without a declared CRS.
+func (c catalogColumn) IsGeometry() bool {
+	return c.Type == "GEOMETRY" || strings.HasPrefix(c.Type, "GEOMETRY(")
+}
+
+// catalogIndex describes one index of a table as duckdb_indexes reports it.
+type catalogIndex struct {
+	Name   string
+	Unique bool
+	SQL    string
+}
+
+// tableColumns lists the columns of an existing table, in declaration
+// order, from DuckDB's catalogue. The table name is a bound parameter, so
+// nothing is interpolated into the query.
+func tableColumns(ctx context.Context, conn Querier, tableName string) ([]catalogColumn, error) {
+	rows, err := conn.Query(ctx, `
+        SELECT column_name, column_index, data_type, is_nullable, column_default
+        FROM duckdb_columns()
+        WHERE database_name = current_database() AND schema_name = current_schema()
+          AND table_name = ?
+        ORDER BY column_index
+    `, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []catalogColumn
+	for rows.Next() {
+		var c catalogColumn
+		var colDefault sql.NullString
+		if err := rows.Scan(&c.Name, &c.Index, &c.Type, &c.Nullable, &colDefault); err != nil {
+			return nil, err
+		}
+		c.Default = colDefault.String
+		cols = append(cols, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(cols) == 0 {
+		return nil, fmt.Errorf("table %q does not exist", tableName)
+	}
+	return cols, nil
+}
+
+// queryColumns describes the shape a SELECT query produces, without
+// materializing it — the one case the catalogue cannot answer, since an
+// unmaterialized query has no catalogue entry. DESCRIBE resolves aliases,
+// wildcards and computed expressions exactly as DuckDB will when the query
+// runs, so callers never parse the query themselves.
+func queryColumns(ctx context.Context, conn Querier, query string) ([]catalogColumn, error) {
+	rows, err := conn.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, query))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []catalogColumn
+	for rows.Next() {
+		var c catalogColumn
+		var nullable, colDefault, key, extra sql.NullString
+		if err := rows.Scan(&c.Name, &c.Type, &nullable, &key, &colDefault, &extra); err != nil {
+			return nil, err
+		}
+		c.Index = len(cols) + 1
+		c.Nullable = nullable.String != "NO"
+		c.Default = colDefault.String
+		cols = append(cols, c)
+	}
+	return cols, rows.Err()
+}
+
+// soleGeometryColumn returns the single geometry column of cols, or an empty
+// name when there is none. More than one is rejected outright: the rest of
+// the domain (Tile, FilterByBbox, row reads) assumes a single geometry
+// column throughout, so picking the first would only be partially correct.
+func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
+	var found []catalogColumn
+	for _, c := range cols {
+		if c.IsGeometry() {
+			found = append(found, c)
+		}
+	}
+
+	switch len(found) {
+	case 0:
+		return catalogColumn{}, nil
+	case 1:
+		return found[0], nil
+	default:
+		names := make([]string, 0, len(found))
+		for _, c := range found {
+			names = append(names, c.Name)
+		}
+		return catalogColumn{}, fmt.Errorf("table has multiple geometry columns %v — multi-geometry sources are not supported", names)
+	}
+}
+
+// tableIndexes lists the indexes DuckDB holds for tableName, so index
+// creation can be verified rather than assumed.
+func tableIndexes(ctx context.Context, conn Querier, tableName string) ([]catalogIndex, error) {
+	rows, err := conn.Query(ctx, `
+        SELECT index_name, is_unique, sql
+        FROM duckdb_indexes()
+        WHERE database_name = current_database() AND schema_name = current_schema()
+          AND table_name = ?
+    `, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	indexes := []catalogIndex{}
+	for rows.Next() {
+		var idx catalogIndex
+		var createSQL sql.NullString
+		if err := rows.Scan(&idx.Name, &idx.Unique, &createSQL); err != nil {
+			return nil, err
+		}
+		idx.SQL = createSQL.String
+		indexes = append(indexes, idx)
+	}
+	return indexes, rows.Err()
+}
+
+// ExistingTables binds conn into a reader of the tables that physically
+// exist in it, which is all the catalogue needs to tell a registered table
+// apart from a metadata row whose physical table is gone. Returning the
+// bound reader keeps the wiring a single expression, and keeps
+// duckdb_tables() read here alone.
+func ExistingTables(conn Querier) func(ctx context.Context) (map[string]bool, error) {
+	return func(ctx context.Context) (map[string]bool, error) {
+		return existingTableNames(ctx, conn)
+	}
+}
+
+// existingTableNames lists the tables that physically exist in the
+// database.
+func existingTableNames(ctx context.Context, conn Querier) (map[string]bool, error) {
+	rows, err := conn.Query(ctx, `
+        SELECT table_name FROM duckdb_tables()
+        WHERE database_name = current_database() AND schema_name = current_schema()
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	names := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names[name] = true
+	}
+	return names, rows.Err()
+}
+
+// ExtensionLoaded reports whether a DuckDB extension is loaded in the
+// current session — what a readiness probe needs, since installed alone
+// backs no query.
+func ExtensionLoaded(ctx context.Context, conn Querier, name string) (bool, error) {
+	var loaded bool
+	err := conn.QueryRow(ctx, `
+        SELECT COALESCE(MAX(loaded), FALSE) FROM duckdb_extensions() WHERE extension_name = ?
+    `, name).Scan(&loaded)
+	return loaded, err
+}

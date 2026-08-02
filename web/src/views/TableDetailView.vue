@@ -1,209 +1,188 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { deleteTable, exportUrl, getSchema, getTable, listRows } from "../client/tables";
-import type { ColumnSchema, Metadata, Row } from "../client/types";
-import { ApiError } from "../client/http";
-
-// MapLibre GL is the largest dependency in the bundle — load it only when
-// a geo table's map tab is actually opened.
-const MapView = defineAsyncComponent(() => import("../components/MapView.vue"));
+import { exportUrl } from "../client/tables";
+import { errorMessage } from "../client/http";
+import Badge from "../components/Badge.vue";
+import ColumnsModal from "../components/ColumnsModal.vue";
+import ConfirmButton from "../components/ConfirmButton.vue";
+import TableDataPanel from "../components/TableDataPanel.vue";
+import DeriveTableModal from "../components/DeriveTableModal.vue";
+import AddColumnModal from "../components/AddColumnModal.vue";
+import BaseButton from "../components/ui/BaseButton.vue";
+import { useTableMetadata } from "../composables/useTableMetadata";
+import { useToast } from "../composables/useToast";
+import { useDocumentTitle } from "../composables/useDocumentTitle";
 
 const props = defineProps<{ tableId: string }>();
 const router = useRouter();
+const toast = useToast();
 
-const table = ref<Metadata | null>(null);
-const columns = ref<ColumnSchema[]>([]);
-const rows = ref<Row[]>([]);
-const total = ref(0);
-const offset = ref(0);
-const limit = ref(20);
-const tab = ref<"rows" | "schema" | "map">("rows");
-const loading = ref(false);
-const error = ref<string | null>(null);
-const deleting = ref(false);
+const { table, columns, editableColumns, rowColumns, loadTable, rename, remove } = useTableMetadata(
+  toRef(props, "tableId"),
+);
 
-const rowColumns = computed(() => columns.value.map((c) => c.name).filter((name) => name !== table.value?.geometryColumn));
+useDocumentTitle(computed(() => table.value?.tableName ?? "Table"));
 
-// The physical column is named "__pkey", but Row objects key it as "pkey"
-// (see router.rowToJSON on the backend, which pulls it out of storage.Row's
-// dedicated Pkey field rather than its Values map) — map the two back
-// together for display rather than showing a blank cell.
-function cellValue(row: Row, col: string): Row[string] {
-  return col === "__pkey" ? row.pkey : row[col];
+const renaming = ref(false);
+const editingName = ref(false);
+const nameInput = ref("");
+
+// The user's visible-column choice must survive a schema reload (§8.3): only
+// the first population is a straight assignment, later ones diff against the
+// previously known column list so a hidden column stays hidden, a removed
+// column drops out, and a newly added one defaults to visible.
+const visibleColumns = ref<string[]>([]);
+let knownRowColumns: string[] = [];
+watch(
+  rowColumns,
+  (cols) => {
+    if (knownRowColumns.length === 0) {
+      visibleColumns.value = cols;
+    } else {
+      const added = cols.filter((c) => !knownRowColumns.includes(c));
+      visibleColumns.value = [...visibleColumns.value.filter((c) => cols.includes(c)), ...added];
+    }
+    knownRowColumns = cols;
+  },
+  { immediate: true },
+);
+
+const showColumns = ref(false);
+const showDerive = ref(false);
+const showAddColumn = ref(false);
+
+const deriveModalRef = ref<InstanceType<typeof DeriveTableModal>>();
+const addColumnModalRef = ref<InstanceType<typeof AddColumnModal>>();
+
+function startRename() {
+  nameInput.value = table.value?.tableName ?? "";
+  editingName.value = true;
 }
 
-async function loadTable() {
-  table.value = await getTable(props.tableId);
-  if (table.value.isGeo) tab.value = "map";
-}
-
-async function loadSchema() {
-  const res = await getSchema(props.tableId);
-  columns.value = res.columns;
-}
-
-async function loadRows() {
-  const page = await listRows(props.tableId, offset.value, limit.value);
-  rows.value = page.rows;
-  total.value = page.total;
-}
-
-async function loadAll() {
-  loading.value = true;
-  error.value = null;
+async function confirmRename() {
+  if (!nameInput.value.trim()) return;
+  renaming.value = true;
   try {
-    await Promise.all([loadTable(), loadSchema(), loadRows()]);
+    await rename(nameInput.value.trim());
+    editingName.value = false;
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de charger la table";
+    toast.error(errorMessage(e, "Impossible de renommer la table"));
   } finally {
-    loading.value = false;
+    renaming.value = false;
   }
 }
 
-async function onDelete() {
-  if (!confirm(`Supprimer la table "${table.value?.tableName}" et ses données ?`)) return;
-  deleting.value = true;
+async function onDeleteTable() {
+  console.log("asshole")
   try {
-    await deleteTable(props.tableId);
+    const name = table.value?.tableName;
+    await remove();
+    toast.success(`Table "${name}" supprimée.`);
     router.push("/tables");
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : "Impossible de supprimer la table";
-    deleting.value = false;
+    toast.error(errorMessage(e, "Impossible de supprimer la table"));
   }
 }
 
-function nextPage() {
-  if (offset.value + limit.value >= total.value) return;
-  offset.value += limit.value;
+function openDerive() {
+  showDerive.value = true;
+  deriveModalRef.value?.openModal();
 }
 
-function prevPage() {
-  offset.value = Math.max(0, offset.value - limit.value);
+async function onDeriveSuccess(result: { tableId: string }) {
+  await router.push(`/tables/${result.tableId}`);
 }
 
-watch(offset, loadRows);
-onMounted(loadAll);
+function openAddColumn() {
+  showAddColumn.value = true;
+  addColumnModalRef.value?.openModal();
+}
+
+async function onAddColumnSuccess() {
+  await loadTable();
+}
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-8 py-8">
-    <RouterLink to="/tables" class="text-sm font-medium text-slate-500 hover:text-slate-700">&larr; Tables</RouterLink>
+  <div class="flex min-h-0 flex-1 flex-col px-6 py-4">
+    <RouterLink to="/tables" class="shrink-0 text-sm font-medium text-slate-500 hover:text-slate-700">&larr; Tables</RouterLink>
 
-    <div v-if="table" class="mt-2 mb-6 flex items-start justify-between">
+    <div v-if="table" class="mt-3 mb-4 flex shrink-0 items-start justify-between">
       <div>
-        <h1 class="text-lg font-semibold text-slate-900">{{ table.tableName }}</h1>
-        <p class="text-sm text-slate-500">
+        <div v-if="editingName" class="flex items-center gap-2">
+          <input
+            v-model="nameInput"
+            type="text"
+            class="rounded-md border border-slate-300 px-2 py-1 text-lg font-semibold text-slate-900"
+            @keyup.enter="confirmRename"
+            @keyup.esc="editingName = false"
+          />
+          <BaseButton size="sm" variant="primary" :busy="renaming" :disabled="renaming || !nameInput.trim()" @click="confirmRename">
+            {{ renaming ? "..." : "Enregistrer" }}
+          </BaseButton>
+          <BaseButton size="sm" variant="secondary" @click="editingName = false">Annuler</BaseButton>
+        </div>
+        <h1 v-else class="group flex items-center gap-2 text-lg font-semibold text-slate-900">
+          {{ table.tableName }}
+          <button class="text-xs font-medium text-slate-400 hover:text-indigo-600" @click="startRename">Renommer</button>
+        </h1>
+        <p class="flex items-center gap-2 text-sm text-slate-500">
+          <Badge :tone="table.isGeo ? 'primary' : 'neutral'">{{ table.isGeo ? "Géo" : "Standard" }}</Badge>
           {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
         </p>
       </div>
       <div class="flex gap-2">
+        <BaseButton variant="secondary" @click="showColumns = true">Colonnes</BaseButton>
+        <BaseButton variant="secondary" @click="openAddColumn">Ajouter une colonne</BaseButton>
+        <BaseButton variant="secondary" @click="openDerive">Dériver</BaseButton>
         <a
           :href="exportUrl(table.tableId, table.isGeo ? 'geojson' : 'csv')"
-          class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          class="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           Exporter
         </a>
-        <button
-          class="rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-          :disabled="deleting"
-          @click="onDelete"
-        >
-          Supprimer
-        </button>
+        <ConfirmButton label="Supprimer" confirm-label="Supprimer la table" @confirm="onDeleteTable" />
       </div>
     </div>
 
-    <p v-if="error" class="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-      {{ error }}
-    </p>
+    <TableDataPanel
+      v-if="table"
+      :table-id="table.tableId"
+      :bbox="table.bbox"
+      :is-geo="table.isGeo"
+      :row-columns="rowColumns"
+      :visible-columns="visibleColumns"
+      :editable-columns="editableColumns"
+      :columns="columns"
+      :geometry-column="table.geometryColumn"
+      @mutated="loadTable"
+    />
 
-    <div class="mb-4 flex gap-1 border-b border-slate-200">
-      <button
-        v-if="table?.isGeo"
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'map' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'map'"
-      >
-        Carte
-      </button>
-      <button
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'rows' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'rows'"
-      >
-        Données
-      </button>
-      <button
-        class="border-b-2 px-3 py-2 text-sm font-medium"
-        :class="tab === 'schema' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'"
-        @click="tab = 'schema'"
-      >
-        Schéma
-      </button>
-    </div>
+    <DeriveTableModal
+      v-if="showDerive && table"
+      ref="deriveModalRef"
+      :table-id="table.tableId"
+      :physical-name="table.physicalName"
+      @derived="onDeriveSuccess"
+      @close="showDerive = false"
+    />
 
-    <div v-if="tab === 'map' && table?.isGeo" class="h-[65vh] overflow-hidden rounded-lg border border-slate-200">
-      <MapView :table-id="table.tableId" :bbox="table.bbox" />
-    </div>
+    <ColumnsModal
+      v-if="showColumns && table"
+      :table-id="table.tableId"
+      :row-columns="rowColumns"
+      :visible-columns="visibleColumns"
+      @update:visible-columns="visibleColumns = $event"
+      @close="showColumns = false"
+    />
 
-    <div v-else-if="tab === 'schema'" class="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <table class="w-full text-sm">
-        <thead class="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-          <tr>
-            <th class="px-4 py-2.5">Colonne</th>
-            <th class="px-4 py-2.5">Type</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          <tr v-for="col in columns" :key="col.name">
-            <td class="px-4 py-2.5 font-medium text-slate-800">{{ col.name }}</td>
-            <td class="px-4 py-2.5 font-mono text-xs text-slate-500">{{ col.type }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div v-else>
-      <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table class="w-full text-sm">
-          <thead class="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-            <tr>
-              <th v-for="col in rowColumns" :key="col" class="whitespace-nowrap px-4 py-2.5">{{ col }}</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            <tr v-for="row in rows" :key="row.pkey">
-              <td v-for="col in rowColumns" :key="col" class="whitespace-nowrap px-4 py-2.5 text-slate-700">
-                {{ cellValue(row, col) }}
-              </td>
-            </tr>
-            <tr v-if="!loading && rows.length === 0">
-              <td :colspan="rowColumns.length || 1" class="px-4 py-8 text-center text-sm text-slate-400">Aucune ligne.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="mt-3 flex items-center justify-between text-sm text-slate-500">
-        <span>{{ offset + 1 }}–{{ Math.min(offset + limit, total) }} sur {{ total }}</span>
-        <div class="flex gap-2">
-          <button
-            class="rounded-md border border-slate-300 bg-white px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            :disabled="offset === 0"
-            @click="prevPage"
-          >
-            Précédent
-          </button>
-          <button
-            class="rounded-md border border-slate-300 bg-white px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            :disabled="offset + limit >= total"
-            @click="nextPage"
-          >
-            Suivant
-          </button>
-        </div>
-      </div>
-    </div>
+    <AddColumnModal
+      v-if="showAddColumn && table"
+      ref="addColumnModalRef"
+      :table-id="table.tableId"
+      @added="onAddColumnSuccess"
+      @close="showAddColumn = false"
+    />
   </div>
 </template>

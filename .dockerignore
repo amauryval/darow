@@ -1,0 +1,9 @@
+bin/
+data/
+web/node_modules/
+web/dist/
+internal/webui/dist/*
+!internal/webui/dist/index.html
+.git/
+.claude/
+spec/

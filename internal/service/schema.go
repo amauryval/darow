@@ -1,32 +1,97 @@
 package service
 
+import (
+	"context"
+	"darow/internal/storage"
+
+	"github.com/hashicorp/golang-lru/v2/expirable"
+)
+
 // ColumnSchema describes a single column's name and DuckDB type.
 type ColumnSchema struct {
 	Name string
 	Type string
 }
 
-// Schema returns the name and type of every column of tableId's
-// underlying table, geometry column included (this describes structure,
-// not row data, so règle 7 does not apply).
-func (s *TableService) Schema(tableId string) ([]ColumnSchema, error) {
-	cols, err := s.storage.Columns(tableId)
+// SchemaService exposes a table's structure — column names and types —
+// distinct from RowService's row data. Adding a column never affects
+// derived metadata, so it needs no dependency on MetadataService. It is
+// the single owner of its own column schema cache, a size-bounded LRU
+// with expiration, invalidated by AddColumn and, through
+// InvalidateSchema, by MetadataService.RemoveTable.
+type SchemaService struct {
+	storage tableResolver
+	cache   *expirable.LRU[string, []ColumnSchema]
+}
+
+// NewSchemaService builds a SchemaService backed by storage, using c to
+// cache each table's column schema.
+func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSchema]) *SchemaService {
+	return &SchemaService{storage: storage, cache: c}
+}
+
+// Schema returns the name and type of every column of meta's underlying
+// table, geometry column included (this describes structure, not row
+// data, so the geometry-exclusion rule doesn't apply), from cache when
+// present: one DESCRIBE-driven population, not one per column, per cache
+// miss. meta is the caller's already-resolved metadata; only its TableId
+// is used as the cache key.
+func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
+	if schema, ok := s.cache.Get(meta.TableId); ok {
+		return schema, nil
+	}
+
+	repo, err := s.storage.Table(meta)
+	if err != nil {
+		return nil, err
+	}
+	cols, err := repo.Schema(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	schema := make([]ColumnSchema, 0, len(cols))
 	for _, col := range cols {
-		colType, err := s.storage.ColumnType(tableId, col)
-		if err != nil {
-			return nil, err
-		}
-		schema = append(schema, ColumnSchema{Name: col, Type: colType})
+		schema = append(schema, ColumnSchema{Name: col.Name, Type: col.Type})
 	}
+
+	s.cache.Add(meta.TableId, schema)
 	return schema, nil
 }
 
-// AddColumn adds colName of type colType to tableId's underlying table.
-func (s *TableService) AddColumn(tableId, colName, colType string) error {
-	return s.storage.AddColumn(tableId, colName, colType)
+// Types returns meta's column-name-to-DuckDB-type map, from the same
+// cache as Schema, so converting row values (RowService.convertRow) never
+// issues one DESCRIBE call per column.
+func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[string]string, error) {
+	schema, err := s.Schema(ctx, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	types := make(map[string]string, len(schema))
+	for _, col := range schema {
+		types[col.Name] = col.Type
+	}
+	return types, nil
+}
+
+// AddColumn adds colName of type colType to meta's underlying table and
+// invalidates its cached schema.
+func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
+	repo, err := s.storage.Table(meta)
+	if err != nil {
+		return err
+	}
+	if err := repo.AddColumn(ctx, colName, colType); err != nil {
+		return err
+	}
+	s.InvalidateSchema(meta.TableId)
+	return nil
+}
+
+// InvalidateSchema drops tableId's cached schema. Called by
+// MetadataService.RemoveTable, the one structural change to a table that
+// happens outside SchemaService.
+func (s *SchemaService) InvalidateSchema(tableId string) {
+	s.cache.Remove(tableId)
 }

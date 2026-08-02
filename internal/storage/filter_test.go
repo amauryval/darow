@@ -28,7 +28,7 @@ func Test_BuildFilter(t *testing.T) {
 				{Column: "height", Operator: ">", Value: 10},
 			},
 			validColumns: []string{"height"},
-			wantFilter:   "height > ?",
+			wantFilter:   `"height" > ?`,
 			wantArgs:     []any{10},
 		},
 		{
@@ -38,8 +38,17 @@ func Test_BuildFilter(t *testing.T) {
 				{Column: "name", Operator: "LIKE", Value: "%foo%"},
 			},
 			validColumns: []string{"height", "name"},
-			wantFilter:   "height > ? AND name LIKE ?",
+			wantFilter:   `"height" > ? AND "name" LIKE ?`,
 			wantArgs:     []any{10, "%foo%"},
+		},
+		{
+			name: "accented column name is whitelisted and quoted, not rejected",
+			conditions: []FilterCondition{
+				{Column: "nom_région", Operator: "=", Value: "Bretagne"},
+			},
+			validColumns: []string{"nom_région"},
+			wantFilter:   `"nom_région" = ?`,
+			wantArgs:     []any{"Bretagne"},
 		},
 		{
 			name: "unknown column rejected",
@@ -58,11 +67,68 @@ func Test_BuildFilter(t *testing.T) {
 			wantErr:      true,
 		},
 		{
-			name: "non identifier column rejected even if whitelisted",
+			name: "column with an unusual name is quoted safely rather than rejected, but only once whitelisted against the table's real columns",
 			conditions: []FilterCondition{
 				{Column: "height; DROP TABLE x", Operator: "=", Value: 1},
 			},
 			validColumns: []string{"height; DROP TABLE x"},
+			wantFilter:   `"height; DROP TABLE x" = ?`,
+			wantArgs:     []any{1},
+		},
+		{
+			name: "OR group ANDed with a root-level leaf",
+			conditions: []FilterCondition{
+				{Column: "height", Operator: ">", Value: 10},
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Column: "name", Operator: "=", Value: "a"},
+					{Column: "name", Operator: "=", Value: "b"},
+				}},
+			},
+			validColumns: []string{"height", "name"},
+			wantFilter:   `"height" > ? AND ("name" = ? OR "name" = ?)`,
+			wantArgs:     []any{10, "a", "b"},
+		},
+		{
+			name: "AND group nested inside an OR group",
+			conditions: []FilterCondition{
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Bool: "AND", Conditions: []FilterCondition{
+						{Column: "height", Operator: ">", Value: 10},
+						{Column: "name", Operator: "=", Value: "a"},
+					}},
+					{Column: "name", Operator: "=", Value: "b"},
+				}},
+			},
+			validColumns: []string{"height", "name"},
+			wantFilter:   `(("height" > ? AND "name" = ?) OR "name" = ?)`,
+			wantArgs:     []any{10, "a", "b"},
+		},
+		{
+			name: "unsupported boolean operator rejected",
+			conditions: []FilterCondition{
+				{Bool: "XOR", Conditions: []FilterCondition{
+					{Column: "height", Operator: ">", Value: 10},
+				}},
+			},
+			validColumns: []string{"height"},
+			wantErr:      true,
+		},
+		{
+			name: "empty boolean group rejected",
+			conditions: []FilterCondition{
+				{Bool: "AND", Conditions: nil},
+			},
+			validColumns: []string{"height"},
+			wantErr:      true,
+		},
+		{
+			name: "unknown column rejected even nested inside a group",
+			conditions: []FilterCondition{
+				{Bool: "OR", Conditions: []FilterCondition{
+					{Column: "geom", Operator: "=", Value: "x"},
+				}},
+			},
+			validColumns: []string{"height"},
 			wantErr:      true,
 		},
 	}

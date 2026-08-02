@@ -15,7 +15,225 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/sources": {
+        "/api/v1/ogc/": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "OGC API - Features landing page",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/ogc/collections": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "List OGC API - Features collections",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/ogc/collections/{tableId}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "Get an OGC API - Features collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection (table) ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.collectionDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/ogc/collections/{tableId}/items": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "List features of an OGC API - Features collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection (table) ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)",
+                        "name": "bbox",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded []FilterCondition",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Simplify tolerance override",
+                        "name": "simplify",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Coordinate precision grid size override",
+                        "name": "precision",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max features returned",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/ogc/collections/{tableId}/items/{featureId}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "Get a single feature of an OGC API - Features collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection (table) ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Feature (row) primary key",
+                        "name": "featureId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/ogc/conformance": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "features"
+                ],
+                "summary": "Declared OGC API - Features conformance classes",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sources": {
             "get": {
                 "produces": [
                     "application/json"
@@ -24,20 +242,44 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "List cached sources",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/service.Source"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/sources/refresh": {
+        "/api/v1/sources/refresh": {
             "post": {
                 "produces": [
                     "application/json"
@@ -46,20 +288,44 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "Rescan workDir",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/service.Source"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/sources/upload": {
+        "/api/v1/sources/upload": {
             "post": {
                 "consumes": [
                     "multipart/form-data"
@@ -71,6 +337,14 @@ const docTemplate = `{
                     "sources"
                 ],
                 "summary": "Upload a file and load it into a new table",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Explicit source EPSG code, overriding auto-detection",
+                        "name": "srid",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "201": {
                         "description": "Created",
@@ -84,13 +358,41 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/sources/{name}/load": {
+        "/api/v1/sources/{name}": {
+            "delete": {
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Delete a source file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sources/{name}/load": {
             "post": {
                 "produces": [
                     "application/json"
@@ -112,6 +414,12 @@ const docTemplate = `{
                         "description": "Layer name (required for multi-layer sources)",
                         "name": "layer",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Explicit source EPSG code, overriding auto-detection",
+                        "name": "srid",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -127,15 +435,56 @@ const docTemplate = `{
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables": {
+        "/api/v1/sources/{name}/metadata": {
             "get": {
-                "description": "Liste toutes les tables avec leurs métadonnées",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Preview a source's detected CRS",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Layer name (for multi-layer sources)",
+                        "name": "layer",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables": {
+            "get": {
+                "description": "Liste les tables avec leurs métadonnées, paginées",
                 "produces": [
                     "application/json"
                 ],
@@ -143,20 +492,44 @@ const docTemplate = `{
                     "tables"
                 ],
                 "summary": "List tables",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. tableName,-updatedAt",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/router.metadataDTO"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}": {
+        "/api/v1/tables/{tableId}": {
             "get": {
                 "produces": [
                     "application/json"
@@ -178,13 +551,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/router.metadataDTO"
+                            "$ref": "#/definitions/handlers.metadataDTO"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -211,14 +584,50 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Rename a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.metadataDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/bbox": {
+        "/api/v1/tables/{tableId}/bbox": {
             "post": {
+                "description": "bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)",
                 "consumes": [
                     "application/json"
                 ],
@@ -243,18 +652,13 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/columns": {
+        "/api/v1/tables/{tableId}/columns": {
             "post": {
                 "consumes": [
                     "application/json"
@@ -288,13 +692,67 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/derive": {
+        "/api/v1/tables/{tableId}/columns/{col}/distinct": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "List a column's distinct values",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "col",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/derive": {
             "post": {
                 "consumes": [
                     "application/json"
@@ -328,13 +786,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/export": {
+        "/api/v1/tables/{tableId}/export": {
             "get": {
                 "produces": [
                     "application/json",
@@ -369,13 +827,94 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/geometry-types": {
+        "/api/v1/tables/{tableId}/filter": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Filter rows by column conditions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/filtered-extent": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geo"
+                ],
+                "summary": "Get the bounding box of rows matching a filter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded []FilterCondition",
+                        "name": "filter",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/geometry-types": {
             "get": {
                 "produces": [
                     "application/json"
@@ -409,7 +948,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/rows": {
+        "/api/v1/tables/{tableId}/rows": {
             "get": {
                 "produces": [
                     "application/json"
@@ -437,6 +976,12 @@ const docTemplate = `{
                         "description": "Pagination limit",
                         "name": "limit",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated sort columns, e.g. name,-createdAt",
+                        "name": "sort",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -445,6 +990,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -485,13 +1036,51 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/rows/{pkey}": {
+        "/api/v1/tables/{tableId}/rows/batch": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rows"
+                ],
+                "summary": "Get multiple rows by pkey in one request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/rows/{pkey}": {
             "get": {
                 "produces": [
                     "application/json"
@@ -527,7 +1116,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -597,13 +1186,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/router.ErrorResponse"
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/tables/{tableId}/schema": {
+        "/api/v1/tables/{tableId}/schema": {
             "get": {
                 "produces": [
                     "application/json"
@@ -632,10 +1221,10 @@ const docTemplate = `{
                 }
             }
         },
-        "/tables/{tableId}/tiles/{z}/{x}/{y}": {
+        "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}": {
             "get": {
                 "produces": [
-                    "application/x-protobuf"
+                    "application/vnd.mapbox-vector-tile"
                 ],
                 "tags": [
                     "geo"
@@ -669,6 +1258,18 @@ const docTemplate = `{
                         "name": "y",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated non-geometry columns to embed in the tile",
+                        "name": "attrs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded []FilterCondition",
+                        "name": "filter",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -680,24 +1281,159 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geo"
+                ],
+                "summary": "Get features intersecting an MVT-style tile, as GeoJSON",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Zoom level",
+                        "name": "z",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Tile X",
+                        "name": "x",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Tile Y",
+                        "name": "y",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated non-geometry columns to embed",
+                        "name": "attrs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON-encoded []FilterCondition",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Simplify tolerance override",
+                        "name": "simplify",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Coordinate precision grid size override",
+                        "name": "precision",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max features returned",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/readyz": {
+            "get": {
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Readiness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
-        "router.ErrorResponse": {
+        "handlers.collectionDTO": {
             "type": "object",
             "properties": {
-                "code": {
-                    "type": "integer"
+                "extent": {
+                    "$ref": "#/definitions/handlers.extentDTO"
                 },
-                "error": {
+                "id": {
                     "type": "string"
                 },
-                "message": {
+                "itemType": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }
         },
-        "router.metadataDTO": {
+        "handlers.extentDTO": {
+            "type": "object",
+            "properties": {
+                "spatial": {
+                    "$ref": "#/definitions/handlers.spatialExtentDTO"
+                }
+            }
+        },
+        "handlers.metadataDTO": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -732,45 +1468,34 @@ const docTemplate = `{
                 }
             }
         },
-        "service.Source": {
+        "handlers.spatialExtentDTO": {
             "type": "object",
             "properties": {
-                "ext": {
-                    "type": "string"
-                },
-                "layers": {
+                "bbox": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/service.SourceLayer"
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
                     }
                 },
-                "loaded": {
-                    "type": "boolean"
-                },
-                "modTime": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "sizeBytes": {
-                    "type": "integer"
-                },
-                "tableId": {
+                "crs": {
                     "type": "string"
                 }
             }
         },
-        "service.SourceLayer": {
+        "response.ErrorResponse": {
             "type": "object",
             "properties": {
-                "loaded": {
-                    "type": "boolean"
+                "code": {
+                    "type": "integer"
                 },
-                "name": {
+                "error": {
                     "type": "string"
                 },
-                "tableId": {
+                "message": {
                     "type": "string"
                 }
             }
@@ -784,8 +1509,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "GeoAPI",
-	Description:      "Serveur cartographique GeoAPI — sources, tables, rows, tuiles MVT, dérivation.",
+	Title:            "Darow",
+	Description:      "Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources, tables, rows, tuiles MVT, dérivation.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

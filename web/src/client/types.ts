@@ -27,6 +27,25 @@ export interface Source {
   layers?: SourceLayer[];
 }
 
+export interface SourceCRS {
+  srid: number | null;
+  authName: string;
+}
+
+export interface TablesPage {
+  tables: Metadata[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SourcesPage {
+  sources: Source[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export type RowValue = string | number | boolean | null;
 
 export interface Row {
@@ -48,6 +67,24 @@ export interface ColumnSchema {
 
 export interface SchemaResponse {
   columns: ColumnSchema[];
+}
+
+// Matches storage.FilterCondition — a node is either a leaf
+// (column/operator/value) or a boolean group (bool + conditions), never
+// both. Column and operator are validated server-side against the table's
+// real schema and a fixed operator whitelist, so no enum is enforced
+// client-side.
+export interface FilterCondition {
+  column?: string;
+  operator?: string;
+  value?: RowValue;
+  bool?: "AND" | "OR";
+  conditions?: FilterCondition[];
+}
+
+export interface ColumnDTO {
+  name: string;
+  type: string;
 }
 
 export interface ErrorResponse {

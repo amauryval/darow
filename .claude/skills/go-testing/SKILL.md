@@ -36,6 +36,12 @@ what you're doing! Finish by listing your changes.
     should continue
 -   Mock method argument if needed
 -   Test internal functions by placing test files in the same package (no `_test` suffix)
+-   A test file is named after the file it tests: `rows.go` is tested by `rows_test.go`, and never
+    by a file whose `.go` counterpart does not exist. A package's shared test harness (doubles,
+    fixtures used by several of its test files) goes in `fixtures_test.go` — the only allowed
+    exception, and it tests nothing itself
+-   A package's tests are self-sufficient: they build their fixtures from that package alone, never
+    through a sibling package's code
 -   Avoid creating externally facing functions solely for testing purposes
 -   Never add comments
 

@@ -35,3 +35,32 @@ func Test_ValidateIdentifier(t *testing.T) {
 		})
 	}
 }
+
+func Test_QuoteIdentifier(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "simple lowercase", input: "buildings", want: `"buildings"`},
+		{name: "accented column name", input: "nom_région", want: `"nom_région"`},
+		{name: "spaces", input: "Population 2020", want: `"Population 2020"`},
+		{name: "embedded double quote is doubled", input: `weird"name`, want: `"weird""name"`},
+		{name: "empty string", input: "", wantErr: true},
+		{name: "embedded NUL byte", input: "a\x00b", wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := QuoteIdentifier(c.input)
+
+			if c.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
