@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
-	"darow/internal/storage"
 	"fmt"
+	"path/filepath"
 	"strings"
+
+	"darow/internal/storage"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:
@@ -46,7 +48,11 @@ func (s *ImportService) LoadedSourceNames(ctx context.Context) (map[string]strin
 // ListLayers returns the layer names a source file exposes, used by
 // SourceService.Refresh to populate Source.Layers for multi-layer formats.
 func (s *ImportService) ListLayers(ctx context.Context, path string) ([]string, error) {
-	return s.storage.ListLayers(ctx, path)
+	layers, err := s.storage.ListLayers(ctx, path)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to list layers of %q", filepath.Base(path)), err)
+	}
+	return layers, nil
 }
 
 // ImportFromFile registers a new table from a source file: it creates the
@@ -67,7 +73,7 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 
 	geometryColumn, isGeo, resolvedSrid, err := s.storage.CreateFromFile(ctx, meta.PhysicalName, path, layer, srid)
 	if err != nil {
-		return "", s.metadata.Rollback(ctx, tableId, fmt.Errorf("importing %q: %w", name, err))
+		return "", s.metadata.Rollback(ctx, tableId, NewDisplayError(fmt.Sprintf("unable to import %q", name), err))
 	}
 
 	// sourceName/sourceLayer are independent of tableName, which
@@ -99,7 +105,11 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 // DetectCRS reports the authority/code of a source layer's declared CRS
 // (0 if undetectable), for a caller to preview before importing.
 func (s *ImportService) DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error) {
-	return s.storage.DetectCRS(ctx, path, layer)
+	authName, authCode, err = s.storage.DetectCRS(ctx, path, layer)
+	if err != nil {
+		return "", 0, NewDisplayError(fmt.Sprintf("unable to detect the CRS of %q", filepath.Base(path)), err)
+	}
+	return authName, authCode, nil
 }
 
 // RemoveTable deletes tableId's metadata and physical table, used by

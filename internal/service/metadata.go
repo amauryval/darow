@@ -45,7 +45,7 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (stor
 
 	meta, err := s.storage.GetMetadata(ctx, tableId)
 	if err != nil {
-		return storage.Metadata{}, err
+		return storage.Metadata{}, NewDisplayError(fmt.Sprintf("unable to read table %q", tableId), err)
 	}
 
 	s.cache.Add(tableId, meta)
@@ -56,7 +56,11 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (stor
 // deterministic order (or ORDER BY tableId when empty), plus the total
 // number of registered tables.
 func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
-	return s.storage.List(ctx, sort, offset, limit)
+	tables, total, err := s.storage.List(ctx, sort, offset, limit)
+	if err != nil {
+		return nil, 0, NewDisplayError("unable to list tables", err)
+	}
+	return tables, total, nil
 }
 
 // invalidateMetadataCache must be called after any write that changes
@@ -69,13 +73,17 @@ func (s *MetadataService) invalidateMetadataCache(tableId string) {
 // Create registers a new logical table's metadata row, used by
 // DeriveService/ImportService before materializing its physical table.
 func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	return s.storage.Create(ctx, tableName, isGeo, geometryColumn)
+	tableId, err := s.storage.Create(ctx, tableName, isGeo, geometryColumn)
+	if err != nil {
+		return "", NewDisplayError(fmt.Sprintf("unable to create table %q", tableName), err)
+	}
+	return tableId, nil
 }
 
 // UpdateMetadata patches tableId's metadata and invalidates the cache.
 func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error {
 	if err := s.storage.UpdateMetadata(ctx, tableId, patch); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to update table %q", tableId), err)
 	}
 	s.invalidateMetadataCache(tableId)
 	return nil
@@ -85,7 +93,7 @@ func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, pa
 // then invalidates both the metadata and the schema cache.
 func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error {
 	if err := s.storage.Remove(ctx, tableId); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to delete table %q", tableId), err)
 	}
 	s.invalidateMetadataCache(tableId)
 	s.schema.InvalidateSchema(tableId)
@@ -98,7 +106,7 @@ func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error
 // row count or touches the geometry column.
 func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error {
 	if err := s.storage.RefreshDerivedMetadata(ctx, tableId, touchesGeometry); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to refresh derived metadata of table %q", tableId), err)
 	}
 	s.invalidateMetadataCache(tableId)
 	return nil
@@ -111,7 +119,10 @@ func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, to
 // physical table.
 func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause error) error {
 	if err := s.RemoveTable(ctx, tableId); err != nil {
-		return fmt.Errorf("%w (cleanup also failed: %v)", cause, err)
+		return NewDisplayError(
+			fmt.Sprintf("table creation failed, and cleaning up the partial table %q also failed", tableId),
+			fmt.Errorf("%w (cleanup also failed: %v)", cause, err),
+		)
 	}
 	return cause
 }
@@ -127,7 +138,7 @@ func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause er
 func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
 	bySource, err := s.storage.BySource(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError("unable to list tables loaded from a source", err)
 	}
 
 	names := make(map[string]string, len(bySource))

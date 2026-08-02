@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
-	"darow/internal/storage"
+	"fmt"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
+
+	"darow/internal/storage"
 )
 
 // ColumnSchema describes a single column's name and DuckDB type.
@@ -43,11 +45,11 @@ func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]Co
 
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	cols, err := repo.Schema(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to read the schema of table %q", meta.TableId), err)
 	}
 
 	schema := make([]ColumnSchema, 0, len(cols))
@@ -80,10 +82,10 @@ func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[s
 func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	if err := repo.AddColumn(ctx, colName, colType); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to add column %q to table %q", colName, meta.TableId), err)
 	}
 	s.InvalidateSchema(meta.TableId)
 	return nil

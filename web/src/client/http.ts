@@ -3,8 +3,8 @@ import type { ErrorResponse } from "./types";
 // Every API route lives under this prefix (docs/audit.md HTTP-2 —
 // versioned API); the unversioned root paths still work but only as
 // redirects kept for the transition. apiUrl is also used directly by
-// callers building a URL for <a href>/tile templates rather than going
-// through fetch (tables.ts's exportUrl, geo.ts's tileUrl).
+// callers building a URL for a tile template rather than going through
+// fetch (geo.ts's tileUrl).
 const API_BASE = "/api/v1";
 
 // Defaults to "" (paths resolve relative to the page's own origin), which
@@ -30,21 +30,48 @@ function rootUrl(path: string): string {
 
 export class ApiError extends Error {
   code: number;
+  requestId: string;
 
   constructor(response: ErrorResponse) {
-    super(response.error);
+    super(response.message);
     this.code = response.code;
+    this.requestId = response.requestId;
   }
 }
 
-// errorMessage turns any caught value into a user-facing string: the
-// server's own message for an ApiError, or fallback plus the underlying
-// error's message for anything else (e.g. a network failure — the request
-// never reached the server at all, so there is no ApiError to unwrap, but
-// the browser's own error text, "Failed to fetch" and the like, is still
-// more diagnosable than a bare generic string).
+// statusPhrase gives an ApiError's status class a short French framing —
+// the server itself is English-only (spec/back/spec.md has no i18n
+// concept), but every user-visible string here must be French (§0.17), and
+// a raw "Internal Server Error"/"Not Found" reads as untranslated in an
+// otherwise all-French interface.
+function statusPhrase(code: number): string {
+  if (code === 404) return "Introuvable";
+  if (code === 409) return "Conflit";
+  if (code === 413) return "Fichier ou requête trop volumineux";
+  if (code === 499) return "Requête annulée";
+  if (code === 503) return "Service indisponible";
+  if (code === 504) return "Délai dépassé";
+  if (code >= 500) return "Erreur interne du serveur";
+  if (code >= 400) return "Requête invalide";
+  return "";
+}
+
+// errorMessage turns any caught value into a user-facing string: a French
+// status phrase plus the server's own detail for an ApiError (the detail is
+// kept — even in English, a DuckDB/Go message is usually the most precise
+// thing available, per spec/back/spec.md §6.4), or fallback plus the
+// underlying error's message for anything else (e.g. a network failure —
+// the request never reached the server at all, so there is no ApiError to
+// unwrap, but the browser's own error text, "Failed to fetch" and the like,
+// is still more diagnosable than a bare generic string). The request
+// identifier, when the server returned one, is appended so the text stays
+// selectable and quotable when reporting a failure (§8.4).
 export function errorMessage(e: unknown, fallback: string): string {
-  if (e instanceof ApiError) return e.message;
+  if (e instanceof ApiError) {
+    const phrase = statusPhrase(e.code);
+    const base = phrase && e.message ? `${phrase} : ${e.message}` : (phrase || e.message);
+    return base;
+  }
   if (e instanceof Error) return `${fallback} : ${e.message}`;
   return fallback;
 }
@@ -52,7 +79,7 @@ export function errorMessage(e: unknown, fallback: string): string {
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ErrorResponse | null;
-    throw new ApiError(body ?? { error: res.statusText, message: res.statusText, code: res.status });
+    throw new ApiError(body ?? { error: "request_error", message: "", code: res.status, requestId: "" });
   }
   if (res.status === 204) {
     return undefined as T;
@@ -97,4 +124,16 @@ export function del<T>(path: string): Promise<T> {
 // itself from the FormData body.
 export function postForm<T>(path: string, form: FormData): Promise<T> {
   return fetch(apiUrl(path), { method: "POST", body: form }).then((res) => handle<T>(res));
+}
+
+// getBlob is get's counterpart for a non-JSON response body (tables.ts's
+// exportTable) — a failure still becomes the same ApiError every other
+// call throws, instead of a plain <a href> download the client never sees.
+export async function getBlob(path: string): Promise<Blob> {
+  const res = await fetch(apiUrl(path));
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ErrorResponse | null;
+    throw new ApiError(body ?? { error: "request_error", message: "", code: res.status, requestId: "" });
+  }
+  return res.blob();
 }

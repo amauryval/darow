@@ -77,7 +77,7 @@ func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName str
 
 	geometryColumn, isGeo, err := s.storage.CreateFromQuery(ctx, meta.PhysicalName, query)
 	if err != nil {
-		return "", s.metadata.Rollback(ctx, tableId, fmt.Errorf("deriving table: %w", err))
+		return "", s.metadata.Rollback(ctx, tableId, NewDisplayError(fmt.Sprintf("unable to derive table %q from the given query", newTableName), err))
 	}
 
 	if isGeo {

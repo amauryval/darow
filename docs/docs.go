@@ -1497,6 +1497,9 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
                 }
             }
         }

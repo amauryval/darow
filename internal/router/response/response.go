@@ -4,6 +4,7 @@
 package response
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,12 @@ import (
 	"darow/internal/storage"
 )
 
+// statusClientClosedRequest mirrors nginx's non-standard 499: the client
+// disconnected or cancelled before the server could answer, which is
+// neither a server fault (5xx) nor a rejection of the request as sent
+// (4xx). No net/http constant exists for it.
+const statusClientClosedRequest = 499
+
 // WriteJSON writes v as a JSON response with the given status code, always
 // setting Content-Type so clients never have to rely on content sniffing.
 func WriteJSON(w http.ResponseWriter, code int, v any) {
@@ -25,32 +32,74 @@ func WriteJSON(w http.ResponseWriter, code int, v any) {
 	}
 }
 
-// ErrorResponse is the JSON body written by WriteError.
+// ErrorResponse is the JSON body written by WriteError. Error is a stable,
+// machine-readable discriminator (errorCode's return value) a client can
+// switch on without matching on prose; Message is the human-readable
+// detail. RequestId lets a user quote the identifier the server logged the
+// failure under, so an operator can find the matching log line.
 type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Code    int    `json:"code"`
+	Error     string `json:"error"`
+	Message   string `json:"message"`
+	Code      int    `json:"code"`
+	RequestId string `json:"requestId"`
+}
+
+// errorCode maps a status to the stable discriminator ErrorResponse.Error
+// carries, kept coarser than the HTTP status itself so a client can
+// switch on a handful of classes rather than every code in play.
+func errorCode(code int) string {
+	switch code {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "payload_too_large"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	case http.StatusServiceUnavailable:
+		return "unavailable"
+	case statusClientClosedRequest:
+		return "client_closed_request"
+	}
+	if code >= 500 {
+		return "internal_error"
+	}
+	return "request_error"
 }
 
 // WriteError writes a JSON error response with the given status code. A 5xx
-// logs err server-side and never sends its detail to the client (it may
-// contain internal details like DuckDB error text or physicalName) — only
-// 4xx, caused by the caller's own request, gets the underlying message.
+// is additionally logged server-side, but the client gets the same
+// underlying message a 4xx does — the server is designed for a trusted
+// network (LIM-1), never exposed directly on the Internet, so the detail
+// (which may name a physicalName or quote a DuckDB error) is worth more to
+// an operator diagnosing a failure than the risk of a generic-status-text
+// alternative is worth avoiding. If err wraps a *service.DisplayError, its
+// DisplayMessage is sent instead of the wrapped cause's own text — a
+// service reaches for that when the cause's raw message is too internal to
+// show as is, without changing how MapServiceError classifies the failure.
 func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
-	message := err.Error()
+	requestId := middleware.GetReqID(req.Context())
 	if code >= 500 {
 		slog.Error("request failed",
 			"method", req.Method,
 			"path", req.URL.Path,
-			"request_id", middleware.GetReqID(req.Context()),
+			"request_id", requestId,
 			"error", err,
 		)
-		message = http.StatusText(code)
+	}
+	message := err.Error()
+	var displayErr *service.DisplayError
+	if errors.As(err, &displayErr) {
+		message = displayErr.DisplayMessage()
 	}
 	WriteJSON(w, code, ErrorResponse{
-		Error:   message,
-		Message: http.StatusText(code),
-		Code:    code,
+		Error:     errorCode(code),
+		Message:   message,
+		Code:      code,
+		RequestId: requestId,
 	})
 }
 
@@ -87,6 +136,12 @@ func MapServiceError(err error) int {
 	var conflictErr *service.ConflictError
 	if errors.As(err, &conflictErr) {
 		return http.StatusConflict
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return statusClientClosedRequest
 	}
 	return http.StatusInternalServerError
 }

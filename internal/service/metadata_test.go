@@ -46,9 +46,15 @@ func Test_MetadataService_GetMetadata(t *testing.T) {
 			svc, m, _ := setupMetadataService(t)
 
 			if c.failStorage {
-				m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("boom")).Once()
+				cause := errors.New("boom")
+				m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, cause).Once()
 				_, err := svc.GetMetadata(context.Background(), "id-1")
-				assert.Error(t, err)
+				require.Error(t, err)
+
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr, "GetMetadata must wrap a raw storage failure in a DisplayError")
+				assert.Contains(t, displayErr.DisplayMessage(), "id-1")
+				assert.Same(t, cause, displayErr.Unwrap())
 				return
 			}
 

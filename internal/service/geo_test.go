@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -48,6 +49,21 @@ func Test_GeoService_RejectsNonGeoTable(t *testing.T) {
 	_, err := svc.GetTile(context.Background(), meta, 0, 0, 0, nil, storage.GeoQuery{})
 	var notFoundErr *storage.NotFoundError
 	assert.ErrorAs(t, err, &notFoundErr)
+}
+
+func Test_GeoService_GetTile_WrapsStorageFailureInDisplayError(t *testing.T) {
+	geoSvc, geoRepo := setupGeoService(t)
+	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
+	cause := errors.New("duckdb: connection reset")
+
+	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return(nil, cause).Once()
+
+	_, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
+
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "id-1")
+	assert.Same(t, cause, displayErr.Unwrap())
 }
 
 func Test_GeoService_GetTile_CachesWithinSameTableVersion(t *testing.T) {

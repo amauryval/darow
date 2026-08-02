@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -73,6 +74,25 @@ func Test_RowService_ListRows(t *testing.T) {
 	assert.Equal(t, int64(1), page.Total)
 	require.Len(t, page.Rows, 1)
 	assert.Equal(t, "2024-01-01", page.Rows[0].Values["createdAt"])
+}
+
+// A raw storage failure must reach the caller wrapped in a DisplayError
+// carrying a clean, table-identifying message — the underlying cause stays
+// reachable through Unwrap for response.MapServiceError's classification
+// and the server log.
+func Test_RowService_ListRows_WrapsStorageFailureInDisplayError(t *testing.T) {
+	svc, _, rowRepo, _ := setupRowService(t)
+	meta := storage.Metadata{TableId: "id-1"}
+	cause := errors.New("duckdb: connection reset")
+
+	rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(10)).Return(nil, cause).Once()
+
+	_, err := svc.ListRows(context.Background(), meta, nil, 0, 10)
+
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "id-1")
+	assert.Same(t, cause, displayErr.Unwrap())
 }
 
 // ListRows must forward sort unchanged to Rows().Page, which is where the

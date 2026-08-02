@@ -1,4 +1,4 @@
-import { apiUrl, del, get, patch, post } from "./http";
+import { del, get, getBlob, patch, post } from "./http";
 import type { ColumnDTO, FilterCondition, Metadata, Row, RowsPage, RowValue, SchemaResponse, TablesPage } from "./types";
 
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
@@ -60,8 +60,23 @@ export function deriveTable(tableId: string, query: string, newTableName: string
   return post(`/tables/${tableId}/derive`, { query, newTableName });
 }
 
-export function exportUrl(tableId: string, format: "csv" | "geojson"): string {
-  return apiUrl(`/tables/${tableId}/export?format=${format}`);
+// Streams a table export and triggers a browser download through this
+// client (getBlob), instead of a plain <a href> that bypasses it entirely:
+// that left a failure to show up as a bare JSON error tab, or a truncated
+// file with no indication anything went wrong. Rejects like any other
+// client call — the caller turns that into the same errorMessage/toast
+// every other action uses.
+export async function exportTable(tableId: string, format: "csv" | "geojson", tableName: string): Promise<void> {
+  const blob = await getBlob(`/tables/${tableId}/export?format=${format}`);
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${tableName}.${format}`;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 // Filters rows by column conditions, ANDed together — a server-validated

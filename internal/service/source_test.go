@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,13 +92,14 @@ func Test_SourceService_Load(t *testing.T) {
 
 func Test_SourceService_Upload(t *testing.T) {
 	cases := []struct {
-		name        string
-		filename    string
-		content     string
-		preexisting bool
-		maxSize     int64
-		wantErr     bool
-		wantSaved   string
+		name         string
+		filename     string
+		content      string
+		preexisting  bool
+		maxSize      int64
+		wantErr      bool
+		wantConflict bool
+		wantSaved    string
 	}{
 		{
 			name:      "writes file and sanitizes traversal",
@@ -114,12 +116,13 @@ func Test_SourceService_Upload(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:        "rejects already existing file",
-			filename:    "buildings.geojson",
-			content:     "x",
-			preexisting: true,
-			maxSize:     1000,
-			wantErr:     true,
+			name:         "rejects already existing file",
+			filename:     "buildings.geojson",
+			content:      "x",
+			preexisting:  true,
+			maxSize:      1000,
+			wantErr:      true,
+			wantConflict: true,
 		},
 		{
 			name:     "rejects content exceeding maxSizeBytes",
@@ -148,6 +151,10 @@ func Test_SourceService_Upload(t *testing.T) {
 
 			if c.wantErr {
 				assert.Error(t, err)
+				if c.wantConflict {
+					var conflictErr *ConflictError
+					assert.ErrorAs(t, err, &conflictErr, "an already-existing file is the caller's mistake, not an internal failure")
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -504,6 +511,32 @@ func Test_SourceService_DetectCRS_SkipsNonIntrospectableFormat(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, authName)
 	assert.Zero(t, authCode)
+}
+
+func Test_SourceService_DetectCRS_WrapsStorageFailureInDisplayError(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "lambert.geojson", 100)
+
+	tableSvc, m := setupImportService(t)
+	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
+
+	svc := NewSourceService(config.SourcesConfig{
+		WorkDir:           dir,
+		MaxSizeBytes:      1000,
+		AllowedExtensions: []string{".geojson"},
+	}, tableSvc)
+
+	_, err := svc.Refresh(context.Background())
+	require.NoError(t, err)
+
+	cause := errors.New("duckdb: connection reset")
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "lambert.geojson"), "").Return("", 0, cause).Once()
+
+	_, _, err = svc.DetectCRS(context.Background(), "lambert.geojson", "")
+
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "lambert.geojson")
 }
 
 func Test_SourceService_DetectCRS_RejectsUnknownSource(t *testing.T) {

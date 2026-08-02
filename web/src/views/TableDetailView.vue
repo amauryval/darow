@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { exportUrl } from "../client/tables";
+import { exportTable } from "../client/tables";
 import { errorMessage } from "../client/http";
 import Badge from "../components/Badge.vue";
 import ColumnsModal from "../components/ColumnsModal.vue";
@@ -74,7 +74,6 @@ async function confirmRename() {
 }
 
 async function onDeleteTable() {
-  console.log("asshole")
   try {
     const name = table.value?.tableName;
     await remove();
@@ -82,6 +81,20 @@ async function onDeleteTable() {
     router.push("/tables");
   } catch (e) {
     toast.error(errorMessage(e, "Impossible de supprimer la table"));
+  }
+}
+
+const exporting = ref(false);
+
+async function onExportTable() {
+  if (!table.value) return;
+  exporting.value = true;
+  try {
+    await exportTable(table.value.tableId, table.value.isGeo ? "geojson" : "csv", table.value.tableName);
+  } catch (e) {
+    toast.error(errorMessage(e, "Impossible d'exporter la table"));
+  } finally {
+    exporting.value = false;
   }
 }
 
@@ -136,12 +149,9 @@ async function onAddColumnSuccess() {
         <BaseButton variant="secondary" @click="showColumns = true">Colonnes</BaseButton>
         <BaseButton variant="secondary" @click="openAddColumn">Ajouter une colonne</BaseButton>
         <BaseButton variant="secondary" @click="openDerive">Dériver</BaseButton>
-        <a
-          :href="exportUrl(table.tableId, table.isGeo ? 'geojson' : 'csv')"
-          class="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Exporter
-        </a>
+        <BaseButton variant="secondary" :busy="exporting" :disabled="exporting" @click="onExportTable">
+          {{ exporting ? "Export en cours…" : "Exporter" }}
+        </BaseButton>
         <ConfirmButton label="Supprimer" confirm-label="Supprimer la table" @confirm="onDeleteTable" />
       </div>
     </div>
