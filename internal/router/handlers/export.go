@@ -13,6 +13,23 @@ import (
 	"darow/internal/service"
 )
 
+// firstByteWriter wraps an http.ResponseWriter to record whether any byte
+// has actually reached it, so ExportTable can tell an export failure before
+// streaming started (still reportable as a normal JSON error) from one
+// mid-stream (the status is already committed and can no longer change).
+type firstByteWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *firstByteWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	if n > 0 {
+		w.wrote = true
+	}
+	return n, err
+}
+
 // ExportHandler serves table export, streaming rows in CSV or GeoJSON.
 type ExportHandler struct {
 	validation.TableResolver
@@ -75,12 +92,26 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.%s"`, meta.TableName, format))
-	if err := eh.exportService.Export(req.Context(), w, meta, format); err != nil {
+
+	tracked := &firstByteWriter{ResponseWriter: w}
+	if err := eh.exportService.Export(req.Context(), tracked, meta, format); err != nil {
 		slog.Error("streaming export failed",
 			"method", req.Method,
 			"path", req.URL.Path,
 			"request_id", middleware.GetReqID(req.Context()),
 			"error", err,
 		)
+		if !tracked.wrote {
+			response.WriteError(w, req, err, response.MapServiceError(err))
+			return
+		}
+		// Headers and a partial body are already on the wire: the status can
+		// no longer change to signal the failure. Aborting the connection
+		// instead of returning normally prevents Go from silently closing
+		// out the chunked response as if it were complete — the client sees
+		// a broken download rather than a truncated file it believes whole.
+		// http.ErrAbortHandler is net/http's documented sentinel for this;
+		// chi's Recoverer re-panics it untouched (see recoverJSON).
+		panic(http.ErrAbortHandler)
 	}
 }

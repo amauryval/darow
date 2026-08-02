@@ -277,10 +277,11 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 		{name: "unknown source table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
-			// An internal storage failure (e.g. a raw DuckDB "Binder Error"
-			// mentioning physicalName) must not leak past a 500 as
-			// request-validation detail.
-			name:            "storage failure returns 500 without leaking detail",
+			// The server is never exposed on the Internet (LIM-1), so a raw
+			// storage failure (a DuckDB "Binder Error" here) is still
+			// reported to the caller rather than masked behind a generic
+			// 500 — see response.WriteError.
+			name:            "storage failure returns 500 with the underlying detail",
 			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
 			wantStatus:      http.StatusInternalServerError,
 			wantBodyExcerpt: "Binder Error",
@@ -303,7 +304,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {
-				assert.NotContains(t, rec.Body.String(), c.wantBodyExcerpt)
+				assert.Contains(t, rec.Body.String(), c.wantBodyExcerpt)
 			}
 			metadataSvc.AssertExpectations(t)
 			deriveSvc.AssertExpectations(t)

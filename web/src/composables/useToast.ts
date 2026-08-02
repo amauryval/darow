@@ -12,10 +12,17 @@ export interface Toast {
 const toasts = ref<Toast[]>([]);
 let nextId = 0;
 
+// Only a success toast dismisses itself: it confirms an action already
+// done, nothing is lost by it disappearing. An error toast may carry a
+// detailed server message (and now a request identifier, §6.4 on the back
+// side) the user needs time to read or copy, so it stays until dismissed
+// by hand (§8.4).
 function push(kind: Toast["kind"], message: string) {
   const id = nextId++;
   toasts.value.push({ id, kind, message });
-  setTimeout(() => dismiss(id), 4000);
+  if (kind === "success") {
+    setTimeout(() => dismiss(id), 4000);
+  }
 }
 
 function dismiss(id: number) {

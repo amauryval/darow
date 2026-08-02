@@ -10,13 +10,13 @@ const { toasts, dismiss } = useToast();
       <div
         v-for="t in toasts"
         :key="t.id"
-        class="alert max-w-sm text-sm shadow-lg"
+        class="alert w-80 max-w-md items-start text-sm shadow-lg"
         :class="t.kind === 'success' ? 'alert-success' : 'alert-error'"
         :role="t.kind === 'error' ? 'alert' : 'status'"
         :aria-live="t.kind === 'error' ? 'assertive' : 'polite'"
       >
-        <span class="flex-1">{{ t.message }}</span>
-        <button class="btn btn-ghost btn-xs" aria-label="Fermer la notification" @click="dismiss(t.id)">✕</button>
+        <span class="flex-1 [overflow-wrap:anywhere] select-text whitespace-pre-line">{{ t.message }}</span>
+        <button class="btn btn-ghost btn-xs shrink-0" aria-label="Fermer la notification" @click="dismiss(t.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>

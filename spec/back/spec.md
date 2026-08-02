@@ -508,6 +508,13 @@ target to `DESCRIBE` — is what removes the interpolation from the common case.
 
 Eight services, each the exclusive owner of its state. Files: `internal/service/`.
 
+**Error wrapping.** Every service method that calls into the storage layer wraps a raw failure it
+did not itself construct (a DuckDB error, an `os` error) in `service.DisplayError` (§6.4) before
+returning it — a clean message naming the table, column, source or operation concerned, the raw
+cause kept reachable through `Unwrap` for classification and logging. An error a service already
+constructs itself (`ValidationError`, `NotFoundError`, `ConflictError`) is deliberate and clean as
+written and is never further wrapped.
+
 ### 5.1 `MetadataService` — sole owner of the metadata cache
 
 Every other service goes through it to read or write metadata, through a narrow port; nobody caches
@@ -581,7 +588,11 @@ response body.
 
 - Rows are read **page by page** (`exportBatchSize`), never all in memory.
 - The format is validated **before** the first byte is written: once the streaming has started, the
-  status code can no longer change.
+  status code can no longer change. `ExportHandler.ExportTable` tracks whether any byte has actually
+  reached the response (`firstByteWriter`): a failure before that point is answered as a normal error
+  response (§6.4); a failure after it aborts the connection (`panic(http.ErrAbortHandler)`) instead
+  of letting the response complete as if the export were whole — a truncated or empty file is never
+  presented as a `200`.
 - CSV: a `pkey` header + the schema's columns (geometry excluded), written before any row is read.
 - GeoJSON: a `FeatureCollection` assembled as a stream; refused on a non-geo table. A NULL geometry
   produces the JSON literal `null`, never an empty string.
@@ -712,14 +723,41 @@ geometry through a generic path). Used by `/filter`, `/distinct`, the rows' `sor
 
 ### 6.4 Errors
 
-A single error body: `{"error", "message", "code"}` (`router/response/response.go`).
+A single error body: `{"error", "message", "code", "requestId"}` (`router/response/response.go`).
+`error` is a stable, coarse, machine-readable discriminator (`errorCode`, e.g. `not_found`,
+`bad_request`, `timeout`, `internal_error`) a client can switch on without matching on prose;
+`message` is the human-readable detail; `requestId` is the same identifier `middleware.RequestID`
+attaches to the request and the server log line, so a caller can quote it and an operator can find
+the matching entry.
 
-**A 5xx never returns the original message** — it is logged server-side with the request identifier,
-and the client receives the status's standard text. A DuckDB error may contain a `physicalName` or
-internal details. 4xx responses, caused by the caller's request, do pass the message through.
+**A 5xx carries the same underlying message a 4xx does** — `err.Error()`, unmasked. This is a
+deliberate trade-off, not an oversight: the server is designed for a trusted network, never exposed
+directly on the Internet (§6.7, `LIM-1`), so the diagnostic value of the raw message (which may name
+a `physicalName` or quote a DuckDB error verbatim) outweighs what masking it behind the status's
+generic text would buy on this deployment model. A 5xx is still logged server-side with the request
+identifier, for the case where the caller doesn't relay what they saw.
+
+A service showing a clean message instead of an internal cause's raw text — a DuckDB error too far
+into the engine's own vocabulary, a multi-step rollback — wraps the cause in `service.DisplayError`
+(`internal/service/errors.go`, §5). `WriteError` sends `DisplayError.DisplayMessage()` to the client
+instead of `Error()`; the wrapped cause stays reachable through `Unwrap()`, so `MapServiceError`'s
+`errors.As`/`errors.Is` dispatch (below) still classifies by the cause, not by the wrapper, and the
+full chain (message plus cause) is still what reaches the server log.
+
+Every exit out of the router answers with this same envelope, not only the handlers: an unmatched
+route (`Router.NotFound`) and a matched route hit with the wrong verb (`Router.MethodNotAllowed`)
+both write it, and a recovered panic (`recoverJSON`, replacing chi's default `Recoverer`) writes it
+as a `500` rather than an empty body. `http.ErrAbortHandler` is the one panic value `recoverJSON`
+re-panics untouched — the deliberate signal `ExportHandler.ExportTable` raises to abort a streamed
+response whose headers are already committed (§5.6); `recoverJSON` must never answer it with a body
+that can no longer be sent cleanly. The `/ui/*` SPA fallback and `/swagger/*` keep their own
+non-JSON behaviour, since they are not part of the JSON API.
 
 `MapServiceError` maps by error type, with **500 as the default**: an unclassified error is an
-internal problem, never the client's fault (NEW-SEC-1).
+internal problem, never the client's fault (NEW-SEC-1). A cancelled or expired request context
+(`context.DeadlineExceeded`, `context.Canceled` — surfaced by `middleware.Timeout` on the `/api/v1`
+group, §6.3) is classified explicitly rather than falling into that default, so a client can tell an
+overrun budget from a genuine internal failure.
 
 | Error type | Status |
 |---|---|
@@ -728,6 +766,8 @@ internal problem, never the client's fault (NEW-SEC-1).
 | `storage.InvalidSortError` | 400 |
 | `service.NotFoundError` | 404 |
 | `service.ConflictError` | 409 |
+| `context.DeadlineExceeded` | 504 |
+| `context.Canceled` | 499 (non-standard, nginx's "client closed request") |
 | everything else | 500 |
 
 ### 6.5 HTTP tile caching

@@ -33,7 +33,7 @@ func NewGeoService(storage tableResolver, tileCache *expirable.LRU[string, []byt
 func (g *GeoService) geoRepo(meta storage.Metadata) (storage.GeoRepository, error) {
 	repo, err := g.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	geo, ok := repo.Geo()
 	if !ok {
@@ -66,7 +66,7 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 	}
 	mvt, err := geo.Tile(ctx, zoom, x, y, attrs, q)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to render tile %d/%d/%d of table %q", zoom, x, y, meta.TableId), err)
 	}
 
 	g.tileCache.Add(key, mvt)
@@ -82,9 +82,13 @@ func (g *GeoService) GetFeatures(ctx context.Context, meta storage.Metadata, pke
 	if err != nil {
 		return nil, err
 	}
-	return geo.Features(ctx, storage.FeatureQuery{
+	features, err := geo.Features(ctx, storage.FeatureQuery{
 		Pkeys: pkeys, Bbox: bbox, Attrs: attrs, Query: q, Limit: limit, Offset: offset,
 	})
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch features of table %q", meta.TableId), err)
+	}
+	return features, nil
 }
 
 // CountFeatures returns how many features match pkeys/bbox/q, ignoring
@@ -95,7 +99,11 @@ func (g *GeoService) CountFeatures(ctx context.Context, meta storage.Metadata, p
 	if err != nil {
 		return 0, err
 	}
-	return geo.CountFeatures(ctx, storage.FeatureQuery{Pkeys: pkeys, Bbox: bbox, Query: q})
+	count, err := geo.CountFeatures(ctx, storage.FeatureQuery{Pkeys: pkeys, Bbox: bbox, Query: q})
+	if err != nil {
+		return 0, NewDisplayError(fmt.Sprintf("unable to count features of table %q", meta.TableId), err)
+	}
+	return count, nil
 }
 
 // GetFeaturesTile returns up to limit GeoFeatures intersecting the given
@@ -107,9 +115,13 @@ func (g *GeoService) GetFeaturesTile(ctx context.Context, meta storage.Metadata,
 	if err != nil {
 		return nil, err
 	}
-	return geo.FeaturesInTile(ctx, zoom, x, y, storage.FeatureQuery{
+	features, err := geo.FeaturesInTile(ctx, zoom, x, y, storage.FeatureQuery{
 		Attrs: attrs, Query: q, Limit: limit, Offset: offset,
 	})
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch features of tile %d/%d/%d of table %q", zoom, x, y, meta.TableId), err)
+	}
+	return features, nil
 }
 
 // FilterByBbox returns a page of up to limit pkeys of rows whose geometry
@@ -120,7 +132,11 @@ func (g *GeoService) FilterByBbox(ctx context.Context, meta storage.Metadata, bb
 	if err != nil {
 		return nil, err
 	}
-	return geo.PkeysInBbox(ctx, bbox, offset, limit)
+	pkeys, err := geo.PkeysInBbox(ctx, bbox, offset, limit)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to filter table %q by bounding box", meta.TableId), err)
+	}
+	return pkeys, nil
 }
 
 // FilteredExtent returns the bounding box of every row matching q, computed
@@ -131,7 +147,11 @@ func (g *GeoService) FilteredExtent(ctx context.Context, meta storage.Metadata, 
 	if err != nil {
 		return "", err
 	}
-	return geo.Extent(ctx, q)
+	extent, err := geo.Extent(ctx, q)
+	if err != nil {
+		return "", NewDisplayError(fmt.Sprintf("unable to compute the filtered extent of table %q", meta.TableId), err)
+	}
+	return extent, nil
 }
 
 // GetGeometryGeoJSON returns each row's geometry as a raw GeoJSON
@@ -142,7 +162,11 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 	if err != nil {
 		return nil, err
 	}
-	return geo.GeoJSONByPkey(ctx, pkeys)
+	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch geometries of table %q", meta.TableId), err)
+	}
+	return geoJSON, nil
 }
 
 // GeometryTypes returns every distinct geometry type present in meta's
@@ -152,5 +176,9 @@ func (g *GeoService) GeometryTypes(ctx context.Context, meta storage.Metadata) (
 	if err != nil {
 		return nil, err
 	}
-	return geo.Types(ctx)
+	types, err := geo.Types(ctx)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to list geometry types of table %q", meta.TableId), err)
+	}
+	return types, nil
 }

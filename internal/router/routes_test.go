@@ -145,6 +145,22 @@ func Test_Router_Setup(t *testing.T) {
 			path:       "/tables/id-1",
 			wantStatus: http.StatusNotFound,
 		},
+		{
+			name:              "an unmatched route answers with the JSON error envelope",
+			apiCfg:            config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
+			method:            http.MethodGet,
+			path:              "/api/v1/no-such-route",
+			wantStatus:        http.StatusNotFound,
+			wantErrorContains: "no such route",
+		},
+		{
+			name:              "a matched route hit with the wrong verb answers with the JSON error envelope",
+			apiCfg:            config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
+			method:            http.MethodPut,
+			path:              "/api/v1/tables",
+			wantStatus:        http.StatusMethodNotAllowed,
+			wantErrorContains: "not allowed",
+		},
 	}
 
 	for _, c := range cases {
@@ -158,7 +174,7 @@ func Test_Router_Setup(t *testing.T) {
 			if c.wantErrorContains != "" {
 				var body response.ErrorResponse
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-				assert.Contains(t, body.Error, c.wantErrorContains)
+				assert.Contains(t, body.Message, c.wantErrorContains)
 			}
 		})
 	}

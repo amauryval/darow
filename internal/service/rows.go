@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"darow/internal/storage"
@@ -89,7 +90,7 @@ func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, row
 
 	types, err := s.schema.Types(ctx, meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to resolve column types of table %q", meta.TableId), err)
 	}
 
 	converted := make([]storage.Row, 0, len(rows))
@@ -105,12 +106,12 @@ func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, row
 func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 
 	rows, err := repo.Rows().Page(ctx, sort, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to list rows of table %q", meta.TableId), err)
 	}
 
 	rows, err = s.convertRows(ctx, meta, rows)
@@ -120,7 +121,7 @@ func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort [
 
 	total, err := repo.Count(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to count rows of table %q", meta.TableId), err)
 	}
 
 	return &RowsPage{Rows: rows, Total: total, Limit: limit, Offset: offset}, nil
@@ -134,12 +135,12 @@ func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort [
 func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 
 	rows, err := repo.Rows().Page(ctx, nil, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to list rows of table %q", meta.TableId), err)
 	}
 	return s.convertRows(ctx, meta, rows)
 }
@@ -150,11 +151,11 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, of
 func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	rows, err := repo.Rows().ByPkey(ctx, pkeys)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch rows of table %q", meta.TableId), err)
 	}
 	return s.convertRows(ctx, meta, rows)
 }
@@ -163,11 +164,11 @@ func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, p
 func (s *RowService) GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	rows, err := repo.Rows().ByPkey(ctx, []string{pkey})
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch row %q of table %q", pkey, meta.TableId), err)
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -186,11 +187,11 @@ func (s *RowService) GetRow(ctx context.Context, meta storage.Metadata, pkey str
 func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	rows, err := repo.Rows().Filtered(ctx, storage.RowQuery{Filter: filter, Args: args}, limit)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to filter rows of table %q", meta.TableId), err)
 	}
 	return s.convertRows(ctx, meta, rows)
 }
@@ -201,16 +202,16 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	values, err := repo.Rows().Distinct(ctx, column, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to list distinct values of column %q in table %q", column, meta.TableId), err)
 	}
 
 	types, err := s.schema.Types(ctx, meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to resolve column types of table %q", meta.TableId), err)
 	}
 
 	converted := make([]any, len(values))
@@ -229,10 +230,10 @@ func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadat
 func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	if err := repo.Rows().Update(ctx, pkeys, updates); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
 	}
 
 	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
@@ -249,11 +250,11 @@ func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys
 func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return "", err
+		return "", NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	pkey, err := repo.Rows().Insert(ctx, values)
 	if err != nil {
-		return "", err
+		return "", NewDisplayError(fmt.Sprintf("unable to insert a row into table %q", meta.TableId), err)
 	}
 	_, touchesGeometry := values[meta.GeometryColumn]
 	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
@@ -268,11 +269,11 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	pkeys, err := repo.Rows().InsertMany(ctx, rows)
 	if err != nil {
-		return nil, err
+		return nil, NewDisplayError(fmt.Sprintf("unable to insert rows into table %q", meta.TableId), err)
 	}
 	touchesGeometry := false
 	for _, row := range rows {
@@ -293,10 +294,10 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, 
 func (s *RowService) RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
 	if err := repo.Rows().Delete(ctx, pkeys); err != nil {
-		return err
+		return NewDisplayError(fmt.Sprintf("unable to delete rows of table %q", meta.TableId), err)
 	}
 	return s.metadata.RefreshDerived(ctx, meta.TableId, meta.IsGeo)
 }

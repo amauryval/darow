@@ -1490,6 +1490,9 @@
                 },
                 "message": {
                     "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
                 }
             }
         }

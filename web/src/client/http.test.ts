@@ -40,10 +40,16 @@ describe("http client", () => {
   it("rejects with an ApiError carrying the server's error body on failure", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ error: "not found", message: "Not Found", code: 404 }, 404)),
+      vi.fn().mockResolvedValue(
+        jsonResponse({ error: "not_found", message: "table t1 not found", code: 404, requestId: "req-1" }, 404),
+      ),
     );
 
-    await expect(get("/tables/unknown")).rejects.toMatchObject({ message: "not found", code: 404 });
+    await expect(get("/tables/unknown")).rejects.toMatchObject({
+      message: "table t1 not found",
+      code: 404,
+      requestId: "req-1",
+    });
   });
 
   it("falls back to the status text when the error body isn't JSON", async () => {

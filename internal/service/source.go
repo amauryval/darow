@@ -86,7 +86,7 @@ func (s *SourceService) MaxUploadBytes() int64 {
 func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 	entries, err := os.ReadDir(s.cfg.WorkDir)
 	if err != nil {
-		return nil, fmt.Errorf("reading workDir: %w", err)
+		return nil, NewDisplayError("unable to scan the sources directory", err)
 	}
 
 	loaded, err := s.tableService.LoadedSourceNames(ctx)
@@ -248,16 +248,16 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
-			return "", fmt.Errorf("a file named %q already exists in workDir", filename)
+			return "", &ConflictError{fmt.Sprintf("a file named %q already exists in workDir", filename)}
 		}
-		return "", fmt.Errorf("creating file: %w", err)
+		return "", NewDisplayError(fmt.Sprintf("unable to create file %q in workDir", filename), err)
 	}
 	defer out.Close()
 
 	written, err := io.Copy(out, io.LimitReader(content, s.cfg.MaxSizeBytes+1))
 	if err != nil {
 		os.Remove(path)
-		return "", fmt.Errorf("writing file: %w", err)
+		return "", NewDisplayError(fmt.Sprintf("unable to write file %q", filename), err)
 	}
 	if written > s.cfg.MaxSizeBytes {
 		os.Remove(path)
@@ -379,7 +379,11 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 	if format, ok := lookupSourceFormat(filepath.Ext(name)); ok && !format.Introspectable {
 		return "", 0, nil
 	}
-	return s.tableService.DetectCRS(ctx, path, layer)
+	authName, authCode, err = s.tableService.DetectCRS(ctx, path, layer)
+	if err != nil {
+		return "", 0, NewDisplayError(fmt.Sprintf("unable to detect the CRS of source %q", name), err)
+	}
+	return authName, authCode, nil
 }
 
 // Delete removes the table(s) loaded from name and drops its cache entry —

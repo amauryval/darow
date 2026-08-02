@@ -59,6 +59,11 @@ export function useMvtLayer(
       ...(bounds ? { bounds } : {}),
     });
 
+    // Best-effort: a failure here degrades to no MVT layers added rather
+    // than blocking activation — the tile source itself was already added
+    // above and still renders once the map issues its own tile requests,
+    // so losing only the type-driven styling is the tolerated silence
+    // spec/front/spec.md §0.13 allows for a tile-related display load.
     const { types } = await getGeometryTypes(tableId.value).catch(() => ({ types: [] as string[] }));
     if (!active) return;
 

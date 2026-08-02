@@ -56,9 +56,12 @@ func NewRouter(
 func (rt *Router) Setup() http.Handler {
 	r := chi.NewRouter()
 
+	r.NotFound(notFoundJSON)
+	r.MethodNotAllowed(methodNotAllowedJSON)
+
 	r.Use(middleware.RequestID)
 	r.Use(slogLogger)
-	r.Use(middleware.Recoverer)
+	r.Use(recoverJSON)
 	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
 
 	r.Get("/healthz", rt.ops.Healthz)

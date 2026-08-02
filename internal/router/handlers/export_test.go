@@ -33,17 +33,26 @@ func Test_newExportHandler(t *testing.T) {
 
 // fakeExportDeps satisfies ExportService's unexported rowLister,
 // geometryFetcher, and columnLister ports structurally, so ExportTable's
-// streaming path can be exercised without a mocking framework.
+// streaming path can be exercised without a mocking framework. schemaErr
+// and pageErr let a test fail the stream at a chosen point: schemaErr
+// fails before any byte is written (both formats read the schema/columns
+// first), pageErr fails mid-stream for GeoJSON, which writes its opening
+// brace before fetching the first page.
 type fakeExportDeps struct {
-	schema []service.ColumnSchema
-	rows   []storage.Row
+	schema    []service.ColumnSchema
+	rows      []storage.Row
+	schemaErr error
+	pageErr   error
 }
 
 func (f fakeExportDeps) Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error) {
-	return f.schema, nil
+	return f.schema, f.schemaErr
 }
 
 func (f fakeExportDeps) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
+	if f.pageErr != nil {
+		return nil, f.pageErr
+	}
 	if offset > 0 {
 		return nil, nil
 	}
@@ -51,7 +60,11 @@ func (f fakeExportDeps) ListRowsPage(ctx context.Context, meta storage.Metadata,
 }
 
 func (f fakeExportDeps) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
-	return map[string]string{}, nil
+	geometries := make(map[string]string, len(pkeys))
+	for _, pkey := range pkeys {
+		geometries[pkey] = "null"
+	}
+	return geometries, nil
 }
 
 func Test_exportHandler_exportTable(t *testing.T) {
@@ -96,4 +109,50 @@ func Test_exportHandler_exportTable(t *testing.T) {
 			metadataSvc.AssertExpectations(t)
 		})
 	}
+}
+
+// Test_exportHandler_exportTable_failureBeforeFirstByte covers BLK-2: a
+// streaming failure that happens before any byte reaches the client must
+// still be reported as a normal, parseable error response.
+func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
+	metadataSvc := &mockMetadataAPI{}
+	deps := fakeExportDeps{schemaErr: assert.AnError}
+	exportSvc := service.NewExportService(deps, deps, deps, 100)
+	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
+
+	meta := storage.Metadata{TableId: "t1", TableName: "t1"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+
+	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1/export", nil, map[string]string{"tableId": "t1"})
+	rec := httptest.NewRecorder()
+
+	eh.ExportTable(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"error"`)
+	metadataSvc.AssertExpectations(t)
+}
+
+// Test_exportHandler_exportTable_failureAfterFirstByte covers BLK-2's other
+// half: once streaming has started, the status can no longer change, so
+// ExportTable must abort the connection (panic(http.ErrAbortHandler))
+// rather than let the response complete as if it were a whole file.
+func Test_exportHandler_exportTable_failureAfterFirstByte(t *testing.T) {
+	metadataSvc := &mockMetadataAPI{}
+	deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, pageErr: assert.AnError}
+	exportSvc := service.NewExportService(deps, deps, deps, 100)
+	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
+
+	meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: true}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+
+	req := newHandlerRequest(http.MethodGet, "/api/v1/tables/t1/export", nil, map[string]string{"tableId": "t1"})
+	rec := httptest.NewRecorder()
+
+	assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
+		eh.ExportTable(rec, req)
+	})
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.NotEmpty(t, rec.Body.String())
+	metadataSvc.AssertExpectations(t)
 }

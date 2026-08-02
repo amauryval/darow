@@ -109,13 +109,18 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 // metadata row: the Create above it must be rolled back (BUG-2).
 func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
 	svc, m := setupDeriveService(t)
+	cause := errors.New("unknown table")
 
 	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, errors.New("unknown table")).Once()
+	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, cause).Once()
 	m.On("Remove", mock.Anything, "id-derived").Return(nil).Once()
 
 	_, err := svc.DeriveTable(context.Background(), "SELECT * FROM t_source", "derived")
 
-	assert.Error(t, err)
+	require.Error(t, err)
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr, "CreateFromQuery's failure must reach the caller wrapped in a DisplayError")
+	assert.Contains(t, displayErr.DisplayMessage(), "derived")
+	assert.ErrorIs(t, err, cause)
 }

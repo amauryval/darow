@@ -3,6 +3,7 @@ import type { GeoJSONSource, Map } from "maplibre-gl";
 import type { OgcFeature } from "../client/features";
 import type { FilterCondition } from "../client/types";
 import { useTiledFeatures } from "./useTiledFeatures";
+import { useToast } from "./useToast";
 
 // WFS/OGC-Features rendering of a table: a single GeoJSON source split by a
 // ["geometry-type"] filter expression into fill/line/circle layers — no
@@ -12,9 +13,14 @@ import { useTiledFeatures } from "./useTiledFeatures";
 export function useWfsLayer(map: Ref<Map | null>, tableId: Ref<string>, conditions: Ref<FilterCondition[]>) {
   const sourceId = `wfs-${tableId.value}`;
   const tiledFeatures = useTiledFeatures();
+  const toast = useToast();
   let active = false;
   let onMoveEnd: (() => void) | null = null;
   let requestId = 0;
+  // Warns at most once per run of failures rather than on every moveend —
+  // reset as soon as a load comes back complete, so a later, separate
+  // failure still warns again.
+  let warnedIncomplete = false;
 
   function addSourceAndLayers(m: Map) {
     m.addSource(sourceId, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -88,7 +94,17 @@ export function useWfsLayer(map: Ref<Map | null>, tableId: Ref<string>, conditio
       });
     }
 
-    await tiledFeatures.loadVisible(tableId.value, bbox, zoom, conditions.value, render).catch(() => null);
+    const result = await tiledFeatures.loadVisible(tableId.value, bbox, zoom, conditions.value, render).catch(() => null);
+    if (thisRequestId !== requestId) return;
+
+    if (!result || !result.complete) {
+      if (!warnedIncomplete) {
+        warnedIncomplete = true;
+        toast.error("Certaines tuiles n'ont pas pu être chargées — les données affichées peuvent être incomplètes.");
+      }
+    } else {
+      warnedIncomplete = false;
+    }
   }
 
   function activate() {

@@ -61,6 +61,10 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
       filteredBbox.value = null;
       return;
     }
+    // Best-effort: a failure here just skips re-centering the map on the
+    // filter's extent (filteredBbox stays null, the table's own extent
+    // keeps framing it) — the tolerated silence spec/front/spec.md §0.13
+    // names explicitly for an extent-related display load.
     const { bbox } = await getFilteredExtent(tableId.value, appliedConditions.value).catch(() => ({ bbox: "" }));
     filteredBbox.value = bbox || null;
   }

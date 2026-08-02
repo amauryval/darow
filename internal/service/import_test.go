@@ -51,6 +51,20 @@ func Test_ImportService_ListLayers(t *testing.T) {
 	assert.Equal(t, []string{"communes", "departements"}, layers)
 }
 
+func Test_ImportService_ListLayers_WrapsStorageFailureInDisplayError(t *testing.T) {
+	svc, m := setupImportService(t)
+	cause := errors.New("duckdb: connection reset")
+
+	m.On("ListLayers", mock.Anything, "/data/regions.gpkg").Return(nil, cause).Once()
+
+	_, err := svc.ListLayers(context.Background(), "/data/regions.gpkg")
+
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "regions.gpkg")
+	assert.Same(t, cause, displayErr.Unwrap())
+}
+
 func Test_ImportService_DetectCRS(t *testing.T) {
 	svc, m := setupImportService(t)
 
@@ -140,7 +154,10 @@ func Test_ImportService_ImportFromFile_RollsBackMetadataOnCreateFromFileFailure(
 
 	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
-	assert.Error(t, err)
+	require.Error(t, err)
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr, "CreateFromFile's failure must reach the caller wrapped in a DisplayError")
+	assert.Contains(t, displayErr.DisplayMessage(), "buildings.geojson")
 }
 
 // If the rollback itself fails, the caller still needs to see the original

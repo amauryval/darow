@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -36,6 +37,22 @@ func Test_SchemaService_Schema(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []ColumnSchema{{Name: "__pkey", Type: "VARCHAR"}, {Name: "height", Type: "DOUBLE"}}, schema)
+}
+
+func Test_SchemaService_Schema_WrapsStorageFailureInDisplayError(t *testing.T) {
+	svc, m, tableRepo := setupSchemaService(t)
+	meta := storage.Metadata{TableId: "id-1"}
+	cause := errors.New("duckdb: connection reset")
+
+	m.On("Table", meta).Return(tableRepo, nil).Once()
+	tableRepo.On("Schema", context.Background()).Return(nil, cause).Once()
+
+	_, err := svc.Schema(context.Background(), meta)
+
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "id-1")
+	assert.Same(t, cause, displayErr.Unwrap())
 }
 
 func Test_SchemaService_AddColumn(t *testing.T) {
