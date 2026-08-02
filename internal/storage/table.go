@@ -63,8 +63,10 @@ type RowRepository interface {
 	// column.
 	Filtered(ctx context.Context, q RowQuery, limit int) ([]Row, error)
 	// Distinct returns a page of up to limit distinct values of column,
-	// ordered by column itself for a deterministic offset.
-	Distinct(ctx context.Context, column string, offset, limit int) ([]any, error)
+	// ordered by column itself for a deterministic offset. A non-empty
+	// search keeps only the values whose text form contains it,
+	// case-insensitively, as a literal (its %/_ match themselves).
+	Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error)
 	Insert(ctx context.Context, values map[string]any) (string, error)
 	// InsertMany inserts every row in a single transaction.
 	InsertMany(ctx context.Context, rows []map[string]any) ([]string, error)

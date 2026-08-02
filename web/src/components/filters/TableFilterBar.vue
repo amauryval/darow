@@ -23,8 +23,6 @@ const emit = defineEmits<{ "update:nodes": [nodes: DraftNode[]] }>();
 const toast = useToast();
 const saved = useSavedFilters(toRef(props, "tableId"));
 
-const columnNames = computed(() => props.columns.map((col) => col.name));
-
 // Only one filter applies at a time: a second one would silently AND with the
 // first, which the toolbar cannot show.
 const activeFilterId = ref<string | null>(null);
@@ -124,7 +122,8 @@ async function onRemove(filter: SavedFilter) {
     <FilterEditorModal
       v-if="editing"
       :key="editing.filter?.filterId ?? 'new'"
-      :columns="columnNames"
+      :table-id="tableId"
+      :columns="columns"
       :node="editedNode"
       :saved-name="editing.filter?.name"
       :saving="saved.saving.value"

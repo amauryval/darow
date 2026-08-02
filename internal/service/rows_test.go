@@ -168,13 +168,13 @@ func Test_RowService_GetRow_NotFound(t *testing.T) {
 func Test_RowService_GetDistinctValues(t *testing.T) {
 	svc, _, rowRepo, tableRepo := setupRowService(t)
 
-	rowRepo.On("Distinct", mock.Anything, "createdAt", 0, 100).Return([]any{
+	rowRepo.On("Distinct", mock.Anything, "createdAt", "2024", 0, 100).Return([]any{
 		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
 	}, nil).Once()
 	tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{{Name: "createdAt", Type: "DATE"}}, nil).Once()
 
-	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt", 0, 100)
+	values, err := svc.GetDistinctValues(context.Background(), storage.Metadata{TableId: "id-1"}, "createdAt", "2024", 0, 100)
 
 	require.NoError(t, err)
 	assert.Equal(t, []any{"2024-01-01", "2024-02-01"}, values)

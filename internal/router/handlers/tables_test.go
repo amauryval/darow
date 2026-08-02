@@ -369,12 +369,14 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 func Test_tablesHandler_getDistinctValues(t *testing.T) {
 	cases := []struct {
 		name        string
+		search      string
 		lookupErr   error
 		schemaErr   error
 		distinctErr error
 		wantStatus  int
 	}{
 		{name: "returns distinct values", wantStatus: http.StatusOK},
+		{name: "search is forwarded to the service", search: "ab", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "unknown column is rejected", schemaErr: nil, wantStatus: http.StatusBadRequest},
 		{name: "distinct lookup failure returns 500", distinctErr: assert.AnError, wantStatus: http.StatusInternalServerError},
@@ -403,10 +405,14 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}}, nil).Once()
 			}
 			if c.lookupErr == nil && col == "status" {
-				rowSvc.On("GetDistinctValues", mock.Anything, meta, col, 0, 100).Return([]any{"a", "b"}, c.distinctErr).Once()
+				rowSvc.On("GetDistinctValues", mock.Anything, meta, col, c.search, 0, 100).Return([]any{"a", "b"}, c.distinctErr).Once()
 			}
 
-			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, "/api/v1/tables/t1/columns/"+col+"/distinct", nil,
+			url := "/api/v1/tables/t1/columns/" + col + "/distinct"
+			if c.search != "" {
+				url += "?search=" + c.search
+			}
+			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, url, nil,
 				map[string]string{"tableId": "t1", "col": col})
 
 			assert.Equal(t, c.wantStatus, rec.Code)

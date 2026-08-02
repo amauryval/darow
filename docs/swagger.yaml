@@ -562,6 +562,10 @@ paths:
         name: col
         required: true
         type: string
+      - description: Keep only the values containing this text (case-insensitive)
+        in: query
+        name: search
+        type: string
       - description: Pagination offset
         in: query
         name: offset

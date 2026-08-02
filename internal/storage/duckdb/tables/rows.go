@@ -122,18 +122,31 @@ func (r *tableRows) Filtered(ctx context.Context, q storage.RowQuery, limit int)
 	return scanRows(rows)
 }
 
+// searchEscaper neutralises LIKE's own wildcards so a searched value is
+// matched literally, paired with ESCAPE '\' in the query.
+var searchEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // Distinct returns a page of up to limit distinct values found in column,
 // skipping offset matches first, ordered by column itself so paging is
-// deterministic across calls.
-func (r *tableRows) Distinct(ctx context.Context, column string, offset, limit int) ([]any, error) {
+// deterministic across calls. A non-empty search keeps only the values
+// containing it, case-insensitively, matched against their text form so
+// the same query works whatever the column's type.
+func (r *tableRows) Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error) {
 	quotedCol, err := storage.QuoteIdentifier(column)
 	if err != nil {
 		return nil, err
 	}
 
+	where, args := "", []any{}
+	if search != "" {
+		where = fmt.Sprintf(` WHERE CAST(%s AS VARCHAR) ILIKE ? ESCAPE '\'`, quotedCol)
+		args = append(args, "%"+searchEscaper.Replace(search)+"%")
+	}
+	args = append(args, limit, offset)
+
 	rows, err := r.conn.Query(ctx, fmt.Sprintf(
-		`SELECT DISTINCT %s FROM %s ORDER BY %s LIMIT ? OFFSET ?`, quotedCol, r.ref.PhysicalName, quotedCol,
-	), limit, offset)
+		`SELECT DISTINCT %s FROM %s%s ORDER BY %s LIMIT ? OFFSET ?`, quotedCol, r.ref.PhysicalName, where, quotedCol,
+	), args...)
 	if err != nil {
 		return nil, err
 	}

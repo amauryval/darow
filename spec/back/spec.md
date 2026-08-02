@@ -365,7 +365,7 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 |---|---|
 | `Catalog` | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone — an interrupted rollback — reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
 | `TableRepository` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
-| `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct`, `Insert`, `InsertMany`, `Update`, `Delete` |
+| `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `Delete` |
 | `GeoRepository` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
 | `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized |
 
@@ -672,7 +672,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | DELETE | `/api/v1/tables/{tableId}` | deletes the table and its data |
 | GET | `/api/v1/tables/{tableId}/schema` | columns and types, geometry included |
 | POST | `/api/v1/tables/{tableId}/columns` | adds a column |
-| GET | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column |
+| GET | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search` |
 | POST | `/api/v1/tables/{tableId}/derive` | creates a new table from a `SELECT` query |
 | POST | `/api/v1/tables/{tableId}/filter` | filters by conditions (`BuildFilter`) |
 | GET | `/api/v1/tables/{tableId}/filters` | lists the table's stored filters (§4.5.1), oldest first |

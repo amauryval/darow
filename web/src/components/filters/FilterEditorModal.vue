@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import type { ColumnSchema } from "../../client/types";
 import { describeDraft, draftOf, isComplete, nodeOf, type DraftNode } from "../../utils/filterTree";
 import Modal from "../Modal.vue";
 import FilterNodeEditor from "./FilterNodeEditor.vue";
@@ -11,7 +12,8 @@ import Typography from "../ui/Typography.vue";
 // savedName is set when the edited filter already exists in the catalogue, so
 // the name field opens on its stored name rather than a fresh suggestion.
 const props = defineProps<{
-  columns: string[];
+  tableId: string;
+  columns: ColumnSchema[];
   node?: DraftNode | null;
   savedName?: string;
   saving?: boolean;
@@ -22,7 +24,7 @@ const emit = defineEmits<{
   submit: [payload: { node: DraftNode; name: string }];
 }>();
 
-const initial = draftOf(props.node ?? null, props.columns[0] ?? "");
+const initial = draftOf(props.node ?? null, props.columns[0]?.name ?? "");
 const bool = ref<"AND" | "OR">(initial.bool);
 const children = ref<DraftNode[]>(initial.children);
 // Every filter is persisted — there is no draft state to reason about, so no
@@ -63,12 +65,14 @@ function onSubmit() {
   <Modal
     :title="props.node ? 'Modifier le filtre' : 'Créer un filtre'"
     wide
+    overflow-visible
     :dirty="dirty"
     @close="emit('close')"
     @submit="onSubmit"
   >
     <div class="flex flex-col gap-5">
       <FilterNodeEditor
+        :table-id="tableId"
         :columns="columns"
         :nodes="children"
         :bool="bool"

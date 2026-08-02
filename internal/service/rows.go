@@ -198,13 +198,14 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 
 // GetDistinctValues returns a page of up to limit of column's distinct
 // values, skipping offset matches first, converted to native
-// JSON types the same way row reads are.
-func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
+// JSON types the same way row reads are. A non-empty search narrows the
+// page to the values containing it, case-insensitively.
+func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
-	values, err := repo.Rows().Distinct(ctx, column, offset, limit)
+	values, err := repo.Rows().Distinct(ctx, column, search, offset, limit)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to list distinct values of column %q in table %q", column, meta.TableId), err)
 	}

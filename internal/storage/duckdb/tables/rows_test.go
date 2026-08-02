@@ -46,9 +46,46 @@ func Test_RowRepository_PkeysByPkeyFilteredDistinct(t *testing.T) {
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "2", filtered[0].Pkey)
 
-	distinct, err := rows.Distinct(ctx, "name", 0, 10)
+	distinct, err := rows.Distinct(ctx, "name", "", 0, 10)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []any{"a", "b"}, distinct)
+}
+
+func Test_RowRepository_Distinct_Search(t *testing.T) {
+	conn := openRepoTestDB(t)
+	_, err := conn.db.Exec(`CREATE TABLE t_search (__pkey TEXT PRIMARY KEY, name TEXT, qty INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`INSERT INTO t_search VALUES
+        ('1', 'Paris', 10), ('2', 'PARIS-SUD', 11), ('3', 'Lyon', 120), ('4', '100%', 12)`)
+	require.NoError(t, err)
+
+	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-search", PhysicalName: "t_search"})
+	require.NoError(t, err)
+	ctx := context.Background()
+	rows := repo.Rows()
+
+	cases := []struct {
+		name   string
+		column string
+		search string
+		limit  int
+		want   []any
+	}{
+		{"case-insensitive substring", "name", "ris", 10, []any{"PARIS-SUD", "Paris"}},
+		{"wildcards are matched literally", "name", "0%", 10, []any{"100%"}},
+		{"underscore is matched literally", "name", "S_S", 10, []any{}},
+		{"no match", "name", "zzz", 10, []any{}},
+		{"non-text column is searched on its text form", "qty", "12", 10, []any{int32(12), int32(120)}},
+		{"limit caps the page", "name", "", 2, []any{"100%", "Lyon"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := rows.Distinct(ctx, c.column, c.search, 0, c.limit)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
 }
 
 // A filter value the column's type cannot read must narrow the result to
@@ -147,11 +184,11 @@ func Test_RowRepository_PkeysAndDistinctPagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"2"}, page)
 
-	first, err := rows.Distinct(ctx, "name", 0, 1)
+	first, err := rows.Distinct(ctx, "name", "", 0, 1)
 	require.NoError(t, err)
 	require.Len(t, first, 1)
 
-	second, err := rows.Distinct(ctx, "name", 1, 1)
+	second, err := rows.Distinct(ctx, "name", "", 1, 1)
 	require.NoError(t, err)
 	require.Len(t, second, 1)
 

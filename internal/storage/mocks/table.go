@@ -82,8 +82,8 @@ func (m *RowRepository) Filtered(ctx context.Context, q storage.RowQuery, limit 
 	return rows, callArgs.Error(1)
 }
 
-func (m *RowRepository) Distinct(ctx context.Context, column string, offset, limit int) ([]any, error) {
-	callArgs := m.Called(ctx, column, offset, limit)
+func (m *RowRepository) Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error) {
+	callArgs := m.Called(ctx, column, search, offset, limit)
 	values, _ := callArgs.Get(0).([]any)
 	return values, callArgs.Error(1)
 }

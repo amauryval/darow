@@ -7,10 +7,14 @@ import Typography from "./ui/Typography.vue";
 // dirty: a modified form must not be lost by a stray click (§8.3). While
 // dirty, a backdrop click is a no-op and Escape asks for confirmation
 // instead of closing straight away.
-const props = withDefaults(defineProps<{ title: string; wide?: boolean; dirty?: boolean }>(), {
-  wide: false,
-  dirty: false,
-});
+// overflowVisible: daisyUI's modal-box scrolls its own content, which turns
+// any out-of-flow layer a field opens (an autocomplete list) into scrollable
+// content — a scrollbar appears and the list is clipped at the box's edge.
+// A modal short enough not to need scrolling lets it spill over instead.
+const props = withDefaults(
+  defineProps<{ title: string; wide?: boolean; dirty?: boolean; overflowVisible?: boolean }>(),
+  { wide: false, dirty: false, overflowVisible: false },
+);
 const emit = defineEmits<{ close: []; submit: [] }>();
 
 const box = ref<HTMLElement | null>(null);
@@ -50,7 +54,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 <template>
   <Teleport to="body">
     <div class="modal modal-open">
-      <div ref="box" class="modal-box" :class="props.wide ? 'max-w-2xl' : 'max-w-md'">
+      <div
+        ref="box"
+        class="modal-box"
+        :class="[props.wide ? 'max-w-2xl' : 'max-w-md', { 'overflow-visible': props.overflowVisible }]"
+      >
         <div class="mb-4 flex items-center justify-between">
           <Typography variant="h4">{{ props.title }}</Typography>
           <BaseButton variant="ghost" size="xs" square aria-label="Fermer" @click="requestClose">✕</BaseButton>

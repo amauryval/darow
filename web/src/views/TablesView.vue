@@ -16,7 +16,6 @@ import ErrorState from "../components/ui/ErrorState.vue";
 import Skeleton from "../components/ui/Skeleton.vue";
 import BaseInput from "../components/ui/BaseInput.vue";
 import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
-import Typography from "../components/ui/Typography.vue";
 import TableNameCell from "../components/tables/TableNameCell.vue";
 
 const router = useRouter();

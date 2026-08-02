@@ -196,6 +196,7 @@ module level and documents it; that is the exception, not the rule.
 | `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
 | `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; only `useMvtLayer` wires selection (WFS has no click support) | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
+| `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 
 ---
 
@@ -210,9 +211,10 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 |---|---|
 | `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
 | `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>` |
+| `BaseAutocomplete` | free-text field that suggests without constraining: the caller loads `options` in reaction to the `search` event (on focus and on every keystroke), keyboard navigation (↑/↓/Entrée/Échap), selection on `mousedown` so `blur` never wins the race. The list is absolutely positioned, so it never lengthens what contains it; a container that scrolls its own content has to let it spill over (`Modal`'s `overflowVisible`) |
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
-| `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths |
+| `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
 | `Drawer` | daisyUI `drawer`/`drawer-side` (`drawer-end` for the right edge) as a closeable side panel — `v-model`, wrapping the whole content region in its default slot (a `panel` slot holds the side panel's content), exactly as `App.vue`'s own nav drawer wraps the page. It is **not** shrink-wrapped around just a trigger button: `.drawer` is sized/laid out as the region it wraps (`display: grid`), so a caller keeps its own trigger as ordinary markup inside that default slot, wired to the same `v-model`. No feature uses it today — filtering, its former caller, moved to a modal — it stays as the primitive any future side panel builds on |
 | `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size` and `icon` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
 | `Badge` | status pill, **semantic** tones (neutral, success, warning, error) — never colour names |
@@ -254,7 +256,13 @@ single, link-less entry naming the page.
   with a single connector), the rest repeat it as plain text, and a nested group indents under that
   same column on a tinted background rather than nesting a second bordered box. Negation is a `NON`
   toggle at the end of each row, on a condition or on a whole group alike; `IS NULL`/`IS NOT NULL`
-  drop the value box (`takesValue`).
+  drop the value box (`takesValue`). The column list carries each column's **type** in its label:
+  it decides what the value has to look like and which operators mean anything. The value box is
+  `FilterValueInput`, one per condition: on a text column (`isTextType`) it is a `BaseAutocomplete`
+  fed by `useColumnValues` — the column's own values, the first 20 matching what is being typed —
+  and a plain `BaseInput` otherwise, a number or a date being typed, not picked. A column change
+  drops the suggestions rather than offering another column's values, and a failed lookup leaves
+  the field plainly typable instead of raising an error over a filter being written.
   **Every filter is persisted, and the catalogue is the single source of truth.** There is no draft
   state and no opt-out, so `TableFilterBar` holds no parallel tree: it keeps only `activeFilterId`,
   and *derives* the `DraftNode[]` it emits to the panel from the applied stored filter

@@ -30,7 +30,7 @@ type rowAPI interface {
 	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error
 	RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error
 	ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error)
-	GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error)
+	GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error)
 }
 
 // schemaAPI is everything the router calls on *service.SchemaService.

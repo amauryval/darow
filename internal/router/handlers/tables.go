@@ -352,13 +352,17 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 // col is validated against the table's real, non-geometry columns — never
 // surface geometry through a generic column-name path. Paginated like
 // ListRows: a high-cardinality column (an identifier, a date) never
-// returns unbounded values in one response.
+// returns unbounded values in one response. The optional search narrows
+// the page to the values containing it, so a value-suggestion caller can
+// ask for the first few matches of what is being typed rather than page
+// through everything.
 //
 // @Summary List a column's distinct values
 // @Tags tables
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Param col path string true "Column name"
+// @Param search query string false "Keep only the values containing this text (case-insensitive)"
 // @Param offset query int false "Pagination offset"
 // @Param limit query int false "Pagination limit"
 // @Success 200 {object} map[string]any
@@ -377,7 +381,8 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 	}
 
 	offset, limit := th.distinctValuesPaginationParams(req)
-	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, int(offset), int(limit))
+	search := req.URL.Query().Get("search")
+	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, search, int(offset), int(limit))
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return

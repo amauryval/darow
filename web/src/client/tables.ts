@@ -86,6 +86,18 @@ export function filterRows(tableId: string, conditions: FilterCondition[], limit
   return post(`/tables/${tableId}/filter`, { conditions, limit });
 }
 
-export function getDistinctValues(tableId: string, col: string): Promise<{ values: RowValue[] }> {
-  return get(`/tables/${tableId}/columns/${encodeURIComponent(col)}/distinct`);
+// Lists a column's distinct values, paginated server-side. `search` keeps
+// only the values containing it (case-insensitive, wildcards literal), which
+// is what makes this usable as a value-suggestion source on a high-cardinality
+// column: the server returns the first `limit` matches, never everything.
+export function getDistinctValues(
+  tableId: string,
+  col: string,
+  opts: { search?: string; limit?: number } = {},
+): Promise<{ values: RowValue[] }> {
+  const params = new URLSearchParams();
+  if (opts.search) params.set("search", opts.search);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const query = params.size > 0 ? `?${params}` : "";
+  return get(`/tables/${tableId}/columns/${encodeURIComponent(col)}/distinct${query}`);
 }

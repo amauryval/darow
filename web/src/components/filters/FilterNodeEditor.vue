@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { Plus, X } from "@lucide/vue";
+import type { ColumnSchema } from "../../client/types";
+import { columnType } from "../../utils/columnTypes";
 import {
   createLeaf,
   nextNodeId,
@@ -8,8 +10,8 @@ import {
   updateChildren as updateChildrenUtil,
   type DraftNode,
 } from "../../utils/filterTree";
+import FilterValueInput from "./FilterValueInput.vue";
 import BaseButton from "../ui/BaseButton.vue";
-import BaseInput from "../ui/BaseInput.vue";
 import BaseSelect from "../ui/BaseSelect.vue";
 import Typography from "../ui/Typography.vue";
 
@@ -22,7 +24,12 @@ const OPERATORS = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "NOT LIKE", "IS NULL
 // joins with a single connector), the rest repeat it as plain text. The whole
 // predicate then reads straight down, and a nested group indents under that
 // same column instead of nesting a second bordered box.
-const props = defineProps<{ columns: string[]; nodes: DraftNode[]; bool: "AND" | "OR" }>();
+const props = defineProps<{
+  tableId: string;
+  columns: ColumnSchema[];
+  nodes: DraftNode[];
+  bool: "AND" | "OR";
+}>();
 const emit = defineEmits<{
   "update:nodes": [nodes: DraftNode[]];
   "update:bool": [bool: "AND" | "OR"];
@@ -43,8 +50,10 @@ function updateChildren(groupId: number, children: DraftNode[]) {
   emit("update:nodes", updateChildrenUtil(props.nodes, groupId, children));
 }
 
+const firstColumn = () => props.columns[0]?.name ?? "";
+
 function addLeaf() {
-  emit("update:nodes", [...props.nodes, createLeaf(props.columns[0] ?? "")]);
+  emit("update:nodes", [...props.nodes, createLeaf(firstColumn())]);
 }
 
 function addGroup() {
@@ -54,14 +63,17 @@ function addGroup() {
       id: nextNodeId(),
       kind: "group",
       bool: "AND",
-      children: [createLeaf(props.columns[0] ?? "")],
+      children: [createLeaf(firstColumn())],
       not: false,
       active: true,
     },
   ]);
 }
 
-const columnOptions = () => props.columns.map((col) => ({ value: col, label: col }));
+// The type is part of the option's label: it decides what a value has to look
+// like, and which conditions make sense at all (a LIKE on an integer matches
+// nothing).
+const columnOptions = () => props.columns.map((col) => ({ value: col.name, label: `${col.name} — ${col.type}` }));
 const operatorOptions = OPERATORS.map((op) => ({ value: op, label: op }));
 const boolOptions = [
   { value: "AND", label: "ET" },
@@ -105,13 +117,13 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
             aria-label="Opérateur"
             @update:model-value="updateNode(node.id, { operator: $event })"
           />
-          <BaseInput
+          <FilterValueInput
             v-if="takesValue(node.operator)"
+            :table-id="tableId"
+            :column="node.column"
+            :type="columnType(columns, node.column)"
             :model-value="node.value"
-            size="sm"
-            placeholder="Valeur"
             class="min-w-0 flex-1"
-            aria-label="Valeur"
             @update:model-value="updateNode(node.id, { value: $event })"
           />
           <div v-else class="min-w-0 flex-1"></div>
@@ -119,6 +131,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
 
         <div v-else class="rounded-md bg-base-200 px-2 py-1.5">
           <FilterNodeEditor
+            :table-id="tableId"
             :columns="columns"
             :nodes="node.children"
             :bool="node.bool"

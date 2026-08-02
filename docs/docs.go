@@ -723,6 +723,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Keep only the values containing this text (case-insensitive)",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Pagination offset",
                         "name": "offset",

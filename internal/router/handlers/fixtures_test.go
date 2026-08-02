@@ -94,8 +94,8 @@ func (m *mockRowAPI) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 	return rows, args.Error(1)
 }
 
-func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
-	args := m.Called(ctx, meta, column, offset, limit)
+func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error) {
+	args := m.Called(ctx, meta, column, search, offset, limit)
 	values, _ := args.Get(0).([]any)
 	return values, args.Error(1)
 }
