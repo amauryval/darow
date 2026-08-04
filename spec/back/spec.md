@@ -35,10 +35,13 @@ reordered — code comments describe the code itself and do not refer to these n
 5. **Every read filter goes through the validated `BuildFilter` DSL** (§4.5): column whitelisted
    against the real schema, whitelisted operator, bound value. Never a string concatenated from the
    HTTP request.
-6. **`BulkInsert` runs in a single transaction.**
-7. **The geometry column is never returned by the row read endpoints.** Two deliberate, named
-   exceptions: export (`GetGeometryGeoJSON`) and OGC API - Features (`GetFeatures`,
-   `GetFeaturesTile`), where the geometry *is* the requested data.
+6. **A multi-row write runs in a single transaction** — `BulkInsert` as much as `UpdateMany`: a
+   topological edit moves a boundary shared by several rows, and half of it landing is a corrupted
+   boundary, not a partial success.
+7. **The geometry column is never returned by the row read endpoints.** Three deliberate, named
+   exceptions: export (`GetGeometryGeoJSON`), OGC API - Features (`GetFeatures`,
+   `GetFeaturesTile`) and the per-row geometry read (`GeoService.RowGeometry`, plus the echo a
+   geometry-setting write returns), where the geometry *is* the requested data.
 8. **Every paginated listing sorts explicitly**, with a deterministic tie-breaker (`__pkey` for
    rows, `tableId` for the catalogue) always appended last. DuckDB guarantees no stable order
    without an `ORDER BY`.
@@ -73,8 +76,12 @@ reordered — code comments describe the code itself and do not refer to these n
     invalidates the tiles with no separate invalidation mechanism.
 21. **Every DuckDB write goes through the adapter's single application-level lock.** DuckDB allows
     only one active writer; unserialized concurrent writes fail.
-22. **A write to the geometry column expects WKT** and converts it through `ST_GeomFromText`, never a
-    direct bind. It triggers `RefreshDerived` through the service, never from the storage layer.
+22. **A write to the geometry column carries its own encoding and its own CRS**
+    (`storage.GeometryValue`): WKT through `ST_GeomFromText`, a GeoJSON geometry through
+    `ST_GeomFromGeoJSON`, never a direct bind — then `ST_Transform` from the stated CRS
+    (`OGC:CRS84` by default, what every read emits) to the EPSG:3857 the column stores, the exact
+    mirror of the read. The CRS is a bound parameter. The write triggers `RefreshDerived` through
+    the service, never from the storage layer.
 23. **`context.Context` is the first parameter of every method that touches DuckDB or the disk**,
     received from `req.Context()` and propagated without derivation. Purely in-memory methods
     (`SourceService.List`, `MaxUploadBytes`) do not take one.
@@ -365,8 +372,8 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 |---|---|
 | `Catalog` | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone — an interrupted rollback — reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
 | `TableRepository` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
-| `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `Delete` |
-| `GeoRepository` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `Types` |
+| `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete` |
+| `GeoRepository` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types` |
 | `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized |
 
 The delete cascade is deliberately absent from these interfaces: `duckdb/catalog.Catalog.Remove`
@@ -573,7 +580,14 @@ only dependency on another service, and it only goes that way — `SchemaService
 Converts every value to a native JSON type according to the column type resolved by
 `SchemaService.Types` (rule 12), resolved **once per page** rather than once per row.
 
-`UpdateRow` writes every column in **one** statement: a multi-column update is atomic, all or
+A write that sets the geometry column names the CRS its literal is expressed in (`crs`, defaulting
+to `OGC:CRS84`); the service turns the raw JSON value into a `storage.GeometryValue` — a string is
+WKT, an object is a GeoJSON geometry, anything else is a `ValidationError` — and reads the stored
+geometry back as GeoJSON (`RowWriteResult`), so the client redraws what the server kept rather than
+its own draft. A bulk insert carries the same CRS and echoes nothing.
+
+`UpdateRows` is the multi-row form: each row carries its own values, the whole set is written in one
+transaction, and derived metadata is refreshed once. `UpdateRow` writes every column in **one** statement: a multi-column update is atomic, all or
 nothing (§5.1 from the calling code's point of view). `UpdateRow`, `InsertRow` and `BulkInsertRows`
 trigger `RefreshDerived` with `touchesGeometry` true only if the write actually sets the geometry
 column (rule 9); a purely scalar update or insert recomputes only `rowCount`/`updatedAt`, never the
@@ -615,7 +629,9 @@ The only service that caches a rendering result. The cache key includes: `tableI
 since all of them change the tile's contents for a given table version.
 
 Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
-`GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`. The reason: filter, bbox, tolerance and
+`GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single row's geometry in both
+encodings, rule 7's third exception), `NeighbourFeatures` (the rows within a buffer of a geometry —
+the query an edit session runs, unbounded in its key space like every other filtered read). The reason: filter, bbox, tolerance and
 attributes form an unbounded key space, unlike a tile's z/x/y.
 
 ### 5.6 `ExportService` — export is domain, not transport
@@ -690,10 +706,12 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/tables/{tableId}/rows` | paginated listing (`offset`, `limit`, `sort` validated against the schema) |
-| POST | `/api/v1/tables/{tableId}/rows` | inserts one or more rows (one → simple insert, several → transaction) |
+| POST | `/api/v1/tables/{tableId}/rows` | inserts one or more rows (one → simple insert, several → transaction). `?crs=` names the CRS a written geometry is in (default `OGC:CRS84`); a single insert that sets the geometry echoes back what was stored |
+| PATCH | `/api/v1/tables/{tableId}/rows` | updates several rows, each with its own values, in **one transaction**; `?crs=` as on the insert, and every row that set a geometry gets the stored one back |
 | POST | `/api/v1/tables/{tableId}/rows/batch` | fetches several rows by pkeys |
 | GET | `/api/v1/tables/{tableId}/rows/{pkey}` | one row |
-| PATCH | `/api/v1/tables/{tableId}/rows/{pkey}` | updates a row, returns the resulting state |
+| GET | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, at full resolution in `OGC:CRS84`; `404` on a scalar table or an unknown row |
+| PATCH | `/api/v1/tables/{tableId}/rows/{pkey}` | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert |
 | DELETE | `/api/v1/tables/{tableId}/rows/{pkey}` | deletes a row |
 
 **Geo**
@@ -704,6 +722,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation |
 | GET | `/api/v1/tables/{tableId}/geometry-types` | the distinct geometry types present |
 | POST | `/api/v1/tables/{tableId}/bbox` | pkeys of the rows intersecting an extent |
+| POST | `/api/v1/tables/{tableId}/neighbours` | the features within `buffer` meters of a GeoJSON geometry (`ST_Intersects` against `ST_Buffer`), minus the rows named by `exclude` — what an edit session snaps to and carries along |
 | GET | `/api/v1/tables/{tableId}/filtered-extent` | extent of the rows matching a filter, to recentre a map |
 
 **OGC API - Features**

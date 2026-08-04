@@ -16,7 +16,6 @@ import { useToast } from "./useToast";
 export function useTableRows(
   tableId: Ref<string>,
   rowColumns: Ref<string[]>,
-  editableColumns: Ref<string[]>,
   columns: Ref<ColumnSchema[]>,
   onMutated: () => void,
 ) {
@@ -92,15 +91,22 @@ export function useTableRows(
   const addingRow = ref(false);
   const addRowError = ref<string | null>(null);
 
+  // The typed values a row write expects, read off the editable columns —
+  // the geometry column is not one of them: it is drawn on the map, not
+  // typed (useGeometryEditing).
+  function coerceValues(values: Record<string, string>): Record<string, unknown> {
+    const coerced: Record<string, unknown> = {};
+    for (const col of rowColumns.value) {
+      coerced[col] = coerceByType(columnType(columns.value, col), values[col] ?? "");
+    }
+    return coerced;
+  }
+
   async function addRow(values: Record<string, string>) {
     addingRow.value = true;
     addRowError.value = null;
     try {
-      const coerced: Record<string, unknown> = {};
-      for (const col of editableColumns.value) {
-        coerced[col] = coerceByType(columnType(columns.value, col), values[col] ?? "");
-      }
-      await addRows(tableId.value, [coerced]);
+      await addRows(tableId.value, [coerceValues(values)]);
       await list.reload();
       onMutated();
       toast.success("Ligne ajoutée.");
@@ -136,5 +142,6 @@ export function useTableRows(
     addingRow,
     addRowError,
     addRow,
+    coerceValues,
   };
 }

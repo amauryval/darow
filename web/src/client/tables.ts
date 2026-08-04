@@ -5,6 +5,7 @@ import type {
   FilterCondition,
   Metadata,
   Row,
+  RowGeometry,
   RowsPage,
   RowValue,
   SchemaResponse,
@@ -52,14 +53,52 @@ export function getRowsByPkey(tableId: string, pkeys: string[]): Promise<{ rows:
   return post(`/tables/${tableId}/rows/batch`, { pkeys });
 }
 
-// Inserts one or more rows in a single request; returns the new rows'
-// primary keys in insertion order.
-export function addRows(tableId: string, rows: Array<Record<string, unknown>>): Promise<{ pkeys: string[] }> {
-  return post(`/tables/${tableId}/rows`, { rows });
+// A geometry is written in the CRS the map itself speaks (lon/lat), which
+// is also what every geometry read emits — the server reprojects to what it
+// stores. Naming another CRS is the caller's business, never a conversion
+// done here.
+function crsParam(crs?: string): string {
+  return crs ? `?crs=${encodeURIComponent(crs)}` : "";
 }
 
-export function updateRow(tableId: string, pkey: string, updates: Record<string, unknown>): Promise<{ row: Row }> {
-  return patch(`/tables/${tableId}/rows/${pkey}`, updates);
+// Inserts one or more rows in a single request; returns the new rows'
+// primary keys in insertion order. A single insert that sets the geometry
+// echoes back what the server actually stored, to be drawn instead of the
+// draft that was sent.
+export function addRows(
+  tableId: string,
+  rows: Array<Record<string, unknown>>,
+  crs?: string,
+): Promise<{ pkeys: string[]; geometry?: GeoJSON.Geometry }> {
+  return post(`/tables/${tableId}/rows${crsParam(crs)}`, { rows });
+}
+
+export function updateRow(
+  tableId: string,
+  pkey: string,
+  updates: Record<string, unknown>,
+  crs?: string,
+): Promise<{ row: Row; geometry?: GeoJSON.Geometry }> {
+  return patch(`/tables/${tableId}/rows/${pkey}${crsParam(crs)}`, updates);
+}
+
+// Several rows in one transaction: every row lands or none does. This is
+// what a topological edit writes through — moving a shared boundary changes
+// the edited row and each neighbour carrying the same vertex, and half of
+// that landing is a corrupted boundary.
+export function updateRows(
+  tableId: string,
+  updates: Array<{ pkey: string; values: Record<string, unknown> }>,
+  crs?: string,
+): Promise<{ rows: Array<{ pkey: string; geometry?: GeoJSON.Geometry }> }> {
+  return patch(`/tables/${tableId}/rows${crsParam(crs)}`, { updates });
+}
+
+// A single row's geometry, in both encodings: GeoJSON to draw or edit it,
+// WKT to read and copy it. Full resolution, lon/lat — the geometry is
+// deliberately absent from every other row read.
+export function getRowGeometry(tableId: string, pkey: string): Promise<RowGeometry> {
+  return get(`/tables/${tableId}/rows/${pkey}/geometry`);
 }
 
 export function deleteRow(tableId: string, pkey: string): Promise<void> {

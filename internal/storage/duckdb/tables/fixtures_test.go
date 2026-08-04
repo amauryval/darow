@@ -1,15 +1,15 @@
 package tables
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"context"
-	"database/sql"
 	"testing"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
@@ -74,6 +74,19 @@ func newGeoTestTable(t *testing.T, conn dbConn) storage.Metadata {
         ('2', 'b', ST_GeomFromText('POINT(2000000 2000000)'))`)
 	require.NoError(t, err)
 	return storage.Metadata{TableId: "id-geo", PhysicalName: "t_geo", IsGeo: true, GeometryColumn: "geom"}
+}
+
+// assertPointNear checks a WKT point against expected lon/lat: a geometry
+// written in lon/lat is reprojected to EPSG:3857 and back on the way out,
+// so the last digits never survive the round trip and an exact comparison
+// would test floating point, not the write.
+func assertPointNear(t *testing.T, wkt string, lon, lat, delta float64) {
+	t.Helper()
+	var x, y float64
+	_, err := fmt.Sscanf(wkt, "POINT (%g %g)", &x, &y)
+	require.NoError(t, err, "unexpected WKT: %s", wkt)
+	assert.InDelta(t, lon, x, delta)
+	assert.InDelta(t, lat, y, delta)
 }
 
 // fakePhysicalNames stands in for the catalogue's PhysicalNames, so these

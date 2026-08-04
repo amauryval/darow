@@ -67,20 +67,28 @@ func (m *mockRowAPI) GetRowsByPkey(ctx context.Context, meta storage.Metadata, p
 	return rows, args.Error(1)
 }
 
-func (m *mockRowAPI) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
-	args := m.Called(ctx, meta, values)
-	return args.String(0), args.Error(1)
+func (m *mockRowAPI) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any, crs string) (service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, values, crs)
+	written, _ := args.Get(0).(service.RowWriteResult)
+	return written, args.Error(1)
 }
 
-func (m *mockRowAPI) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error) {
-	args := m.Called(ctx, meta, rows)
+func (m *mockRowAPI) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error) {
+	args := m.Called(ctx, meta, rows, crs)
 	pkeys, _ := args.Get(0).([]string)
 	return pkeys, args.Error(1)
 }
 
-func (m *mockRowAPI) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error {
-	args := m.Called(ctx, meta, pkeys, updates)
-	return args.Error(0)
+func (m *mockRowAPI) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any, crs string) (service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, pkeys, updates, crs)
+	written, _ := args.Get(0).(service.RowWriteResult)
+	return written, args.Error(1)
+}
+
+func (m *mockRowAPI) UpdateRows(ctx context.Context, meta storage.Metadata, updates []service.RowUpdate, crs string) ([]service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, updates, crs)
+	written, _ := args.Get(0).([]service.RowWriteResult)
+	return written, args.Error(1)
 }
 
 func (m *mockRowAPI) RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error {
@@ -143,6 +151,18 @@ func (m *mockGeoAPI) FilteredExtent(ctx context.Context, meta storage.Metadata, 
 	args := m.Called(ctx, meta, q)
 	bbox, _ := args.Get(0).(string)
 	return bbox, args.Error(1)
+}
+
+func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, near, exclude, limit)
+	features, _ := args.Get(0).([]storage.GeoFeature)
+	return features, args.Error(1)
+}
+
+func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*service.RowGeometry, error) {
+	args := m.Called(ctx, meta, pkey)
+	geometry, _ := args.Get(0).(*service.RowGeometry)
+	return geometry, args.Error(1)
 }
 
 func (m *mockGeoAPI) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {

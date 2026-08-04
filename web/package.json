@@ -14,8 +14,15 @@
   "dependencies": {
     "@lucide/vue": "^1.27.0",
     "@tanstack/vue-table": "^8.21.3",
+    "@turf/area": "^7.4.0",
+    "@turf/boolean-intersects": "^7.4.0",
+    "@turf/difference": "^7.4.0",
+    "@turf/distance": "^7.4.0",
+    "@turf/flatten": "^7.4.0",
+    "@turf/nearest-point-on-line": "^7.4.0",
+    "@turf/union": "^7.4.0",
     "@vueuse/core": "^14.4.0",
-    "maplibre-gl": "^4.7.1",
+    "maplibre-gl": "^5.24.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },

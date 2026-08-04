@@ -196,6 +196,61 @@ func Test_RowRepository_PkeysAndDistinctPagination(t *testing.T) {
 	assert.ElementsMatch(t, []any{"a", "b"}, []any{first[0], second[0]})
 }
 
+// A geometry written in lon/lat must be reprojected to the EPSG:3857 the
+// column stores, or it lands metres from Null Island and drags the table's
+// bbox with it — the write is the exact mirror of the read.
+func Test_RowRepository_Insert_GeometryColumn_ReprojectsFromItsCRS(t *testing.T) {
+	conn := openRepoTestDB(t)
+	meta := newGeoTestTable(t, conn)
+	repo, err := Open(conn, conn, meta)
+	require.NoError(t, err)
+	ctx := context.Background()
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+
+	cases := []struct {
+		name  string
+		value any
+	}{
+		{name: "WKT", value: storage.GeometryValue{Literal: "POINT(2.35 48.85)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}},
+		{name: "GeoJSON", value: storage.GeometryValue{Literal: `{"type":"Point","coordinates":[2.35,48.85]}`, Format: storage.GeometryGeoJSON, CRS: storage.DefaultGeometryCRS}},
+		{name: "bare string defaults to WKT in lon/lat", value: "POINT(2.35 48.85)"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pkey, err := repo.Rows().Insert(ctx, map[string]any{"geom": c.value})
+			require.NoError(t, err)
+
+			wkt, err := geo.WKTByPkey(ctx, []string{pkey})
+			require.NoError(t, err)
+			assertPointNear(t, wkt[pkey], 2.35, 48.85, 1e-6)
+		})
+	}
+}
+
+// A geometry written in a projected CRS is reprojected from that CRS, not
+// from the lon/lat default.
+func Test_RowRepository_Insert_GeometryColumn_HonoursTheStatedCRS(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	ctx := context.Background()
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+
+	// The same place as the lon/lat case above, stated in Web Mercator
+	// meters: read back, it must land on the very coordinates it names.
+	pkey, err := repo.Rows().Insert(ctx, map[string]any{
+		"geom": storage.GeometryValue{Literal: "POINT(261598 6250566)", Format: storage.GeometryWKT, CRS: "EPSG:3857"},
+	})
+	require.NoError(t, err)
+
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey})
+	require.NoError(t, err)
+	assertPointNear(t, wkt[pkey], 2.35, 48.8566, 1e-3)
+}
+
 // A geometry column is written as WKT: an invalid literal must fail rather
 // than store a NULL geometry silently.
 func Test_RowRepository_Update_GeometryColumn_RejectsInvalidWKT(t *testing.T) {
@@ -237,4 +292,42 @@ func Test_RowRepository_Pkeys_RejectsUnknownSortColumn(t *testing.T) {
 
 	_, err = repo.Rows().Pkeys(context.Background(), []storage.SortField{{Column: "no such column"}}, 0, 100)
 	assert.Error(t, err)
+}
+
+// A topological edit moves a boundary shared by several rows: every row
+// lands or none does, so a failure mid-way must leave the whole set
+// untouched rather than half a boundary behind.
+func Test_RowRepository_UpdateMany_IsAtomic(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	ctx := context.Background()
+	rows := repo.Rows()
+	geo, _ := repo.Geo()
+
+	valid := storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
+	require.NoError(t, rows.UpdateMany(ctx, []storage.RowUpdate{
+		{Pkey: "1", Values: map[string]any{"name": "a2", "geom": valid}},
+		{Pkey: "2", Values: map[string]any{"name": "b2"}},
+	}))
+
+	updated, err := rows.ByPkey(ctx, []string{"1", "2"})
+	require.NoError(t, err)
+	require.Len(t, updated, 2)
+
+	wkt, err := geo.WKTByPkey(ctx, []string{"1"})
+	require.NoError(t, err)
+	assertPointNear(t, wkt["1"], 1, 1, 1e-6)
+
+	broken := storage.GeometryValue{Literal: "not-wkt", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
+	err = rows.UpdateMany(ctx, []storage.RowUpdate{
+		{Pkey: "2", Values: map[string]any{"name": "rolled-back"}},
+		{Pkey: "1", Values: map[string]any{"geom": broken}},
+	})
+	require.Error(t, err)
+
+	after, err := rows.ByPkey(ctx, []string{"2"})
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, "b2", after[0].Values["name"])
 }

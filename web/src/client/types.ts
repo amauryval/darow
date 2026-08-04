@@ -53,6 +53,14 @@ export interface Row {
   [column: string]: RowValue;
 }
 
+// A row's geometry, as served by the per-row geometry route: GeoJSON to
+// draw it, WKT to read it. Both at full resolution, in lon/lat.
+export interface RowGeometry {
+  pkey: string;
+  geometry: GeoJSON.Geometry | null;
+  wkt: string;
+}
+
 export interface RowsPage {
   rows: Row[];
   total: number;

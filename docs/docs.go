@@ -77,13 +77,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.collectionDTO"
+                            "$ref": "#/definitions/internal_router_handlers.collectionDTO"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -154,13 +154,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -202,7 +202,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -273,7 +273,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -319,7 +319,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -358,7 +358,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -386,7 +386,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -435,7 +435,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -476,7 +476,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -523,7 +523,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -551,13 +551,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.metadataDTO"
+                            "$ref": "#/definitions/internal_router_handlers.metadataDTO"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -584,7 +584,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -613,13 +613,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.metadataDTO"
+                            "$ref": "#/definitions/internal_router_handlers.metadataDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -692,7 +692,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -752,7 +752,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -792,7 +792,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -832,7 +832,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -873,7 +873,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -911,7 +911,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -954,7 +954,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -989,7 +989,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1018,19 +1018,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/handlers.filterDTO"
+                            "$ref": "#/definitions/internal_router_handlers.filterDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1065,7 +1065,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1101,19 +1101,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.filterDTO"
+                            "$ref": "#/definitions/internal_router_handlers.filterDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1148,6 +1148,45 @@ const docTemplate = `{
                                     "type": "string"
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/neighbours": {
+            "post": {
+                "description": "geometry is a GeoJSON geometry in OGC:CRS84; buffer is a distance in meters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geo"
+                ],
+                "summary": "List the features around a geometry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1200,7 +1239,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1241,7 +1280,50 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Every row lands or none does — what a topological edit needs, since it moves a boundary shared by several rows",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rows"
+                ],
+                "summary": "Update several rows in one transaction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "CRS of the written geometries (default OGC:CRS84)",
+                        "name": "crs",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1279,7 +1361,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1321,7 +1403,7 @@ const docTemplate = `{
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1391,7 +1473,49 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/rows/{pkey}/geometry": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rows"
+                ],
+                "summary": "Get a row's geometry, as GeoJSON and as WKT",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Row primary key",
+                        "name": "pkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1573,7 +1697,7 @@ const docTemplate = `{
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1605,7 +1729,7 @@ const docTemplate = `{
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/darow_internal_router_response.ErrorResponse"
                         }
                     }
                 }
@@ -1613,11 +1737,52 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.collectionDTO": {
+        "darow_internal_router_response.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
+                }
+            }
+        },
+        "darow_internal_storage.FilterCondition": {
+            "type": "object",
+            "properties": {
+                "bool": {
+                    "type": "string"
+                },
+                "column": {
+                    "type": "string"
+                },
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/darow_internal_storage.FilterCondition"
+                    }
+                },
+                "not": {
+                    "type": "boolean"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {}
+            }
+        },
+        "internal_router_handlers.collectionDTO": {
             "type": "object",
             "properties": {
                 "extent": {
-                    "$ref": "#/definitions/handlers.extentDTO"
+                    "$ref": "#/definitions/internal_router_handlers.extentDTO"
                 },
                 "id": {
                     "type": "string"
@@ -1630,21 +1795,21 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.extentDTO": {
+        "internal_router_handlers.extentDTO": {
             "type": "object",
             "properties": {
                 "spatial": {
-                    "$ref": "#/definitions/handlers.spatialExtentDTO"
+                    "$ref": "#/definitions/internal_router_handlers.spatialExtentDTO"
                 }
             }
         },
-        "handlers.filterDTO": {
+        "internal_router_handlers.filterDTO": {
             "type": "object",
             "properties": {
                 "conditions": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/storage.FilterCondition"
+                        "$ref": "#/definitions/darow_internal_storage.FilterCondition"
                     }
                 },
                 "createdAt": {
@@ -1664,7 +1829,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.metadataDTO": {
+        "internal_router_handlers.metadataDTO": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -1699,7 +1864,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.spatialExtentDTO": {
+        "internal_router_handlers.spatialExtentDTO": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -1715,47 +1880,6 @@ const docTemplate = `{
                 "crs": {
                     "type": "string"
                 }
-            }
-        },
-        "response.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "requestId": {
-                    "type": "string"
-                }
-            }
-        },
-        "storage.FilterCondition": {
-            "type": "object",
-            "properties": {
-                "bool": {
-                    "type": "string"
-                },
-                "column": {
-                    "type": "string"
-                },
-                "conditions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/storage.FilterCondition"
-                    }
-                },
-                "not": {
-                    "type": "boolean"
-                },
-                "operator": {
-                    "type": "string"
-                },
-                "value": {}
             }
         }
     }

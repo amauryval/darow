@@ -4,7 +4,9 @@ import Modal from "./Modal.vue";
 import BaseButton from "./ui/BaseButton.vue";
 import BaseInput from "./ui/BaseInput.vue";
 
-const props = defineProps<{ editableColumns: string[]; geometryColumn?: string }>();
+// On a geo table the geometry is not typed here: the modal collects the
+// attributes and the map takes over for the shape (useGeometryEditing).
+const props = defineProps<{ editableColumns: string[]; isGeo?: boolean }>();
 const emit = defineEmits<{ close: []; add: [values: Record<string, string>] }>();
 
 const newRowValues = reactive<Record<string, string>>({});
@@ -38,17 +40,18 @@ defineExpose({ openModal });
   <Modal title="Ajouter une ligne" :dirty="isDirty" @close="onClose" @submit="confirmAdd">
     <div class="flex max-h-96 flex-col gap-3 overflow-y-auto pr-1">
       <label v-for="col in editableColumns" :key="col" class="block">
-        <span class="mb-1 block text-xs font-medium text-base-content/50">
-          {{ col }} <span v-if="col === geometryColumn">(WKT)</span>
-        </span>
-        <BaseInput v-model="newRowValues[col]" :placeholder="col === geometryColumn ? 'POINT(2.35 48.85)' : ''" />
+        <span class="mb-1 block text-xs font-medium text-base-content/50">{{ col }}</span>
+        <BaseInput v-model="newRowValues[col]" />
       </label>
     </div>
+    <p v-if="isGeo" class="mt-3 text-xs text-base-content/60">
+      La géométrie se dessine ensuite sur la carte : la ligne sera créée une fois la forme enregistrée.
+    </p>
     <p v-if="error" class="mt-3 text-xs text-error">{{ error }}</p>
     <div class="mt-4 flex justify-end gap-2">
       <BaseButton variant="secondary" @click="onClose">Annuler</BaseButton>
       <BaseButton variant="primary" :busy="isLoading" :disabled="isLoading" @click="confirmAdd">
-        {{ isLoading ? "Ajout…" : "Ajouter" }}
+        {{ isGeo ? "Dessiner la géométrie" : isLoading ? "Ajout…" : "Ajouter" }}
       </BaseButton>
     </div>
   </Modal>

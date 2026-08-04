@@ -166,6 +166,31 @@ One module per subject, no module state, no side effect:
 - `rows.ts` — `cellValue`, the one place a row's primary key is read: it is carried by `Row.pkey`,
   not by a `__pkey` entry, so any column list including it has to go through here.
 - `sort.ts` — projection of TanStack's sorting state onto the API's `sort` parameter.
+- `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text, the bounded
+  excerpt a modal may put in the DOM (the clipboard still carries the whole value), the predicate
+  telling an editable shape from a `GeometryCollection`, which has none.
+- `vertices.ts` — addressing a vertex inside any geometry: a path names the coordinate list (`[]`
+  for a point or a line, `[ring]` for a polygon, `[polygon, ring]` for a multipolygon) and an index
+  names the vertex in it. The three moves the map editor makes on that address — move, insert,
+  remove — plus `draftGeometry`/`draftPositions`, the two directions between the clicks collected
+  while drawing and the geometry they amount to. A ring's repeated last vertex is maintained here
+  and nowhere else, and a removal that would leave a ring under three distinct vertices or a line
+  under two is refused rather than performed.
+- `handles.ts` — the dots the user grabs: one per vertex, one at the middle of every segment
+  (dragging a midpoint is how a vertex is added). They travel as an ordinary GeoJSON source, not as
+  DOM markers — a parcel with three hundred vertices must cost what one with four costs — so the
+  vertex address rides in feature properties as text and is read back by `handleRef`.
+- `snapping.ts` — turf-backed snapping of a placed vertex onto the loaded neighbours: vertices
+  first, then the nearest point on a segment (`nearestPointOnLine`), with a planar pre-filter
+  before each haversine because a drag runs this on every mouse move. The tolerance arrives in
+  meters, converted by the caller from a pixel distance, so it stays the same handful of pixels at
+  every zoom.
+- `topology.ts` — recutting the neighbours after an edit, as set operations rather than vertex
+  bookkeeping: what the reshaped geometry now covers is taken from them (`difference`), what its
+  retreat freed is given back in pieces to whoever they touch (`flatten` + `booleanIntersects` +
+  `union`). Cut first, fill second — the edited shape always wins the area it covers. A neighbour
+  the edit did not reach, or that comes back with no area changed hands (under a square millimeter
+  is the clipper's noise), reports none and is never written. Areal geometries only.
 - `sourceRows.ts` — the `SourceRow` view model of the sources tree (`toSourceRows`: a multi-layer
   file becomes a parent row over its layers, a single-layer one stays flat) and `formatSize`. The
   shape the cells read is defined once here, not rebuilt in the view and in each cell.
@@ -194,7 +219,12 @@ module level and documents it; that is the exception, not the rule.
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
 | `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref | present |
 | `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
-| `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; only `useMvtLayer` wires selection (WFS has no click support) | present |
+| `useMapDraw` | the edit session: the shape being drawn (point, line, polygon) or the geometry being corrected, the clicks collected, the vertex moves applied through `vertices.ts`, the snapping toggle and its pixel tolerance measured on the map itself, the neighbours it snaps to, teardown. No dependency beyond MapLibre for the pointer and turf for the geometry | present |
+| `useDrawLayers` | the three GeoJSON sources an edit session draws — the neighbours as outlines, the shape, the handles — and their layers. Writes only: it pushes what the editor holds and reads nothing back | present |
+| `useVertexDrag` | the pointer half of the editor: grabbing a handle (hit-tested on the handle layer, not on DOM markers), dragging it, dropping it, right-clicking a vertex away, and the cursor. It decides nothing about the geometry — it reports the address it grabbed and where the pointer is | present |
+| `useGeometryEditing` | entering a geometry: the two flows (a new row's attributes then its shape, an existing row's shape corrected), the neighbours loaded around the edited shape, the topological mode and the recut it drives through `topology.ts`, the writes | present |
+| `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
+| `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; both wire the same selection (click to toggle, pointer cursor, selected features highlighted) through the `FeatureSelection` pair the caller hands them, and both refetch on a bump of the data version the caller passes | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
@@ -286,13 +316,20 @@ single, link-less entry naming the page.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: MapLibre is the bundle's largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
-- `TableRowsPanel` — row grid: edit mode, pinned selection, infinite scroll. Switching between the
+- `TableRowsPanel` (`components/tables/`) — row grid: the edit-mode toggle button, the pinned
+  selection, infinite scroll, and the per-row action column. That column is **always** rendered:
+  reading a row's geometry is a read, so arming edit mode to reach it would be a trap. It receives
+  the `useTableRows` state its parent owns and emits intentions (`toggleEditMode`, `updateCell`,
+  `geometry`, `editGeometry`), never mutating that prop itself. Switching between the
   filtered, read-only `DataTable` and the paginated one (`filter.filterActive`) carries a distinct
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `AddColumnModal`, `AddRowModal`, `ColumnsModal` — one modal = one file, never inline modal markup
-  in a view.
+- `AddColumnModal`, `AddRowModal`, `ColumnsModal`, `GeometryModal` — one modal = one file, never
+  inline modal markup in a view. `GeometryModal` (`components/tables/`) shows one row's geometry in
+  both encodings with a copy button each, rendering a bounded excerpt while the clipboard carries
+  the whole value; `AddRowModal` collects attributes only — on a geo table the geometry is drawn
+  next, on the map.
 - **Deriving is two modes in one modal**, in `components/tables/`. `DeriveTableModal` is the shell:
   the tab pair, the new table's name, the submit, and the one `useDeriveTable` instance both tabs
   work through. `DeriveFromTableForm` is the guided tab — the column picker, the computed-column
@@ -450,6 +487,32 @@ This is the product's main screen; it follows fixed rules.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with
   an obvious way to deselect everything.
 - Basemap attribution displayed, navigation controls present.
+- **Entering a geometry is a mode, and it is explicit.** Drawing and reshaping are the map's own:
+  MapLibre carries the pointer and the rendering, turf carries the geometry, and there is no
+  drawing library between the two. The mode is on only while a geometry is actually being entered;
+  the map takes the whole
+  width for as long as it lasts, a bar states what is expected, and nothing is written until
+  *Enregistrer* is clicked — a drag is not a submission. Adding a row on a geo table is two steps
+  (attributes, then shape) posted as one write, so a row never lands without its geometry. What is
+  drawn again after the write is what the server answers, never the local draft.
+- **One gesture per operation, the desktop-GIS ones.** A click places a vertex, dragging a vertex
+  moves it, dragging the midpoint of a segment creates a vertex there, a right-click on a vertex
+  removes it, and *Annuler le point* takes back the last click. The shape a creation draws (point,
+  line, polygon) is picked in the bar; a correction keeps the type the row already carries.
+- **Snapping is a toggle, not a setting**: it is what makes two features share an exact boundary,
+  and what gets in the way when they must not. Its tolerance is a screen distance, so it means the
+  same thing at every zoom, and it pulls onto a neighbour's vertex before a neighbour's segment.
+- **Topology is a toggle too, and it is set operations, never vertex guessing.** Opening an edit
+  session loads the rows within a buffer of the edited shape (server-side `ST_Intersects` on
+  `ST_Buffer`, not a bounding box): that is what snapping snaps to, what is drawn as outlines, and
+  what the recut applies to. With the mode on — on by default, off for shapes that merely touch —
+  saving takes from each neighbour the area the reshaped geometry now covers and gives back the
+  freed pieces that touch it, through turf's `difference` / `union`. The edited geometry itself is
+  never corrected: it is written exactly as drawn. The edited row and every recut neighbour go in
+  one request, so a limit is never left moved on one side only.
+- **A write invalidates what the map shows.** MapLibre keeps its own copy of a tile per URL, so the
+  panel bumps a data version after every row write and the layers ask again — an edited geometry is
+  visible immediately, not at the next zoom.
 
 ### 8.9 Consistency and wording
 

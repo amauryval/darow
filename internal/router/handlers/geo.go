@@ -279,6 +279,62 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 	response.WriteJSON(w, http.StatusOK, map[string]string{"bbox": bbox})
 }
 
+// FindNeighbours handles POST /tables/{tableId}/neighbours.
+//
+// @Summary List the features around a geometry
+// @Description geometry is a GeoJSON geometry in OGC:CRS84; buffer is a distance in meters
+// @Tags geo
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/neighbours [post]
+func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
+	meta, ok := gh.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Geometry json.RawMessage `json:"geometry"`
+		Buffer   float64         `json:"buffer"`
+		Exclude  []string        `json:"exclude"`
+		Limit    int             `json:"limit"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+	if len(body.Geometry) == 0 {
+		response.WriteError(w, req, errNoGeometryProvided, http.StatusBadRequest)
+		return
+	}
+
+	limit := body.Limit
+	if limit <= 0 {
+		limit = gh.apiCfg.DefaultFeaturesLimit
+	}
+	if limit > gh.apiCfg.MaxRowLimit {
+		limit = gh.apiCfg.MaxRowLimit
+	}
+
+	near := storage.NearQuery{
+		Geometry: storage.GeometryValue{
+			Literal: string(body.Geometry),
+			Format:  storage.GeometryGeoJSON,
+			CRS:     geometryCRS(req),
+		},
+		Buffer: body.Buffer,
+	}
+	features, err := gh.geoService.NeighbourFeatures(req.Context(), meta, near, body.Exclude, limit)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), nil))
+}
+
 // FilterByBbox handles POST /tables/{tableId}/bbox. bbox is lon/lat in
 // OGC:CRS84, the same CRS Metadata.Bbox is reported in. Paginated like
 // ListRows: a world-spanning bbox on a large table never

@@ -103,6 +103,11 @@ func (m *RowRepository) Update(ctx context.Context, pkeys []string, updates map[
 	return m.Called(ctx, pkeys, updates).Error(0)
 }
 
+func (m *RowRepository) UpdateMany(ctx context.Context, updates []storage.RowUpdate) error {
+	callArgs := m.Called(ctx, updates)
+	return callArgs.Error(0)
+}
+
 func (m *RowRepository) Delete(ctx context.Context, pkeys []string) error {
 	return m.Called(ctx, pkeys).Error(0)
 }
@@ -151,6 +156,12 @@ func (m *GeoRepository) Extent(ctx context.Context, q storage.GeoQuery) (string,
 }
 
 func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys)
+	result, _ := callArgs.Get(0).(map[string]string)
+	return result, callArgs.Error(1)
+}
+
+func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
 	callArgs := m.Called(ctx, pkeys)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)

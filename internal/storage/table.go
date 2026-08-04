@@ -2,6 +2,13 @@ package storage
 
 import "context"
 
+// RowUpdate is one row's share of a multi-row write: which row, and the
+// values it receives.
+type RowUpdate struct {
+	Pkey   string
+	Values map[string]any
+}
+
 // RowQuery narrows a RowRepository.Filtered call: Filter/Args must already
 // be a BuildFilter clause.
 type RowQuery struct {
@@ -19,12 +26,26 @@ type RowQuery struct {
 // non-geometry columns populate GeoFeature.Values (nil/empty means every
 // column).
 type FeatureQuery struct {
-	Pkeys  []string
-	Bbox   *[4]float64
-	Attrs  []string
-	Query  GeoQuery
-	Limit  int
-	Offset int
+	Pkeys []string
+	Bbox  *[4]float64
+	// Near restricts the result to the rows whose geometry intersects a
+	// buffer around a caller-supplied geometry — the neighbours of a shape
+	// being edited, which a bbox cannot express (a bbox around an L-shaped
+	// parcel catches what the parcel itself never touches).
+	Near    *NearQuery
+	Exclude []string
+	Attrs   []string
+	Query   GeoQuery
+	Limit   int
+	Offset  int
+}
+
+// NearQuery is a geometry and the distance around it, in meters (the unit
+// of the EPSG:3857 the geometry column is stored in), a neighbour search
+// works with.
+type NearQuery struct {
+	Geometry GeometryValue
+	Buffer   float64
 }
 
 // TableRepository groups every operation on a single resolved data table.
@@ -73,6 +94,10 @@ type RowRepository interface {
 	// Update sets every column in updates for the given rows in a single
 	// statement (atomic: either every column changes or none does).
 	Update(ctx context.Context, pkeys []string, updates map[string]any) error
+	// UpdateMany applies its own values to each row, every statement in a
+	// single transaction — several rows changed by one edit land together
+	// or not at all.
+	UpdateMany(ctx context.Context, updates []RowUpdate) error
 	// Delete removes the given rows. An empty pkeys is a no-op.
 	Delete(ctx context.Context, pkeys []string) error
 }
@@ -105,6 +130,10 @@ type GeoRepository interface {
 	// keyed by pkey — an export-only exception to never returning the
 	// geometry column.
 	GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
+	// WKTByPkey returns each row's geometry as Well-Known Text, keyed by
+	// pkey, at full resolution and in the same OGC:CRS84 lon/lat
+	// GeoJSONByPkey reports.
+	WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
 }

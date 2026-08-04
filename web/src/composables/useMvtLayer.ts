@@ -21,6 +21,7 @@ export function useMvtLayer(
   bbox: Ref<string | undefined>,
   conditions: Ref<FilterCondition[]>,
   selection: FeatureSelection,
+  version: Ref<number>,
 ) {
   const sourceId = `table-${tableId.value}`;
   const sourceLayer = "layer";
@@ -51,7 +52,7 @@ export function useMvtLayer(
     const bounds = bbox.value ? parseBbox(bbox.value) : null;
     m.addSource(sourceId, {
       type: "vector",
-      tiles: [`${location.origin}${tileUrl(tableId.value, conditions.value)}`],
+      tiles: [tileUrl(tableId.value, conditions.value, version.value)],
       // Promotes the "pkey" tile property to the MapLibre feature id, so
       // selection state (setFeatureState) can be tracked per row and
       // survives tile reloads instead of resetting on every pan/zoom.
@@ -97,7 +98,7 @@ export function useMvtLayer(
   function refreshTiles() {
     const m = map.value;
     const source = m?.getSource<VectorTileSource>(sourceId);
-    source?.setTiles([`${location.origin}${tileUrl(tableId.value, conditions.value)}`]);
+    source?.setTiles([tileUrl(tableId.value, conditions.value, version.value)]);
   }
 
   function deactivate() {
@@ -120,7 +121,7 @@ export function useMvtLayer(
     trackedSelected = new Set();
   }
 
-  watch(conditions, () => {
+  watch([conditions, version], () => {
     if (active) refreshTiles();
   });
   watch(selection.selectedPkeys, () => {

@@ -23,7 +23,7 @@ const props = defineProps<{ tableId: string }>();
 const router = useRouter();
 const toast = useToast();
 
-const { table, columns, editableColumns, rowColumns, loadTable, rename, remove } = useTableMetadata(
+const { table, columns, rowColumns, loadTable, rename, remove } = useTableMetadata(
   toRef(props, "tableId"),
 );
 
@@ -166,7 +166,6 @@ async function onAddColumnSuccess() {
       :is-geo="table.isGeo"
       :row-columns="rowColumns"
       :visible-columns="visibleColumns"
-      :editable-columns="editableColumns"
       :columns="columns"
       :geometry-column="table.geometryColumn"
       @mutated="loadTable"

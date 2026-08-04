@@ -1,4 +1,4 @@
-import { apiUrl, get, post } from "./http";
+import { absoluteApiUrl, get, post } from "./http";
 import type { OgcFeatureCollection } from "./features";
 import type { FilterCondition } from "./types";
 
@@ -6,9 +6,16 @@ import type { FilterCondition } from "./types";
 // getTileFeatures take it — the MVT tile endpoint applies it server-side
 // (règle 5), so a client-controlled filter narrows what a tile renders
 // exactly like it narrows a GeoJSON/OGC-Features query.
-export function tileUrl(tableId: string, filter: FilterCondition[] = []): string {
-  const base = apiUrl(`/tables/${tableId}/tiles/{z}/{x}/{y}`);
-  return filter.length > 0 ? `${base}?filter=${encodeURIComponent(JSON.stringify(filter))}` : base;
+// version, when given, is appended as a plain query parameter the server
+// ignores: the tile's content is already keyed on the table's UpdatedAt
+// server-side, but MapLibre keeps its own copy of a tile per URL, so a
+// write has to change the URL for the map to ask again.
+export function tileUrl(tableId: string, filter: FilterCondition[] = [], version = 0): string {
+  const params = new URLSearchParams();
+  if (filter.length > 0) params.set("filter", JSON.stringify(filter));
+  if (version > 0) params.set("v", String(version));
+  const qs = params.toString();
+  return `${absoluteApiUrl(`/tables/${tableId}/tiles/{z}/{x}/{y}`)}${qs ? `?${qs}` : ""}`;
 }
 
 export interface TileFeatureQueryOptions {
@@ -50,6 +57,20 @@ export function filterByBbox(tableId: string, bbox: [number, number, number, num
 export function getFilteredExtent(tableId: string, filter: FilterCondition[] = []): Promise<{ bbox: string }> {
   const qs = filter.length > 0 ? `?filter=${encodeURIComponent(JSON.stringify(filter))}` : "";
   return get(`/tables/${tableId}/filtered-extent${qs}`);
+}
+
+// The features around a geometry: everything whose own geometry falls
+// within buffer meters of it, minus the rows named by exclude. This is what
+// an edit session loads to snap to its neighbours and to carry a shared
+// boundary along when it moves.
+export function getNeighbours(
+  tableId: string,
+  geometry: GeoJSON.Geometry,
+  buffer: number,
+  exclude: string[] = [],
+  limit?: number,
+): Promise<OgcFeatureCollection> {
+  return post(`/tables/${tableId}/neighbours`, { geometry, buffer, exclude, limit });
 }
 
 // Distinct geometry types found in the table's geometry column — computed

@@ -113,5 +113,11 @@ export function useTiledFeatures() {
     return { features: Array.from(byId.values()), complete };
   }
 
-  return { loadVisible };
+  // A write changes what a tile holds; the cached tiles are dropped so the
+  // next load asks the server again.
+  function invalidate() {
+    lastTiles = new Map();
+  }
+
+  return { loadVisible, invalidate };
 }

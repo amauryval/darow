@@ -163,15 +163,32 @@ func (g *tableGeo) Extent(ctx context.Context, q storage.GeoQuery) (string, erro
 }
 
 // GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
-// keyed by pkey. Used only by table export.
+// keyed by pkey. Used by table export and by the per-row geometry read.
 func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
-	pkeyIn, args := pkeyInClause(pkeys)
-
 	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
 	// column is stored reprojected to EPSG:3857.
+	// A NULL geometry (a legal, geometry-less Feature) must still produce
+	// valid JSON for the caller to embed as-is — the JSON literal null, not
+	// an empty string, which json.RawMessage can't marshal.
+	return g.geometryByPkey(ctx, pkeys, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
+}
+
+// WKTByPkey returns each row's geometry as Well-Known Text, keyed by pkey,
+// at full resolution and in the lon/lat CRS every geometry read emits.
+func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
+	return g.geometryByPkey(ctx, pkeys, "ST_AsText(%s)", "")
+}
+
+// geometryByPkey reads the geometry of each row named by pkeys, encoded by
+// encoding (a format string taking the reprojected geometry expression),
+// with nullValue standing for a row whose geometry is NULL.
+func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, encoding, nullValue string) (map[string]string, error) {
+	pkeyIn, args := pkeyInClause(pkeys)
+
+	geometry := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", g.ref.QuotedGeometryColumn)
 	query := fmt.Sprintf(
-		`SELECT __pkey, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) FROM %s WHERE %s`,
-		g.ref.QuotedGeometryColumn, g.ref.PhysicalName, pkeyIn,
+		`SELECT __pkey, %s FROM %s WHERE %s`,
+		fmt.Sprintf(encoding, geometry), g.ref.PhysicalName, pkeyIn,
 	)
 	rows, err := g.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -182,18 +199,14 @@ func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[strin
 	result := make(map[string]string, len(pkeys))
 	for rows.Next() {
 		var pkey string
-		var geojson sql.NullString
-		if err := rows.Scan(&pkey, &geojson); err != nil {
+		var encoded sql.NullString
+		if err := rows.Scan(&pkey, &encoded); err != nil {
 			return nil, err
 		}
-		// A NULL geometry (a legal, geometry-less Feature) must still
-		// produce valid JSON for the caller to embed as-is —
-		// the JSON literal null, not an empty string, which json.RawMessage
-		// can't marshal.
-		if geojson.Valid {
-			result[pkey] = geojson.String
+		if encoded.Valid {
+			result[pkey] = encoded.String
 		} else {
-			result[pkey] = "null"
+			result[pkey] = nullValue
 		}
 	}
 	return result, rows.Err()
@@ -299,6 +312,23 @@ func featuresWhereClause(ref tableRef, q storage.FeatureQuery, baseArgs []any) (
 			"ST_Intersects(%s, ST_Transform(ST_MakeEnvelope(?, ?, ?, ?), 'OGC:CRS84', 'EPSG:3857'))", quotedGeom,
 		))
 		args = append(args, q.Bbox[0], q.Bbox[1], q.Bbox[2], q.Bbox[3])
+	}
+	if q.Near != nil {
+		// The buffer is in meters because the column is stored in
+		// EPSG:3857: the caller's geometry is transformed into it first,
+		// then widened, so ST_Intersects compares like with like and the
+		// RTREE index still applies.
+		parse, geomArgs := geometryExpr(q.Near.Geometry)
+		whereClauses = append(whereClauses, fmt.Sprintf("ST_Intersects(%s, ST_Buffer(%s, ?))", quotedGeom, parse))
+		args = append(args, geomArgs...)
+		args = append(args, q.Near.Buffer)
+	}
+	if len(q.Exclude) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(q.Exclude)), ", ")
+		whereClauses = append(whereClauses, fmt.Sprintf("__pkey NOT IN (%s)", placeholders))
+		for _, pkey := range q.Exclude {
+			args = append(args, pkey)
+		}
 	}
 	if q.Query.Filter != "" {
 		whereClauses = append(whereClauses, "("+q.Query.Filter+")")

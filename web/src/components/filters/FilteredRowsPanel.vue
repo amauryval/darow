@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, h } from "vue";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import type { Row } from "../../client/types";
 import { cellValue } from "../../utils/rows";
 import DataTable from "../DataTable.vue";
+import TableRowActions from "../tables/TableRowActions.vue";
 import BaseInput from "../ui/BaseInput.vue";
 import ErrorState from "../ui/ErrorState.vue";
 import Skeleton from "../ui/Skeleton.vue";
@@ -18,14 +19,35 @@ const props = defineProps<{
   loading: boolean;
   error: string;
   limit: number;
+  isGeo?: boolean;
   rowClass?: (row: { original: Row }) => string;
 }>();
-const emit = defineEmits<{ "update:limit": [limit: number]; retry: []; "row-click": [row: { original: Row }] }>();
+const emit = defineEmits<{
+  "update:limit": [limit: number];
+  retry: [];
+  "row-click": [row: { original: Row }];
+  geometry: [pkey: string];
+}>();
 
 const columnHelper = createColumnHelper<Row>();
-const columnDefs = computed(() =>
-  props.visibleColumns.map((col) => columnHelper.accessor((row) => cellValue(row, col), { id: col, header: col })),
-);
+// The filtered grid is read-only, but reading a row's geometry is a read:
+// it stays reachable here too, or the feature would disappear as soon as a
+// filter is applied.
+const columnDefs = computed(() => {
+  const defs = props.visibleColumns.map((col) =>
+    columnHelper.accessor((row) => cellValue(row, col), { id: col, header: col }),
+  );
+  if (!props.isGeo) return defs;
+  return [
+    ...defs,
+    columnHelper.display({
+      id: "actions",
+      header: "",
+      meta: { align: "right" },
+      cell: (info) => h(TableRowActions, { isGeo: true, onGeometry: () => emit("geometry", info.row.original.pkey) }),
+    }),
+  ];
+});
 
 const table = useVueTable({
   get data() {

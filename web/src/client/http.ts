@@ -2,9 +2,9 @@ import type { ErrorResponse } from "./types";
 
 // Every API route lives under this prefix (docs/audit.md HTTP-2 —
 // versioned API); the unversioned root paths still work but only as
-// redirects kept for the transition. apiUrl is also used directly by
-// callers building a URL for a tile template rather than going through
-// fetch (geo.ts's tileUrl).
+// redirects kept for the transition. absoluteApiUrl below is the form a
+// caller uses when it builds a URL for something other than fetch (geo.ts's
+// tile template).
 const API_BASE = "/api/v1";
 
 // Defaults to "" (paths resolve relative to the page's own origin), which
@@ -20,6 +20,16 @@ export function configureApiClient(options: { baseUrl?: string }): void {
 
 export function apiUrl(path: string): string {
   return `${baseUrl}${API_BASE}${path}`;
+}
+
+// The absolute form of apiUrl, for a URL handed to something that refuses a
+// relative one — MapLibre's tile template. The origin is prefixed by hand
+// rather than through URL parsing, which would percent-encode the
+// {z}/{x}/{y} placeholders and leave MapLibre nothing to substitute. A
+// client pointed at a remote instance already has an absolute baseUrl.
+export function absoluteApiUrl(path: string): string {
+  const url = apiUrl(path);
+  return /^https?:\/\//.test(url) ? url : `${window.location.origin}${url}`;
 }
 
 // rootUrl builds a URL outside the /api/v1 prefix — only /healthz and
