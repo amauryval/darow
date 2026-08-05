@@ -162,6 +162,31 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     return { updates, inserts };
   }
 
+  // Gives back the room the session is no longer using: the features it holds
+  // that the view has left and that the user has not touched. Without it the
+  // caps (useEditFeatures) are a one-way ratchet — a session that filled its
+  // budget once on a wide view could never load anything again, whatever the
+  // user zoomed into afterwards. A dirty feature is never released, whether it
+  // is in view or not: it carries unsaved work. Nor is one that belongs to no
+  // row yet — it was drawn here, and the server has no copy to give back.
+  function prune(): string[] {
+    const m = map.value;
+    const size = m?.getSize();
+    if (!m || !size) return [];
+    const extent = m.getView().calculateExtent(size);
+    const released: string[] = [];
+    for (const feature of source.getFeatures()) {
+      if (feature.get(DIRTY_PROPERTY)) continue;
+      const pkey = pkeyOf(feature);
+      if (pkey === null) continue;
+      if (feature.getGeometry()?.intersectsExtent(extent)) continue;
+      if (focused === feature) focus(null);
+      source.removeFeature(feature);
+      released.push(pkey);
+    }
+    return released;
+  }
+
   function remove() {
     const m = map.value;
     if (!m || !added) return;
@@ -183,6 +208,7 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     trackPointer,
     blur: () => focus(null),
     load,
+    prune,
     noteChange,
     changes,
     dirtyCount,

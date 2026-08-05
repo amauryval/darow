@@ -119,6 +119,12 @@ export function useMapDraw(map: Ref<Map | null>) {
     layer.load(features);
   }
 
+  // The rows the session may stop holding, so its budget is not a one-way
+  // ratchet. The caller reports them to whoever counts them.
+  function prune(): string[] {
+    return layer.prune();
+  }
+
   function deactivate() {
     const m = map.value;
     layer.source.un("changefeature", onChange);
@@ -156,6 +162,7 @@ export function useMapDraw(map: Ref<Map | null>) {
     deactivate,
     commit,
     load,
+    prune,
     setShape: tools.setShape,
     toggleHole: tools.toggleHole,
     toggleSnapping: tools.toggleSnapping,

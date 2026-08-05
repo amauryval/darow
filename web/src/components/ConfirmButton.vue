@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { Component } from "vue";
-import Modal from "./Modal.vue";
 import BaseButton from "./ui/BaseButton.vue";
-import Typography from "./ui/Typography.vue";
+import ConfirmDialog from "./ui/ConfirmDialog.vue";
 
-// A destructive action gated by the shared daisyUI `Modal` (never a native
-// confirm()) rather than an inline pair — consistent across a single rare
+// A destructive action and its confirmation in one control: the trigger here,
+// the wording in the shared `ConfirmDialog` — consistent across a single rare
 // action (delete a table) and a frequent one (delete a row) alike (§8.3).
-withDefaults(
+const props = withDefaults(
   defineProps<{
     label: string;
     confirmLabel?: string;
@@ -30,20 +29,17 @@ const emit = defineEmits<{ confirm: [] }>();
 
 const open = ref(false);
 
-function onConfirm() {
-  emit("confirm");
-}
-
 defineExpose({ reset: () => (open.value = false) });
 </script>
 
 <template>
   <BaseButton variant="danger" :size="size" :icon="icon" @click="open = true">{{ label }}</BaseButton>
-  <Modal v-if="open" title="Confirmer la suppression" @close="open = false" @submit="onConfirm">
-    <Typography variant="body-sm">{{ message ?? `${label} ? Cette action est irréversible.` }}</Typography>
-    <div class="mt-4 flex justify-end gap-2">
-      <BaseButton variant="secondary" @click="open = false">Annuler</BaseButton>
-      <BaseButton variant="danger" :busy="busy" @click="onConfirm">{{ confirmLabel }}</BaseButton>
-    </div>
-  </Modal>
+  <ConfirmDialog
+    v-if="open"
+    :message="props.message ?? `${props.label} ? Cette action est irréversible.`"
+    :confirm-label="props.confirmLabel"
+    :busy="props.busy"
+    @confirm="emit('confirm')"
+    @close="open = false"
+  />
 </template>

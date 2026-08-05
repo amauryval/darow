@@ -27,6 +27,13 @@ const props = defineProps<{
   features?: EditableFeature[];
   loadingFeatures?: boolean;
   saving?: boolean;
+  // CSS selector of the workspace bar the session's tools are rendered into.
+  // The tools act on the map but belong above both panels: a session is a
+  // mode of the table, and half of what it offers (adding a row) has nothing
+  // to do with the canvas. They stay inside this component all the same —
+  // OpenLayers must not be pulled into the initial bundle by a parent that
+  // imports the session's state (§8.10).
+  toolbarTarget: string;
   // Bumped by the parent after every write: a tile is cached by URL, so a
   // rendering only shows an edited geometry once the layers are told to ask
   // again.
@@ -39,6 +46,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleSelection: [pkey: string];
   requestFeatures: [bbox: [number, number, number, number]];
+  // The rows the map has stopped holding: untouched geometries the view has
+  // left. They are what gives the session's budget back (§8.8).
+  releaseFeatures: [pkeys: string[]];
   save: [changes: LayerChanges];
   cancel: [];
 }>();
@@ -113,8 +123,21 @@ function requestFeatures() {
   if (!m) return;
   cancelRetry();
   const extent = viewBbox(m);
-  if (extent) emit("requestFeatures", extent);
-  else retry = requestAnimationFrame(requestFeatures);
+  if (extent) {
+    // Freed first, asked second: the room the view just left is what the
+    // view it arrives on is loaded with.
+    const released = draw.prune();
+    if (released.length > 0) emit("releaseFeatures", released);
+    emit("requestFeatures", extent);
+    return;
+  }
+  // A map with no area has no view to ask about — it is hidden behind a
+  // maximized table, or its panel is still being laid out. Retrying on the
+  // next frame would spin for as long as it stays hidden; `change:size` is
+  // what fires when it gets an area back, and it is already bound.
+  const size = m.getSize();
+  if (!size || size[0] === 0 || size[1] === 0) return;
+  retry = requestAnimationFrame(requestFeatures);
 }
 
 function startEditing() {
@@ -176,9 +199,10 @@ function pick(value: DrawShape) {
       </label>
     </FloatingPanel>
 
-    <!-- The editing bar sits over the map for as long as the mode lasts: a
-         drag is not a submission, saving is a click. -->
-    <FloatingPanel v-if="editing" position="bottom">
+    <!-- The session's tools are rendered above both panels rather than over
+         the canvas: a drag is not a submission, saving is a click, and the
+         bar has to stay reachable even when the map is the hidden half. -->
+    <Teleport v-if="editing" :to="toolbarTarget">
       <MapEditBar
         :prompt="editingPrompt"
         :loading-features="loadingFeatures"
@@ -199,7 +223,7 @@ function pick(value: DrawShape) {
         @save="onSave"
         @cancel="emit('cancel')"
       />
-    </FloatingPanel>
+    </Teleport>
 
     <div ref="container" class="h-full w-full rounded-lg" />
   </div>

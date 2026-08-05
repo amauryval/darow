@@ -6,14 +6,12 @@ import { EDIT_LEGEND } from "../../utils/drawStyles";
 import Badge from "../Badge.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ButtonGroup from "../ui/ButtonGroup.vue";
-import Spinner from "../ui/Spinner.vue";
 import Typography from "../ui/Typography.vue";
 
 // The edit session's bar, overlaid on the map for as long as the mode lasts.
 // Presentational: it renders the session's state and emits intentions, and
 // knows nothing of the layer, the network or what a save writes (§0.5).
 const props = defineProps<{
-  prompt?: string;
   loadingFeatures?: boolean;
   saving?: boolean;
   shape: DrawShape | null;
@@ -57,30 +55,7 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
 
 <template>
   <div class="flex flex-col gap-2">
-    <div class="flex flex-wrap items-center gap-3">
-      <Typography variant="body-sm">{{ prompt }}</Typography>
-      <Spinner v-if="loadingFeatures" label="Chargement des géométries" />
-      <!-- The counts are the honest ones: they come from what the session
-           actually touched, not from what was loaded — and they are split the
-           way the write is, one update and one insert. -->
-      <Badge v-if="changedCount > 0" tone="warning">
-        {{ changedCount }} modifiée{{ changedCount > 1 ? "s" : "" }}
-      </Badge>
-      <Badge v-if="createdCount > 0" tone="primary">
-        {{ createdCount }} nouvelle{{ createdCount > 1 ? "s" : "" }}
-      </Badge>
-
-      <!-- The three states the session draws, named: a colour alone does not
-           carry information (§8.7). -->
-      <ul class="ml-auto flex items-center gap-2.5">
-        <li v-for="entry in EDIT_LEGEND" :key="entry.label" class="flex items-center gap-1">
-          <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.tone }" aria-hidden="true" />
-          <Typography variant="caption">{{ entry.label }}</Typography>
-        </li>
-      </ul>
-    </div>
-
-    <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-wrap items-center gap-8">
       <div class="flex items-center gap-1.5">
         <Typography variant="eyebrow">Créer</Typography>
         <ButtonGroup>
@@ -94,9 +69,7 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
             :aria-pressed="shape === s.value"
             :title="`Dessiner ${s.label.toLowerCase()} — une nouvelle ligne dans la table`"
             @click="emit('pick', s.value)"
-          >
-            {{ s.label }}
-          </BaseButton>
+          />
         </ButtonGroup>
       </div>
 
@@ -104,7 +77,7 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
         <Typography variant="eyebrow">Modifier</Typography>
         <ButtonGroup>
           <!-- A tool that cannot apply says so rather than answering nothing
-               (§8.2). -->
+                (§8.2). -->
           <BaseButton
             joined
             size="sm"
@@ -118,9 +91,7 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
                 : 'Aucun polygone dans cette vue : un trou se dessine à l’intérieur d’une surface'
             "
             @click="emit('toggleHole')"
-          >
-            Trou
-          </BaseButton>
+          />
           <BaseButton
             joined
             size="sm"
@@ -128,52 +99,64 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
             :disabled="!drawing"
             :title="drawing ? 'Retirer le dernier point posé' : 'Aucune forme en cours de dessin'"
             @click="emit('undo')"
-          >
-            Annuler le point
-          </BaseButton>
+          />
         </ButtonGroup>
       </div>
 
-      <!-- Two switches, because they answer two questions: snapping is about
-           placing a vertex, topology about what moves when one already
-           placed is dragged. -->
-      <BaseButton
-        size="sm"
-        :variant="snapping ? 'primary' : 'secondary'"
-        :icon="Magnet"
-        :aria-pressed="snapping"
-        title="Aimanter un sommet posé sur les sommets et segments voisins"
-        @click="emit('toggleSnapping')"
-      >
-        Aimantation
-      </BaseButton>
-      <BaseButton
-        size="sm"
-        :variant="topological ? 'primary' : 'secondary'"
-        :icon="Share2"
-        :aria-pressed="topological"
-        :title="
-          topological
-            ? 'Topologie active : déplacer un sommet partagé déplace toutes les géométries qui le portent'
-            : 'Topologie inactive : seule la géométrie sous le pointeur est déplacée, ses voisines gardent leur sommet'
-        "
-        @click="emit('toggleTopology')"
-      >
-        Topologie
-      </BaseButton>
-
-      <div class="ml-auto flex items-center gap-2">
-        <BaseButton size="sm" @click="emit('cancel')">Annuler</BaseButton>
+      <div class="flex flex-wrap items-center gap-3">
+        <Typography variant="eyebrow">Outils</Typography>
         <BaseButton
-          variant="primary"
           size="sm"
-          :busy="saving"
-          :disabled="saving || dirtyCount === 0"
-          :title="dirtyCount === 0 ? 'Rien n’a été modifié' : undefined"
-          @click="emit('save')"
-        >
-          {{ saving ? "Enregistrement…" : "Enregistrer" }}
-        </BaseButton>
+          :variant="snapping ? 'primary' : 'secondary'"
+          :icon="Magnet"
+          :aria-pressed="snapping"
+          title="Aimanter un sommet posé sur les sommets et segments voisins"
+          @click="emit('toggleSnapping')"
+        />
+        <BaseButton
+          size="sm"
+          :variant="topological ? 'primary' : 'secondary'"
+          :icon="Share2"
+          :aria-pressed="topological"
+          :title="
+            topological
+              ? 'Déplacer un sommet partagé déplace toutes les géométries qui le portent'
+              : 'Seule la géométrie sous le pointeur est déplacée, ses voisines gardent leur sommet'
+          "
+          @click="emit('toggleTopology')"
+        />
+        
+        <div class="flex gap-2 ml-auto">
+          <Badge v-if="changedCount > 0" tone="warning">
+            {{ changedCount }} modifiée{{ changedCount > 1 ? "s" : "" }}
+          </Badge>
+          <Badge v-if="createdCount > 0" tone="primary">
+            {{ createdCount }} nouvelle{{ createdCount > 1 ? "s" : "" }}
+          </Badge>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-2 ml-auto">
+        <div class="flex gap-2 ml-auto">
+          <BaseButton size="sm" @click="emit('cancel')">Annuler</BaseButton>
+          <BaseButton
+            variant="primary"
+            size="sm"
+            :busy="saving"
+            :disabled="saving || dirtyCount === 0"
+            :title="dirtyCount === 0 ? 'Rien n’a été modifié' : undefined"
+            @click="emit('save')"
+          >
+            {{ saving ? "Enregistrement…" : "Enregistrer" }}
+          </BaseButton>
+        </div>
+
+        <ul class="ml-auto flex items-center gap-3">
+          <li v-for="entry in EDIT_LEGEND" :key="entry.label" class="flex items-center gap-1">
+            <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.tone }" aria-hidden="true" />
+            <Typography variant="caption">{{ entry.label }}</Typography>
+          </li>
+        </ul>
       </div>
     </div>
   </div>

@@ -2,7 +2,6 @@
 import { computed, h } from "vue";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
-import { Plus } from "@lucide/vue";
 import type { Row, RowValue } from "../../client/types";
 import type { useTableRows } from "../../composables/useTableRows";
 import { cellValue } from "../../utils/rows";
@@ -28,7 +27,6 @@ const props = defineProps<{
   rowClass?: (row: { original: Row }) => string;
 }>();
 const emit = defineEmits<{
-  addRow: [];
   updateCell: [column: string, value: string];
   geometry: [pkey: string];
   clearSelection: [];
@@ -106,17 +104,14 @@ const table = useVueTable({
 </script>
 
 <template>
-  <div class="mb-3 flex shrink-0 items-center justify-between">
-    <div class="flex items-center gap-4">
-      <span v-if="isGeo && selectedCount > 0" class="flex items-center gap-2">
-        <span class="badge badge-warning badge-xs"></span>
-        <Typography variant="caption">{{ selectedCount }} sélectionnée(s)</Typography>
-        <BaseButton variant="ghost" size="xs" @click="emit('clearSelection')">Vider</BaseButton>
-      </span>
-    </div>
-    <BaseButton v-if="state.editMode.value" variant="primary" size="sm" :icon="Plus" @click="emit('addRow')">
-      Ajouter une ligne
-    </BaseButton>
+  <!-- Adding a row is an action of the edit mode, and the mode states its
+       actions in one bar above both panels (TableEditBar) — not once per
+       panel. What stays here belongs to this grid alone: what is selected on
+       the map and pinned at its top. -->
+  <div v-if="isGeo && selectedCount > 0" class="mb-3 flex shrink-0 items-center gap-2">
+    <span class="badge badge-warning badge-xs"></span>
+    <Typography variant="caption">{{ selectedCount }} sélectionnée(s)</Typography>
+    <BaseButton variant="ghost" size="xs" @click="emit('clearSelection')">Vider</BaseButton>
   </div>
 
   <Skeleton v-if="state.loading.value && !state.loadedOnce.value" :rows="8" />

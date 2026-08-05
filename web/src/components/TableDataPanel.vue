@@ -6,14 +6,12 @@ import { useLayerEditing } from "../composables/useLayerEditing";
 import { useRowFilter } from "../composables/useRowFilter";
 import { useRowGeometry } from "../composables/useRowGeometry";
 import { useTableRows } from "../composables/useTableRows";
-import { LayoutPanelLeft, Map as MapIcon, PencilLine, Spline, Table2 } from "@lucide/vue";
 import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
-import TableFilterBar from "./filters/TableFilterBar.vue";
 import AddRowModal from "./AddRowModal.vue";
 import GeometryModal from "./tables/GeometryModal.vue";
+import TableEditBar from "./tables/TableEditBar.vue";
 import TableRowsPanel from "./tables/TableRowsPanel.vue";
-import BaseButton from "./ui/BaseButton.vue";
-import ButtonGroup from "./ui/ButtonGroup.vue";
+import TableToolbar from "./tables/TableToolbar.vue";
 
 // OpenLayers is the largest dependency in the bundle — load it only when a
 // geo table's data panel is actually rendered.
@@ -28,9 +26,11 @@ const props = defineProps<{
   columns: ColumnSchema[];
   geometryColumn?: string;
 }>();
-// Emitted after any row add/edit/delete, since that changes the table's
+// mutated: after any row add/edit/delete, since that changes the table's
 // rowCount — the parent owns table metadata and reloads it.
-const emit = defineEmits<{ mutated: [] }>();
+// openColumns: the visible-column choice is the view's state (it survives a
+// schema reload), so the toolbar's button only asks for its modal.
+const emit = defineEmits<{ mutated: []; openColumns: [] }>();
 
 const tableId = toRef(props, "tableId");
 const columns = toRef(props, "columns");
@@ -55,43 +55,43 @@ const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
   emit("mutated");
 });
 
-// The two halves of a table are edited separately and never at once: the
-// geometries on the map, the attributes in the grid. Arming one disarms the
-// other, so there is only ever one thing the screen is waiting for.
-function toggleAttributeEditing() {
-  if (layerEditing.active.value) layerEditing.cancel();
-  rowsState.editMode.value = !rowsState.editMode.value;
-}
+// Editing is **one** mode of the table, not two: the rows and the geometries
+// are two halves of the same object, and asking the user which half they mean
+// before they have touched anything is asking a question they cannot answer
+// yet. What the mode offers is what the table can carry — a table without
+// geometry simply has no geometry tools (§8.8).
+const editing = computed(() => rowsState.editMode.value || layerEditing.active.value);
 
-function toggleGeometryEditing() {
-  if (layerEditing.active.value) {
+function toggleEditing() {
+  if (editing.value) {
+    // Cancelling says what it drops: a session opened to give a new row its
+    // geometry loses that row (useLayerEditing.cancel).
     layerEditing.cancel();
+    rowsState.editMode.value = false;
     return;
   }
-  rowsState.editMode.value = false;
-  layerEditing.start();
+  rowsState.editMode.value = true;
+  if (props.isGeo) layerEditing.start();
 }
+
+// The tools the map owns are rendered into the bar above both panels: they
+// are part of the same mode as the row tools, and they have to stay reachable
+// when the map is the hidden half (see mapMounted).
+const MAP_TOOLS_ID = "darow-map-edit-tools";
 
 // Table and map share the space 50/50 by default; either can be maximized to
 // take the whole width, restored back to 'split' from the same toggle group.
+// Neither edit mode touches it: the layout is the user's, and an editing
+// session that reframes the screen under them takes away the only view they
+// were working from (§8.3).
 const focusPanel = ref<"split" | "table" | "map">("split");
 watch(tableId, () => (focusPanel.value = "split"));
 
-// Editing the geometries needs the map: it takes the whole width for as long
-// as the session lasts, and the previous layout comes back afterwards.
-watch(
-  () => layerEditing.active.value,
-  (active) => (focusPanel.value = active ? "map" : "split"),
-);
-
-// The map is mounted only while it is shown, and the session's unsaved work
-// lives inside it — hiding the map would drop every reshape without a word.
-// So the layout is frozen for as long as a session lasts: the way out is
-// Enregistrer or Annuler, both of which are on the map itself (§8.3).
-const layoutLocked = computed(() => layerEditing.active.value);
-const layoutLockReason = computed(() =>
-  layoutLocked.value ? "Édition des géométries en cours : enregistrez ou annulez pour changer la disposition." : undefined,
-);
+// The session's unsaved work lives inside the map, so the map stays mounted
+// for as long as one lasts — maximizing the table hides it rather than
+// unmounting it, which would drop every reshape without a word.
+const mapMounted = computed(() => props.isGeo && (focusPanel.value !== "table" || layerEditing.active.value));
+const mapHidden = computed(() => focusPanel.value === "table");
 
 // Re-centers the map on the filter's own results rather than the whole
 // table's extent, cleared back to the table's bbox once inactive.
@@ -111,8 +111,10 @@ function openAddRow() {
 // layer-wide one — the shape drawn first is the one that takes these values.
 async function onAddRow(values: Record<string, string>) {
   if (props.isGeo) {
-    rowsState.editMode.value = false;
-    layerEditing.start(rowsState.coerceValues(values));
+    // The session is already open — it is the same mode the button was
+    // reached from — so its values are attached to it rather than starting it
+    // over, which would drop everything loaded and every reshape made since.
+    layerEditing.awaitGeometry(rowsState.coerceValues(values));
     return;
   }
   await rowsState.addRow(values);
@@ -137,74 +139,19 @@ function onRowClick(row: { original: Row }) {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col gap-4">
-    <div class="flex shrink-0 flex-wrap items-center gap-2">
-      <TableFilterBar :table-id="tableId" :columns="columns" @update:nodes="filter.conditions.value = $event" />
+    <TableToolbar
+      :table-id="tableId"
+      :columns="columns"
+      :is-geo="isGeo"
+      :editing="editing"
+      :focus-panel="focusPanel"
+      @update:nodes="filter.conditions.value = $event"
+      @update:focus-panel="focusPanel = $event"
+      @toggle-editing="toggleEditing"
+      @open-columns="emit('openColumns')"
+    />
 
-      <!-- The two halves of a table are edited apart: the attributes in the
-           grid, the geometries on the map. A table without geometry has only
-           the first, and the button says just that. -->
-      <div class="ml-auto flex flex-wrap items-center gap-2">
-        <BaseButton
-          size="sm"
-          :variant="rowsState.editMode.value ? 'primary' : 'secondary'"
-          :icon="PencilLine"
-          :aria-pressed="rowsState.editMode.value"
-          @click="toggleAttributeEditing"
-        >
-          {{ isGeo ? "Éditer la table" : "Mode édition" }}
-        </BaseButton>
-        <BaseButton
-          v-if="isGeo"
-          size="sm"
-          :variant="layerEditing.active.value ? 'primary' : 'secondary'"
-          :icon="Spline"
-          :aria-pressed="layerEditing.active.value"
-          @click="toggleGeometryEditing"
-        >
-          Éditer la géométrie
-        </BaseButton>
-      </div>
-
-      <!-- Table and map default to half the width each; either can be
-           maximized when the data being read needs the room (§8.10). -->
-      <ButtonGroup v-if="isGeo">
-        <BaseButton
-          joined
-          size="sm"
-          :variant="focusPanel === 'table' ? 'primary' : 'secondary'"
-          :icon="Table2"
-          :aria-pressed="focusPanel === 'table'"
-          :disabled="layoutLocked"
-          :title="layoutLockReason"
-          @click="focusPanel = focusPanel === 'table' ? 'split' : 'table'"
-        >
-          Tableau
-        </BaseButton>
-        <BaseButton
-          joined
-          size="sm"
-          :variant="focusPanel === 'split' ? 'primary' : 'secondary'"
-          :icon="LayoutPanelLeft"
-          icon-only
-          aria-label="Partager la vue"
-          :disabled="layoutLocked"
-          :title="layoutLockReason ?? 'Partager la vue'"
-          @click="focusPanel = 'split'"
-        />
-        <BaseButton
-          joined
-          size="sm"
-          :variant="focusPanel === 'map' ? 'primary' : 'secondary'"
-          :icon="MapIcon"
-          :aria-pressed="focusPanel === 'map'"
-          :disabled="layoutLocked"
-          :title="layoutLockReason"
-          @click="focusPanel = focusPanel === 'map' ? 'split' : 'map'"
-        >
-          Carte
-        </BaseButton>
-      </ButtonGroup>
-    </div>
+    <TableEditBar v-if="editing" :is-geo="isGeo" :tools-id="MAP_TOOLS_ID" @add-row="openAddRow" />
 
     <div class="flex min-h-0 flex-1 gap-4">
       <div
@@ -236,7 +183,6 @@ function onRowClick(row: { original: Row }) {
           :is-geo="isGeo"
           :selected-count="selection.selectedPkeys.value.length"
           :row-class="rowClassFor"
-          @add-row="openAddRow"
           @update-cell="(column, value) => (rowsState.editValues[column] = value)"
           @geometry="rowGeometry.open"
           @clear-selection="selection.clear"
@@ -244,10 +190,13 @@ function onRowClick(row: { original: Row }) {
         />
       </div>
 
+      <!-- Kept in the DOM but hidden while a session holds unsaved reshapes
+           (mapMounted): OpenLayers re-measures its container on its own when
+           it comes back, so maximizing the table costs nothing but the view. -->
       <div
-        v-if="isGeo && focusPanel !== 'table'"
+        v-if="mapMounted"
         class="card min-h-0 overflow-hidden rounded-lg border border-base-300"
-        :class="focusPanel === 'map' ? 'w-full' : 'w-1/2'"
+        :class="mapHidden ? 'hidden' : focusPanel === 'map' ? 'w-full' : 'w-1/2'"
       >
         <MapView
           :table-id="tableId"
@@ -255,13 +204,14 @@ function onRowClick(row: { original: Row }) {
           :conditions="filter.appliedConditions.value"
           :selected-pkeys="selection.selectedPkeys.value"
           :editing="layerEditing.active.value"
-          :editing-prompt="layerEditing.prompt.value"
           :features="layerEditing.features.value"
           :loading-features="layerEditing.loading.value"
           :saving="layerEditing.saving.value"
+          :toolbar-target="`#${MAP_TOOLS_ID}`"
           :data-version="dataVersion"
           @toggle-selection="selection.toggle"
           @request-features="layerEditing.loadIn"
+          @release-features="layerEditing.release"
           @save="layerEditing.save"
           @cancel="layerEditing.cancel"
         />

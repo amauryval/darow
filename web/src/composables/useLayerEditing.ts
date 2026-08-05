@@ -2,8 +2,8 @@ import { computed, ref, watch, type Ref } from "vue";
 import { addRows, updateRows } from "../client/tables";
 import { errorMessage } from "../client/http";
 import type { LayerChanges } from "./useEditLayer";
-import { MAX_EDITABLE, useEditFeatures } from "./useEditFeatures";
-import { editingPrompt, summarizeWrites } from "../utils/editPrompts";
+import { useEditFeatures } from "./useEditFeatures";
+import { summarizeWrites } from "../utils/editPrompts";
 import { useToast } from "./useToast";
 
 // Editing a geo table's geometries, as a mode of the layer rather than of one
@@ -24,16 +24,6 @@ export function useLayerEditing(tableId: Ref<string>, geometryColumn: Ref<string
 
   const pendingRow = computed(() => Object.keys(draftValues.value).length > 0);
 
-  const prompt = computed(() =>
-    editingPrompt({
-      loading: loaded.loading.value,
-      truncated: loaded.truncated.value,
-      pendingRow: pendingRow.value,
-      empty: loaded.answered.value && loaded.heldCount.value === 0,
-      max: MAX_EDITABLE,
-    }),
-  );
-
   function reset() {
     active.value = false;
     draftValues.value = {};
@@ -44,6 +34,15 @@ export function useLayerEditing(tableId: Ref<string>, geometryColumn: Ref<string
     reset();
     draftValues.value = values;
     active.value = true;
+  }
+
+  // A row whose attributes were collected in the grid: its geometry is the
+  // first shape drawn from here on. The session is not restarted — it is
+  // already open, and resetting it would drop everything loaded and every
+  // reshape made since (§8.3).
+  function awaitGeometry(values: Record<string, unknown>) {
+    draftValues.value = values;
+    if (!active.value) active.value = true;
   }
 
   async function save(changes: LayerChanges) {
@@ -112,9 +111,10 @@ export function useLayerEditing(tableId: Ref<string>, geometryColumn: Ref<string
     prompt,
     loading: loaded.loading,
     features: loaded.features,
-    truncated: loaded.truncated,
     loadIn: loaded.loadIn,
+    release: loaded.release,
     start,
+    awaitGeometry,
     save,
     cancel,
   };

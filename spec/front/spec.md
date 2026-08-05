@@ -195,7 +195,8 @@ One module per subject, no module state, no side effect:
   nothing on screen saying so. Answers nothing when the ring has no polygon to belong to, which is
   what the caller turns into a message. `isAreal` is what tells the edit bar the hole tool applies
   to the layer at all.
-- `editPrompts.ts` — the sentences the map's edit bar states (`editingPrompt`) and the summary a
+- `editPrompts.ts` — the sentences the edit bar states (`editingPrompt`) — never one about the
+  session's own budget (§8.8) — and the summary a
   save toasts (`summarizeWrites`). The order is the contract: a load in flight first, then a row
   waiting for its geometry — the one thing that is lost if the user walks away — then the session's
   cap, then the general instruction.
@@ -246,7 +247,7 @@ module level and documents it; that is the exception, not the rule.
 | `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
 | `useEditLayer` | the one source an edit session works on, holding every feature of the layer in view, plus the second layer that draws the hovered geometry's vertices alone. One source is what makes editing topological — a vertex two geometries share is dragged in both at once. Owns what the session has touched (`changedCount`/`createdCount`, split the way the write is), whether anything on it can hold a hole at all (`hasAreal`), which single feature the pointer rests over (`trackPointer`/`blur` — at once the `solo` collection a non-topological `Modify` follows and the sole content of the second, vertex-drawing layer it owns), and answers it all as writes: the rows whose geometry moved, and the shapes that belong to no row yet | present |
 | `useHoleTool` | drawing an interior ring and handing it to whichever polygon contains it (`utils/holes.ts`), rather than to a source: a hole is part of its polygon and is undone by editing its vertices, not by an opposite tool. A ring that belongs to no polygon is refused out loud | present |
-| `useEditFeatures` | what a session carries on the map: the rows of the views it has visited, at full resolution, under one cap counted over the **whole session** and not per request. Holds the pkeys already loaded, so a row is never counted twice and the server's copy never comes back over a geometry the user moved, and versions its requests so a pan that outruns its own load is not undone by the slower answer | present |
+| `useEditFeatures` | the session's **working set**: the rows of the view, at full resolution, under two caps — rows and vertices — counted over the whole session, with `release` giving back exactly what a released row cost so the caps are not a one-way ratchet. Holds the pkeys already loaded, so a row is never counted twice and the server's copy never comes back over a geometry the user moved, and versions its requests so a pan that outruns its own load is not undone by the slower answer | present |
 | `useLayerEditing` | the mode itself: what it is waiting for (the prompt, the row whose geometry is still to be drawn) and what leaving it writes — one update request for what moved, one insert for what was drawn | present |
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners are bound only while the selection is `selectable`, which an edit session turns off — the layer stays drawn and the selection stays painted, only the clicking stops | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
@@ -268,10 +269,13 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 |---|---|
 | `Spinner` | the busy indicator, wherever something is in flight and the content around it stays on screen — a `Skeleton` is for a first load, this is for a refresh happening next to what it refreshes |
 | `ButtonGroup` | a row of buttons welded into one control (daisyUI `join`). Each child carries `BaseButton`'s `joined` prop: daisyUI needs the modifier on the items, and a wrapper cannot put it there without reaching into the slot |
-| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`), the edit bar along the bottom (`bottom`). The caller says where, never how |
+| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`). The caller says where, never how |
 | `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
 | `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>` |
 | `BaseAutocomplete` | free-text field that suggests without constraining: the caller loads `options` in reaction to the `search` event (on focus and on every keystroke), keyboard navigation (↑/↓/Entrée/Échap), selection on `mousedown` so `blur` never wins the race. The list is absolutely positioned, so it never lengthens what contains it; a container that scrolls its own content has to let it spill over (`Modal`'s `overflowVisible`) |
+| `MenuDropdown` | daisyUI `dropdown` + `menu`: a trigger button and the panel it opens under itself, with `MenuItem` (a `menu` `<li>`, its `actions` slot carrying the per-row buttons that must not trigger the entry) and `MenuTitle` (`menu-title`, a section heading) as its content. The open state is owned here, not left to daisyUI's CSS-focus or `<details>` variants: both only close when focus leaves, so acting from the panel left it hanging over the toolbar and opening a modal put it behind a still-open menu. The caller says which edge it hangs from (`align`) and how wide the panel is (`panelClass`) — only the caller knows whether its trigger stands at the left of a bar or at its right |
+| `Divider` | daisyUI `divider`, tightened: the hairline saying the controls on either side belong to two different registers. daisyUI names its class after the layout it divides, so `orientation="vertical"` (the line) maps to `divider-horizontal` (the row) here, once |
+| `ConfirmDialog` | the confirmation of a destructive action, worded once — always this box, never a native `confirm()` and never an inline pair (§8.3). `ConfirmButton` is it with its own trigger; a caller whose trigger is something else (a menu entry) opens it directly |
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
@@ -302,7 +306,21 @@ single, link-less entry naming the page.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
-- `TableHeader` — editable name, badges, counters, action bar.
+- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update) and
+  what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
+  *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
+  *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
+  Five buttons of five registers side by side read as a pile, and four of them are used once in a
+  table's life. The rename form is opened from the menu but the view owns its open state
+  (`editingName`): only the view knows whether the write went through, and therefore whether the
+  form may close.
+- `TableToolbar` (`components/tables/`) — the workspace's own bar, one row below, holding
+  everything that acts on what is **displayed**, in the order it is read: *les données*
+  (`TableFilterBar`), *l'édition* (one `Éditer` toggle, whose tools are stated by `TableEditBar`
+  above both panels), then *l'affichage* (*Colonnes*, and the
+  `Tableau / ⬛ / Carte` group), the two registers parted by a `Divider`. It owns nothing: the
+  visible-column choice is the view's state, so the *Colonnes* button asks the panel for its modal
+  and the panel asks the view.
 - Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
   discrete thing one creates or edits and then applies. `components/filters/` holds the whole
   feature — `TableFilterBar` (the "Filtrer" button, the saved-filter menu, the pills, and the modal's
@@ -344,7 +362,7 @@ single, link-less entry naming the page.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: OpenLayers is the bundle’s largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
-- `TableRowsPanel` (`components/tables/`) — row grid: the edit-mode toggle button, the pinned
+- `TableRowsPanel` (`components/tables/`) — row grid: the pinned
   selection, infinite scroll, and the per-row action column. That column is **always** rendered:
   reading a row's geometry is a read, so arming edit mode to reach it would be a trap. It receives
   the `useTableRows` state its parent owns and emits intentions (`toggleEditMode`, `updateCell`,
@@ -484,7 +502,9 @@ This is the product's main screen; it follows fixed rules.
   affordance explained (`title`) rather than guessed.
 - Long cells are truncated with the full value in `title`; the row height is not broken.
 - Sorting, search and filtering apply to **all** the data server-side, never only to the pages
-  already loaded: a silent partial result is a lie.
+  already loaded: a silent partial result is a lie. The one exception is the map editor's working
+  set, which is deliberately silent and says what it holds by drawing it (§8.8, LIM-F7) — nothing
+  there is *answered* partially, it is a neighbourhood being worked on.
 - Infinite scroll always states what is left ("50 sur 1 240") and does not prevent reaching the page
   footer.
 - Selection and editing do not tread on each other: a selected row stays identifiable after a sort,
@@ -538,9 +558,11 @@ This is the product's main screen; it follows fixed rules.
   saved. The render-mode toggle stays available, since the layer it acts on is still there.
   **Selecting is not**: the click that places a vertex must not also toggle a row, and a hover cursor
   must not fight the one the reshaping sets, so the render mode's selection listeners are suspended
-  for the length of the session. The layout is frozen on the map too — the map holds the session's
-  unsaved work, and a panel toggle that unmounted it would drop that work without a word. The way out
-  is *Enregistrer* or *Annuler*.
+  for the length of the session. **The layout stays the user's**: entering the mode reframes
+  nothing, and the `Tableau / ⬛ / Carte` group keeps working throughout. The map holds the session's
+  unsaved work, so maximizing the table *hides* it instead of unmounting it — the session survives,
+  and OpenLayers re-measures its container on its own when the map comes back. The way out of the
+  mode is still *Enregistrer* or *Annuler*, both on the map itself.
 - **The session asks for what is in view, whenever the view changes.** Entering the mode, panning
   and zooming all ask; so does the map growing to the full width, which is a resize and not a
   move. A view not yet measured — including one the engine measured at zero, which it reports as a
@@ -548,8 +570,16 @@ This is the product's main screen; it follows fixed rules.
   frame, never on the next render: a map with no area draws nothing, so there is no next render to
   wait for. A load that never answers is dropped after a fixed delay and stated as a failure; the
   bar never keeps saying it is loading once nothing is.
+- **Editing is one mode of the table, and its tools stand above both panels.** There is a single
+  *Éditer* toggle in `TableToolbar`, never one per half: the rows and the geometries are two halves
+  of one object, and choosing between them before touching anything is a question the user cannot
+  answer yet. Arming it raises `TableEditBar` over both panels, holding what the table can actually
+  carry — the row actions always, the map's tools only on a geo table. Those tools stay owned by
+  `MapView` (the OpenLayers session is theirs, and OpenLayers must not reach the initial bundle
+  through the bar) and are rendered into it by a `Teleport`, which is also what keeps *Enregistrer*
+  and *Annuler* reachable while the map is the hidden half of a maximized table.
 - **Creating and modifying are two intentions, and the bar says so.** The session's toolbar
-  (`components/map/MapEditBar.vue`, overlaid on the map) groups *Polygone / Ligne / Point* under
+  (`components/map/MapEditBar.vue`) groups *Polygone / Ligne / Point* under
   **Créer** — each adds a row that does not exist yet — and *Trou / Annuler le point* under
   **Modifier**, which act on a shape already there. Undifferentiated, *Trou* read as a fourth shape
   to draw rather than as a cut into an existing polygon.
@@ -582,13 +612,21 @@ This is the product's main screen; it follows fixed rules.
   would quietly write a degraded shape back over a correct one — so it never does: a session loads
   its rows from the OGC Features endpoint, at full resolution, and no coordinate that gets written
   ever came off a tile.
-- **A session is bounded, and says so when it is.** The bound is on the **session**, not on one
-  request: panning along a boundary is the gesture the mode exists for, so a cap counted per view
-  would let a dozen pans pile up a dozen capfuls. Past that number the map carries what fits and the
-  bar states that the rest is not editable, rather than freezing the browser on a whole region no one
-  is about to reshape by hand (§8.6 — a silent partial result is a lie). Once said, it stays said for
-  the session: a warning that came and went as the user panned would read as a glitch rather than as
-  the statement it is.
+- **A session works on a working set, and moving it is silent.** The bound is on the **session**,
+  not on one request: panning along a boundary is the gesture the mode exists for, so a cap counted
+  per view would let a dozen pans pile up a dozen capfuls. A row count alone is not a bound at all —
+  one administrative boundary at full resolution carries more vertices than a thousand parcels, and
+  every vertex is indexed by the `Modify` and by the `Snap`, then re-indexed on every change: a
+  hundred such rows freeze the tab for seconds on entering the mode. So a second cap is counted in
+  vertices (`countVertices`, `MAX_EDITABLE_VERTICES`), a feature being taken whole or not at all.
+  Neither cap is a ratchet: leaving a view **releases** the untouched rows it held
+  (`useEditLayer.prune` → `useEditFeatures.release`), giving their exact cost back, so the next
+  neighbourhood loads whole. A feature the user has touched is never released, in view or not — it
+  carries unsaved work — and neither is one drawn in the session, which the server has no copy of.
+  The whole of it is **silent**: the bar states what the session is waiting for, never what its
+  budget is doing (`editPrompts`). What is editable is what is drawn as editable, over a rendering
+  that keeps showing the rest — a message about a working set is a message about plumbing
+  (`limitations.md` LIM-F7).
 - **A tool that cannot apply says so; a gesture that answered nothing is a defect.** *Trou* is
   disabled, with the reason in its `title`, on a view holding no polygon to cut, and a ring drawn
   where no polygon contains it is refused out loud rather than dropped. *Annuler le point* is

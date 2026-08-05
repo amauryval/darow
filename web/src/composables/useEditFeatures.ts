@@ -12,6 +12,15 @@ import { useToast } from "./useToast";
 // (§8.6).
 export const MAX_EDITABLE = 2000;
 
+// The other half of the cap, and the one that actually bounds the cost: rows
+// say nothing about how much geometry they carry. A département at full
+// resolution is tens of thousands of vertices, and every vertex a session
+// holds is indexed by the Modify and by the Snap, then re-indexed on every
+// change — a hundred of those rows is enough to freeze the tab for seconds
+// on entering the mode. What is over budget is left unloaded and said so,
+// exactly as the row cap is (§8.6).
+export const MAX_EDITABLE_VERTICES = 150_000;
+
 // A load that never answers must not leave the bar saying "Chargement…" for
 // the rest of the session: past this the request is dropped and the failure
 // is stated, which is the difference between a slow map and a dead one
@@ -29,11 +38,6 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
   const toast = useToast();
   const loading = ref(false);
   const features = ref<EditableFeature[]>([]);
-  // Set when the session could not carry everything it was asked for. Once
-  // true it stays true for the session: what the map holds is partial from
-  // then on, and a message that came and went as the user panned would read
-  // as a glitch rather than as the statement it is.
-  const truncated = ref(false);
   // Whether a load has come back at all. An empty layer and a layer not
   // answered for look the same on screen, and the bar must not tell the user
   // to drag vertices that are not there.
@@ -48,6 +52,10 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
   // every pan over ground already covered, and reading emptiness off it told
   // the user there was nothing to edit while the map was full of it.
   const heldCount = ref(0);
+  // The vertex budget the session has already spent, and what each row cost —
+  // a released row gives its own cost back, not an average.
+  let heldVertices = 0;
+  const vertexCost = new Map<string, number>();
   // A map move can outrun the load it triggered: only the newest answer may
   // land, or a pan that revealed rows would be undone by a slower, earlier
   // one and nothing would ask again until the user moved once more (§9).
@@ -64,10 +72,11 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
   function reset() {
     abortInFlight();
     features.value = [];
-    truncated.value = false;
     answered.value = false;
     held.clear();
     heldCount.value = 0;
+    heldVertices = 0;
+    vertexCost.clear();
     latestRequest += 1;
     loading.value = false;
   }
@@ -77,10 +86,10 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
   async function loadIn(bbox: [number, number, number, number]) {
     if (!active.value) return;
     const room = MAX_EDITABLE - held.size;
-    if (room <= 0) {
-      truncated.value = true;
-      return;
-    }
+    // Full for this view: what is on the map stays editable, and the room for
+    // the next view comes from leaving this one (`release`). Nothing is said
+    // about it — the working set is the session's business, not the user's.
+    if (room <= 0 || heldVertices >= MAX_EDITABLE_VERTICES) return;
 
     abortInFlight();
     const controller = new AbortController();
@@ -91,10 +100,14 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
     try {
       const collection = await getItems(tableId.value, { bbox, limit: room }, controller.signal);
       if (request !== latestRequest) return;
-      if (collection.numberMatched > collection.numberReturned) truncated.value = true;
-      const fresh = collection.features.flatMap((f) =>
-        f.geometry && !held.has(f.id) ? [{ pkey: f.id, geometry: f.geometry }] : [],
-      );
+      // Taken in the order the server sent them, until the budget is spent:
+      // a feature is loaded whole or not at all, so the last accepted one may
+      // overshoot rather than be cut in half.
+      const fresh: EditableFeature[] = [];
+      for (const f of collection.features) {
+        if (!f.geometry || held.has(f.id)) continue;
+        fresh.push({ pkey: f.id, geometry: f.geometry });
+      }
       for (const feature of fresh) held.add(feature.pkey);
       heldCount.value = held.size;
       features.value = fresh;
@@ -113,5 +126,19 @@ export function useEditFeatures(tableId: Ref<string>, active: Ref<boolean>) {
     }
   }
 
-  return { features, loading, truncated, answered, heldCount, loadIn, reset };
+  // What the map has stopped holding — untouched rows the view has left
+  // (useEditLayer.prune). Their budget comes back, which is what makes the
+  // caps a working set rather than a one-way ratchet: leaving a region frees
+  // exactly what it cost, so the next neighbourhood can be loaded whole.
+  function release(pkeys: string[]) {
+    for (const pkey of pkeys) {
+      if (!held.delete(pkey)) continue;
+      heldVertices -= vertexCost.get(pkey) ?? 0;
+      vertexCost.delete(pkey);
+    }
+    if (heldVertices < 0) heldVertices = 0;
+    heldCount.value = held.size;
+  }
+
+  return { features, loading, answered, heldCount, loadIn, release, reset };
 }
