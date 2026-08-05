@@ -23,9 +23,9 @@ export function apiUrl(path: string): string {
 }
 
 // The absolute form of apiUrl, for a URL handed to something that refuses a
-// relative one — MapLibre's tile template. The origin is prefixed by hand
+// relative one — the map's tile template. The origin is prefixed by hand
 // rather than through URL parsing, which would percent-encode the
-// {z}/{x}/{y} placeholders and leave MapLibre nothing to substitute. A
+// {z}/{x}/{y} placeholders and leave the tile source nothing to substitute. A
 // client pointed at a remote instance already has an absolute baseUrl.
 export function absoluteApiUrl(path: string): string {
   const url = apiUrl(path);
@@ -100,8 +100,11 @@ async function handle<T>(res: Response): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-export function get<T>(path: string): Promise<T> {
-  return fetch(apiUrl(path)).then((res) => handle<T>(res));
+// signal lets a caller drop a request it no longer wants — a map load the
+// next pan has already superseded — and, with AbortSignal.timeout, stops a
+// request that never answers from leaving a screen busy for ever.
+export function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return fetch(apiUrl(path), { signal }).then((res) => handle<T>(res));
 }
 
 // getRoot is get's counterpart for the handful of routes outside

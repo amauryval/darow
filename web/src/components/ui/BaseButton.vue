@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from "vue";
+import Spinner from "./Spinner.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -12,6 +13,9 @@ const props = withDefaults(
     iconOnly?: boolean;
     busy?: boolean;
     disabled?: boolean;
+    // Set on every button of a ButtonGroup: daisyUI welds a row of controls
+    // by the modifier each item carries, not by the wrapper alone.
+    joined?: boolean;
     ariaLabel?: string;
     title?: string;
   }>(),
@@ -50,10 +54,10 @@ const iconSizes = {
       'btn',
       variants[variant],
       sizes[size],
-      { 'btn-square': square || (icon && iconOnly) },
+      { 'btn-square': square || (icon && iconOnly), 'join-item': joined },
     ]"
   >
-    <span v-if="busy" class="loading loading-spinner loading-xs"></span>
+    <Spinner v-if="busy" />
     <component :is="icon" v-else-if="icon" :size="iconSizes[props.size]" aria-hidden="true" />
     <span v-if="!(icon && iconOnly)"><slot /></span>
   </button>

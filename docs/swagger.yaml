@@ -1,36 +1,9 @@
 basePath: /
 definitions:
-  darow_internal_router_response.ErrorResponse:
-    properties:
-      code:
-        type: integer
-      error:
-        type: string
-      message:
-        type: string
-      requestId:
-        type: string
-    type: object
-  darow_internal_storage.FilterCondition:
-    properties:
-      bool:
-        type: string
-      column:
-        type: string
-      conditions:
-        items:
-          $ref: '#/definitions/darow_internal_storage.FilterCondition'
-        type: array
-      not:
-        type: boolean
-      operator:
-        type: string
-      value: {}
-    type: object
-  internal_router_handlers.collectionDTO:
+  handlers.collectionDTO:
     properties:
       extent:
-        $ref: '#/definitions/internal_router_handlers.extentDTO'
+        $ref: '#/definitions/handlers.extentDTO'
       id:
         type: string
       itemType:
@@ -38,16 +11,16 @@ definitions:
       title:
         type: string
     type: object
-  internal_router_handlers.extentDTO:
+  handlers.extentDTO:
     properties:
       spatial:
-        $ref: '#/definitions/internal_router_handlers.spatialExtentDTO'
+        $ref: '#/definitions/handlers.spatialExtentDTO'
     type: object
-  internal_router_handlers.filterDTO:
+  handlers.filterDTO:
     properties:
       conditions:
         items:
-          $ref: '#/definitions/darow_internal_storage.FilterCondition'
+          $ref: '#/definitions/storage.FilterCondition'
         type: array
       createdAt:
         type: string
@@ -60,7 +33,7 @@ definitions:
       updatedAt:
         type: string
     type: object
-  internal_router_handlers.metadataDTO:
+  handlers.metadataDTO:
     properties:
       bbox:
         type: string
@@ -83,7 +56,7 @@ definitions:
       updatedAt:
         type: string
     type: object
-  internal_router_handlers.spatialExtentDTO:
+  handlers.spatialExtentDTO:
     properties:
       bbox:
         items:
@@ -94,6 +67,33 @@ definitions:
         type: array
       crs:
         type: string
+    type: object
+  response.ErrorResponse:
+    properties:
+      code:
+        type: integer
+      error:
+        type: string
+      message:
+        type: string
+      requestId:
+        type: string
+    type: object
+  storage.FilterCondition:
+    properties:
+      bool:
+        type: string
+      column:
+        type: string
+      conditions:
+        items:
+          $ref: '#/definitions/storage.FilterCondition'
+        type: array
+      not:
+        type: boolean
+      operator:
+        type: string
+      value: {}
     type: object
 info:
   contact: {}
@@ -142,11 +142,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_router_handlers.collectionDTO'
+            $ref: '#/definitions/handlers.collectionDTO'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get an OGC API - Features collection
       tags:
       - features
@@ -193,11 +193,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List features of an OGC API - Features collection
       tags:
       - features
@@ -225,7 +225,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get a single feature of an OGC API - Features collection
       tags:
       - features
@@ -271,7 +271,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List cached sources
       tags:
       - sources
@@ -289,7 +289,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a source file
       tags:
       - sources
@@ -321,7 +321,7 @@ paths:
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Load a source file into a new table
       tags:
       - sources
@@ -348,7 +348,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Preview a source's detected CRS
       tags:
       - sources
@@ -378,7 +378,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Rescan workDir
       tags:
       - sources
@@ -403,7 +403,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Upload a file and load it into a new table
       tags:
       - sources
@@ -434,7 +434,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List tables
       tags:
       - tables
@@ -453,7 +453,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a table
       tags:
       - tables
@@ -470,11 +470,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_router_handlers.metadataDTO'
+            $ref: '#/definitions/handlers.metadataDTO'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get table metadata
       tags:
       - tables
@@ -493,11 +493,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_router_handlers.metadataDTO'
+            $ref: '#/definitions/handlers.metadataDTO'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Rename a table
       tags:
       - tables
@@ -545,7 +545,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add a column
       tags:
       - tables
@@ -585,7 +585,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List a column's distinct values
       tags:
       - tables
@@ -611,7 +611,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Derive a table from a SELECT query
       tags:
       - tables
@@ -637,7 +637,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Derive a table from this table's columns, expressions and conditions
       tags:
       - tables
@@ -664,7 +664,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Export a table
       tags:
       - tables
@@ -689,7 +689,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Filter rows by column conditions
       tags:
       - tables
@@ -717,7 +717,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get the bounding box of rows matching a filter
       tags:
       - geo
@@ -740,7 +740,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List a table's stored filters
       tags:
       - filters
@@ -759,15 +759,15 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/internal_router_handlers.filterDTO'
+            $ref: '#/definitions/handlers.filterDTO'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Save a named filter on a table
       tags:
       - filters
@@ -790,7 +790,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Delete a stored filter
       tags:
       - filters
@@ -814,15 +814,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_router_handlers.filterDTO'
+            $ref: '#/definitions/handlers.filterDTO'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Update a stored filter's name and/or conditions
       tags:
       - filters
@@ -871,7 +871,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List the features around a geometry
       tags:
       - geo
@@ -906,7 +906,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: List rows
       tags:
       - rows
@@ -936,7 +936,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Update several rows in one transaction
       tags:
       - rows
@@ -963,7 +963,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Add one or more rows
       tags:
       - rows
@@ -1009,7 +1009,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get a row by pkey
       tags:
       - rows
@@ -1038,7 +1038,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Update a row
       tags:
       - rows
@@ -1066,7 +1066,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get a row's geometry, as GeoJSON and as WKT
       tags:
       - rows
@@ -1091,7 +1091,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get multiple rows by pkey in one request
       tags:
       - rows
@@ -1213,7 +1213,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Get features intersecting an MVT-style tile, as GeoJSON
       tags:
       - geo
@@ -1233,7 +1233,7 @@ paths:
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/darow_internal_router_response.ErrorResponse'
+            $ref: '#/definitions/response.ErrorResponse'
       summary: Readiness probe
       tags:
       - ops

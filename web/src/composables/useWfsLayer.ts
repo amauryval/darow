@@ -1,20 +1,27 @@
 import { watch, type Ref } from "vue";
-import type { ExpressionSpecification, GeoJSONSource, Map, MapMouseEvent } from "maplibre-gl";
-import type { OgcFeature } from "../client/features";
+import type Map from "ol/Map";
+import type Feature from "ol/Feature";
+import type Geometry from "ol/geom/Geometry";
+import type { Extent } from "ol/extent";
+import { getCenter } from "ol/extent";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import VectorSource from "ol/source/Vector";
+import { tile as tileStrategy } from "ol/loadingstrategy";
+import { getAllTileFeatures } from "../client/geo";
 import type { FilterCondition } from "../client/types";
-import type { FeatureSelection } from "./useMvtLayer";
-import { useTiledFeatures } from "./useTiledFeatures";
+import { wfsFlatStyle } from "../utils/mapStyles";
+import { readFeatures } from "../utils/projection";
+import { tileSimplifyTolerance, xyzGrid } from "../utils/tileGrid";
+import { useMapSelection, type FeatureSelection } from "./useMapSelection";
 import { useToast } from "./useToast";
 
-const SELECTED_COLOR = "#f59e0b";
+// WFS/OGC-Features rendering of a table: real GeoJSON features rather than
+// tiles, loaded over the same XYZ grid the MVT endpoint is cut along. The
+// grid is the loading strategy's: OpenLayers decides which tiles the view is
+// missing, remembers the ones already loaded across a pan, and asks again
+// only for what it does not have.
+const grid = xyzGrid();
 
-// WFS/OGC-Features rendering of a table: a single GeoJSON source split by a
-// ["geometry-type"] filter expression into fill/line/circle layers — no
-// per-type server round-trip needed, unlike MVT. Data loads on moveend,
-// tile by tile, reusing useTiledFeatures' cache. Selection is the same
-// selection the table and the MVT mode share: this composable reflects it
-// onto the map and reports clicks back through toggle(), it never keeps its
-// own selected set.
 export function useWfsLayer(
   map: Ref<Map | null>,
   tableId: Ref<string>,
@@ -22,208 +29,87 @@ export function useWfsLayer(
   selection: FeatureSelection,
   version: Ref<number>,
 ) {
-  const sourceId = `wfs-${tableId.value}`;
-  const layerIds = [`${sourceId}-fill`, `${sourceId}-line`, `${sourceId}-point`];
-  const tiledFeatures = useTiledFeatures();
   const toast = useToast();
-  let active = false;
-  let onMoveEnd: (() => void) | null = null;
-  let onMouseEnter: (() => void) | null = null;
-  let onMouseLeave: (() => void) | null = null;
-  let onClick: ((e: MapMouseEvent) => void) | null = null;
-  let requestId = 0;
-  let trackedSelected = new Set<string>();
-  // Warns at most once per run of failures rather than on every moveend —
-  // reset as soon as a load comes back complete, so a later, separate
-  // failure still warns again.
+  let layer: WebGLVectorLayer<VectorSource> | null = null;
+  // The GPU compiles the style once, so a selection change is a new style
+  // rather than a repaint — see wfsFlatStyle.
+  const picked = useMapSelection(map, selection, (pkeys) => layer?.setStyle(wfsFlatStyle(pkeys)));
+  // Warns at most once per run of failures rather than on every tile — reset
+  // as soon as a tile comes back complete, so a later, separate failure
+  // still warns again.
   let warnedIncomplete = false;
 
-  // A selected feature is drawn in the same amber the table pins its
-  // selected rows with, so both halves of one selection read alike.
-  function selectedOr(color: string): ExpressionSpecification {
-    return ["case", ["boolean", ["feature-state", "selected"], false], SELECTED_COLOR, color];
-  }
-
-  function addSourceAndLayers(m: Map) {
-    m.addSource(sourceId, {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-      // A pkey is a UUID, and MapLibre only keeps a GeoJSON feature's own
-      // id when it is a number — promoting the property is what makes
-      // per-feature selection state survive a reload of the source.
-      promoteId: "pkey",
-    });
-    m.addLayer({
-      id: `${sourceId}-fill`,
-      type: "fill",
-      source: sourceId,
-      filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": selectedOr("#16a34a"), "fill-opacity": 0.25 },
-    });
-    m.addLayer({
-      id: `${sourceId}-line`,
-      type: "line",
-      source: sourceId,
-      filter: ["in", ["geometry-type"], ["literal", ["Polygon", "LineString"]]],
-      paint: { "line-color": selectedOr("#15803d"), "line-width": 2, "line-dasharray": [2, 1] },
-    });
-    m.addLayer({
-      id: `${sourceId}-point`,
-      type: "circle",
-      source: sourceId,
-      filter: ["==", ["geometry-type"], "Point"],
-      paint: {
-        "circle-color": selectedOr("#16a34a"),
-        "circle-radius": 5,
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1,
-      },
+  // A feature straddling a tile boundary is returned by every tile it
+  // intersects; adding it twice would draw it twice and let one click select
+  // it and the next deselect the copy.
+  function unseen(source: VectorSource, features: Feature<Geometry>[]): Feature<Geometry>[] {
+    return features.filter((feature) => {
+      const id = feature.getId();
+      return id === undefined || source.getFeatureById(id) === null;
     });
   }
 
-  function removeSourceAndLayers(m: Map) {
-    for (const id of layerIds) {
-      if (m.getLayer(id)) m.removeLayer(id);
-    }
-    if (m.getSource(sourceId)) m.removeSource(sourceId);
-  }
+  async function loadTile(source: VectorSource, extent: Extent, resolution: number, success: (features: Feature<Geometry>[]) => void, failure: () => void) {
+    const z = grid.getZForResolution(resolution);
+    const [, x, y] = grid.getTileCoordForCoordAndZ(getCenter(extent), z);
+    const { features, complete } = await getAllTileFeatures(tableId.value, z, x, y, {
+      simplify: tileSimplifyTolerance(z),
+      filter: conditions.value,
+    });
 
-  function setFeatureSelected(m: Map, pkey: string, isSelected: boolean) {
-    m.setFeatureState({ source: sourceId, id: pkey }, { selected: isSelected });
-  }
+    const read = readFeatures({
+      type: "FeatureCollection",
+      features: features.flatMap((f) => (f.geometry ? [{ ...f, geometry: f.geometry }] : [])),
+    });
+    const added = unseen(source, read);
+    source.addFeatures(added);
 
-  function syncSelection(m: Map) {
-    if (!m.getSource(sourceId)) return;
-    const current = new Set(selection.selectedPkeys.value);
-    for (const pkey of trackedSelected) if (!current.has(pkey)) setFeatureSelected(m, pkey, false);
-    for (const pkey of current) if (!trackedSelected.has(pkey)) setFeatureSelected(m, pkey, true);
-    trackedSelected = current;
-  }
-
-  // The OGC feature carries its pkey as the feature id; MapLibre reads it
-  // from the properties instead (see promoteId), so it is copied there
-  // before the source ever sees the feature.
-  function withPkeyProperty(feature: OgcFeature & { geometry: GeoJSON.Geometry }) {
-    return { ...feature, properties: { ...feature.properties, pkey: feature.id } };
-  }
-
-  function bindInteractions(m: Map) {
-    onMouseEnter = () => (m.getCanvas().style.cursor = "pointer");
-    onMouseLeave = () => (m.getCanvas().style.cursor = "");
-    // One click toggles the clicked feature in and out of the selection,
-    // with no modifier key — the same gesture the MVT mode answers to.
-    onClick = (e) => {
-      const feature = m.queryRenderedFeatures(e.point, { layers: layerIds })[0];
-      const pkey = feature?.properties?.pkey;
-      if (typeof pkey !== "string") return;
-      selection.toggle(pkey);
-    };
-    m.on("mouseenter", layerIds, onMouseEnter);
-    m.on("mouseleave", layerIds, onMouseLeave);
-    m.on("click", layerIds, onClick);
-  }
-
-  function unbindInteractions(m: Map) {
-    if (onMouseEnter) m.off("mouseenter", layerIds, onMouseEnter);
-    if (onMouseLeave) m.off("mouseleave", layerIds, onMouseLeave);
-    if (onClick) m.off("click", layerIds, onClick);
-    onMouseEnter = null;
-    onMouseLeave = null;
-    onClick = null;
-  }
-
-  async function refreshData() {
-    const m = map.value;
-    const maybeSource = m?.getSource<GeoJSONSource>(sourceId);
-    if (!m || !maybeSource) return;
-    // Rebound to a definitely-assigned const: TypeScript doesn't retain
-    // narrowing of a captured variable across the nested render() closure
-    // below.
-    const source = maybeSource;
-    const mapInstance = m;
-
-    const thisRequestId = ++requestId;
-    const viewBounds = m.getBounds();
-    const bbox: [number, number, number, number] = [
-      viewBounds.getWest(),
-      viewBounds.getSouth(),
-      viewBounds.getEast(),
-      viewBounds.getNorth(),
-    ];
-    const zoom = Math.max(0, Math.floor(m.getZoom()));
-
-    // A GeoJSON source re-indexes its whole feature set on every setData
-    // call (synchronously, on the main thread) — calling it once per tile
-    // as they land in a burst freezes the map. Coalescing to one setData
-    // per animation frame keeps the progressive-loading feel without the
-    // reindex storm.
-    let renderScheduled = false;
-    let latest: OgcFeature[] | null = null;
-
-    function render(loaded: OgcFeature[]) {
-      if (thisRequestId !== requestId) return;
-      latest = loaded;
-      if (renderScheduled) return;
-      renderScheduled = true;
-      requestAnimationFrame(() => {
-        renderScheduled = false;
-        if (thisRequestId !== requestId || !latest) return;
-        const features = latest
-          .filter((f): f is OgcFeature & { geometry: GeoJSON.Geometry } => f.geometry !== null)
-          .map(withPkeyProperty);
-        source.setData({ type: "FeatureCollection", features });
-        // Feature state is keyed by id and reapplied on every reload, so
-        // freshly rendered features come back highlighted too.
-        trackedSelected = new Set();
-        syncSelection(mapInstance);
-      });
-    }
-
-    const result = await tiledFeatures.loadVisible(tableId.value, bbox, zoom, conditions.value, render).catch(() => null);
-    if (thisRequestId !== requestId) return;
-
-    if (!result || !result.complete) {
-      if (!warnedIncomplete) {
-        warnedIncomplete = true;
-        toast.error("Certaines tuiles n'ont pas pu être chargées — les données affichées peuvent être incomplètes.");
-      }
-    } else {
+    if (complete) {
       warnedIncomplete = false;
+      success(added);
+      return;
+    }
+    // What did load stays on screen, but the tile is not marked loaded: the
+    // next pan asks for it again instead of leaving a hole no gesture fills.
+    failure();
+    if (!warnedIncomplete) {
+      warnedIncomplete = true;
+      toast.error("Certaines tuiles n'ont pas pu être chargées — les données affichées peuvent être incomplètes.");
     }
   }
 
   function activate() {
     const m = map.value;
-    if (!m) return;
-    active = true;
-    addSourceAndLayers(m);
-    bindInteractions(m);
-    refreshData();
-    onMoveEnd = () => refreshData();
-    m.on("moveend", onMoveEnd);
+    if (!m || layer) return;
+
+    const source = new VectorSource({
+      strategy: tileStrategy(grid),
+      loader: (extent, resolution, _projection, success, failure) => {
+        if (success && failure) loadTile(source, extent, resolution, success, failure);
+      },
+    });
+    layer = new WebGLVectorLayer({ source, style: wfsFlatStyle(selection.selectedPkeys.value) });
+    m.addLayer(layer);
+    picked.activate(layer);
+  }
+
+  // A filter changes which rows a tile holds and a write changes their
+  // geometry: both invalidate every tile already loaded, so the source
+  // forgets all of them rather than growing a second version alongside.
+  function refreshData() {
+    layer?.getSource()?.refresh();
   }
 
   function deactivate() {
     const m = map.value;
-    active = false;
-    if (m && onMoveEnd) m.off("moveend", onMoveEnd);
-    onMoveEnd = null;
-    if (m) {
-      unbindInteractions(m);
-      removeSourceAndLayers(m);
-    }
-    trackedSelected = new Set();
+    picked.deactivate();
+    if (m && layer) m.removeLayer(layer);
+    layer = null;
+    warnedIncomplete = false;
   }
 
-  watch(conditions, () => {
-    if (active) refreshData();
-  });
-  watch(version, () => {
-    tiledFeatures.invalidate();
-    if (active) refreshData();
-  });
-  watch(selection.selectedPkeys, () => {
-    if (active && map.value) syncSelection(map.value);
+  watch([conditions, version], () => {
+    if (layer) refreshData();
   });
 
   return { activate, deactivate, refreshData };

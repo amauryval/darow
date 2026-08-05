@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import { watchDebounced } from "@vueuse/core";
 import { getFilteredExtent } from "../client/geo";
 import { filterRows } from "../client/tables";
@@ -11,9 +11,9 @@ import { type DraftNode, pruneActive } from "../utils/filterTree";
 // results/extent it produces. Only the active conditions are effective —
 // they drive both the map (whichever of MVT/WFS is active renders the
 // filtered rows) and the flat filtered-rows table, live, as soon as a pill
-// is added/toggled/removed. Knows nothing of MapLibre or the paginated rows
+// is added/toggled/removed. Knows nothing of the map or the paginated rows
 // grid: its outputs (appliedConditions, filteredBbox) are consumed by
-// whoever composes this with useMapLibre/useTableRows.
+// whoever composes this with useOpenLayers/useTableRows.
 export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>, isGeo: Ref<boolean>) {
   const conditions = ref<DraftNode[]>([]);
   const appliedConditions = computed<FilterCondition[]>(() =>
@@ -79,6 +79,18 @@ export function useRowFilter(tableId: Ref<string>, columns: Ref<ColumnSchema[]>,
   }
 
   watchDebounced(appliedConditions, refreshFilteredBbox, { debounce: 300, immediate: true });
+
+  // A filter is written against one table's columns, so it does not survive
+  // a move to another one: the pills would name columns that may not exist
+  // there, and the results and extent on screen would be the previous
+  // table's (§9). Cleared synchronously, ahead of the debounced watchers, so
+  // nothing filtered is ever shown under the new table's name.
+  watch(tableId, () => {
+    conditions.value = [];
+    filterResults.value = null;
+    filterError.value = "";
+    filteredBbox.value = null;
+  });
 
   return { conditions, appliedConditions, filterActive, filterLimit, filtering, filterError, filterResults, filteredBbox, retry };
 }

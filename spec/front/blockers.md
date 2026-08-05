@@ -10,6 +10,4 @@
 
 Each entry carries a stable identifier (`BLK-Fn`); a retired identifier is never reused.
 
-| # | Blocker | Effect | Rule |
-|---|---|---|---|
-| BLK-F1 | `TableDetailView` and `TableDataPanel` load on `onMounted` without reacting to a `tableId` change | After a derivation (which navigates to the new table), the view keeps showing the old one: the user reads data that is not the displayed table's | §9 |
+*No blocker identified.*

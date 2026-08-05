@@ -2,7 +2,7 @@
 import { computed, h } from "vue";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
-import { PencilLine, Plus } from "@lucide/vue";
+import { Plus } from "@lucide/vue";
 import type { Row, RowValue } from "../../client/types";
 import type { useTableRows } from "../../composables/useTableRows";
 import { cellValue } from "../../utils/rows";
@@ -14,9 +14,11 @@ import ErrorState from "../ui/ErrorState.vue";
 import Skeleton from "../ui/Skeleton.vue";
 import Typography from "../ui/Typography.vue";
 
-// The rows grid of a table: edit mode, the pinned selection and the
-// infinite scroll. It receives the row state its view already owns
-// (useTableRows) and reports intentions; it loads nothing itself.
+// The rows grid of a table: the pinned selection, the infinite scroll, and
+// the cells the attribute edit mode makes writable. It receives the row state
+// its view already owns (useTableRows) and reports intentions; it loads
+// nothing itself, and it does not own the mode either — arming it is a
+// table-level action, next to the one that arms the geometries (§8.8).
 const props = defineProps<{
   state: ReturnType<typeof useTableRows>;
   displayRows: Row[];
@@ -27,10 +29,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   addRow: [];
-  toggleEditMode: [];
   updateCell: [column: string, value: string];
   geometry: [pkey: string];
-  editGeometry: [pkey: string];
   clearSelection: [];
   rowClick: [row: { original: Row }];
 }>();
@@ -76,7 +76,6 @@ const columnDefs = computed(() => {
           onEdit: () => props.state.startEditRow(row),
           onDelete: () => props.state.deleteRow(row.pkey),
           onGeometry: () => emit("geometry", row.pkey),
-          onEditGeometry: () => emit("editGeometry", row.pkey),
         });
       },
     }),
@@ -109,15 +108,6 @@ const table = useVueTable({
 <template>
   <div class="mb-3 flex shrink-0 items-center justify-between">
     <div class="flex items-center gap-4">
-      <BaseButton
-        size="sm"
-        :variant="state.editMode.value ? 'primary' : 'secondary'"
-        :icon="PencilLine"
-        :aria-pressed="state.editMode.value"
-        @click="emit('toggleEditMode')"
-      >
-        Mode édition
-      </BaseButton>
       <span v-if="isGeo && selectedCount > 0" class="flex items-center gap-2">
         <span class="badge badge-warning badge-xs"></span>
         <Typography variant="caption">{{ selectedCount }} sélectionnée(s)</Typography>

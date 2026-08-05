@@ -42,9 +42,6 @@ export function listRows(tableId: string, offset: number, limit: number, sort?: 
   return get(`/tables/${tableId}/rows?offset=${offset}&limit=${limit}${sortParam}`);
 }
 
-export function getRow(tableId: string, pkey: string): Promise<{ row: Row }> {
-  return get(`/tables/${tableId}/rows/${pkey}`);
-}
 
 // Fetches several rows by pkey in a single request — used to hydrate only
 // the current page of an arbitrary pkey list (e.g. the map's selected

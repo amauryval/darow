@@ -30,6 +30,32 @@ func tileSimplifyTolerance(zoom int) float64 {
 	return math.Max(tolerance, 0.25)
 }
 
+// webMercatorOrigin is half the Web Mercator circumference: the axis extent
+// on either side of the origin, and so the span one tile covers at zoom 0.
+const webMercatorOrigin = 20037508.342789244
+
+// tileEnvelope is ST_TileEnvelope computed in Go rather than in SQL.
+//
+// It has to be computed here because the spatial extension's optimizer
+// rewrites ST_Intersects_Extent into an RTREE index scan only when the
+// envelope side of the comparison is a constant it can evaluate. Selecting
+// the envelope in a CTE and cross-joining it makes that side a *column
+// reference*, and the rule then evaluates an expression that is not flat —
+// which raises a DuckDB INTERNAL error during planning
+// ("Operation requires a flat vector but a non-flat vector was
+// encountered"). An INTERNAL error invalidates the whole database instance,
+// not just the failing query: every later query on the process fails, the
+// readiness probe included. One unlucky tile took the server down with it.
+//
+// Returned as minX, minY, maxX, maxY in EPSG:3857, the CRS the geometry
+// column is stored in.
+func tileEnvelope(zoom, x, y int) (float64, float64, float64, float64) {
+	span := 2 * webMercatorOrigin / math.Pow(2, float64(zoom))
+	minX := -webMercatorOrigin + float64(x)*span
+	maxY := webMercatorOrigin - float64(y)*span
+	return minX, maxY - span, minX + span, maxY
+}
+
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
 // validated before interpolation; zoom/x/y and the source CRS
 // string are bound parameters. attrs embeds extra non-geometry columns in
@@ -52,8 +78,15 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 		structFields[i] = fmt.Sprintf(", '%s': %s", strings.ReplaceAll(attr, "'", "''"), alias)
 	}
 
-	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
-	args := []any{zoom, x, y, tileSimplifyTolerance(zoom)}
+	// The envelope is inlined as literals, not bound: the optimizer rule that
+	// turns this comparison into an RTREE index scan only fires on a constant
+	// it can read at planning time, and these four numbers come from
+	// validated integers, never from user text (see tileEnvelope).
+	minX, minY, maxX, maxY := tileEnvelope(zoom, x, y)
+	envelope := fmt.Sprintf("ST_MakeEnvelope(%v, %v, %v, %v)", minX, minY, maxX, maxY)
+
+	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", " + envelope + ")"
+	args := []any{tileSimplifyTolerance(zoom)}
 	if q.Filter != "" {
 		where += " AND (" + q.Filter + ")"
 		args = append(args, q.Args...)
@@ -81,20 +114,17 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 	// leave behind is tolerated by MVT renderers and already caught by the
 	// TRY/NULL filter above.
 	query := fmt.Sprintf(`
-        WITH tile AS (
-            SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
-        )
         SELECT ST_AsMVT(
             {'geom': mvt_geom, 'pkey': pkey%s},
             'layer'
         ) AS mvt
         FROM (
-            SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
-            FROM %s, tile
+            SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(%s))) AS mvt_geom, __pkey AS pkey%s
+            FROM %s
             %s
         )
         WHERE mvt_geom IS NOT NULL
-    `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
+    `, strings.Join(structFields, ""), quotedGeom, envelope, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
 
 	var mvt []byte
 	err := g.conn.QueryRow(ctx, query, args...).Scan(&mvt)

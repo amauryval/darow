@@ -8,11 +8,9 @@ function focusablesOf(container: HTMLElement | null): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
 }
 
-// Manual controller: for a container whose own mount/unmount doesn't line
-// up with when the trap should be active (e.g. a v-if'd panel toggled from
-// a parent that stays mounted). activate()/deactivate() bracket one
-// open/close cycle; deactivate() restores focus to what had it before.
-export function createFocusTrap(container: Ref<HTMLElement | null>) {
+// One open/close cycle: activate() moves focus inside and holds it there,
+// deactivate() restores it to whatever had it before.
+function createFocusTrap(container: Ref<HTMLElement | null>) {
   let previouslyFocused: HTMLElement | null = null;
 
   function onKeydown(e: KeyboardEvent) {

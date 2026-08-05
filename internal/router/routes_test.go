@@ -155,6 +155,17 @@ func Test_Router_Setup(t *testing.T) {
 			wantErrorContains: "not allowed",
 		},
 		{
+			// The UI's edit session asks for /items with no trailing slash:
+			// the route is declared as "/" inside a Route("/items") subrouter,
+			// so this is the case that says the two forms still meet.
+			name:              "mounts the OGC items route without a trailing slash",
+			apiCfg:            config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
+			method:            http.MethodPut,
+			path:              "/api/v1/ogc/collections/id-1/items",
+			wantStatus:        http.StatusMethodNotAllowed,
+			wantErrorContains: "not allowed",
+		},
+		{
 			name:              "an unmatched route answers with the JSON error envelope",
 			apiCfg:            config.APIConfig{MaxBodyBytes: 10 * 1024 * 1024},
 			method:            http.MethodGet,

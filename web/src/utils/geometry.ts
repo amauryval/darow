@@ -14,14 +14,3 @@ export function excerpt(text: string, limit = DISPLAY_LIMIT): string {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n… (extrait — copier pour obtenir la valeur complète)`;
 }
-
-// The map editor addresses vertices in the six simple geometry types; a
-// GeometryCollection has no single shape to reshape and is read-only on the
-// map.
-const EDITABLE_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"];
-
-export function isEditableGeometry(
-  geometry: GeoJSON.Geometry | null,
-): geometry is Exclude<GeoJSON.Geometry, GeoJSON.GeometryCollection> {
-  return geometry !== null && EDITABLE_TYPES.includes(geometry.type);
-}

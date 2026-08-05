@@ -1,20 +1,19 @@
 import { watch, type Ref } from "vue";
-import type { Map, MapMouseEvent, VectorTileSource } from "maplibre-gl";
-import { getGeometryTypes, tileUrl } from "../client/geo";
+import type Map from "ol/Map";
+import MVT from "ol/format/MVT";
+import VectorTileLayer from "ol/layer/VectorTile";
+import VectorTileSource from "ol/source/VectorTile";
+import { tileUrl } from "../client/geo";
 import type { FilterCondition } from "../client/types";
-import { parseBbox } from "../utils/bbox";
-import { buildMvtLayers } from "../utils/mvtStyle";
+import { mvtStyle } from "../utils/mapStyles";
+import { viewExtent } from "../utils/projection";
+import { xyzGrid } from "../utils/tileGrid";
+import { useMapSelection, type FeatureSelection } from "./useMapSelection";
 
-export interface FeatureSelection {
-  selectedPkeys: Ref<string[]>;
-  toggle: (pkey: string) => void;
-}
-
-// MVT rendering of a table: source + layers picked by the geometry types
-// actually present, click-to-toggle selection reflected as MapLibre
-// feature-state. selection is the single source of truth
-// (useFeatureSelection): this composable only reflects it onto the map and
-// reports clicks back via toggle(), it never keeps its own selected-set.
+// MVT rendering of a table: one vector-tile layer, styled by a function that
+// answers per feature. Nothing has to be asked of the server to know which
+// geometry types the column holds — the style reads the type off each
+// feature, so a mixed column is one layer either way.
 export function useMvtLayer(
   map: Ref<Map | null>,
   tableId: Ref<string>,
@@ -23,109 +22,57 @@ export function useMvtLayer(
   selection: FeatureSelection,
   version: Ref<number>,
 ) {
-  const sourceId = `table-${tableId.value}`;
-  const sourceLayer = "layer";
-  let active = false;
-  let layerIds: string[] = [];
-  let interactiveLayerIds: string[] = [];
-  let onMouseEnter: (() => void) | null = null;
-  let onMouseLeave: (() => void) | null = null;
-  let onClick: ((e: MapMouseEvent) => void) | null = null;
-  let trackedSelected = new Set<string>();
+  let layer: VectorTileLayer | null = null;
+  // Canvas: the style function is re-run per feature on every frame, so the
+  // layer only has to be told to repaint.
+  const picked = useMapSelection(map, selection, () => layer?.changed());
 
-  function setFeatureSelected(m: Map, pkey: string, isSelected: boolean) {
-    m.setFeatureState({ source: sourceId, sourceLayer, id: pkey }, { selected: isSelected });
-  }
-
-  function syncSelection(m: Map) {
-    const current = new Set(selection.selectedPkeys.value);
-    for (const pkey of trackedSelected) if (!current.has(pkey)) setFeatureSelected(m, pkey, false);
-    for (const pkey of current) if (!trackedSelected.has(pkey)) setFeatureSelected(m, pkey, true);
-    trackedSelected = current;
-  }
-
-  async function activate() {
-    const m = map.value;
-    if (!m) return;
-    active = true;
-
-    const bounds = bbox.value ? parseBbox(bbox.value) : null;
-    m.addSource(sourceId, {
-      type: "vector",
-      tiles: [tileUrl(tableId.value, conditions.value, version.value)],
-      // Promotes the "pkey" tile property to the MapLibre feature id, so
-      // selection state (setFeatureState) can be tracked per row and
-      // survives tile reloads instead of resetting on every pan/zoom.
-      promoteId: { [sourceLayer]: "pkey" },
-      ...(bounds ? { bounds } : {}),
+  function source(): VectorTileSource {
+    return new VectorTileSource({
+      // The tile carries the row's pkey; promoting it to the feature's id is
+      // what lets a selection survive a tile reload, since a feature is
+      // rebuilt from scratch on every pan.
+      format: new MVT({ idProperty: "pkey", layers: ["layer"] }),
+      // Stated, never defaulted: the default is a 512-pixel grid, which asks
+      // the server for a different z — and so a different simplification —
+      // than the endpoint is cut along (see utils/tileGrid).
+      tileGrid: xyzGrid(),
+      url: tileUrl(tableId.value, conditions.value, version.value),
     });
-
-    // Best-effort: a failure here degrades to no MVT layers added rather
-    // than blocking activation — the tile source itself was already added
-    // above and still renders once the map issues its own tile requests,
-    // so losing only the type-driven styling is the tolerated silence
-    // spec/front/spec.md §0.13 allows for a tile-related display load.
-    const { types } = await getGeometryTypes(tableId.value).catch(() => ({ types: [] as string[] }));
-    if (!active) return;
-
-    layerIds = [];
-    interactiveLayerIds = [];
-    for (const { layer, interactive } of buildMvtLayers(sourceId, sourceLayer, types)) {
-      m.addLayer(layer);
-      layerIds.push(layer.id);
-      if (interactive) interactiveLayerIds.push(layer.id);
-    }
-
-    if (interactiveLayerIds.length > 0) {
-      onMouseEnter = () => (m.getCanvas().style.cursor = "pointer");
-      onMouseLeave = () => (m.getCanvas().style.cursor = "");
-      // Each click toggles the clicked feature in/out of the selection —
-      // no modifier key needed, so the whole feature works on trackpad/
-      // touch too.
-      onClick = (e) => {
-        const feature = m.queryRenderedFeatures(e.point, { layers: interactiveLayerIds })[0];
-        if (feature?.id === undefined || feature.id === null) return;
-        selection.toggle(String(feature.id));
-      };
-      m.on("mouseenter", interactiveLayerIds, onMouseEnter);
-      m.on("mouseleave", interactiveLayerIds, onMouseLeave);
-      m.on("click", interactiveLayerIds, onClick);
-    }
-
-    syncSelection(m);
   }
 
-  function refreshTiles() {
+  function activate() {
     const m = map.value;
-    const source = m?.getSource<VectorTileSource>(sourceId);
-    source?.setTiles([tileUrl(tableId.value, conditions.value, version.value)]);
+    if (!m || layer) return;
+
+    const extent = bbox.value ? viewExtent(bbox.value) : null;
+    layer = new VectorTileLayer({
+      source: source(),
+      // Outside the table's own extent there is nothing to draw: bounding the
+      // layer is what keeps the map from asking the server for empty tiles.
+      ...(extent ? { extent } : {}),
+      style: (feature) => mvtStyle(picked.isSelected(feature.getId())),
+    });
+    m.addLayer(layer);
+    picked.activate(layer);
+  }
+
+  // A write changes what a tile holds and a filter changes which rows it
+  // holds; both come back as a new URL, which is the only thing a tile cache
+  // keyed by URL reacts to.
+  function refreshTiles() {
+    layer?.setSource(source());
   }
 
   function deactivate() {
     const m = map.value;
-    active = false;
-    if (m) {
-      if (interactiveLayerIds.length > 0 && onMouseEnter && onMouseLeave && onClick) {
-        m.off("mouseenter", interactiveLayerIds, onMouseEnter);
-        m.off("mouseleave", interactiveLayerIds, onMouseLeave);
-        m.off("click", interactiveLayerIds, onClick);
-      }
-      for (const id of layerIds) if (m.getLayer(id)) m.removeLayer(id);
-      if (m.getSource(sourceId)) m.removeSource(sourceId);
-    }
-    layerIds = [];
-    interactiveLayerIds = [];
-    onMouseEnter = null;
-    onMouseLeave = null;
-    onClick = null;
-    trackedSelected = new Set();
+    picked.deactivate();
+    if (m && layer) m.removeLayer(layer);
+    layer = null;
   }
 
   watch([conditions, version], () => {
-    if (active) refreshTiles();
-  });
-  watch(selection.selectedPkeys, () => {
-    if (active && map.value) syncSelection(map.value);
+    if (layer) refreshTiles();
   });
 
   return { activate, deactivate };

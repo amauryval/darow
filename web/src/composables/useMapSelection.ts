@@ -1,0 +1,102 @@
+import { watch, type Ref } from "vue";
+import type Map from "ol/Map";
+import type Layer from "ol/layer/Layer";
+import type MapBrowserEvent from "ol/MapBrowserEvent";
+
+export interface FeatureSelection {
+  selectedPkeys: Ref<string[]>;
+  toggle: (pkey: string) => void;
+  // Whether a click on the map means "select" at all. It does not during an
+  // edit session: the same click places a vertex or grabs a handle, and the
+  // hover cursor would fight the one Modify sets (§8.8).
+  selectable: Ref<boolean>;
+}
+
+// The half of a render mode that has nothing to do with how the table is
+// fetched: which features are selected, and what a click on one means. Both
+// modes wire it the same way, so they share it rather than each keeping
+// their own copy of the same three listeners.
+//
+// The selection itself lives in useFeatureSelection and is never held here:
+// this reflects it onto the layer and reports clicks back through toggle().
+// OpenLayers has no per-feature state — a style function reads the set on
+// every frame instead, which is why a change has to tell the layer to
+// repaint.
+// repaint is how a layer is told the selection moved. The two render modes
+// answer it differently — a canvas layer re-runs its style function, a WebGL
+// one is handed a new style — so the layer decides, not this.
+export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelection, repaint: (pkeys: string[]) => void) {
+  let selected = new Set(selection.selectedPkeys.value);
+  let layer: Layer | null = null;
+  let onClick: ((event: MapBrowserEvent) => void) | null = null;
+  let onMove: ((event: MapBrowserEvent) => void) | null = null;
+
+  // Passed to a layer's style function: the answer must not depend on
+  // anything but the feature, since it is asked once per feature per frame.
+  function isSelected(id: string | number | undefined): boolean {
+    return id !== undefined && selected.has(String(id));
+  }
+
+  function featureIdAt(m: Map, event: MapBrowserEvent): string | null {
+    const found = m.forEachFeatureAtPixel(
+      event.pixel,
+      (feature) => feature.getId(),
+      { layerFilter: (candidate) => candidate === layer },
+    );
+    return found === undefined ? null : String(found);
+  }
+
+  function bind() {
+    const m = map.value;
+    if (!m || onClick) return;
+
+    // One click toggles the clicked feature in and out of the selection, with
+    // no modifier key — so the gesture stays usable on a trackpad (§8.8).
+    onClick = (event) => {
+      const id = featureIdAt(m, event);
+      if (id !== null) selection.toggle(id);
+    };
+    onMove = (event) => {
+      if (event.dragging) return;
+      m.getTargetElement().style.cursor = featureIdAt(m, event) === null ? "" : "pointer";
+    };
+    m.on("singleclick", onClick);
+    m.on("pointermove", onMove);
+  }
+
+  function unbind() {
+    const m = map.value;
+    if (m && onClick) m.un("singleclick", onClick);
+    if (m && onMove) m.un("pointermove", onMove);
+    // The cursor is the map's, not this layer's: whatever set it last has to
+    // give it back, or an edit session inherits a pointer over every feature.
+    if (m) m.getTargetElement().style.cursor = "";
+    onClick = null;
+    onMove = null;
+  }
+
+  function activate(target: Layer) {
+    layer = target;
+    if (selection.selectable.value) bind();
+  }
+
+  function deactivate() {
+    unbind();
+    layer = null;
+  }
+
+  // The layer stays drawn while selection is suspended — only the listeners
+  // go, so the render mode is untouched and the selection is still painted.
+  watch(selection.selectable, (on) => {
+    if (!layer) return;
+    if (on) bind();
+    else unbind();
+  });
+
+  watch(selection.selectedPkeys, (pkeys) => {
+    selected = new Set(pkeys);
+    if (layer) repaint(pkeys);
+  });
+
+  return { isSelected, activate, deactivate };
+}

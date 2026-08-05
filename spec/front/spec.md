@@ -130,8 +130,11 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts` — one function per endpoint, named
-  after the action and not after the HTTP verb, explicit parameters, typed return. URLs built for a
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts` — one function per endpoint **the
+  application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
+  return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
+  contract is described on its own side, and an unreachable function here is code that rots without
+  anyone noticing. Nothing is exported that only its own module uses. URLs built for a
   non-`fetch` use (export, tile template) go through `apiUrl` and are therefore subject to `baseUrl`
   like the rest.
 
@@ -144,9 +147,25 @@ The endpoint contracts (pagination, sorting, filter DSL, formats) are described 
 
 One module per subject, no module state, no side effect:
 
-- `tileGrid.ts` — XYZ grid (`tilesCovering`, `tileKey`) and per-zoom simplification tolerance,
-  aligned on the server formula (`internal/storage/duckdb/data/geo.go`). Any change on one side
-  requires the same on the other.
+- `tileGrid.ts` — the per-zoom simplification tolerance, aligned on the server formula
+  (`internal/storage/duckdb/data/geo.go`), and `xyzGrid`, the 256-pixel XYZ grid both tile
+  endpoints are cut along. Any change to the tolerance on one side requires the same on the other.
+  The grid is the engine's (`createXYZ`) but it is **stated, never defaulted**: a vector-tile source
+  left to itself uses 512-pixel tiles, which asks for a different zoom for the same view than the
+  tolerance above is written against — the two render modes would request different tiles for the
+  same map, and the simplification the server applies would not be the one the zoom means here.
+- `projection.ts` — the boundary between the two coordinate systems the map lives between, and the
+  only place they meet: everything crossing `src/client/` is OGC:CRS84 lon/lat, everything inside
+  the map is Web Mercator. A geometry is read and written through one configured GeoJSON format, a
+  bbox becomes a view extent through `viewExtent`. Nothing else in the app converts between the two
+  — a geometry that reached the REST client still in meters would be written into the table in
+  meters, and nothing on screen would say so. `viewBbox` is the other direction: it cuts the view
+  down to the **projection's own extent**, which the engine knows and this module does not restate,
+  before transforming. It answers null for the two views there is no honest bbox for — one the
+  engine has not measured (a zero-sized container is reported as `[0, 0]`, an array, and truthy, so
+  a caller trusting it queries a bbox that is a point, reads the empty answer as "there is nothing
+  here", and leaves an edit session on a map with no editable geometry at all) and one that meets
+  the world nowhere.
 - `filterTree.ts` — the model of the UI's filter tree (`DraftNode`) and its projection to the server
   DSL (`pruneActive`), which prunes inactive nodes and groups that have become empty (`BuildFilter`
   rejects an empty boolean group — `spec.md` §4.5). **Every** manipulation of that tree (activation,
@@ -166,31 +185,36 @@ One module per subject, no module state, no side effect:
 - `rows.ts` — `cellValue`, the one place a row's primary key is read: it is carried by `Row.pkey`,
   not by a `__pkey` entry, so any column list including it has to go through here.
 - `sort.ts` — projection of TanStack's sorting state onto the API's `sort` parameter.
-- `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text, the bounded
-  excerpt a modal may put in the DOM (the clipboard still carries the whole value), the predicate
-  telling an editable shape from a `GeometryCollection`, which has none.
-- `vertices.ts` — addressing a vertex inside any geometry: a path names the coordinate list (`[]`
-  for a point or a line, `[ring]` for a polygon, `[polygon, ring]` for a multipolygon) and an index
-  names the vertex in it. The three moves the map editor makes on that address — move, insert,
-  remove — plus `draftGeometry`/`draftPositions`, the two directions between the clicks collected
-  while drawing and the geometry they amount to. A ring's repeated last vertex is maintained here
-  and nowhere else, and a removal that would leave a ring under three distinct vertices or a line
-  under two is refused rather than performed.
-- `handles.ts` — the dots the user grabs: one per vertex, one at the middle of every segment
-  (dragging a midpoint is how a vertex is added). They travel as an ordinary GeoJSON source, not as
-  DOM markers — a parcel with three hundred vertices must cost what one with four costs — so the
-  vertex address rides in feature properties as text and is read back by `handleRef`.
-- `snapping.ts` — turf-backed snapping of a placed vertex onto the loaded neighbours: vertices
-  first, then the nearest point on a segment (`nearestPointOnLine`), with a planar pre-filter
-  before each haversine because a drag runs this on every mouse move. The tolerance arrives in
-  meters, converted by the caller from a pixel distance, so it stays the same handful of pixels at
-  every zoom.
-- `topology.ts` — recutting the neighbours after an edit, as set operations rather than vertex
-  bookkeeping: what the reshaped geometry now covers is taken from them (`difference`), what its
-  retreat freed is given back in pieces to whoever they touch (`flatten` + `booleanIntersects` +
-  `union`). Cut first, fill second — the edited shape always wins the area it covers. A neighbour
-  the edit did not reach, or that comes back with no area changed hands (under a square millimeter
-  is the clipper's noise), reports none and is never written. Areal geometries only.
+- `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text and the bounded
+  excerpt a modal may put in the DOM (the clipboard still carries the whole value).
+- `holes.ts` — `punchHole`, adding a drawn ring to the polygon that contains it as an interior ring.
+  A hole is not a set operation and not a feature of its own: it is part of its polygon, every vertex
+  of it stays editable, and it is undone the way it was made. Containment is tested on **every**
+  vertex of the ring, not just the first: a ring half outside the polygon, or drawn inside a hole it
+  already has, would otherwise be appended anyway and written back as an invalid polygon with
+  nothing on screen saying so. Answers nothing when the ring has no polygon to belong to, which is
+  what the caller turns into a message. `isAreal` is what tells the edit bar the hole tool applies
+  to the layer at all.
+- `editPrompts.ts` — the sentences the map's edit bar states (`editingPrompt`) and the summary a
+  save toasts (`summarizeWrites`). The order is the contract: a load in flight first, then a row
+  waiting for its geometry — the one thing that is lost if the user walks away — then the session's
+  cap, then the general instruction.
+- `mapStyles.ts` / `drawStyles.ts` — the colours a table is read in and those an edit session is
+  drawn in. For the canvas layer one style carries fill, stroke and image at once, so a column
+  mixing geometry types needs one style and not one layer per type; the GPU layer cannot run a style
+  function per feature, so its selection is compiled into the style instead (`wfsFlatStyle`). The two
+  render modes are deliberately different colours so it is always readable which one is on. An edit
+  session draws **three** states and owns a palette none of the render modes uses, since it is drawn
+  above one of them: cyan for what is editable and untouched, amber for a row whose geometry moved —
+  the colour a pending write carries everywhere, free here because selection is suspended for the
+  length of a session — and violet for a shape that belongs to no row yet. The last two are also
+  drawn with a heavier stroke, so the distinction survives a colour-blind reading (§8.7), and
+  `EDIT_LEGEND` is what names them in the bar. `PKEY_PROPERTY`/`DIRTY_PROPERTY` live here, next to
+  the style that reads them on every frame, as do the two rules that keep a session's rendering
+  cheap: every state's style is built once and handed back as it is, never rebuilt per feature per
+  frame; and `verticesOf` caches a geometry's vertices against its own revision, so a dragged shape
+  recomputes them and a still one does not. `editStyle` draws a geometry, `focusStyle` draws the
+  dots of the one under the pointer, and they are two layers for a reason (§8.8).
 - `sourceRows.ts` — the `SourceRow` view model of the sources tree (`toSourceRows`: a multi-layer
   file becomes a parent row over its layers, a single-layer one stays flat) and `formatSize`. The
   shape the cells read is defined once here, not rebuilt in the view and in each cell.
@@ -200,8 +224,8 @@ One module per subject, no module state, no side effect:
 ## 4. Composables (`src/composables/`)
 
 **Contract.** A composable exposes read-only `ref`/`computed` and action functions; it registers the
-cleanup it needs itself (`onUnmounted`, `AbortController`, `IntersectionObserver`, MapLibre
-instance). It renders nothing, styles nothing, and knows of a component only the parameters it is
+cleanup it needs itself (`onUnmounted`, `AbortController`, `IntersectionObserver`, a map layer or
+interaction). It renders nothing, styles nothing, and knows of a component only the parameters it is
 given. A composable whose state must be shared by the whole application (toast queue) declares it at
 module level and documents it; that is the exception, not the rule.
 
@@ -210,21 +234,23 @@ module level and documents it; that is the exception, not the rule.
 | Composable | Subject | Today |
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
-| `useTiledFeatures` | GeoJSON loading split over the tile grid, reusing already seen tiles | present |
-| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel | present |
+| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner | absent — inline in `App.vue` |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
 | `useTableRows` | a table's rows: current page, sorting, editing, insertion, deletion — built on `usePaginatedList` | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
 | `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref | present |
-| `useMapLibre` | map lifecycle: creation, basemap, controls, `fitBounds`, destruction | present |
-| `useMapDraw` | the edit session: the shape being drawn (point, line, polygon) or the geometry being corrected, the clicks collected, the vertex moves applied through `vertices.ts`, the snapping toggle and its pixel tolerance measured on the map itself, the neighbours it snaps to, teardown. No dependency beyond MapLibre for the pointer and turf for the geometry | present |
-| `useDrawLayers` | the three GeoJSON sources an edit session draws — the neighbours as outlines, the shape, the handles — and their layers. Writes only: it pushes what the editor holds and reads nothing back | present |
-| `useVertexDrag` | the pointer half of the editor: grabbing a handle (hit-tested on the handle layer, not on DOM markers), dragging it, dropping it, right-clicking a vertex away, and the cursor. It decides nothing about the geometry — it reports the address it grabbed and where the pointer is | present |
-| `useGeometryEditing` | entering a geometry: the two flows (a new row's attributes then its shape, an existing row's shape corrected), the neighbours loaded around the edited shape, the topological mode and the recut it drives through `topology.ts`, the writes | present |
+| `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
+| `useMapDraw` | the edit session's lifecycle: the layer it works on, the one `Modify` over it, the contextmenu the right-click delete has to suppress, `commit` (what the session would write), teardown | present |
+| `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
+| `useEditLayer` | the one source an edit session works on, holding every feature of the layer in view, plus the second layer that draws the hovered geometry's vertices alone. One source is what makes editing topological — a vertex two geometries share is dragged in both at once. Owns what the session has touched (`changedCount`/`createdCount`, split the way the write is), whether anything on it can hold a hole at all (`hasAreal`), which single feature the pointer rests over (`trackPointer`/`blur` — at once the `solo` collection a non-topological `Modify` follows and the sole content of the second, vertex-drawing layer it owns), and answers it all as writes: the rows whose geometry moved, and the shapes that belong to no row yet | present |
+| `useHoleTool` | drawing an interior ring and handing it to whichever polygon contains it (`utils/holes.ts`), rather than to a source: a hole is part of its polygon and is undone by editing its vertices, not by an opposite tool. A ring that belongs to no polygon is refused out loud | present |
+| `useEditFeatures` | what a session carries on the map: the rows of the views it has visited, at full resolution, under one cap counted over the **whole session** and not per request. Holds the pkeys already loaded, so a row is never counted twice and the server's copy never comes back over a geometry the user moved, and versions its requests so a pan that outruns its own load is not undone by the slower answer | present |
+| `useLayerEditing` | the mode itself: what it is waiting for (the prompt, the row whose geometry is still to be drawn) and what leaving it writes — one update request for what moved, one insert for what was drawn | present |
+| `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners are bound only while the selection is `selectable`, which an edit session turns off — the layer stays drawn and the selection stays painted, only the clicking stops | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
-| `useMvtLayer` / `useWfsLayer` | sources and layers of a render mode (`activate`/`deactivate`), symmetric add/remove, listeners; both wire the same selection (click to toggle, pointer cursor, selected features highlighted) through the `FeatureSelection` pair the caller hands them, and both refetch on a bump of the data version the caller passes | present |
+| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection` and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds. WFS is a vector source loading over the XYZ grid the tile endpoint is cut along, the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
@@ -240,15 +266,17 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 
 | Primitive | Role |
 |---|---|
+| `Spinner` | the busy indicator, wherever something is in flight and the content around it stays on screen — a `Skeleton` is for a first load, this is for a refresh happening next to what it refreshes |
+| `ButtonGroup` | a row of buttons welded into one control (daisyUI `join`). Each child carries `BaseButton`'s `joined` prop: daisyUI needs the modifier on the items, and a wrapper cannot put it there without reaching into the slot |
+| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`), the edit bar along the bottom (`bottom`). The caller says where, never how |
 | `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
 | `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>` |
 | `BaseAutocomplete` | free-text field that suggests without constraining: the caller loads `options` in reaction to the `search` event (on focus and on every keystroke), keyboard navigation (↑/↓/Entrée/Échap), selection on `mousedown` so `blur` never wins the race. The list is absolutely positioned, so it never lengthens what contains it; a container that scrolls its own content has to let it spill over (`Modal`'s `overflowVisible`) |
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
-| `Drawer` | daisyUI `drawer`/`drawer-side` (`drawer-end` for the right edge) as a closeable side panel — `v-model`, wrapping the whole content region in its default slot (a `panel` slot holds the side panel's content), exactly as `App.vue`'s own nav drawer wraps the page. It is **not** shrink-wrapped around just a trigger button: `.drawer` is sized/laid out as the region it wraps (`display: grid`), so a caller keeps its own trigger as ordinary markup inside that default slot, wired to the same `v-model`. No feature uses it today — filtering, its former caller, moved to a modal — it stays as the primitive any future side panel builds on |
 | `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size` and `icon` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
-| `Badge` | status pill, **semantic** tones (neutral, success, warning, error) — never colour names |
+| `Badge` | status pill, **semantic** tones (neutral, primary, success, warning, error) — never colour names. `warning` is the amber a pending write is shown in everywhere, including the edit bar's count of touched geometries |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
@@ -313,7 +341,7 @@ single, link-less entry naming the page.
   toolbar and opening the editor put a modal behind a still-open menu. It is anchored to its
   button's **left** edge: the toolbar starts at the left of the panel, so a right-aligned menu
   (`dropdown-end`) ran off-screen and clipped every entry.
-- `TableMapPanel` — map (loaded via `defineAsyncComponent`: MapLibre is the bundle's largest
+- `TableMapPanel` — map (loaded via `defineAsyncComponent`: OpenLayers is the bundle’s largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
 - `TableRowsPanel` (`components/tables/`) — row grid: the edit-mode toggle button, the pinned
@@ -365,7 +393,7 @@ The title shown by the banner comes from `route.meta.title`, whose type is decla
   `shrink-0` of height-constrained panels.
 - **Neutral, sober palette**, high density, no ornament: this is an admin console. Semantic colours
   go through the primitives' tones, never through a colour hardcoded in a view.
-- The map is the only place where colours are hardcoded: those are MapLibre paint values, not CSS
+- The map is the only place where colours are hardcoded: those are map style values, not CSS
   classes; they live in the layer definitions.
 
 ---
@@ -487,30 +515,108 @@ This is the product's main screen; it follows fixed rules.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with
   an obvious way to deselect everything.
 - Basemap attribution displayed, navigation controls present.
-- **Entering a geometry is a mode, and it is explicit.** Drawing and reshaping are the map's own:
-  MapLibre carries the pointer and the rendering, turf carries the geometry, and there is no
-  drawing library between the two. The mode is on only while a geometry is actually being entered;
-  the map takes the whole
-  width for as long as it lasts, a bar states what is expected, and nothing is written until
-  *Enregistrer* is clicked — a drag is not a submission. Adding a row on a geo table is two steps
-  (attributes, then shape) posted as one write, so a row never lands without its geometry. What is
-  drawn again after the write is what the server answers, never the local draft.
-- **One gesture per operation, the desktop-GIS ones.** A click places a vertex, dragging a vertex
-  moves it, dragging the midpoint of a segment creates a vertex there, a right-click on a vertex
-  removes it, and *Annuler le point* takes back the last click. The shape a creation draws (point,
-  line, polygon) is picked in the bar; a correction keeps the type the row already carries.
-- **Snapping is a toggle, not a setting**: it is what makes two features share an exact boundary,
-  and what gets in the way when they must not. Its tolerance is a screen distance, so it means the
-  same thing at every zoom, and it pulls onto a neighbour's vertex before a neighbour's segment.
-- **Topology is a toggle too, and it is set operations, never vertex guessing.** Opening an edit
-  session loads the rows within a buffer of the edited shape (server-side `ST_Intersects` on
-  `ST_Buffer`, not a bounding box): that is what snapping snaps to, what is drawn as outlines, and
-  what the recut applies to. With the mode on — on by default, off for shapes that merely touch —
-  saving takes from each neighbour the area the reshaped geometry now covers and gives back the
-  freed pieces that touch it, through turf's `difference` / `union`. The edited geometry itself is
-  never corrected: it is written exactly as drawn. The edited row and every recut neighbour go in
-  one request, so a limit is never left moved on one side only.
-- **A write invalidates what the map shows.** MapLibre keeps its own copy of a tile per URL, so the
+- **A table is edited in two halves, and never in both at once.** The attributes are edited in the
+  grid, the geometries on the map, and each is armed by its own button in the panel's action bar:
+  *Éditer la table* and *Éditer la géométrie*. A table without geometry has only the first, and its
+  button says just *Mode édition* — there is no second half to distinguish it from. Arming one
+  disarms the other, so there is only ever one thing the screen is waiting for.
+- **One door per mode.** *Éditer la géométrie* is the only way into the map's edit mode: a row's
+  actions offer reading its geometry, never editing it. A second entry point onto the same mode is a
+  second thing to explain and a second place to keep true, and it would suggest the mode is about
+  that one row when it is about the whole layer.
+- **Editing the geometries is a mode of the layer, not of a row.** Entering it loads every row of
+  the current view, at full resolution, into one editable layer — and every one of them is editable
+  at once. That is the whole point: two polygons of a coverage that share a limit hold the same
+  coordinates, so dragging that limit drags both sides in the same gesture. The topology is held by
+  construction, not rebuilt afterwards from set operations, and it works the same for a road network
+  as for a parcel plan. Panning loads what the view has gained without touching what is already
+  there: a geometry the user moved is never overwritten by the server's copy of it.
+- **The table stays drawn under an edit session.** The rendering the user was reading (MVT or WFS)
+  is left on and the editable layer is drawn above it, so entering the mode never blanks the map
+  while the editable copies are being fetched, and the layer is still legible where the session
+  holds nothing. A row being reshaped shows its stored geometry underneath until the session is
+  saved. The render-mode toggle stays available, since the layer it acts on is still there.
+  **Selecting is not**: the click that places a vertex must not also toggle a row, and a hover cursor
+  must not fight the one the reshaping sets, so the render mode's selection listeners are suspended
+  for the length of the session. The layout is frozen on the map too — the map holds the session's
+  unsaved work, and a panel toggle that unmounted it would drop that work without a word. The way out
+  is *Enregistrer* or *Annuler*.
+- **The session asks for what is in view, whenever the view changes.** Entering the mode, panning
+  and zooming all ask; so does the map growing to the full width, which is a resize and not a
+  move. A view not yet measured — including one the engine measured at zero, which it reports as a
+  size rather than as nothing — has no extent to ask about and asks again on the next animation
+  frame, never on the next render: a map with no area draws nothing, so there is no next render to
+  wait for. A load that never answers is dropped after a fixed delay and stated as a failure; the
+  bar never keeps saying it is loading once nothing is.
+- **Creating and modifying are two intentions, and the bar says so.** The session's toolbar
+  (`components/map/MapEditBar.vue`, overlaid on the map) groups *Polygone / Ligne / Point* under
+  **Créer** — each adds a row that does not exist yet — and *Trou / Annuler le point* under
+  **Modifier**, which act on a shape already there. Undifferentiated, *Trou* read as a fourth shape
+  to draw rather than as a cut into an existing polygon.
+- **One gesture per operation, the desktop-GIS ones.** Dragging a vertex moves it, dragging anywhere
+  on a segment creates a vertex there, a right-click on a vertex removes it. A shape is added by
+  arming one of *Polygone* / *Ligne* / *Point* in the bar, clicking its vertices and closing it with
+  a double-click; *Trou* draws a ring that becomes an interior ring of whichever polygon contains it,
+  after which its vertices are dragged like any other. *Annuler le point* takes back the last click
+  of whichever of the two is being drawn.
+- **Vertices are drawn where they can be grabbed, not everywhere.** The dots exist to say a limit is
+  grabbable, and only the geometry the pointer rests over can be grabbed now — so it is the only one
+  that shows them, in its own state's colour. Every vertex of a whole view's worth of geometry meant
+  thousands of points rebuilt on every frame of every pan and every drag, which is what made the
+  mode feel heavy; the affordance is the same and the map answers the mouse. They are drawn on a
+  layer of their own, carrying that one feature — the feature itself, not a copy, so a drag takes
+  its dots with it — because painting them from the edit layer's style would repaint every geometry
+  in view each time the pointer crossed a new one. What is under the pointer is hit-tested at most
+  once per frame, on the last pixel seen, and never mid-drag: the interaction has already chosen its
+  feature by then, and a pointer that left the map is over nothing.
+- **What has moved is visible before it is sent, and so is what it will become.** A row whose
+  geometry moved is drawn in the amber a pending write is shown in everywhere else; a shape drawn in
+  the session is violet, because it belongs to no row yet and saving it is an insert, not an update.
+  The bar states the two counts separately for the same reason — they are the two requests a save
+  makes, and they fail differently — each taken from what actually changed, not from what was
+  loaded, and a legend names the three states so none of it rests on colour alone (§8.7). Nothing is
+  written until *Enregistrer* is clicked: a drag is not a submission, and *Annuler* drops the whole
+  session. What is drawn again after the write is what the server answers, never the local state.
+- **What is edited is never what is rendered.** A vector tile's geometry is simplified for its zoom
+  and clipped at its borders. The engine can rebuild it into an editable feature, and saving that
+  would quietly write a degraded shape back over a correct one — so it never does: a session loads
+  its rows from the OGC Features endpoint, at full resolution, and no coordinate that gets written
+  ever came off a tile.
+- **A session is bounded, and says so when it is.** The bound is on the **session**, not on one
+  request: panning along a boundary is the gesture the mode exists for, so a cap counted per view
+  would let a dozen pans pile up a dozen capfuls. Past that number the map carries what fits and the
+  bar states that the rest is not editable, rather than freezing the browser on a whole region no one
+  is about to reshape by hand (§8.6 — a silent partial result is a lie). Once said, it stays said for
+  the session: a warning that came and went as the user panned would read as a glitch rather than as
+  the statement it is.
+- **A tool that cannot apply says so; a gesture that answered nothing is a defect.** *Trou* is
+  disabled, with the reason in its `title`, on a view holding no polygon to cut, and a ring drawn
+  where no polygon contains it is refused out loud rather than dropped. *Annuler le point* is
+  disabled when no shape is being drawn. The work a user did with the mouse never disappears in
+  silence (§8.2).
+- **Two toggles, because they answer two questions.** *Aimantation* is about **placing**: a vertex
+  put down within tolerance of a neighbour is pulled exactly onto it. Its tolerance is a screen
+  distance, so it means the same thing at every zoom, and it pulls onto a vertex before a segment.
+  *Topologie* is about **moving**: whether a coordinate two geometries already hold is one vertex or
+  two. Snapping is how a boundary becomes shared; topology is what happens to it afterwards, and
+  wanting to snap a new shape onto its neighbours without dragging those neighbours around is an
+  ordinary thing to want.
+- **Topology is expressed as what the `Modify` may touch, never as a coordinate comparison.** On, it
+  works over the layer's whole source, so two geometries holding the same coordinate hold the same
+  vertex and one drag moves both sides of a limit. Off, it works over a one-feature `Collection`
+  kept on whatever the pointer rests over, so the neighbour is not in the interaction at all and its
+  copy of the vertex stays put; the switch rebuilds the interaction. It is **not** done with
+  `sharedVerticesEqual`: that comparison is also what tells `Modify` the pointer is on a vertex
+  rather than on a segment, so defeating it makes every press insert a new vertex beside the old one
+  instead of moving it — the shared node looks duplicated and nothing moves.
+- **A save is one write per kind.** Every moved geometry goes in a single update request, so a limit
+  two rows share is never left moved on one side only; the shapes drawn that belong to no row yet go
+  in a single insert. Adding a row on a geo table is still two steps — the attributes are collected
+  in the grid, and the first shape drawn in the session that follows takes them — so a row never
+  lands without its geometry. That session says what it is waiting for while the shape is missing,
+  refuses to save until it is drawn, and states that the row was not created if the session is
+  cancelled instead: attributes the user typed never disappear without a word (§8.3).
+- **A write invalidates what the map shows.** A tile is cached by URL, so the
   panel bumps a data version after every row write and the layers ask again — an edited geometry is
   visible immediately, not at the next zoom.
 
@@ -528,7 +634,7 @@ This is the product's main screen; it follows fixed rules.
 
 - Display target: workstation, width ≥ 1280 px. No mobile layout, but nothing must break or overlap
   down to 1024 px.
-- Heavy dependencies are loaded on demand (MapLibre as an async component), never in the initial
+- Heavy dependencies are loaded on demand (the map as an async component), never in the initial
   bundle.
 - Inputs that trigger a network call are debounced; a stale response never overwrites a more recent
   one (§9).
@@ -544,13 +650,19 @@ This is the product's main screen; it follows fixed rules.
   up in the component mounted once in `App.vue`.
 - **Reaction to route parameters.** A parameterized view (`:tableId`) is reused by `vue-router` when
   only the parameter changes: any initial load is done by a `watch` on the parameter with
-  `{ immediate: true }`, never by `onMounted` alone.
+  `{ immediate: true }`, never by `onMounted` alone. A shared list primitive takes the parameter as
+  its `key` rather than hiding the load in its own `onMounted`, so it is the primitive that reloads
+  and not each caller that remembers to.
+- **State scoped to the parameter is dropped with it.** A pkey, a filter, an open edit session and a
+  visible-column choice all mean something inside one table and nothing in the next: each is reset by
+  a `watch` on the parameter, in the composable that owns it. A load that reacts while the state
+  around it does not is the same bug, one screen further on.
 - **The URL carries the screen state.** Search, sort and active filter live in the query string: a
   screen is shared by copy-paste, a browser refresh loses nothing, and the Back/Forward buttons do
   what is expected. What is ephemeral (open modal, edit mode) stays out of the URL.
 - **Page title.** `document.title` follows the route and names the object being viewed, not just its
   category.
-- **Symmetry of effects.** Every `addEventListener`, `IntersectionObserver`, `setInterval`, MapLibre
+- **Symmetry of effects.** Every `addEventListener`, `IntersectionObserver`, `setInterval`, map
   source or layer added is removed by the same composable that created it.
 - **Concurrent requests.** A load triggered by an input or a map move is either debounced or
   versioned (request token): a stale response must never overwrite a more recent one.

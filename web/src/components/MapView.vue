@@ -1,56 +1,50 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from "vue";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { computed, onUnmounted, ref, toRef, watch } from "vue";
+import "ol/ol.css";
 import type { FilterCondition } from "../client/types";
-import { useMapDraw, type ReferenceFeature } from "../composables/useMapDraw";
-import { useMapLibre } from "../composables/useMapLibre";
+import { useMapDraw, type DrawShape } from "../composables/useMapDraw";
+import type { EditableFeature, LayerChanges } from "../composables/useEditLayer";
+import { useOpenLayers } from "../composables/useOpenLayers";
 import { useMvtLayer } from "../composables/useMvtLayer";
 import { useWfsLayer } from "../composables/useWfsLayer";
-import { isEditableGeometry } from "../utils/geometry";
-import type { DrawShape } from "../utils/vertices";
-import { Magnet, MapPin, Pentagon, Spline, Undo2, Waypoints } from "@lucide/vue";
-import BaseButton from "./ui/BaseButton.vue";
+import { viewBbox } from "../utils/projection";
+import MapEditBar from "./map/MapEditBar.vue";
 import BaseCheckbox from "./ui/BaseCheckbox.vue";
-import Typography from "./ui/Typography.vue";
+import FloatingPanel from "./ui/FloatingPanel.vue";
 
 const props = defineProps<{
   tableId: string;
   bbox?: string;
   conditions: FilterCondition[];
   selectedPkeys: string[];
-  // Drawing is on only while the parent is actually entering a geometry:
-  // outside that, the map stays a reading surface.
-  drawing?: boolean;
-  drawingPrompt?: string;
-  initialGeometry?: GeoJSON.Geometry | null;
-  // The neighbours the editor snaps to and draws as outlines, and that the
-  // parent recuts when the topological mode is on.
-  neighbours?: ReferenceFeature[];
-  // Whether the edit is carried into the neighbours sharing a boundary.
-  // Only meaningful while an existing geometry is reshaped, so the toggle
-  // only shows there.
-  topology?: boolean;
+  // Editing is a mode of the whole layer, on only while the parent says so:
+  // outside it the map stays a reading surface.
+  editing?: boolean;
+  editingPrompt?: string;
+  // The rows of the current view at full resolution, loaded by the parent in
+  // answer to `request-features`. What is already on the layer is left alone,
+  // so a geometry the user moved is never overwritten by a pan.
+  features?: EditableFeature[];
+  loadingFeatures?: boolean;
   saving?: boolean;
-  // Bumped by the parent after every write: MapLibre keeps its own copy of
-  // a tile per URL, so a rendering only shows an edited geometry once the
-  // layers are told to ask again.
+  // Bumped by the parent after every write: a tile is cached by URL, so a
+  // rendering only shows an edited geometry once the layers are told to ask
+  // again.
   dataVersion?: number;
 }>();
 
 // Whoever owns selection (useFeatureSelection, in the parent) applies the
-// toggle — this component only reports the click, it never mutates
-// selection state itself. The drawn geometry leaves the same way: the
-// parent decides what it means and writes it.
+// toggle — this component only reports the click. The session's changes
+// leave the same way: the parent decides what they mean and writes them.
 const emit = defineEmits<{
   toggleSelection: [pkey: string];
-  save: [geometry: GeoJSON.Geometry];
+  requestFeatures: [bbox: [number, number, number, number]];
+  save: [changes: LayerChanges];
   cancel: [];
-  "update:topology": [value: boolean];
 }>();
 
-// MVT and WFS are two independent rendering modes for the same table/
-// filter, toggled manually by the user — not tied to whether a filter is
-// active.
+// MVT and WFS are two independent rendering modes for the same table/filter,
+// toggled manually by the user — not tied to whether a filter is active.
 const wfsEnabled = ref(false);
 
 const container = ref<HTMLDivElement | null>(null);
@@ -60,145 +54,152 @@ const conditions = computed(() => props.conditions);
 const selectedPkeys = computed(() => props.selectedPkeys);
 const dataVersion = computed(() => props.dataVersion ?? 0);
 
-const { map } = useMapLibre(container, bbox, () => {
-  if (wfsEnabled.value) {
-    wfs.activate();
-  } else {
-    mvt.activate();
-  }
-  if (props.drawing) startDrawing();
+const { map } = useOpenLayers(container, bbox, () => {
+  showTable();
+  if (props.editing) startEditing();
 });
 
-const selection = { selectedPkeys, toggle: (pkey: string) => emit("toggleSelection", pkey) };
+// Selection is suspended for the whole of an edit session: the click that
+// places a vertex must not also toggle a row, and the hover cursor must not
+// fight the one Modify sets. The layers stay drawn — only the listeners go.
+const selection = {
+  selectedPkeys,
+  toggle: (pkey: string) => emit("toggleSelection", pkey),
+  selectable: computed(() => !props.editing),
+};
 const mvt = useMvtLayer(map, tableId, bbox, conditions, selection, dataVersion);
 const wfs = useWfsLayer(map, tableId, conditions, selection, dataVersion);
 const draw = useMapDraw(map);
 
-// MVT and WFS are mutually exclusive on the map — switching modes tears
-// down the previous mode's source/layers entirely rather than layering
-// both, so there is only ever one rendering of the table at a time.
-watch(wfsEnabled, (enabled) => {
+// MVT and WFS are mutually exclusive on the map — switching modes tears down
+// the previous mode's layer entirely rather than stacking both, so there is
+// only ever one rendering of the table at a time.
+function showTable() {
   if (!map.value) return;
-  if (enabled) {
+  if (wfsEnabled.value) {
     mvt.deactivate();
     wfs.activate();
   } else {
     wfs.deactivate();
     mvt.activate();
   }
-});
-
-function startDrawing() {
-  const geometry = props.initialGeometry ?? null;
-  draw.activate(isEditableGeometry(geometry) ? geometry : null);
-  draw.setReference(props.neighbours ?? []);
 }
 
-// The neighbours land after the session opens (they are loaded from the
-// server once the edited geometry is known), so they are pushed in as they
-// arrive rather than only at activation.
+watch(wfsEnabled, showTable);
+
+// The table's own rendering stays on under an edit session: it is what shows
+// the layer while the editable copies are being fetched, so entering the mode
+// never leaves the map blank. The edit layer draws above it (see
+// useEditLayer), and a row being reshaped shows its stored geometry
+// underneath until the session is saved.
+
+// The session works on what is in view, so what is in view has to be asked
+// for: on entering, and on every pan or zoom that reveals more.
+// A view that has not been measured yet has no extent to ask about — the
+// panel is still being laid out when the mode is entered, and the map then
+// reports a zero-sized viewport. Retrying on the next frame is what keeps
+// the session from starting empty and staying that way; it cannot be hung on
+// `postrender`, because a map with no area draws nothing and so never renders
+// another frame to hang on.
+let retry = 0;
+
+function cancelRetry() {
+  if (retry) cancelAnimationFrame(retry);
+  retry = 0;
+}
+
+function requestFeatures() {
+  const m = map.value;
+  if (!m) return;
+  cancelRetry();
+  const extent = viewBbox(m);
+  if (extent) emit("requestFeatures", extent);
+  else retry = requestAnimationFrame(requestFeatures);
+}
+
+function startEditing() {
+  draw.activate();
+  requestFeatures();
+  map.value?.on("moveend", requestFeatures);
+  // Entering the mode gives the map the whole width: the view grows without
+  // moving, which is a resize and not a pan, so moveend alone would miss
+  // everything the widening revealed — and it is the event that arrives once
+  // a viewport that was not measurable finally has an area.
+  map.value?.on("change:size", requestFeatures);
+}
+
+function stopEditing() {
+  cancelRetry();
+  map.value?.un("moveend", requestFeatures);
+  map.value?.un("change:size", requestFeatures);
+  draw.deactivate();
+  showTable();
+}
+
+onUnmounted(cancelRetry);
+
 watch(
-  () => props.neighbours,
+  () => props.features,
   (features) => {
-    if (props.drawing) draw.setReference(features ?? []);
+    if (props.editing) draw.load(features ?? []);
   },
 );
 
 watch(
-  () => props.drawing,
-  (drawing) => {
-    if (drawing) {
-      startDrawing();
-    } else {
-      draw.deactivate();
-    }
+  () => props.editing,
+  (editing) => {
+    if (editing) startEditing();
+    else stopEditing();
   },
 );
 
 function onSave() {
-  const geometry = draw.pendingGeometry.value;
-  if (geometry) emit("save", geometry);
+  emit("save", draw.commit());
 }
 
-// The shape picker is a creation affordance: correcting an existing
-// geometry keeps whatever type the row already carries.
-const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = [
-  { value: "Polygon", label: "Polygone", icon: Pentagon },
-  { value: "LineString", label: "Ligne", icon: Spline },
-  { value: "Point", label: "Point", icon: MapPin },
-];
+// Picking a shape arms the drawing; picking the same one again disarms it and
+// the map goes back to reshaping, which is what a session spends most of its
+// time doing.
+function pick(value: DrawShape) {
+  draw.setShape(draw.shape.value === value ? null : value);
+}
 </script>
 
 <template>
   <div class="relative h-full w-full">
-    <label class="card absolute top-2 left-2 z-10 flex flex-row items-center gap-1.5 bg-base-100 px-2.5 py-1.5 text-xs font-medium shadow">
-      <BaseCheckbox v-model="wfsEnabled" />
-      Rendu WFS
-    </label>
+    <!-- The render mode is a reading choice, and the table is still drawn
+         under an edit session — so the toggle keeps acting on something. -->
+    <FloatingPanel position="top-left">
+      <label class="flex flex-row items-center gap-1.5 text-xs font-medium">
+        <BaseCheckbox v-model="wfsEnabled" />
+        Rendu WFS
+      </label>
+    </FloatingPanel>
 
-    <!-- The drawing bar sits over the map, always visible while a geometry
-         is being entered: a drag is not a submission, saving is a click. -->
-    <div
-      v-if="drawing"
-      class="card absolute inset-x-2 bottom-2 z-10 flex flex-row items-center justify-between gap-3 bg-base-100 px-3 py-2 shadow"
-    >
-      <Typography variant="body-sm">{{ drawingPrompt }}</Typography>
-      <div class="flex items-center gap-2">
-        <BaseButton
-          v-for="s in initialGeometry ? [] : shapes"
-          :key="s.value"
-          size="sm"
-          :variant="draw.shape.value === s.value ? 'primary' : 'secondary'"
-          :icon="s.icon"
-          :aria-pressed="draw.shape.value === s.value"
-          @click="draw.setShape(s.value)"
-        >
-          {{ s.label }}
-        </BaseButton>
-        <BaseButton
-          v-if="!initialGeometry"
-          size="sm"
-          variant="secondary"
-          :icon="Undo2"
-          title="Retirer le dernier point posé"
-          @click="draw.undo"
-        >
-          Annuler le point
-        </BaseButton>
-        <BaseButton
-          size="sm"
-          :variant="draw.snapping.value ? 'primary' : 'secondary'"
-          :icon="Magnet"
-          :aria-pressed="draw.snapping.value"
-          title="Aimanter les sommets aux géométries voisines"
-          @click="draw.toggleSnapping"
-        >
-          Aimantation
-        </BaseButton>
-        <BaseButton
-          v-if="initialGeometry"
-          size="sm"
-          :variant="topology ? 'primary' : 'secondary'"
-          :icon="Waypoints"
-          :aria-pressed="topology"
-          title="Recouper les voisins pour qu'ils suivent la limite modifiée"
-          @click="emit('update:topology', !topology)"
-        >
-          Topologie
-        </BaseButton>
-        <BaseButton variant="secondary" size="sm" @click="emit('cancel')">Annuler</BaseButton>
-        <BaseButton
-          variant="primary"
-          size="sm"
-          :busy="saving"
-          :disabled="saving || draw.pendingGeometry.value === null"
-          :title="draw.pendingGeometry.value === null ? 'Dessinez d’abord une géométrie' : undefined"
-          @click="onSave"
-        >
-          {{ saving ? "Enregistrement…" : "Enregistrer" }}
-        </BaseButton>
-      </div>
-    </div>
+    <!-- The editing bar sits over the map for as long as the mode lasts: a
+         drag is not a submission, saving is a click. -->
+    <FloatingPanel v-if="editing" position="bottom">
+      <MapEditBar
+        :prompt="editingPrompt"
+        :loading-features="loadingFeatures"
+        :saving="saving"
+        :shape="draw.shape.value"
+        :snapping="draw.snapping.value"
+        :topological="draw.topological.value"
+        :cutting-hole="draw.cuttingHole.value"
+        :drawing="draw.drawing.value"
+        :has-areal="draw.hasAreal.value"
+        :changed-count="draw.changedCount.value"
+        :created-count="draw.createdCount.value"
+        @pick="pick"
+        @toggle-hole="draw.toggleHole"
+        @toggle-snapping="draw.toggleSnapping"
+        @toggle-topology="draw.toggleTopology"
+        @undo="draw.undo"
+        @save="onSave"
+        @cancel="emit('cancel')"
+      />
+    </FloatingPanel>
 
     <div ref="container" class="h-full w-full rounded-lg" />
   </div>

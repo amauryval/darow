@@ -11,7 +11,7 @@ export interface Metadata {
   srid: number;
 }
 
-export interface SourceLayer {
+interface SourceLayer {
   name: string;
   loaded: boolean;
   tableId?: string;

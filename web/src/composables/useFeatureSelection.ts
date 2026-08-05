@@ -6,7 +6,7 @@ import { useToast } from "./useToast";
 
 // Feature selection (pkeys) and batch hydration of the matching rows. Owns
 // selectedPkeys as the single source of truth — a map composable (e.g.
-// useMvtLayer) reflects it onto MapLibre feature-state by watching it, and
+// useMvtLayer) reflects it onto the map's styling by watching it, and
 // calls toggle() on click, instead of the map and the row list negotiating
 // selection through a component ref and an emit.
 export function useFeatureSelection(tableId: Ref<string>) {
@@ -51,6 +51,14 @@ export function useFeatureSelection(tableId: Ref<string>) {
   }
 
   watch(selectedPkeys, refreshSelectedRows, { immediate: true });
+
+  // A pkey only means something inside its own table: carried over to
+  // another one it would be hydrated against rows that do not exist, and
+  // highlight nothing on the map (§9).
+  watch(tableId, () => {
+    selectedRowCache.clear();
+    clear();
+  });
 
   return { selectedPkeys, selectedRows, toggle, deselect, clear };
 }

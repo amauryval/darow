@@ -24,6 +24,7 @@ export function useTableRows(
 
   const list = usePaginatedList<Row>({
     limit: pageSize,
+    key: tableId,
     fetchPage: (offset, limit, sort) =>
       listRows(tableId.value, offset, limit, sort).then((page) => ({ items: page.rows, total: page.total })),
     describeError: (e) => errorMessage(e, "Impossible de charger les lignes"),

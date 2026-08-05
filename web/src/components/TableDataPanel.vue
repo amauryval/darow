@@ -2,20 +2,21 @@
 import { computed, defineAsyncComponent, ref, toRef, watch } from "vue";
 import type { ColumnSchema, Row } from "../client/types";
 import { useFeatureSelection } from "../composables/useFeatureSelection";
-import { useGeometryEditing } from "../composables/useGeometryEditing";
+import { useLayerEditing } from "../composables/useLayerEditing";
 import { useRowFilter } from "../composables/useRowFilter";
 import { useRowGeometry } from "../composables/useRowGeometry";
 import { useTableRows } from "../composables/useTableRows";
-import { LayoutPanelLeft, Map as MapIcon, Table2 } from "@lucide/vue";
+import { LayoutPanelLeft, Map as MapIcon, PencilLine, Spline, Table2 } from "@lucide/vue";
 import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
 import TableFilterBar from "./filters/TableFilterBar.vue";
 import AddRowModal from "./AddRowModal.vue";
 import GeometryModal from "./tables/GeometryModal.vue";
 import TableRowsPanel from "./tables/TableRowsPanel.vue";
 import BaseButton from "./ui/BaseButton.vue";
+import ButtonGroup from "./ui/ButtonGroup.vue";
 
-// MapLibre GL is the largest dependency in the bundle — load it only when
-// a geo table's data panel is actually rendered.
+// OpenLayers is the largest dependency in the bundle — load it only when a
+// geo table's data panel is actually rendered.
 const MapView = defineAsyncComponent(() => import("./MapView.vue"));
 
 const props = defineProps<{
@@ -36,9 +37,9 @@ const columns = toRef(props, "columns");
 const isGeo = toRef(props, "isGeo");
 const geometryColumn = toRef(props, "geometryColumn");
 
-// Every write bumps this: the map renders from tiles MapLibre caches by
-// URL, so an edited geometry only appears once the layers are told the data
-// changed (they would otherwise wait for the next zoom to refetch).
+// Every write bumps this: the map renders from tiles cached by URL, so an
+// edited geometry only appears once the layers are told the data changed
+// (they would otherwise wait for the next zoom to refetch).
 const dataVersion = ref(0);
 
 const filter = useRowFilter(tableId, columns, isGeo);
@@ -48,25 +49,48 @@ const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), columns, () 
   emit("mutated");
 });
 const rowGeometry = useRowGeometry(tableId);
-const geometryEditing = useGeometryEditing(tableId, geometryColumn, async () => {
+const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
   dataVersion.value += 1;
   await rowsState.retry();
   emit("mutated");
 });
+
+// The two halves of a table are edited separately and never at once: the
+// geometries on the map, the attributes in the grid. Arming one disarms the
+// other, so there is only ever one thing the screen is waiting for.
+function toggleAttributeEditing() {
+  if (layerEditing.active.value) layerEditing.cancel();
+  rowsState.editMode.value = !rowsState.editMode.value;
+}
+
+function toggleGeometryEditing() {
+  if (layerEditing.active.value) {
+    layerEditing.cancel();
+    return;
+  }
+  rowsState.editMode.value = false;
+  layerEditing.start();
+}
 
 // Table and map share the space 50/50 by default; either can be maximized to
 // take the whole width, restored back to 'split' from the same toggle group.
 const focusPanel = ref<"split" | "table" | "map">("split");
 watch(tableId, () => (focusPanel.value = "split"));
 
-// Entering a geometry needs the map: it takes the whole width for as long
-// as the drawing lasts, and the previous layout comes back afterwards.
+// Editing the geometries needs the map: it takes the whole width for as long
+// as the session lasts, and the previous layout comes back afterwards.
 watch(
-  () => geometryEditing.active.value,
-  (active) => {
-    if (active) focusPanel.value = "map";
-    else focusPanel.value = "split";
-  },
+  () => layerEditing.active.value,
+  (active) => (focusPanel.value = active ? "map" : "split"),
+);
+
+// The map is mounted only while it is shown, and the session's unsaved work
+// lives inside it — hiding the map would drop every reshape without a word.
+// So the layout is frozen for as long as a session lasts: the way out is
+// Enregistrer or Annuler, both of which are on the map itself (§8.3).
+const layoutLocked = computed(() => layerEditing.active.value);
+const layoutLockReason = computed(() =>
+  layoutLocked.value ? "Édition des géométries en cours : enregistrez ou annulez pour changer la disposition." : undefined,
 );
 
 // Re-centers the map on the filter's own results rather than the whole
@@ -82,11 +106,13 @@ function openAddRow() {
 }
 
 // On a geo table the attributes are collected first and the geometry drawn
-// second: the row is only posted once both are in hand, so a row without
-// its geometry never lands in the table.
+// second: the row is only posted once both are in hand, so a row without its
+// geometry never lands in the table. The session that opens is the ordinary
+// layer-wide one — the shape drawn first is the one that takes these values.
 async function onAddRow(values: Record<string, string>) {
   if (props.isGeo) {
-    geometryEditing.startCreate(rowsState.coerceValues(values));
+    rowsState.editMode.value = false;
+    layerEditing.start(rowsState.coerceValues(values));
     return;
   }
   await rowsState.addRow(values);
@@ -114,40 +140,70 @@ function onRowClick(row: { original: Row }) {
     <div class="flex shrink-0 flex-wrap items-center gap-2">
       <TableFilterBar :table-id="tableId" :columns="columns" @update:nodes="filter.conditions.value = $event" />
 
+      <!-- The two halves of a table are edited apart: the attributes in the
+           grid, the geometries on the map. A table without geometry has only
+           the first, and the button says just that. -->
+      <div class="ml-auto flex flex-wrap items-center gap-2">
+        <BaseButton
+          size="sm"
+          :variant="rowsState.editMode.value ? 'primary' : 'secondary'"
+          :icon="PencilLine"
+          :aria-pressed="rowsState.editMode.value"
+          @click="toggleAttributeEditing"
+        >
+          {{ isGeo ? "Éditer la table" : "Mode édition" }}
+        </BaseButton>
+        <BaseButton
+          v-if="isGeo"
+          size="sm"
+          :variant="layerEditing.active.value ? 'primary' : 'secondary'"
+          :icon="Spline"
+          :aria-pressed="layerEditing.active.value"
+          @click="toggleGeometryEditing"
+        >
+          Éditer la géométrie
+        </BaseButton>
+      </div>
+
       <!-- Table and map default to half the width each; either can be
            maximized when the data being read needs the room (§8.10). -->
-      <div v-if="isGeo" class="join ml-auto">
+      <ButtonGroup v-if="isGeo">
         <BaseButton
-          class="join-item"
+          joined
           size="sm"
           :variant="focusPanel === 'table' ? 'primary' : 'secondary'"
           :icon="Table2"
           :aria-pressed="focusPanel === 'table'"
+          :disabled="layoutLocked"
+          :title="layoutLockReason"
           @click="focusPanel = focusPanel === 'table' ? 'split' : 'table'"
         >
           Tableau
         </BaseButton>
         <BaseButton
-          class="join-item"
+          joined
           size="sm"
           :variant="focusPanel === 'split' ? 'primary' : 'secondary'"
           :icon="LayoutPanelLeft"
           icon-only
           aria-label="Partager la vue"
-          title="Partager la vue"
+          :disabled="layoutLocked"
+          :title="layoutLockReason ?? 'Partager la vue'"
           @click="focusPanel = 'split'"
         />
         <BaseButton
-          class="join-item"
+          joined
           size="sm"
           :variant="focusPanel === 'map' ? 'primary' : 'secondary'"
           :icon="MapIcon"
           :aria-pressed="focusPanel === 'map'"
+          :disabled="layoutLocked"
+          :title="layoutLockReason"
           @click="focusPanel = focusPanel === 'map' ? 'split' : 'map'"
         >
           Carte
         </BaseButton>
-      </div>
+      </ButtonGroup>
     </div>
 
     <div class="flex min-h-0 flex-1 gap-4">
@@ -181,10 +237,8 @@ function onRowClick(row: { original: Row }) {
           :selected-count="selection.selectedPkeys.value.length"
           :row-class="rowClassFor"
           @add-row="openAddRow"
-          @toggle-edit-mode="rowsState.editMode.value = !rowsState.editMode.value"
           @update-cell="(column, value) => (rowsState.editValues[column] = value)"
           @geometry="rowGeometry.open"
-          @edit-geometry="geometryEditing.startEdit"
           @clear-selection="selection.clear"
           @row-click="onRowClick"
         />
@@ -196,20 +250,20 @@ function onRowClick(row: { original: Row }) {
         :class="focusPanel === 'map' ? 'w-full' : 'w-1/2'"
       >
         <MapView
-          v-model:topology="geometryEditing.topology.value"
           :table-id="tableId"
           :bbox="mapBbox"
           :conditions="filter.appliedConditions.value"
           :selected-pkeys="selection.selectedPkeys.value"
-          :drawing="geometryEditing.active.value"
-          :drawing-prompt="geometryEditing.prompt.value"
-          :initial-geometry="geometryEditing.initialGeometry.value"
-          :neighbours="geometryEditing.neighbours.value"
-          :saving="geometryEditing.saving.value"
+          :editing="layerEditing.active.value"
+          :editing-prompt="layerEditing.prompt.value"
+          :features="layerEditing.features.value"
+          :loading-features="layerEditing.loading.value"
+          :saving="layerEditing.saving.value"
           :data-version="dataVersion"
           @toggle-selection="selection.toggle"
-          @save="geometryEditing.save"
-          @cancel="geometryEditing.cancel"
+          @request-features="layerEditing.loadIn"
+          @save="layerEditing.save"
+          @cancel="layerEditing.cancel"
         />
       </div>
     </div>

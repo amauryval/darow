@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { Pencil, Shapes } from "@lucide/vue";
+import { Shapes } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ConfirmButton from "../ConfirmButton.vue";
 
-// editable is what edit mode turns on: reading a row's geometry is a read,
-// available whether or not the grid is armed for editing.
+// editable is what the attribute edit mode turns on. Reading a row's geometry
+// is a read, available whether or not the grid is armed. There is no geometry
+// *edit* action here on purpose: geometries are edited in one place, the map,
+// through one button (§8.8) — a second door onto the same mode is a second
+// thing to explain.
 withDefaults(
   defineProps<{
     editable?: boolean;
@@ -23,7 +26,6 @@ defineEmits<{
   edit: [];
   delete: [];
   geometry: [];
-  editGeometry: [];
 }>();
 </script>
 
@@ -50,17 +52,6 @@ defineEmits<{
         Géométrie
       </BaseButton>
       <template v-if="editable">
-        <BaseButton
-          v-if="isGeo"
-          size="xs"
-          variant="ghost"
-          :icon="Pencil"
-          icon-only
-          title="Modifier la géométrie sur la carte"
-          @click="$emit('editGeometry')"
-        >
-          Modifier la géométrie
-        </BaseButton>
         <BaseButton variant="secondary" size="xs" @click="$emit('edit')">Modifier</BaseButton>
         <ConfirmButton
           label="Supprimer"

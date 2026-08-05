@@ -1,14 +1,14 @@
 import { get } from "./http";
 import type { FilterCondition } from "./types";
 
-export interface OgcFeature {
+interface OgcFeature {
   type: "Feature";
   id: string;
   geometry: GeoJSON.Geometry | null;
   properties: Record<string, unknown>;
 }
 
-export interface OgcLink {
+interface OgcLink {
   rel: string;
   type: string;
   href: string;
@@ -30,7 +30,7 @@ export interface FeatureQueryOptions {
   offset?: number;
 }
 
-export function featureQueryParams(opts: FeatureQueryOptions): URLSearchParams {
+function featureQueryParams(opts: FeatureQueryOptions): URLSearchParams {
   const params = new URLSearchParams();
   if (opts.bbox) params.set("bbox", opts.bbox.join(","));
   if (opts.filter?.length) params.set("filter", JSON.stringify(opts.filter));
@@ -40,7 +40,7 @@ export function featureQueryParams(opts: FeatureQueryOptions): URLSearchParams {
   return params;
 }
 
-export function getItems(tableId: string, opts: FeatureQueryOptions = {}): Promise<OgcFeatureCollection> {
+export function getItems(tableId: string, opts: FeatureQueryOptions = {}, signal?: AbortSignal): Promise<OgcFeatureCollection> {
   const qs = featureQueryParams(opts).toString();
-  return get(`/ogc/collections/${tableId}/items${qs ? `?${qs}` : ""}`);
+  return get(`/ogc/collections/${tableId}/items${qs ? `?${qs}` : ""}`, signal);
 }

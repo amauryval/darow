@@ -19,7 +19,7 @@ export interface DraftLeaf {
   active: boolean;
 }
 
-export interface DraftGroup {
+interface DraftGroup {
   id: number;
   kind: "group";
   bool: "AND" | "OR";

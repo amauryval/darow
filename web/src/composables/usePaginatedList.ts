@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, type Ref } from "vue";
+import { onMounted, onUnmounted, ref, watch, type Ref } from "vue";
 import type { SortingState, Updater } from "@tanstack/vue-table";
 import { stringifySorting } from "../utils/sort";
 
@@ -11,6 +11,12 @@ export interface UsePaginatedListOptions<T> {
   limit?: number;
   initialSorting?: SortingState;
   sortColumnMap?: Record<string, string>;
+  // What the list is a list *of*, when that is a route parameter: the
+  // initial load is then anchored on this value rather than on the
+  // component's mount. vue-router reuses a parameterised view when only the
+  // parameter changes, so a mount-anchored load would leave the previous
+  // object's items on screen under the new object's name (§9).
+  key?: Ref<unknown>;
   fetchPage: (offset: number, limit: number, sort: string) => Promise<Page<T>>;
   // Turned into the persistent, retryable error state (§8.1) — never a
   // toast on its own, since a failed list load leaves the screen with
@@ -111,6 +117,11 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
   const sentinel = ref<HTMLElement | null>(null);
   let observer: IntersectionObserver | null = null;
 
+  // A keyed list loads — and reloads from page 1 — on its key; an unkeyed
+  // one has nothing to react to and loads once, on mount. The observer is
+  // always a mount concern: it needs the sentinel element.
+  if (options.key) watch(options.key, () => reload(), { immediate: true });
+
   onMounted(() => {
     observer = new IntersectionObserver(
       (entries) => {
@@ -119,7 +130,7 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
       { rootMargin: "200px" },
     );
     if (sentinel.value) observer.observe(sentinel.value);
-    loadMore();
+    if (!options.key) loadMore();
   });
 
   onUnmounted(() => observer?.disconnect());

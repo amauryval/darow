@@ -39,6 +39,10 @@ const nameInput = ref("");
 // column drops out, and a newly added one defaults to visible.
 const visibleColumns = ref<string[]>([]);
 let knownRowColumns: string[] = [];
+// Another table's columns are not a schema reload: forgetting what was known
+// makes the next population a straight assignment again, so the new table
+// opens on all of its columns rather than on the previous one's choice (§9).
+watch(toRef(props, "tableId"), () => (knownRowColumns = []));
 watch(
   rowColumns,
   (cols) => {

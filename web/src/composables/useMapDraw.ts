@@ -1,165 +1,165 @@
-import { onUnmounted, ref, shallowRef, type Ref } from "vue";
-import { distance } from "@turf/distance";
-import type { Map, MapMouseEvent } from "maplibre-gl";
-import { handleFeatures } from "../utils/handles";
-import { snapPosition } from "../utils/snapping";
-import { draftGeometry, draftPositions, insertVertex, moveVertex, removeVertex, type DrawShape } from "../utils/vertices";
-import { useDrawLayers } from "./useDrawLayers";
-import { useVertexDrag } from "./useVertexDrag";
+import { onUnmounted, watch, type Ref } from "vue";
+import type Map from "ol/Map";
+import type MapBrowserEvent from "ol/MapBrowserEvent";
+import Modify from "ol/interaction/Modify";
+import type { Condition } from "ol/events/condition";
+import type { Pixel } from "ol/pixel";
+import type { VectorSourceEvent } from "ol/source/Vector";
+import { handleStyle } from "../utils/drawStyles";
+import { useEditLayer, type EditableFeature, type LayerChanges } from "./useEditLayer";
+import { useEditTools } from "./useEditTools";
 
-// A neighbour handed to the map: the row it belongs to, and its geometry as
-// the server holds it.
-export interface ReferenceFeature {
-  pkey: string;
-  geometry: GeoJSON.Geometry;
-}
+export type { DrawShape } from "./useEditTools";
 
-// How close to a neighbour a placed vertex has to land to be pulled onto
-// it, in screen pixels — a tolerance in meters would mean one thing at the
-// parcel's zoom and another at the district's.
-const SNAP_PIXELS = 12;
+// Right-click removes a vertex (§8.8). The engine deletes on alt+click by
+// default, a keyboard modifier on a gesture that has a dedicated button.
+const rightClick: Condition = (event) =>
+  event.type === "pointerdown" && event.originalEvent instanceof PointerEvent && event.originalEvent.button === 2;
 
-// The map editor: MapLibre carries the pointer and the rendering, turf
-// carries the geometry, and this holds the session — what is being drawn,
-// where its vertices are, what it may snap to. Nothing is written here: the
-// caller decides what a drawn geometry means and when it is saved, so a
-// drag is never a submission (§8.2).
+// The edit session's lifecycle: the layer it works on, the one Modify over
+// it, and the teardown. Which tool the bar has armed is useEditTools'.
+//
+// Editing is a mode of the whole layer: every feature in view is editable, so
+// a limit two polygons share moves on both sides in one gesture. Nothing is
+// written here — the caller decides when the changes are sent, so a drag is
+// never a submission (§8.2).
 export function useMapDraw(map: Ref<Map | null>) {
-  const pendingGeometry = shallowRef<GeoJSON.Geometry | null>(null);
-  const snapping = ref(true);
-  const shape = ref<DrawShape>("Polygon");
-  const layers = useDrawLayers(map);
+  const layer = useEditLayer(map);
+  const tools = useEditTools(map, layer.source);
 
-  // A session is either correcting an existing geometry — vertices are
-  // dragged, never appended — or collecting the clicks of a new one.
-  let correcting = false;
-  let clicked: GeoJSON.Position[] = [];
-  let references: GeoJSON.Geometry[] = [];
-  let onClick: ((event: MapMouseEvent) => void) | null = null;
+  let modify: Modify | null = null;
+  let suppressMenu: ((event: MouseEvent) => void) | null = null;
+  let onHover: ((event: MapBrowserEvent) => void) | null = null;
+  let onLeave: (() => void) | null = null;
+  // The frame the next hit test is scheduled on, and the pixel it will use.
+  let hitScheduled: number | null = null;
+  let lastPixel: Pixel | null = null;
 
-  function render() {
-    const geometry = pendingGeometry.value;
-    // Before a shape is one — a single click of a polygon-to-be — the
-    // clicks are still drawn, as points: the user must see where they
-    // landed, especially when snapping moved them.
-    const provisional: GeoJSON.Geometry | null =
-      geometry ?? (clicked.length > 0 ? { type: "MultiPoint", coordinates: clicked } : null);
-    layers.renderShape(provisional);
-    layers.renderHandles(handleFeatures(geometry));
+  function onChange(event: VectorSourceEvent) {
+    if (event.feature) layer.noteChange(event.feature);
   }
 
-  function setGeometry(geometry: GeoJSON.Geometry | null) {
-    pendingGeometry.value = geometry;
-    // While drawing, the vertex list is the source of the next click's
-    // shape: a vertex dragged or removed has to land back in it.
-    if (!correcting && geometry) clicked = draftPositions(geometry);
-    render();
+  // What the Modify may touch — the whole of the topology switch. Over the
+  // *source*, two geometries holding the same coordinate hold the same
+  // vertex, so one drag moves both sides of a limit at once. Over a
+  // *collection* holding only the feature under the pointer, the neighbour is
+  // not in the interaction at all and its copy of the vertex stays put.
+  //
+  // Not `sharedVerticesEqual`: that comparison also tells Modify the pointer
+  // is on a vertex rather than on a segment, so defeating it makes every
+  // press insert a new vertex beside the old one instead of moving it.
+  function remodify(m: Map) {
+    if (modify) m.removeInteraction(modify);
+    modify = new Modify({
+      ...(tools.topological.value ? { source: layer.source } : { features: layer.solo }),
+      style: handleStyle,
+      deleteCondition: rightClick,
+    });
+    // Below the Snap, which has to see the pointer first to correct it.
+    tools.addUnderSnap(m, modify);
   }
 
-  // The pixel tolerance in meters at the current zoom, measured on the map
-  // itself rather than assumed from the latitude.
-  function tolerance(m: Map): number {
-    const center = m.getCenter();
-    const offset = m.unproject([m.project(center).x + SNAP_PIXELS, m.project(center).y]);
-    return distance([center.lng, center.lat], [offset.lng, offset.lat], { units: "meters" });
+  function activate() {
+    const m = map.value;
+    if (!m || modify) return;
+
+    layer.add();
+    // The Snap goes on before anything it corrects, and stays on for the
+    // whole session: it is what the interaction order is built around.
+    tools.arm();
+    remodify(m);
+    layer.source.on("changefeature", onChange);
+    layer.source.on("addfeature", onChange);
+
+    // A right-click is the gesture that removes a vertex, so it must not also
+    // open the browser's menu over the map.
+    suppressMenu = (event) => event.preventDefault();
+    m.getViewport().addEventListener("contextmenu", suppressMenu);
+
+    // Which feature the pointer rests over is now needed whatever the
+    // topology switch says: with topology off it is what the Modify follows,
+    // and either way it is the one geometry whose vertices are drawn.
+    //
+    // Hit detection over a whole view is not free, and a pointer emits far
+    // more moves than the screen has frames — so at most one test per frame,
+    // on the last pixel seen. Nothing is tracked mid-drag: the interaction
+    // has already chosen its feature, and re-testing would only fight it.
+    onHover = (event) => {
+      if (event.dragging) return;
+      lastPixel = event.pixel;
+      if (hitScheduled !== null) return;
+      hitScheduled = requestAnimationFrame(() => {
+        hitScheduled = null;
+        if (lastPixel) layer.trackPointer(m, lastPixel);
+      });
+    };
+    m.on("pointermove", onHover);
+
+    // A pointer that left the map is over nothing: the vertices it was
+    // showing have to go with it, or they stay lit on a feature no gesture
+    // can reach any more.
+    onLeave = () => layer.blur();
+    m.getViewport().addEventListener("pointerleave", onLeave);
   }
 
-  function place(m: Map, position: GeoJSON.Position): GeoJSON.Position {
-    return snapping.value ? snapPosition(position, references, tolerance(m)) : position;
-  }
-
-  const drag = useVertexDrag(map, {
-    grab: (role, ref, position) => {
-      const geometry = pendingGeometry.value;
-      if (!geometry) return null;
-      // A midpoint becomes the vertex it is dragged into: it is inserted
-      // where it sat, and the address handed back is that new vertex's.
-      if (role === "midpoint") setGeometry(insertVertex(geometry, ref, position));
-      return ref;
-    },
-    move: (ref, position) => {
-      const m = map.value;
-      const geometry = pendingGeometry.value;
-      if (!m || !geometry) return;
-      setGeometry(moveVertex(geometry, ref, place(m, position)));
-    },
-    drop: () => render(),
-    remove: (ref) => {
-      const geometry = pendingGeometry.value;
-      if (geometry) setGeometry(removeVertex(geometry, ref));
-    },
+  watch(tools.topological, () => {
+    const m = map.value;
+    if (m && modify) remodify(m);
   });
 
-  function activate(initial: GeoJSON.Geometry | null) {
-    const m = map.value;
-    if (!m || onClick) return;
-
-    correcting = initial !== null;
-    clicked = [];
-    layers.add();
-    setGeometry(initial);
-
-    // A double-click while drawing is two vertices, never a zoom.
-    m.doubleClickZoom.disable();
-    onClick = (event) => {
-      if (correcting) return;
-      const position = place(m, [event.lngLat.lng, event.lngLat.lat]);
-      clicked = shape.value === "Point" ? [position] : [...clicked, position];
-      setGeometry(draftGeometry(shape.value, clicked));
-    };
-    m.on("click", onClick);
-    drag.activate();
+  // What the session would write, dropping whatever was half-drawn.
+  function commit(): LayerChanges {
+    tools.abort();
+    return layer.changes();
   }
 
-  // Snapping is what makes two features share an exact boundary, and what
-  // gets in the way when they must not — hence a toggle rather than a
-  // setting.
-  function toggleSnapping() {
-    snapping.value = !snapping.value;
-  }
-
-  // Changing the shape restarts the drawing: three clicks meant as a
-  // polygon are not the same three clicks meant as a line.
-  function setShape(next: DrawShape) {
-    if (correcting || next === shape.value) return;
-    shape.value = next;
-    clicked = [];
-    setGeometry(null);
-  }
-
-  // Takes back the last click, so a misplaced vertex does not mean
-  // restarting the shape.
-  function undo() {
-    if (correcting || clicked.length === 0) return;
-    clicked = clicked.slice(0, -1);
-    setGeometry(draftGeometry(shape.value, clicked));
-  }
-
-  // Snapping only ever sees what it is given, so the neighbours loaded
-  // around the edited shape are handed here — and drawn, as outlines, so
-  // the user aims at something visible.
-  function setReference(features: ReferenceFeature[]) {
-    references = features.map((f) => f.geometry);
-    layers.renderReference(references);
+  // The rows the view has gained, at full resolution. The caller owns the
+  // network; what the layer already holds is left alone (useEditLayer.load).
+  function load(features: EditableFeature[]) {
+    layer.load(features);
   }
 
   function deactivate() {
     const m = map.value;
-    drag.deactivate();
-    if (m && onClick) {
-      m.off("click", onClick);
-      m.doubleClickZoom.enable();
+    layer.source.un("changefeature", onChange);
+    layer.source.un("addfeature", onChange);
+    tools.teardown();
+    if (hitScheduled !== null) cancelAnimationFrame(hitScheduled);
+    if (m) {
+      if (modify) m.removeInteraction(modify);
+      if (onHover) m.un("pointermove", onHover);
+      if (onLeave) m.getViewport().removeEventListener("pointerleave", onLeave);
+      if (suppressMenu) m.getViewport().removeEventListener("contextmenu", suppressMenu);
     }
-    onClick = null;
-    references = [];
-    clicked = [];
-    pendingGeometry.value = null;
-    layers.remove();
+    modify = null;
+    onHover = null;
+    onLeave = null;
+    suppressMenu = null;
+    hitScheduled = null;
+    lastPixel = null;
+    layer.remove();
   }
 
-  onUnmounted(() => {
-    deactivate();
-  });
+  onUnmounted(deactivate);
 
-  return { pendingGeometry, snapping, shape, activate, deactivate, setReference, setShape, toggleSnapping, undo };
+  return {
+    shape: tools.shape,
+    snapping: tools.snapping,
+    topological: tools.topological,
+    cuttingHole: tools.cuttingHole,
+    drawing: tools.drawing,
+    dirtyCount: layer.dirtyCount,
+    changedCount: layer.changedCount,
+    createdCount: layer.createdCount,
+    hasAreal: layer.hasAreal,
+    activate,
+    deactivate,
+    commit,
+    load,
+    setShape: tools.setShape,
+    toggleHole: tools.toggleHole,
+    toggleSnapping: tools.toggleSnapping,
+    toggleTopology: tools.toggleTopology,
+    undo: tools.undo,
+  };
 }
