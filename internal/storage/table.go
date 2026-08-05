@@ -166,4 +166,8 @@ type TableMaterializer interface {
 	// CRS, as declared by the source file itself (authCode 0 if
 	// undetectable).
 	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
+
+	// SourceHasGeometry reports whether a source layer carries a geometry
+	// field at all — what decides whether it needs a CRS.
+	SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error)
 }

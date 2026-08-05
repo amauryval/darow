@@ -50,6 +50,7 @@ type tableImporter interface {
 	ListLayers(ctx context.Context, path string) ([]string, error)
 	ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error)
 	DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error)
+	SourceHasGeometry(ctx context.Context, path, layer string) (bool, error)
 	RemoveTable(ctx context.Context, tableId string) error
 }
 
@@ -384,6 +385,23 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 		return "", 0, NewDisplayError(fmt.Sprintf("unable to detect the CRS of source %q", name), err)
 	}
 	return authName, authCode, nil
+}
+
+// SourceHasGeometry reports whether a source carries a geometry field at all —
+// what tells a caller whether the CRS question applies to it. Every format is
+// asked, Parquet included: the storage layer reads each one the way that
+// format has to be read, exactly as CreateFromFile does, so a plain Parquet
+// answers no rather than being assumed to carry a geometry.
+func (s *SourceService) SourceHasGeometry(ctx context.Context, name, layer string) (bool, error) {
+	path, err := s.sourcePath(name, layer)
+	if err != nil {
+		return false, err
+	}
+	hasGeometry, err := s.tableService.SourceHasGeometry(ctx, path, layer)
+	if err != nil {
+		return false, NewDisplayError(fmt.Sprintf("unable to read the geometry fields of source %q", name), err)
+	}
+	return hasGeometry, nil
 }
 
 // Delete removes the table(s) loaded from name and drops its cache entry —

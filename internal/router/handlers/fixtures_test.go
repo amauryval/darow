@@ -231,6 +231,11 @@ func (m *mockSourceAPI) DetectCRS(ctx context.Context, name, layer string) (stri
 	return args.String(0), args.Int(1), args.Error(2)
 }
 
+func (m *mockSourceAPI) SourceHasGeometry(ctx context.Context, name, layer string) (bool, error) {
+	args := m.Called(ctx, name, layer)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockSourceAPI) MaxUploadBytes() int64 {
 	args := m.Called()
 	return int64(args.Int(0))

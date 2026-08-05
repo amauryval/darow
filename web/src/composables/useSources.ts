@@ -63,26 +63,39 @@ export function useSources(initialSorting?: SortingState) {
   const epsgEditingKey = ref<string | null>(null);
   const epsgInput = ref("");
   const epsgDetecting = ref(false);
+  // Whether the source being loaded has a geometry to project. Until the
+  // detection answers, the question is assumed to apply — asking and finding
+  // out it did not costs nothing, loading without asking cannot be undone.
+  const epsgApplies = ref(true);
   const loadingKey = ref<string | null>(null);
 
   async function startLoad(source: Source, layerName?: string) {
     const key = layerName ? layerKey(source, layerName) : source.name;
     epsgEditingKey.value = key;
     epsgInput.value = "";
+    epsgApplies.value = true;
     epsgDetecting.value = true;
     try {
       const crs = await getSourceMetadata(source.name, layerName);
-      if (epsgEditingKey.value === key) epsgInput.value = crs.srid ? String(crs.srid) : "";
+      if (epsgEditingKey.value === key) {
+        epsgInput.value = crs.srid ? String(crs.srid) : "";
+        epsgApplies.value = crs.hasGeometry;
+      }
     } catch (e) {
       toast.error(errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`));
     } finally {
       epsgDetecting.value = false;
     }
+    // Nothing to project, nothing to ask: the click that opened this was the
+    // *Charger* the user meant, and a confirmation of an empty question is a
+    // step that only asks them to click again.
+    if (epsgEditingKey.value === key && !epsgApplies.value) await confirmLoad(source, layerName);
   }
 
   function cancelLoad() {
     epsgEditingKey.value = null;
     epsgInput.value = "";
+    epsgApplies.value = true;
   }
 
   async function confirmLoad(source: Source, layerName?: string) {
@@ -133,6 +146,7 @@ export function useSources(initialSorting?: SortingState) {
     epsgEditingKey,
     epsgInput,
     epsgDetecting,
+    epsgApplies,
     loadingKey,
     startLoad,
     cancelLoad,

@@ -13,6 +13,10 @@ const props = defineProps<{
   // key comparison is the view's, so the cell stays presentational.
   editingEpsg?: boolean;
   epsg: string;
+  // Whether the source has a geometry to project at all. A file of plain
+  // columns is never asked for an EPSG: it has nothing to reproject, and the
+  // server takes it with no srid (§8.2).
+  epsgApplies?: boolean;
   detecting?: boolean;
   loadingRow?: boolean;
   deleting?: boolean;
@@ -26,10 +30,12 @@ const emit = defineEmits<{
   "update:epsg": [value: string];
 }>();
 
-// The server takes an SRID, a positive integer — a leading zero or a
-// negative value is rejected, so the confirm button stays disabled until the
-// input can be one.
+// The server takes an SRID, a positive integer — a leading zero or a negative
+// value is rejected, so the confirm button stays disabled until the input can
+// be one. A source with no geometry has nothing to state: it is confirmed as
+// it is, and the detection is what says which of the two this is.
 const epsgValid = computed(() => /^[1-9]\d*$/.test(props.epsg.trim()));
+const confirmable = computed(() => !props.detecting && (props.epsgApplies === false || epsgValid.value));
 
 const deleteMessage = computed(() =>
   props.row.layerCount !== undefined
@@ -44,6 +50,7 @@ const deleteMessage = computed(() =>
   <div class="flex items-center justify-end gap-2">
     <template v-if="editingEpsg">
       <BaseInput
+        v-if="detecting || epsgApplies !== false"
         :model-value="epsg"
         inputmode="numeric"
         size="xs"
@@ -57,7 +64,7 @@ const deleteMessage = computed(() =>
         variant="primary"
         size="xs"
         :busy="loadingRow"
-        :disabled="detecting || !epsgValid || loadingRow"
+        :disabled="!confirmable || loadingRow"
         @click="emit('confirmLoad')"
       >
         {{ loadingRow ? "Chargement…" : "Confirmer" }}

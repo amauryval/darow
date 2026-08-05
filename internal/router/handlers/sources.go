@@ -217,8 +217,11 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 // GetSourceMetadata handles GET /sources/{name}/metadata — a preview of a
 // not-yet-loaded source's detected CRS, so a client can show it to the
 // user before Load and let them override it. layer selects one layer
-// of a multi-layer source. srid is null if the source declares no CRS
-// DetectCRS can resolve — Load then requires an explicit ?srid=.
+// of a multi-layer source. hasGeometry says whether the source carries a
+// geometry field at all: a source that carries none needs no CRS, and Load
+// takes it with no ?srid=. srid is null if the source declares no CRS
+// DetectCRS can resolve — Load then requires an explicit ?srid= for a source
+// that does have a geometry.
 //
 // @Summary Preview a source's detected CRS
 // @Tags sources
@@ -232,13 +235,23 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
 
+	hasGeometry, err := sh.sourceService.SourceHasGeometry(req.Context(), name, layer)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	if !hasGeometry {
+		response.WriteJSON(w, http.StatusOK, map[string]any{"authName": "", "srid": nil, "hasGeometry": false})
+		return
+	}
+
 	authName, authCode, err := sh.sourceService.DetectCRS(req.Context(), name, layer)
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
 
-	body := map[string]any{"authName": authName}
+	body := map[string]any{"authName": authName, "hasGeometry": true}
 	if authCode != 0 {
 		body["srid"] = authCode
 	} else {

@@ -236,6 +236,13 @@ whether `GetSourceMetadata` (`/sources/{name}/metadata`) calls `DetectCRS` at al
 format whose reader (`read_parquet` for `.parquet`, §7.2) has no `ST_Read_Meta`-based CRS preview
 to offer, and must never be reached with a file `ST_Read_Meta` cannot safely open.
 
+`SourceHasGeometry` is asked **first**, and of every format including Parquet: a source carrying no
+geometry field needs no CRS at all, and `Load` takes it with no `srid`. It is the storage layer that
+knows how to read each format for that answer — `st_read_meta`'s `geometry_fields` for an `ST_Read`
+format, a `DESCRIBE` over `read_parquet` for a Parquet one, the same dispatch `CreateFromFile`
+makes — so no format is ever assumed to carry a geometry it does not have. `DetectCRS` is only
+called when the answer is yes.
+
 | Extension | Multi-layer | Introspectable |
 |---|---|---|
 | `.geojson` | no | yes |
@@ -256,6 +263,7 @@ A file whose extension is not in `allowedExtensions`, or whose size exceeds `max
 | `Upload` | writes into `workDir` after reducing the name to its base (traversal protection), checking extension and size. Refuses to overwrite an existing file. |
 | `Load` | imports a source (or one of its layers) into a table. `name` must exist in the cache (rule 15). |
 | `DetectCRS` | reads the CRS declared by the file, importing nothing — lets the UI show and correct it before loading. |
+| `SourceHasGeometry` | reports whether the file carries a geometry field at all, importing nothing — what decides whether a CRS has to be asked for. |
 | `Delete` | removes the table(s) derived from the source and its cache entry. **The file itself is never deleted.** |
 
 **Locking.** `Load` holds the lock for its whole check-then-import, not just around the cache read:
@@ -384,7 +392,7 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 | `TableRepository` | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)` |
 | `RowRepository` | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete` |
 | `GeoRepository` | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types` |
-| `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized |
+| `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized |
 
 The delete cascade is deliberately absent from these interfaces: `duckdb/catalog.Catalog.Remove`
 drops the physical table through a `Dropper` and cascades to every registered `Attachment`

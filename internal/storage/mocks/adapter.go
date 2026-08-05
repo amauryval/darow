@@ -132,6 +132,11 @@ func (m *Adapter) DetectCRS(ctx context.Context, sourcePath, layer string) (stri
 	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
 }
 
+func (m *Adapter) SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error) {
+	callArgs := m.Called(ctx, sourcePath, layer)
+	return callArgs.Bool(0), callArgs.Error(1)
+}
+
 func (m *Adapter) ListFilters(ctx context.Context, tableId string) ([]storage.StoredFilter, error) {
 	callArgs := m.Called(ctx, tableId)
 	filters, _ := callArgs.Get(0).([]storage.StoredFilter)

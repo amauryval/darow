@@ -2,13 +2,15 @@
 import { computed, h } from "vue";
 import type { ColumnDef } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
-import type { Row, RowValue } from "../../client/types";
+import type { ColumnSchema, Row, RowValue } from "../../client/types";
 import { isDraft } from "../../composables/useRowEdits";
 import type { useRowEdits } from "../../composables/useRowEdits";
 import type { useTableRows } from "../../composables/useTableRows";
+import { columnType } from "../../utils/columnTypes";
 import { cellValue } from "../../utils/rows";
 import DataTable from "../DataTable.vue";
-import TableRowActions from "./TableRowActions.vue";
+import TableGeometryCell from "./TableGeometryCell.vue";
+import TableRowLeadCell from "./TableRowLeadCell.vue";
 import TableRowEditCell from "./TableRowEditCell.vue";
 import ErrorState from "../ui/ErrorState.vue";
 import Skeleton from "../ui/Skeleton.vue";
@@ -25,9 +27,12 @@ const props = defineProps<{
   // table does not own (the pkey) is not a field either.
   edits: ReturnType<typeof useRowEdits>;
   editableColumns: string[];
+  columns: ColumnSchema[];
   displayRows: Row[];
   visibleColumns: string[];
   isGeo: boolean;
+  // The geometry column's own name: it heads the column that opens it.
+  geometryColumn?: string;
   rowClass?: (row: { original: Row }) => string;
 }>();
 const emit = defineEmits<{
@@ -47,6 +52,7 @@ const columnDefs = computed(() => {
           return h(TableRowEditCell, {
             modelValue: props.edits.display(row, col),
             column: col,
+            type: columnType(props.columns, col),
             dirty: props.edits.isDirty(row.pkey, col),
             "onUpdate:modelValue": (value: string) => props.edits.setCell(row, col, value),
           });
@@ -57,62 +63,68 @@ const columnDefs = computed(() => {
     }),
   );
 
-  // The row's own two columns, at the **start** of the grid and pinned there:
-  // its rank, and what a click does to it. Both stay put while the columns
-  // scroll sideways — a grid wider than its panel otherwise hid the number
-  // that names the row and pushed its actions past every attribute (§8.6).
+  // Its width is stated rather than fitted, and so is the offset of whatever
+  // is pinned after it: both depend on the session, which is what puts the two
+  // action icons in the row's own cell.
+  const editing = props.edits.active.value;
+
+  // The geometry is a column of the table, so it is one of the grid: headed by
+  // its own name, pinned next to the row's cell, holding the one control that
+  // reads it (LIM-F3). A draft has none to read yet — its shape is the one
+  // being drawn.
+  if (props.isGeo) {
+    defs.unshift(
+      columnHelper.display({
+        id: "__geometry",
+        header: props.geometryColumn ?? "geom",
+        meta: { pinned: editing ? "left-24" : "left-12", class: "w-16 max-w-16 px-2 truncate" },
+        cell: (info) =>
+          isDraft(info.row.original.pkey)
+            ? null
+            : h(TableGeometryCell, { onOpen: () => emit("geometry", info.row.original.pkey) }),
+      }),
+    );
+  }
+
+  // The row's own cell, first and pinned: what names the row and what acts on
+  // it — neither is a value of the table, and a column of their own for two
+  // icons pushed every attribute one step right for nothing. It stays put
+  // while the columns scroll sideways, or a grid wider than its panel hides
+  // the number that names a row and pushes its actions past every attribute.
   //
-  // The rank is the position of the row in the grid as it is displayed —
-  // selection pinned at the top included. It is what a user points at when
-  // they say "the third one", and it is not the primary key: a pkey is an
-  // identifier, not a position, and the two disagree as soon as the grid is
-  // sorted.
   defs.unshift(
     columnHelper.display({
-      id: "actions",
-      header: "",
-      // Width of its content and nothing more (`w-px` + `whitespace-nowrap`,
-      // the one way a table cell shrinks to fit): the column holds one icon
-      // outside an edit session and three under one, and a fixed width sized
-      // for three left a hand's width of nothing between the row number and
-      // the first attribute.
-      meta: { pinned: "left-12", class: "w-px px-2 whitespace-nowrap" },
+      id: "__row",
+      header: "#",
+      meta: {
+        align: "right",
+        pinned: "left-0",
+        class: editing ? "w-24 min-w-24 px-2 whitespace-nowrap" : "w-12 min-w-12 px-2 whitespace-nowrap",
+      },
       cell: (info) => {
         const row = info.row.original;
-        // A row that does not exist yet has nothing to duplicate and no
-        // geometry to read. Dropping it is the one thing that applies — and
-        // only where the grid alone created it: a draft raised by a drawing
-        // is dropped with the shape, which is the session's *Annuler*.
+        // A draft holds no rank — it has no position in the table until it is
+        // written, and numbering it would shift every rank the user reads.
+        // Dropping it is the one action that applies to it, and only where the
+        // grid alone created it: a draft raised by a drawing goes with its
+        // shape, which is the session's *Annuler*.
         if (isDraft(row.pkey)) {
-          return props.isGeo
-            ? null
-            : h(TableRowActions, { draft: true, onDelete: () => props.edits.removeDraft(row.pkey) });
+          return h(TableRowLeadCell, {
+            rank: null,
+            draft: !props.isGeo,
+            onDelete: () => props.edits.removeDraft(row.pkey),
+          });
         }
-        return h(TableRowActions, {
-          editable: props.edits.active.value,
-          isGeo: props.isGeo,
+        return h(TableRowLeadCell, {
+          rank: info.row.index + 1 - props.edits.draftCount.value,
+          editable: editing,
           isDeletingPkey: props.state.deletingPkey.value ?? undefined,
           isDuplicating: props.state.duplicatingPkey.value === row.pkey,
           deletingPkey: row.pkey,
           onDuplicate: () => props.state.duplicateRow(row),
           onDelete: () => props.state.deleteRow(row.pkey),
-          onGeometry: () => emit("geometry", row.pkey),
         });
       },
-    }),
-  );
-
-  defs.unshift(
-    columnHelper.display({
-      id: "__rownum",
-      header: "#",
-      meta: { align: "right", pinned: "left-0", class: "w-12 min-w-12 px-2 tabular-nums text-base-content/40" },
-      // The drafts sit above the grid's own rows and are not numbered: they
-      // hold no position in the table until they are written, and numbering
-      // them would shift every rank the user reads by however many of them
-      // are open.
-      cell: (info) =>
-        isDraft(info.row.original.pkey) ? "" : String(info.row.index + 1 - props.edits.draftCount.value),
     }),
   );
 

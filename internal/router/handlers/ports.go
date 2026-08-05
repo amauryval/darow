@@ -76,6 +76,7 @@ type sourceAPI interface {
 	Load(ctx context.Context, name, layer string, srid int) (string, error)
 	Delete(ctx context.Context, name string) error
 	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
+	SourceHasGeometry(ctx context.Context, name, layer string) (bool, error)
 	MaxUploadBytes() int64
 }
 

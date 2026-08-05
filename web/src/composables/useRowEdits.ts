@@ -1,6 +1,6 @@
 import { computed, reactive, ref, type Ref } from "vue";
 import type { ColumnSchema, Row, RowValue } from "../client/types";
-import { coerceByType, columnType } from "../utils/columnTypes";
+import { coerceByType, columnType, typeError } from "../utils/columnTypes";
 import { cellValue } from "../utils/rows";
 
 export type RowUpdate = { pkey: string; values: Record<string, unknown> };
@@ -97,6 +97,16 @@ export function useRowEdits(columns: Ref<ColumnSchema[]>, editableColumns: Ref<s
     }
   }
 
+  // What a save would refuse: cells whose text does not fit their column's
+  // type. The check is the grid's, not the server's — a write refused for the
+  // whole session names neither the row nor the column at fault (§8.2).
+  const invalidCount = computed(
+    () =>
+      Object.values(drafts)
+        .flatMap((values) => Object.entries(values))
+        .filter(([column, text]) => typeError(columnType(columns.value, column), text) !== null).length,
+  );
+
   // Rows retyped and rows created, counted apart: they are two different
   // writes and they fail differently (§8.2).
   const dirtyCount = computed(() => Object.keys(drafts).filter((pkey) => !isDraft(pkey)).length);
@@ -153,6 +163,7 @@ export function useRowEdits(columns: Ref<ColumnSchema[]>, editableColumns: Ref<s
     syncDrafts,
     dirtyCount,
     draftCount,
+    invalidCount,
     pendingUpdates,
     pendingInserts,
     reset,

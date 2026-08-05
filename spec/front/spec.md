@@ -422,7 +422,10 @@ TanStack instance over `toSourceRows`; `components/sources/` holds the rest — 
 (the drag-and-drop zone, in a modal opened by the import button rather than a permanent panel: the
 page is a catalogue, and an import is an occasional act that should not cost a third of the screen),
 `SourceNameCell` (file/layer icon, extension badge, layer indentation) and `SourceActionsCell`
-(load with its EPSG prompt, link to the loaded table, deletion). `SourceActionsCell` stays
+(load with its EPSG prompt, link to the loaded table, deletion). The EPSG is asked **only of a
+source that carries a geometry**: the load's first step reads `/sources/{name}/metadata`, and a file
+of plain columns — a CSV of attributes, a non-geo Parquet — has nothing to project, so it is loaded
+straight away rather than held behind a code the user would have to invent. `SourceActionsCell` stays
 presentational: which row is being edited, loaded or deleted is decided by the view comparing
 `useSources`' keys, the cell only renders the state it is handed and emits intentions.
 
@@ -640,6 +643,14 @@ This is the product's main screen; it follows fixed rules.
   and it was the only reason a session could be left waiting for a geometry that never came. A table
   with nothing to draw keeps the same *Créer* group with the one button that still means something
   — a `+` that raises the same empty row.
+- **A field follows its column's type, and says what it expects.** A boolean cell is a choice of
+  three — *Vrai* / *Faux* / vide, since an empty cell is NULL and **not** `false`: a boolean turned
+  into `false` by an empty box writes a fact the user never stated. A number is a number field, a
+  `DATE` a date field (its stored form is exactly what the control round-trips), and everything else
+  a text field checked against what its type can hold. What is still wrong is marked red on the cell
+  that carries it, with the expected format in its tooltip, and *Enregistrer* refuses the session
+  while any remains: the server's own refusal would name neither the row nor the column at fault, and
+  would cost the whole session's work (§8.2).
 - **A draft row is dropped where it was raised.** In the grid on a table without geometry, since the
   grid is what created it; with the whole session on a geo table, since the shape drawn for it is
   part of what would have to go with it (LIM-F5).

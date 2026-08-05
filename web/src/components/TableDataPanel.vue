@@ -6,6 +6,7 @@ import type { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useLayerEditing } from "../composables/useLayerEditing";
 import { isDraft, useRowEdits } from "../composables/useRowEdits";
 import { useRowFilter } from "../composables/useRowFilter";
+import { useToast } from "../composables/useToast";
 import { useRowGeometry } from "../composables/useRowGeometry";
 import { useTableRows } from "../composables/useTableRows";
 import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
@@ -47,6 +48,7 @@ const geometryColumn = toRef(props, "geometryColumn");
 // (they would otherwise wait for the next zoom to refetch).
 const dataVersion = ref(0);
 
+const toast = useToast();
 const filter = useRowFilter(tableId, columns, isGeo);
 const selection = props.selection;
 const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), geometryColumn, () => {
@@ -91,6 +93,13 @@ function cancelEditing() {
 const NO_GEOMETRY_CHANGES: LayerChanges = { updates: new Map(), inserts: [] };
 
 async function saveEditing(changes: LayerChanges = NO_GEOMETRY_CHANGES) {
+  // A cell whose text does not fit its column is refused here, where the grid
+  // can point at it, rather than by the server for the whole session at once.
+  const invalid = rowEdits.invalidCount.value;
+  if (invalid > 0) {
+    toast.error(`${invalid} valeur(s) ne correspondent pas au type de leur colonne : corrigez-les avant d'enregistrer.`);
+    return;
+  }
   if (await layerEditing.save(changes, rowEdits.pendingUpdates.value, rowEdits.pendingInserts.value)) rowEdits.stop();
 }
 
@@ -203,6 +212,7 @@ function onRowClick(row: { original: Row }) {
           :error="filter.filterError.value"
           :limit="filter.filterLimit.value"
           :is-geo="isGeo"
+          :geometry-column="geometryColumn"
           :row-class="rowClassFor"
           @update:limit="filter.filterLimit.value = $event"
           @retry="filter.retry"
@@ -215,9 +225,11 @@ function onRowClick(row: { original: Row }) {
           :state="rowsState"
           :edits="rowEdits"
           :editable-columns="rowColumns"
+          :columns="columns"
           :display-rows="displayRows"
           :visible-columns="visibleColumns"
           :is-geo="isGeo"
+          :geometry-column="geometryColumn"
           :row-class="rowClassFor"
           @geometry="rowGeometry.open"
           @row-click="onRowClick"

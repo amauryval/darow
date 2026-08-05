@@ -111,6 +111,12 @@ func pointsGeoJSONFixture(t *testing.T) string {
 	return path
 }
 
+func plainCSVFixture(t *testing.T) string {
+	path := filepath.Join(t.TempDir(), "plain.csv")
+	require.NoError(t, os.WriteFile(path, []byte("name,height\na,1\nb,2\n"), 0o644))
+	return path
+}
+
 // multiLayerGpkgFixture is a hand-built 2-layer GeoPackage (layer_a: two
 // points, layer_b: one point) generated via Python's stdlib sqlite3 module
 // following the GeoPackage spec directly — DuckDB's spatial extension can

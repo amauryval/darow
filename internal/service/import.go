@@ -23,6 +23,7 @@ type fileMaterializer interface {
 	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
 	ListLayers(ctx context.Context, sourcePath string) ([]string, error)
 	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
+	SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error)
 }
 
 // ImportService registers new tables from source files found in workDir
@@ -110,6 +111,12 @@ func (s *ImportService) DetectCRS(ctx context.Context, path, layer string) (auth
 		return "", 0, NewDisplayError(fmt.Sprintf("unable to detect the CRS of %q", filepath.Base(path)), err)
 	}
 	return authName, authCode, nil
+}
+
+// SourceHasGeometry reports whether a source layer carries a geometry field,
+// which is what decides whether a CRS has to be resolved for it at all.
+func (s *ImportService) SourceHasGeometry(ctx context.Context, path, layer string) (bool, error) {
+	return s.storage.SourceHasGeometry(ctx, path, layer)
 }
 
 // RemoveTable deletes tableId's metadata and physical table, used by

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Copy, Shapes, Trash2 } from "@lucide/vue";
+import { Copy, Trash2 } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ConfirmButton from "../ConfirmButton.vue";
 
-// What a single click does to one row, on the spot: read its geometry,
-// duplicate it, delete it. Retyping is not one of them — the mode makes every
+// What a single click does to one row, on the spot: duplicate it, delete it.
+// Reading its geometry is not here — that is a column of its own, headed by
+// the geometry column's name (`TableGeometryCell`). Retyping is not one of them — the mode makes every
 // cell writable and the session's own *Enregistrer* writes them all, so there
 // is no per-row edit/save/cancel trio to fill this column with (§8.8).
 //
@@ -15,29 +16,25 @@ import ConfirmButton from "../ConfirmButton.vue";
 // its accessible name and its tooltip (§8.7), and deleting keeps its
 // confirmation (§8.3).
 //
-// editable is what the edit mode turns on. Reading a row's geometry is a
-// read, available whether or not the grid is armed. There is no geometry
-// *edit* action here on purpose: geometries are edited in one place, the map,
-// through one button (§8.8) — a second door onto the same mode is a second
-// thing to explain.
+// There is no geometry *edit* action here on purpose: geometries are edited
+// in one place, the map, through one button (§8.8) — a second door onto the
+// same mode is a second thing to explain.
 withDefaults(
   defineProps<{
     // A row the session is about to create: it exists nowhere yet, so the
     // only thing that applies to it is dropping it.
     draft?: boolean;
     editable?: boolean;
-    isGeo?: boolean;
     isDeletingPkey?: string;
     isDuplicating?: boolean;
     deletingPkey?: string;
   }>(),
-  { draft: false, editable: false, isGeo: false, isDuplicating: false },
+  { draft: false, editable: false, isDuplicating: false },
 );
 
 defineEmits<{
   duplicate: [];
   delete: [];
-  geometry: [];
 }>();
 </script>
 
@@ -52,17 +49,6 @@ defineEmits<{
       message="Retirer cette ligne, avec ce qui y a été saisi ?"
       @confirm="$emit('delete')"
     />
-    <BaseButton
-      v-else-if="isGeo"
-      size="xs"
-      variant="ghost"
-      :icon="Shapes"
-      icon-only
-      title="Voir la géométrie (WKT, GeoJSON)"
-      @click="$emit('geometry')"
-    >
-      Géométrie
-    </BaseButton>
     <template v-if="editable">
       <!-- Duplicating is not confirmed: it adds, and what it added is
            deleted by the button next to it (§8.3). -->

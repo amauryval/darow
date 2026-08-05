@@ -30,6 +30,10 @@ export interface Source {
 export interface SourceCRS {
   srid: number | null;
   authName: string;
+  // Whether the source carries a geometry field at all. It decides whether a
+  // CRS has to be asked for: a file of plain columns has nothing to project,
+  // and the server takes it with no srid.
+  hasGeometry: boolean;
 }
 
 export interface TablesPage {

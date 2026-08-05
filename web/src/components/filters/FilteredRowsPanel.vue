@@ -4,7 +4,7 @@ import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-
 import type { Row } from "../../client/types";
 import { cellValue } from "../../utils/rows";
 import DataTable from "../DataTable.vue";
-import TableRowActions from "../tables/TableRowActions.vue";
+import TableGeometryCell from "../tables/TableGeometryCell.vue";
 import BaseInput from "../ui/BaseInput.vue";
 import ErrorState from "../ui/ErrorState.vue";
 import Skeleton from "../ui/Skeleton.vue";
@@ -20,6 +20,7 @@ const props = defineProps<{
   error: string;
   limit: number;
   isGeo?: boolean;
+  geometryColumn?: string;
   rowClass?: (row: { original: Row }) => string;
 }>();
 const emit = defineEmits<{
@@ -38,15 +39,15 @@ const columnDefs = computed(() => {
     columnHelper.accessor((row) => cellValue(row, col), { id: col, header: col }),
   );
   if (!props.isGeo) return defs;
-  // Same place as in the paginated grid: at the start of the row and pinned
-  // there, so filtering a table does not move the control that reads a
-  // geometry to the far end of a grid that scrolls sideways.
+  // Same place as in the paginated grid: the geometry is a column, first and
+  // pinned, so filtering a table does not move the control that reads one to
+  // the far end of a grid that scrolls sideways.
   return [
     columnHelper.display({
-      id: "actions",
-      header: "",
-      meta: { pinned: "left-0", class: "w-px px-2 whitespace-nowrap" },
-      cell: (info) => h(TableRowActions, { isGeo: true, onGeometry: () => emit("geometry", info.row.original.pkey) }),
+      id: "__geometry",
+      header: props.geometryColumn ?? "geom",
+      meta: { pinned: "left-0", class: "w-16 max-w-16 px-2 truncate" },
+      cell: (info) => h(TableGeometryCell, { onOpen: () => emit("geometry", info.row.original.pkey) }),
     }),
     ...defs,
   ];

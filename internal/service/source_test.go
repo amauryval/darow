@@ -485,6 +485,49 @@ func Test_SourceService_DetectCRS(t *testing.T) {
 	assert.Equal(t, 2154, authCode)
 }
 
+func Test_SourceService_SourceHasGeometry(t *testing.T) {
+	cases := []struct {
+		name        string
+		file        string
+		extension   string
+		hasGeometry bool
+		want        bool
+		wantStorage bool
+	}{
+		{name: "a geojson carrying a geometry", file: "points.geojson", extension: ".geojson", hasGeometry: true, want: true, wantStorage: true},
+		{name: "a csv of plain columns", file: "plain.csv", extension: ".csv", want: false, wantStorage: true},
+		{name: "a parquet is asked like any other format", file: "widgets.parquet", extension: ".parquet", want: false, wantStorage: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFixture(t, dir, c.file, 100)
+
+			tableSvc, m := setupImportService(t)
+			m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
+
+			svc := NewSourceService(config.SourcesConfig{
+				WorkDir:           dir,
+				MaxSizeBytes:      1000,
+				AllowedExtensions: []string{c.extension},
+			}, tableSvc)
+
+			_, err := svc.Refresh(context.Background())
+			require.NoError(t, err)
+
+			if c.wantStorage {
+				m.On("SourceHasGeometry", mock.Anything, filepath.Join(dir, c.file), "").Return(c.hasGeometry, nil).Once()
+			}
+
+			got, err := svc.SourceHasGeometry(context.Background(), c.file, "")
+
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
 // A non-Introspectable format (Parquet/GeoParquet) must never reach
 // storage's DetectCRS — it is never called through the same ST_Read_Meta
 // path every other format uses, which crashes outright on one. The mock
