@@ -1,6 +1,7 @@
 import { watch, type Ref } from "vue";
 import type Map from "ol/Map";
 import MVT from "ol/format/MVT";
+import { intersects } from "ol/extent";
 import VectorTileLayer from "ol/layer/VectorTile";
 import VectorTileSource from "ol/source/VectorTile";
 import { tileUrl } from "../client/geo";
@@ -28,29 +29,41 @@ export function useMvtLayer(
   const picked = useMapSelection(map, selection, () => layer?.changed());
 
   function source(): VectorTileSource {
-    return new VectorTileSource({
+    // Stated, never defaulted: the default is a 512-pixel grid, which asks
+    // the server for a different z — and so a different simplification —
+    // than the endpoint is cut along (see utils/tileGrid).
+    const grid = xyzGrid();
+    const src = new VectorTileSource({
       // The tile carries the row's pkey; promoting it to the feature's id is
       // what lets a selection survive a tile reload, since a feature is
       // rebuilt from scratch on every pan.
       format: new MVT({ idProperty: "pkey", layers: ["layer"] }),
-      // Stated, never defaulted: the default is a 512-pixel grid, which asks
-      // the server for a different z — and so a different simplification —
-      // than the endpoint is cut along (see utils/tileGrid).
-      tileGrid: xyzGrid(),
+      tileGrid: grid,
       url: tileUrl(tableId.value, conditions.value, version.value),
     });
+
+    // Outside the table's own extent there is nothing to draw, so a tile that
+    // could only come back empty is never asked for. The bound is put on the
+    // requests and not on the layer: a layer extent also clips what is
+    // painted, and a symbol is drawn around its coordinate — a point sitting
+    // on the edge of its own table's bbox would be painted as a half circle,
+    // cut along the bbox rather than along anything in the data.
+    const extent = bbox.value ? viewExtent(bbox.value) : null;
+    if (extent) {
+      const url = src.getTileUrlFunction();
+      src.setTileUrlFunction((coord, pixelRatio, projection) =>
+        intersects(grid.getTileCoordExtent(coord), extent) ? url(coord, pixelRatio, projection) : undefined,
+      );
+    }
+    return src;
   }
 
   function activate() {
     const m = map.value;
     if (!m || layer) return;
 
-    const extent = bbox.value ? viewExtent(bbox.value) : null;
     layer = new VectorTileLayer({
       source: source(),
-      // Outside the table's own extent there is nothing to draw: bounding the
-      // layer is what keeps the map from asking the server for empty tiles.
-      ...(extent ? { extent } : {}),
       style: (feature) => mvtStyle(picked.isSelected(feature.getId())),
     });
     m.addLayer(layer);
@@ -71,7 +84,10 @@ export function useMvtLayer(
     layer = null;
   }
 
-  watch([conditions, version], () => {
+  // bbox is in the list because it bounds which tiles are asked for: a table
+  // whose extent grew after an edit must be allowed to serve the tiles that
+  // extent now covers.
+  watch([conditions, version, bbox], () => {
     if (layer) refreshTiles();
   });
 
