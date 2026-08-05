@@ -1,5 +1,5 @@
 import { reactive, ref, type Ref } from "vue";
-import { addRows, deleteRow, listRows, updateRow } from "../client/tables";
+import { addRows, deleteRow, getRowGeometry, listRows, updateRow } from "../client/tables";
 import type { ColumnSchema, Row } from "../client/types";
 import { errorMessage } from "../client/http";
 import { coerceByType, columnType } from "../utils/columnTypes";
@@ -17,6 +17,7 @@ export function useTableRows(
   tableId: Ref<string>,
   rowColumns: Ref<string[]>,
   columns: Ref<ColumnSchema[]>,
+  geometryColumn: Ref<string | undefined>,
   onMutated: () => void,
 ) {
   const toast = useToast();
@@ -88,6 +89,32 @@ export function useTableRows(
     }
   }
 
+  // --- Duplicate row ---
+  const duplicatingPkey = ref<string | null>(null);
+
+  // A copy of the row under a new primary key: its attributes are taken from
+  // the row already on screen, but its geometry has to be read for it. The
+  // geometry column is deliberately absent from every row listing (LIM-F3),
+  // and a geo row duplicated without it would land empty — a row that exists
+  // in the grid and nowhere on the map.
+  async function duplicateRow(row: Row) {
+    duplicatingPkey.value = row.pkey;
+    try {
+      const values: Record<string, unknown> = {};
+      for (const col of rowColumns.value) values[col] = cellValue(row, col);
+      const column = geometryColumn.value;
+      if (column) values[column] = (await getRowGeometry(tableId.value, row.pkey)).geometry;
+      await addRows(tableId.value, [values]);
+      await list.reload();
+      onMutated();
+      toast.success("Ligne dupliquée.");
+    } catch (e) {
+      toast.error(errorMessage(e, "Impossible de dupliquer la ligne"));
+    } finally {
+      duplicatingPkey.value = null;
+    }
+  }
+
   // --- Add row ---
   const addingRow = ref(false);
   const addRowError = ref<string | null>(null);
@@ -140,6 +167,8 @@ export function useTableRows(
     cancelEditRow,
     saveEditRow,
     deleteRow: deleteOneRow,
+    duplicatingPkey,
+    duplicateRow,
     addingRow,
     addRowError,
     addRow,

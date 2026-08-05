@@ -112,5 +112,5 @@ export function useWfsLayer(
     if (layer) refreshData();
   });
 
-  return { activate, deactivate, refreshData };
+  return { activate, deactivate, refreshData, pkeyAt: picked.pkeyAt };
 }

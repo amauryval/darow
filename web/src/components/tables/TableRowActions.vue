@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Shapes } from "@lucide/vue";
+import { Copy, Shapes } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ConfirmButton from "../ConfirmButton.vue";
 
@@ -15,15 +15,17 @@ withDefaults(
     isEditing?: boolean;
     isSaving?: boolean;
     isDeletingPkey?: string;
+    isDuplicating?: boolean;
     deletingPkey?: string;
   }>(),
-  { editable: false, isGeo: false, isEditing: false, isSaving: false },
+  { editable: false, isGeo: false, isEditing: false, isSaving: false, isDuplicating: false },
 );
 
 defineEmits<{
   save: [];
   cancel: [];
   edit: [];
+  duplicate: [];
   delete: [];
   geometry: [];
 }>();
@@ -53,6 +55,20 @@ defineEmits<{
       </BaseButton>
       <template v-if="editable">
         <BaseButton variant="secondary" size="xs" @click="$emit('edit')">Modifier</BaseButton>
+        <!-- Duplicating is not confirmed: it adds, and what it added is
+             deleted by the button next to it (§8.3). -->
+        <BaseButton
+          size="xs"
+          variant="ghost"
+          :icon="Copy"
+          icon-only
+          :busy="isDuplicating"
+          :disabled="isDuplicating"
+          title="Dupliquer cette ligne"
+          @click="$emit('duplicate')"
+        >
+          Dupliquer
+        </BaseButton>
         <ConfirmButton
           label="Supprimer"
           message="Supprimer définitivement cette ligne ?"

@@ -6,8 +6,19 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import type Geometry from "ol/geom/Geometry";
 import type { Pixel } from "ol/pixel";
-import { DIRTY_PROPERTY, PKEY_PROPERTY, editStyle, focusStyle } from "../utils/drawStyles";
+import MultiPoint from "ol/geom/MultiPoint";
+import type { Coordinate } from "ol/coordinate";
+import {
+  DIRTY_PROPERTY,
+  MOVED_PROPERTY,
+  PKEY_PROPERTY,
+  coordinateKey,
+  editStyle,
+  focusStyle,
+  verticesOf,
+} from "../utils/drawStyles";
 import { isAreal } from "../utils/holes";
+import { useMoveLeaders } from "./useMoveLeaders";
 import { readGeometry, writeGeometry } from "../utils/projection";
 
 // A row as the edit layer holds it: the row it is, and its geometry at full
@@ -42,6 +53,16 @@ const EDIT_Z_INDEX = 10;
 // to be recognised from at least as far.
 const HIT_TOLERANCE = 8;
 
+// How many **untouched** geometries a session keeps around. Not zero: a
+// neighbour has to be in the source for a shared limit to move on both sides,
+// and it has to be there for a new vertex to snap onto it — dropping every
+// geometry the user did not modify would take topology and snapping with it.
+// Past this, the ones reached longest ago are given back: they are weight in
+// the `Snap`'s index and in the `Modify`'s, and the user has moved on. What
+// was touched is never counted here and never released — it carries unsaved
+// work.
+const MAX_RESTING = 40;
+
 export function useEditLayer(map: Ref<OlMap | null>) {
   const source = new VectorSource();
   const layer = new VectorLayer({ source, style: editStyle, zIndex: EDIT_Z_INDEX });
@@ -55,6 +76,9 @@ export function useEditLayer(map: Ref<OlMap | null>) {
   // geometry, and the dots have to follow it rather than mark where it was.
   const focusSource = new VectorSource();
   const focusLayer = new VectorLayer({ source: focusSource, style: focusStyle, zIndex: EDIT_Z_INDEX + 1 });
+  // Above both: a leader is an annotation over the geometry it describes, and
+  // it has to stay readable across the dots of the feature it starts from.
+  const leaders = useMoveLeaders(EDIT_Z_INDEX + 2);
   // What the session has touched so far, split the way the write is: rows
   // whose geometry moved go out as an update, shapes that belong to no row
   // yet as an insert. The bar states both before the user commits to
@@ -79,6 +103,7 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     added = true;
     m.addLayer(layer);
     m.addLayer(focusLayer);
+    m.addLayer(leaders.layer);
   }
 
   // The single feature the pointer rests over, as a collection because that
@@ -100,14 +125,18 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     }
   }
 
-  // Hit detection is not free on a layer holding a whole view, so the caller
-  // owns the throttling and hands a pixel rather than every pointer event.
-  function trackPointer(m: OlMap, pixel: Pixel) {
+  // Hit detection is not free, so the caller owns the throttling and hands a
+  // pixel rather than every pointer event. Answers whether the session
+  // already holds something under that pixel: what it does not hold is what
+  // the caller goes and fetches (§8.8).
+  function trackPointer(m: OlMap, pixel: Pixel): boolean {
     const found = m.forEachFeatureAtPixel(pixel, (feature) => feature, {
       layerFilter: (candidate) => candidate === layer,
       hitTolerance: HIT_TOLERANCE,
     });
-    focus(found instanceof Feature ? found : null);
+    const hit = found instanceof Feature ? found : null;
+    focus(hit);
+    return hit !== null;
   }
 
   function pkeyOf(feature: Feature<Geometry>): string | null {
@@ -149,6 +178,49 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     if (focused === feature) focusSource.changed();
   }
 
+  // The vertices a modification actually moved, merged into whatever the
+  // feature already carried: one geometry is reshaped over several drags, and
+  // each adds to what the save will write rather than replacing it.
+  //
+  // Merging is not appending, and that is the whole of it: a mark sits at the
+  // position the vertex was dropped at, so the *next* drag on that same vertex
+  // leaves the old mark behind, on a coordinate the geometry no longer holds —
+  // a red dot floating where the vertex used to be. So every call first drops
+  // the marks the geometry has stopped carrying. That also covers the two
+  // cases nothing else would: a vertex deleted after being moved, and a whole
+  // feature translated, after which no mark is on the geometry any more and
+  // "these nodes moved" has stopped meaning anything.
+  //
+  // Set silently and repainted through the source, for the same reason
+  // noteChange is: recording a move must not itself read as a change.
+  // `arrived` are the coordinates the drag put there, `left` the ones it took
+  // away. A reshape that added exactly one and removed exactly one is a node
+  // that moved, and only that case gets a leader: one added and none removed
+  // is a vertex inserted on a segment, which came from nowhere, and the
+  // reverse is a deletion, which went nowhere.
+  function noteMoved(feature: Feature<Geometry>, arrived: Coordinate[], left: Coordinate[]) {
+    const previous = feature.get(MOVED_PROPERTY);
+    const held = previous instanceof MultiPoint ? previous.getCoordinates() : [];
+    if (held.length === 0 && arrived.length === 0 && left.length === 0) return;
+
+    const current = new Set((verticesOf(feature.getGeometry())?.getCoordinates() ?? []).map(coordinateKey));
+    const marks = new Map<string, Coordinate>();
+    for (const coordinate of [...held, ...arrived]) {
+      const id = coordinateKey(coordinate);
+      if (current.has(id)) marks.set(id, coordinate);
+    }
+
+    if (arrived.length === 1 && left.length === 1) leaders.note(feature, left[0], arrived[0]);
+    leaders.retain(feature, new Set(marks.keys()));
+
+    if (marks.size === 0) feature.unset(MOVED_PROPERTY, true);
+    else feature.set(MOVED_PROPERTY, new MultiPoint([...marks.values()]), true);
+    source.changed();
+    // The marks are drawn by the focus layer too, which is not the one the
+    // change was announced on (see focusStyle).
+    if (focused === feature) focusSource.changed();
+  }
+
   function changes(): LayerChanges {
     const updates = new Map<string, GeoJSON.Geometry>();
     const inserts: GeoJSON.Geometry[] = [];
@@ -162,28 +234,46 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     return { updates, inserts };
   }
 
-  // Gives back the room the session is no longer using: the features it holds
-  // that the view has left and that the user has not touched. Without it the
-  // caps (useEditFeatures) are a one-way ratchet — a session that filled its
-  // budget once on a wide view could never load anything again, whatever the
-  // user zoomed into afterwards. A dirty feature is never released, whether it
-  // is in view or not: it carries unsaved work. Nor is one that belongs to no
-  // row yet — it was drawn here, and the server has no copy to give back.
+  // Gives back what the session is no longer using, on two grounds: an
+  // untouched geometry the view has left, and — once those are gone — the
+  // untouched ones reached longest ago, past MAX_RESTING. The second is what
+  // bounds a session worked in place: reaching a geometry is a hover, hovering
+  // is cheap, and a quarter of an hour of pointing over one neighbourhood
+  // piles up features that never leave the view and that nothing would
+  // otherwise release.
+  //
+  // A dirty feature is never released, in view or not: it carries unsaved
+  // work. Nor is one that belongs to no row yet — it was drawn here, and the
+  // server has no copy to give back — nor the one under the pointer, which is
+  // the geometry the user is about to grab.
   function prune(): string[] {
     const m = map.value;
     const size = m?.getSize();
-    if (!m || !size) return [];
-    const extent = m.getView().calculateExtent(size);
+    const extent = m && size ? m.getView().calculateExtent(size) : null;
     const released: string[] = [];
+
+    function drop(feature: Feature<Geometry>, pkey: string) {
+      if (focused === feature) focus(null);
+      leaders.forget(feature);
+      source.removeFeature(feature);
+      released.push(pkey);
+    }
+
+    // Source order is the order the geometries were reached in, so the head of
+    // this list is the oldest — no separate bookkeeping to keep true.
+    const resting: Array<[Feature<Geometry>, string]> = [];
     for (const feature of source.getFeatures()) {
       if (feature.get(DIRTY_PROPERTY)) continue;
       const pkey = pkeyOf(feature);
       if (pkey === null) continue;
-      if (feature.getGeometry()?.intersectsExtent(extent)) continue;
-      if (focused === feature) focus(null);
-      source.removeFeature(feature);
-      released.push(pkey);
+      if (extent && !feature.getGeometry()?.intersectsExtent(extent)) {
+        drop(feature, pkey);
+        continue;
+      }
+      if (focused !== feature) resting.push([feature, pkey]);
     }
+    for (let i = 0; i < resting.length - MAX_RESTING; i += 1) drop(...resting[i]);
+
     return released;
   }
 
@@ -193,6 +283,8 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     added = false;
     m.removeLayer(layer);
     m.removeLayer(focusLayer);
+    m.removeLayer(leaders.layer);
+    leaders.clear();
     source.clear();
     focus(null);
     changedCount.value = 0;
@@ -210,6 +302,7 @@ export function useEditLayer(map: Ref<OlMap | null>) {
     load,
     prune,
     noteChange,
+    noteMoved,
     changes,
     dirtyCount,
     changedCount,

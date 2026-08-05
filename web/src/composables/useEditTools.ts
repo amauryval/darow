@@ -35,6 +35,12 @@ export function useEditTools(map: Ref<Map | null>, source: VectorSource) {
   // dragging those neighbours around is an ordinary thing to want.
   const snapping = ref(true);
   const topological = ref(true);
+  // Moving a whole geometry rather than one of its vertices. It is a mode and
+  // not a gesture, because the two cannot share the pointer: a press near a
+  // boundary is either "grab this vertex" or "grab this shape", and with both
+  // interactions armed the vertex always wins and the move never happens. The
+  // caller swaps the `Modify` for a `Translate` on it (useMapDraw).
+  const moving = ref(false);
   let draw: Draw | null = null;
   let snap: Snap | null = null;
 
@@ -86,6 +92,9 @@ export function useEditTools(map: Ref<Map | null>, source: VectorSource) {
     if (!m) return;
     hole.stop();
     stopDraw(m);
+    // Drawing and moving are two things to do with the same drag: arming one
+    // disarms the other rather than leaving the map answering neither (§8.2).
+    if (next !== null) moving.value = false;
     if (next !== null) {
       shape.value = next;
       const started = new Draw({ source, type: next });
@@ -101,7 +110,18 @@ export function useEditTools(map: Ref<Map | null>, source: VectorSource) {
     const m = map.value;
     if (!m) return;
     stopDraw(m);
+    moving.value = false;
     hole.toggle();
+  }
+
+  // Arming the move drops whatever was being drawn: the drag it takes over is
+  // the one that was placing vertices.
+  function toggleMoving() {
+    const m = map.value;
+    moving.value = !moving.value;
+    if (!moving.value || !m) return;
+    hole.stop();
+    stopDraw(m);
   }
 
   function toggleSnapping() {
@@ -151,17 +171,20 @@ export function useEditTools(map: Ref<Map | null>, source: VectorSource) {
     draw = null;
     snap = null;
     shape.value = null;
+    moving.value = false;
   }
 
   return {
     shape,
     snapping,
     topological,
+    moving,
     cuttingHole: hole.cutting,
     drawing,
     addUnderSnap,
     setShape,
     toggleHole,
+    toggleMoving,
     toggleSnapping,
     toggleTopology,
     undo,

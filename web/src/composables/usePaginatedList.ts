@@ -122,6 +122,16 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
   // always a mount concern: it needs the sentinel element.
   if (options.key) watch(options.key, () => reload(), { immediate: true });
 
+  // The sentinel is at the foot of the list, so it only enters the DOM once
+  // there is a list to put a foot on: a first load renders a skeleton
+  // instead, and the element the observer was given at mount was never
+  // there. Observing it when it appears is what makes the scroll load a
+  // second page at all — without it every list stopped at its first one.
+  watch(sentinel, (element, previous) => {
+    if (previous) observer?.unobserve(previous);
+    if (element) observer?.observe(element);
+  });
+
   onMounted(() => {
     observer = new IntersectionObserver(
       (entries) => {

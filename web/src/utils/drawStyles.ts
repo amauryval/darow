@@ -1,36 +1,52 @@
 import Circle from "ol/style/Circle";
 import Fill from "ol/style/Fill";
+import RegularShape from "ol/style/RegularShape";
 import Stroke from "ol/style/Stroke";
 import Style from "ol/style/Style";
 import MultiPoint from "ol/geom/MultiPoint";
+import Point from "ol/geom/Point";
 import SimpleGeometry from "ol/geom/SimpleGeometry";
 import type { FeatureLike } from "ol/Feature";
 import type Geometry from "ol/geom/Geometry";
 import type RenderFeature from "ol/render/Feature";
 import type { Coordinate } from "ol/coordinate";
 
-// The colours an edit session is drawn in, and the three states it keeps
-// apart on one screen.
+// The colours an edit session is drawn in, and what it does **not** colour.
 //
-// The session draws *above* the table's own rendering, which stays on, so
-// its colours cannot be the rendering's — indigo is the MVT layer's, green
-// the WFS layer's (`mapStyles.ts`). Cyan is neither. Amber is the colour a
-// pending write carries everywhere in the application, and it is free here
-// because selection is suspended for the length of a session. Violet marks a
-// shape that belongs to no row yet: saving it is an insert, not an update,
-// and the two fail differently — a new shape with no attributes is what a
-// save refuses.
-const RESTING = "#0891b2";
-const RESTING_DARK = "#0e7490";
+// Being editable is not a state worth a colour. Every row of the layer is a
+// candidate, the session simply has not been pointed at all of them yet, and
+// painting "you may grab this" over a rendering the user is reading turns the
+// whole screen into a status display. So a reached, untouched geometry is
+// drawn in a neutral slate that merely retraces the boundary already there —
+// it is the vertices under the pointer that say what can be grabbed (§8.8).
+//
+// What is coloured is what the session has *done*, because that is what a
+// save is about to write. Amber is the colour a pending write carries
+// everywhere in the application, free here because selection is suspended for
+// the length of a session; violet marks a shape that belongs to no row yet,
+// since saving it is an insert and not an update, and the two fail
+// differently — a new shape with no attributes is what a save refuses.
+const RESTING = "#64748b";
+const RESTING_DARK = "#475569";
 const CHANGED = "#f59e0b";
 const CHANGED_DARK = "#b45309";
 const CREATED = "#7c3aed";
 const CREATED_DARK = "#5b21b6";
+// The vertices a drag actually moved, told apart from the rest of the
+// geometry carrying them: on a boundary of ten thousand points, "this row
+// changed" says almost nothing and "these three points changed" says all of
+// it. Red-orange rather than the feature's amber, so a moved node stands out
+// against the shape it belongs to instead of melting into it.
+const MOVED = "#dc2626";
 
 // The property names the edit layer tags its features with, kept next to the
 // style that has to read them on every frame.
 export const DIRTY_PROPERTY = "dirty";
 export const PKEY_PROPERTY = "pkey";
+// The vertices of this feature that a modification moved, held as the
+// MultiPoint the style hands straight back — a style function runs per
+// feature per frame and must not build geometry.
+export const MOVED_PROPERTY = "moved";
 
 // Every vertex of a geometry, rebuilt only when that geometry actually moved.
 // A style function runs once per feature per frame, and the vertices of one
@@ -42,6 +58,14 @@ interface CachedVertices {
   points: MultiPoint | undefined;
 }
 const vertexCache = new WeakMap<Geometry, CachedVertices>();
+
+// The identity of a coordinate, for the one question anyone asks about one:
+// does this geometry still carry it? Written once here, next to `verticesOf`,
+// because a mark placed on a vertex and the geometry it is compared against
+// have to agree on what "the same point" means.
+export function coordinateKey(coordinate: Coordinate): string {
+  return `${coordinate[0]}|${coordinate[1]}`;
+}
 
 export function verticesOf(geometry: Geometry | RenderFeature | undefined): MultiPoint | undefined {
   if (!(geometry instanceof SimpleGeometry)) return undefined;
@@ -57,13 +81,25 @@ export function verticesOf(geometry: Geometry | RenderFeature | undefined): Mult
   return built;
 }
 
+// What an editable surface is drawn as: its boundary and its vertices, not a
+// second filled surface over the one the render mode already draws
+// underneath. A fill is a tessellation per geometry per frame, and it was
+// paid to hide the very rendering the session is meant to be compared
+// against.
+//
+// It is not dropped outright, and that is the whole reason for the value:
+// OpenLayers hit-tests what a style actually paints, so a polygon with no
+// fill can only be reached on its outline — and reaching a polygon is how
+// its vertices are shown and how the move tool grabs it.
+const BODY_ALPHA = 0.02;
+
 // A touched geometry is drawn heavier as well as recoloured: §8.7 asks that
 // information never rest on colour alone, and a stroke width survives a
 // colour-blind reading where a hue does not.
-function bodyStyle(color: string, dark: string, opacity: number, width: number): Style[] {
+function bodyStyle(color: string, dark: string, width: number): Style[] {
   return [
     new Style({
-      fill: new Fill({ color: rgba(color, opacity) }),
+      fill: new Fill({ color: rgba(color, BODY_ALPHA) }),
       stroke: new Stroke({ color: dark, width }),
       image: new Circle({ radius: 4, fill: new Fill({ color: dark }) }),
     }),
@@ -91,18 +127,37 @@ function rgba(hex: string, alpha: number): string {
 
 // Built once and handed back as they are: a style function is called for
 // every feature of every frame, so it must not allocate.
-const RESTING_STYLE = bodyStyle(RESTING, RESTING_DARK, 0.12, 2);
-const CHANGED_STYLE = bodyStyle(CHANGED, CHANGED_DARK, 0.35, 3.5);
-const CREATED_STYLE = bodyStyle(CREATED, CREATED_DARK, 0.35, 3.5);
+const RESTING_STYLE = bodyStyle(RESTING, RESTING_DARK, 1.5);
+const CHANGED_STYLE = bodyStyle(CHANGED, CHANGED_DARK, 3.5);
+const CREATED_STYLE = bodyStyle(CREATED, CREATED_DARK, 3.5);
 const RESTING_VERTICES = vertexStyle(RESTING_DARK);
 const CHANGED_VERTICES = vertexStyle(CHANGED_DARK);
 const CREATED_VERTICES = vertexStyle(CREATED_DARK);
 
-// What the legend in the edit bar names, so the three states are readable
-// without decoding the colours (§8.7). The order is the one the bar shows.
+// The nodes a drag moved, drawn wherever they are and not only under the
+// pointer: they are the one thing on screen a save is about to write, so they
+// stay visible once the pointer has gone elsewhere. It costs nothing that the
+// hover dots do not already cost — the set is bounded by the gestures the
+// user actually made, not by what the view holds.
+const MOVED_VERTICES = new Style({
+  geometry: (feature) => {
+    const moved = feature.get(MOVED_PROPERTY);
+    return moved instanceof MultiPoint ? moved : undefined;
+  },
+  image: new Circle({
+    radius: 5,
+    fill: new Fill({ color: MOVED }),
+    stroke: new Stroke({ color: "#ffffff", width: 1.5 }),
+  }),
+});
+
+// What the legend in the edit bar names, so the states are readable without
+// decoding the colours (§8.7). The order is the one the bar shows. Being
+// editable is not in it — it is not a state, and nothing on screen announces
+// it.
 export const EDIT_LEGEND = [
-  { tone: RESTING_DARK, label: "Modifiable" },
-  { tone: CHANGED_DARK, label: "Modifiée" },
+  { tone: MOVED, label: "Sommet déplacé" },
+  { tone: CHANGED_DARK, label: "Géométrie modifiée" },
   { tone: CREATED_DARK, label: "Nouvelle" },
 ];
 
@@ -112,9 +167,16 @@ function created(feature: FeatureLike): boolean {
   return feature.get(PKEY_PROPERTY) === undefined;
 }
 
+// Built once per body style, since a feature carrying moved nodes needs both
+// its own outline and those nodes in the same answer.
+const CHANGED_WITH_MOVED = [...CHANGED_STYLE, MOVED_VERTICES];
+const CREATED_WITH_MOVED = [...CREATED_STYLE, MOVED_VERTICES];
+
 export function editStyle(feature: FeatureLike): Style[] {
-  if (created(feature)) return CREATED_STYLE;
-  return feature.get(DIRTY_PROPERTY) ? CHANGED_STYLE : RESTING_STYLE;
+  const moved = feature.get(MOVED_PROPERTY) !== undefined;
+  if (created(feature)) return moved ? CREATED_WITH_MOVED : CREATED_STYLE;
+  if (!feature.get(DIRTY_PROPERTY)) return RESTING_STYLE;
+  return moved ? CHANGED_WITH_MOVED : CHANGED_STYLE;
 }
 
 // The vertices of the one geometry the pointer rests over, drawn in that
@@ -124,9 +186,57 @@ export function editStyle(feature: FeatureLike): Style[] {
 // point: vertices for the whole session's worth of geometry meant thousands
 // of points rebuilt on every frame of every pan and every drag. Kept apart,
 // a change of what is hovered repaints one geometry instead of a whole view.
-export function focusStyle(feature: FeatureLike): Style {
-  if (created(feature)) return CREATED_VERTICES;
-  return feature.get(DIRTY_PROPERTY) ? CHANGED_VERTICES : RESTING_VERTICES;
+// The moved nodes are repeated here, and they have to be: this layer draws
+// above the one carrying them, so a hover would otherwise bury them under the
+// plain dots of the geometry they belong to.
+const RESTING_FOCUS = [RESTING_VERTICES, MOVED_VERTICES];
+const CHANGED_FOCUS = [CHANGED_VERTICES, MOVED_VERTICES];
+const CREATED_FOCUS = [CREATED_VERTICES, MOVED_VERTICES];
+
+export function focusStyle(feature: FeatureLike): Style[] {
+  if (created(feature)) return CREATED_FOCUS;
+  return feature.get(DIRTY_PROPERTY) ? CHANGED_FOCUS : RESTING_FOCUS;
+}
+
+// The path a node took: a dashed leader from where it stood before the user
+// touched it to where it stands now, a hollow ring on the origin and an
+// arrowhead on the arrival. It says the one thing the red dot cannot — how
+// far, and which way.
+//
+// Built per leader and set on the leader itself (`Feature.setStyle`), never
+// answered by a style function: the arrowhead's rotation is that leader's own
+// direction, so it cannot be one shared, pre-built style, and a style
+// function returning a fresh one would rebuild it on every frame. A leader is
+// created by a gesture, which is when this runs.
+//
+// A `RegularShape` and not an icon: it is rotatable, sized in pixels — so the
+// head stays the same size at every zoom while the leader it caps is in map
+// coordinates — and it needs no image to embed.
+export function leaderStyle(from: Coordinate, to: Coordinate): Style[] {
+  return [
+    new Style({ stroke: new Stroke({ color: MOVED, width: 1.5, lineDash: [5, 4] }) }),
+    new Style({
+      geometry: new Point(from),
+      image: new Circle({
+        radius: 3.5,
+        fill: new Fill({ color: "#ffffff" }),
+        stroke: new Stroke({ color: MOVED, width: 1.5 }),
+      }),
+    }),
+    new Style({
+      geometry: new Point(to),
+      image: new RegularShape({
+        points: 3,
+        radius: 6,
+        // OpenLayers rotates clockwise from north and the triangle points
+        // north unrotated, so the direction is read as an azimuth — atan2 of
+        // (dx, dy), not the usual (dy, dx) angle from the x axis.
+        rotation: Math.atan2(to[0] - from[0], to[1] - from[1]),
+        fill: new Fill({ color: MOVED }),
+        stroke: new Stroke({ color: "#ffffff", width: 1 }),
+      }),
+    }),
+  ];
 }
 
 // The handle under the pointer — the one that will move if the user drags

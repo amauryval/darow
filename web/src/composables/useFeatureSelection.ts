@@ -19,10 +19,6 @@ export function useFeatureSelection(tableId: Ref<string>) {
       : [...selectedPkeys.value, pkey];
   }
 
-  function deselect(pkey: string) {
-    selectedPkeys.value = selectedPkeys.value.filter((p) => p !== pkey);
-  }
-
   function clear() {
     selectedPkeys.value = [];
   }
@@ -60,5 +56,5 @@ export function useFeatureSelection(tableId: Ref<string>) {
     clear();
   });
 
-  return { selectedPkeys, selectedRows, toggle, deselect, clear };
+  return { selectedPkeys, selectedRows, toggle, clear };
 }

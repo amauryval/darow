@@ -75,5 +75,9 @@ export function useMvtLayer(
     if (layer) refreshTiles();
   });
 
-  return { activate, deactivate };
+  // Which row is drawn under a pixel — how an edit session reaches the
+  // geometry the pointer rests over (§8.8). What it answers is an identifier,
+  // never a geometry: a tile's copy is simplified for its zoom and is never
+  // what gets edited.
+  return { activate, deactivate, pkeyAt: picked.pkeyAt };
 }

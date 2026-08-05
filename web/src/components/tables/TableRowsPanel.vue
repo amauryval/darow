@@ -53,6 +53,19 @@ const columnDefs = computed(() => {
     }),
   );
 
+  // The rank of the row in the grid as it is displayed — selection pinned at
+  // the top included. It is what a user points at when they say "the third
+  // one", and it is not the primary key: a pkey is an identifier, not a
+  // position, and the two disagree as soon as the grid is sorted.
+  defs.unshift(
+    columnHelper.display({
+      id: "__rownum",
+      header: "#",
+      meta: { align: "right", class: "w-12 tabular-nums text-base-content/40" },
+      cell: (info) => String(info.row.index + 1),
+    }),
+  );
+
   // The actions column is always there: reading a row's geometry is a read,
   // and arming edit mode to look at one would be a trap.
   defs.push(
@@ -68,10 +81,12 @@ const columnDefs = computed(() => {
           isEditing: props.state.editingPkey.value === row.pkey,
           isSaving: props.state.savingRow.value,
           isDeletingPkey: props.state.deletingPkey.value ?? undefined,
+          isDuplicating: props.state.duplicatingPkey.value === row.pkey,
           deletingPkey: row.pkey,
           onSave: props.state.saveEditRow,
           onCancel: props.state.cancelEditRow,
           onEdit: () => props.state.startEditRow(row),
+          onDuplicate: () => props.state.duplicateRow(row),
           onDelete: () => props.state.deleteRow(row.pkey),
           onGeometry: () => emit("geometry", row.pkey),
         });

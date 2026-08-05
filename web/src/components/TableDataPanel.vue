@@ -44,7 +44,7 @@ const dataVersion = ref(0);
 
 const filter = useRowFilter(tableId, columns, isGeo);
 const selection = useFeatureSelection(tableId);
-const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), columns, () => {
+const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), columns, geometryColumn, () => {
   dataVersion.value += 1;
   emit("mutated");
 });
@@ -127,13 +127,20 @@ const displayRows = computed(() => {
 });
 
 function rowClassFor(row: { original: Row }) {
-  return props.isGeo && selection.selectedPkeys.value.includes(row.original.pkey)
+  if (!props.isGeo) return "";
+  return selection.selectedPkeys.value.includes(row.original.pkey)
     ? "bg-warning/10 hover:bg-warning/20 cursor-pointer"
-    : "";
+    : "cursor-pointer";
 }
 
+// One click on a row toggles it in and out of the selection, exactly as one
+// click on its feature does — map selection and table selection are the same
+// selection, so the gesture that reverses it has to be the same too (§8.8).
+// A row open for editing is not a target: the click is aimed at the field
+// under the pointer, and DataTable has already filtered out the controls.
 function onRowClick(row: { original: Row }) {
-  if (props.isGeo && selection.selectedPkeys.value.includes(row.original.pkey)) selection.deselect(row.original.pkey);
+  if (!props.isGeo || rowsState.editingPkey.value === row.original.pkey) return;
+  selection.toggle(row.original.pkey);
 }
 </script>
 
@@ -210,7 +217,7 @@ function onRowClick(row: { original: Row }) {
           :toolbar-target="`#${MAP_TOOLS_ID}`"
           :data-version="dataVersion"
           @toggle-selection="selection.toggle"
-          @request-features="layerEditing.loadIn"
+          @request-feature="layerEditing.reach"
           @release-features="layerEditing.release"
           @save="layerEditing.save"
           @cancel="layerEditing.cancel"

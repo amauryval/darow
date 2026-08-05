@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Circle, Magnet, MapPin, Pentagon, Share2, Spline, Undo2 } from "@lucide/vue";
+import { Circle, Magnet, MapPin, Move, Pentagon, Share2, Spline, Undo2 } from "@lucide/vue";
 import type { DrawShape } from "../../composables/useMapDraw";
 import { EDIT_LEGEND } from "../../utils/drawStyles";
 import Badge from "../Badge.vue";
@@ -20,6 +20,9 @@ const props = defineProps<{
   // Moving: whether a coordinate two geometries already share is one vertex
   // or two.
   topological: boolean;
+  // Moving: the drag grabs the whole geometry under the pointer instead of
+  // one of its vertices. The two cannot share a drag, so it is a mode.
+  moving: boolean;
   cuttingHole: boolean;
   // Whether a shape is being drawn at all — what tells the bar that taking
   // back a point means something.
@@ -34,6 +37,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   pick: [shape: DrawShape];
   toggleHole: [];
+  toggleMoving: [];
   toggleSnapping: [];
   toggleTopology: [];
   undo: [];
@@ -88,9 +92,18 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
             :title="
               hasAreal
                 ? 'Découper un trou dans le polygone qui le contient'
-                : 'Aucun polygone dans cette vue : un trou se dessine à l’intérieur d’une surface'
+                : 'Aucun polygone dans la session : survolez-en un pour le rendre modifiable'
             "
             @click="emit('toggleHole')"
+          />
+          <BaseButton
+            joined
+            size="sm"
+            :variant="moving ? 'primary' : 'secondary'"
+            :icon="Move"
+            :aria-pressed="moving"
+            title="Déplacer la géométrie entière survolée, au lieu d’un seul de ses sommets"
+            @click="emit('toggleMoving')"
           />
           <BaseButton
             joined

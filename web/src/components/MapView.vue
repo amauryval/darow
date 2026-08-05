@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, toRef, watch } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import "ol/ol.css";
 import type { FilterCondition } from "../client/types";
 import { useMapDraw, type DrawShape } from "../composables/useMapDraw";
@@ -7,7 +7,6 @@ import type { EditableFeature, LayerChanges } from "../composables/useEditLayer"
 import { useOpenLayers } from "../composables/useOpenLayers";
 import { useMvtLayer } from "../composables/useMvtLayer";
 import { useWfsLayer } from "../composables/useWfsLayer";
-import { viewBbox } from "../utils/projection";
 import MapEditBar from "./map/MapEditBar.vue";
 import BaseCheckbox from "./ui/BaseCheckbox.vue";
 import FloatingPanel from "./ui/FloatingPanel.vue";
@@ -20,10 +19,9 @@ const props = defineProps<{
   // Editing is a mode of the whole layer, on only while the parent says so:
   // outside it the map stays a reading surface.
   editing?: boolean;
-  editingPrompt?: string;
-  // The rows of the current view at full resolution, loaded by the parent in
-  // answer to `request-features`. What is already on the layer is left alone,
-  // so a geometry the user moved is never overwritten by a pan.
+  // The geometries the parent has loaded at full resolution, in answer to
+  // `request-feature`. What is already on the layer is left alone, so a
+  // geometry the user moved is never overwritten.
   features?: EditableFeature[];
   loadingFeatures?: boolean;
   saving?: boolean;
@@ -45,7 +43,9 @@ const props = defineProps<{
 // leave the same way: the parent decides what they mean and writes them.
 const emit = defineEmits<{
   toggleSelection: [pkey: string];
-  requestFeatures: [bbox: [number, number, number, number]];
+  // The row the pointer rests over and the session does not hold yet: a
+  // session grows by pointing, one geometry at a time (§8.8).
+  requestFeature: [pkey: string];
   // The rows the map has stopped holding: untouched geometries the view has
   // left. They are what gives the session's budget back (§8.8).
   releaseFeatures: [pkeys: string[]];
@@ -79,7 +79,12 @@ const selection = {
 };
 const mvt = useMvtLayer(map, tableId, bbox, conditions, selection, dataVersion);
 const wfs = useWfsLayer(map, tableId, conditions, selection, dataVersion);
-const draw = useMapDraw(map);
+// The session reads the rendering to know what the pointer is over: only the
+// mode actually on the map can answer, and it is the one the user is reading.
+const draw = useMapDraw(map, {
+  pkeyAt: (pixel) => (wfsEnabled.value ? wfs.pkeyAt(pixel) : mvt.pkeyAt(pixel)),
+  reach: (pkey) => emit("requestFeature", pkey),
+});
 
 // MVT and WFS are mutually exclusive on the map — switching modes tears down
 // the previous mode's layer entirely rather than stacking both, so there is
@@ -103,68 +108,37 @@ watch(wfsEnabled, showTable);
 // useEditLayer), and a row being reshaped shows its stored geometry
 // underneath until the session is saved.
 
-// The session works on what is in view, so what is in view has to be asked
-// for: on entering, and on every pan or zoom that reveals more.
-// A view that has not been measured yet has no extent to ask about — the
-// panel is still being laid out when the mode is entered, and the map then
-// reports a zero-sized viewport. Retrying on the next frame is what keeps
-// the session from starting empty and staying that way; it cannot be hung on
-// `postrender`, because a map with no area draws nothing and so never renders
-// another frame to hang on.
-let retry = 0;
-
-function cancelRetry() {
-  if (retry) cancelAnimationFrame(retry);
-  retry = 0;
-}
-
-function requestFeatures() {
-  const m = map.value;
-  if (!m) return;
-  cancelRetry();
-  const extent = viewBbox(m);
-  if (extent) {
-    // Freed first, asked second: the room the view just left is what the
-    // view it arrives on is loaded with.
-    const released = draw.prune();
-    if (released.length > 0) emit("releaseFeatures", released);
-    emit("requestFeatures", extent);
-    return;
-  }
-  // A map with no area has no view to ask about — it is hidden behind a
-  // maximized table, or its panel is still being laid out. Retrying on the
-  // next frame would spin for as long as it stays hidden; `change:size` is
-  // what fires when it gets an area back, and it is already bound.
-  const size = m.getSize();
-  if (!size || size[0] === 0 || size[1] === 0) return;
-  retry = requestAnimationFrame(requestFeatures);
+// The session asks for nothing on entering and nothing on panning: what it
+// holds is what the pointer has reached. What a move still does is give room
+// back — the untouched geometries the view has left are released, so a
+// session that walked across a region is not capped by ground it no longer
+// shows. Nothing is asked in exchange, so there is no view to measure and no
+// unmeasurable viewport to wait for.
+function releaseLeftBehind() {
+  const released = draw.prune();
+  if (released.length > 0) emit("releaseFeatures", released);
 }
 
 function startEditing() {
   draw.activate();
-  requestFeatures();
-  map.value?.on("moveend", requestFeatures);
-  // Entering the mode gives the map the whole width: the view grows without
-  // moving, which is a resize and not a pan, so moveend alone would miss
-  // everything the widening revealed — and it is the event that arrives once
-  // a viewport that was not measurable finally has an area.
-  map.value?.on("change:size", requestFeatures);
+  map.value?.on("moveend", releaseLeftBehind);
 }
 
 function stopEditing() {
-  cancelRetry();
-  map.value?.un("moveend", requestFeatures);
-  map.value?.un("change:size", requestFeatures);
+  map.value?.un("moveend", releaseLeftBehind);
   draw.deactivate();
   showTable();
 }
 
-onUnmounted(cancelRetry);
-
 watch(
   () => props.features,
   (features) => {
-    if (props.editing) draw.load(features ?? []);
+    if (!props.editing) return;
+    draw.load(features ?? []);
+    // Reaching a geometry is a hover and hovering is cheap, so the count has
+    // to be given back where it grows — a session worked in place never pans,
+    // and moveend alone would never bound it.
+    releaseLeftBehind();
   },
 );
 
@@ -204,12 +178,12 @@ function pick(value: DrawShape) {
          bar has to stay reachable even when the map is the hidden half. -->
     <Teleport v-if="editing" :to="toolbarTarget">
       <MapEditBar
-        :prompt="editingPrompt"
         :loading-features="loadingFeatures"
         :saving="saving"
         :shape="draw.shape.value"
         :snapping="draw.snapping.value"
         :topological="draw.topological.value"
+        :moving="draw.moving.value"
         :cutting-hole="draw.cuttingHole.value"
         :drawing="draw.drawing.value"
         :has-areal="draw.hasAreal.value"
@@ -217,6 +191,7 @@ function pick(value: DrawShape) {
         :created-count="draw.createdCount.value"
         @pick="pick"
         @toggle-hole="draw.toggleHole"
+        @toggle-moving="draw.toggleMoving"
         @toggle-snapping="draw.toggleSnapping"
         @toggle-topology="draw.toggleTopology"
         @undo="draw.undo"

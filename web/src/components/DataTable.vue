@@ -9,7 +9,16 @@ defineProps<{
   loading?: boolean;
 }>();
 
-defineEmits<{ rowClick: [row: Row<TData>] }>();
+const emit = defineEmits<{ rowClick: [row: Row<TData>] }>();
+
+// A click that landed on a control inside the row belongs to that control,
+// never to the row: the row-wide shortcut would otherwise also toggle the
+// selection of the very row the user asked to edit, duplicate or delete.
+function onRowClick(row: Row<TData>, event: MouseEvent) {
+  const target = event.target;
+  if (target instanceof Element && target.closest("button, a, input, select, textarea, label")) return;
+  emit("rowClick", row);
+}
 
 function getCellMetaAlign(meta: unknown): string | undefined {
   if (typeof meta === 'object' && meta !== null) {
@@ -33,9 +42,9 @@ function getCellTitle(value: unknown): string | undefined {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : undefined;
 }
 
-// A row is only a keyboard target when it actually looks clickable — most
-// rowClass callers only add "cursor-pointer" for rows that do something on
-// click (TableDataPanel's selected-row deselect isn't every row).
+// A row is only a keyboard target when it actually looks clickable — a
+// rowClass only carries "cursor-pointer" on rows whose click does something
+// (a table with no geometry has no selection to toggle).
 function isRowClickable(rowClass: string | undefined): boolean {
   return rowClass?.includes("cursor-pointer") ?? false;
 }
@@ -72,9 +81,9 @@ function isRowClickable(rowClass: string | undefined): boolean {
           <tr
             :class="rowClass?.(row)"
             :tabindex="isRowClickable(rowClass?.(row)) ? 0 : undefined"
-            @click="$emit('rowClick', row)"
-            @keydown.enter="isRowClickable(rowClass?.(row)) && $emit('rowClick', row)"
-            @keydown.space.prevent="isRowClickable(rowClass?.(row)) && $emit('rowClick', row)"
+            @click="onRowClick(row, $event)"
+            @keydown.enter="isRowClickable(rowClass?.(row)) && emit('rowClick', row)"
+            @keydown.space.prevent="isRowClickable(rowClass?.(row)) && emit('rowClick', row)"
           >
             <td
               v-for="cell in row.getVisibleCells()"

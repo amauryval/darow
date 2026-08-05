@@ -2,6 +2,7 @@ import { watch, type Ref } from "vue";
 import type Map from "ol/Map";
 import type Layer from "ol/layer/Layer";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
+import type { Pixel } from "ol/pixel";
 
 export interface FeatureSelection {
   selectedPkeys: Ref<string[]>;
@@ -37,12 +38,16 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
     return id !== undefined && selected.has(String(id));
   }
 
-  function featureIdAt(m: Map, event: MapBrowserEvent): string | null {
-    const found = m.forEachFeatureAtPixel(
-      event.pixel,
-      (feature) => feature.getId(),
-      { layerFilter: (candidate) => candidate === layer },
-    );
+  // Which row of this render mode's layer lies under a pixel. Selection is
+  // one reader of it and an edit session is the other: pointing at a feature
+  // is how its geometry is brought into the session (§8.8), and that happens
+  // precisely while these listeners are unbound.
+  function pkeyAt(pixel: Pixel): string | null {
+    const m = map.value;
+    if (!m || !layer) return null;
+    const found = m.forEachFeatureAtPixel(pixel, (feature) => feature.getId(), {
+      layerFilter: (candidate) => candidate === layer,
+    });
     return found === undefined ? null : String(found);
   }
 
@@ -53,12 +58,12 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
     // One click toggles the clicked feature in and out of the selection, with
     // no modifier key — so the gesture stays usable on a trackpad (§8.8).
     onClick = (event) => {
-      const id = featureIdAt(m, event);
+      const id = pkeyAt(event.pixel);
       if (id !== null) selection.toggle(id);
     };
     onMove = (event) => {
       if (event.dragging) return;
-      m.getTargetElement().style.cursor = featureIdAt(m, event) === null ? "" : "pointer";
+      m.getTargetElement().style.cursor = pkeyAt(event.pixel) === null ? "" : "pointer";
     };
     m.on("singleclick", onClick);
     m.on("pointermove", onMove);
@@ -98,5 +103,5 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
     if (layer) repaint(pkeys);
   });
 
-  return { isSelected, activate, deactivate };
+  return { isSelected, pkeyAt, activate, deactivate };
 }
