@@ -29,3 +29,4 @@ Each entry carries a stable identifier (`IMP-Fn`); a retired identifier is never
 | IMP-11 | I want to be able select a row by clicking on it |  |
 | IMP-12 | when edition is enabled, feature edited must be pass to the edit state when mouse is hover on it, they must not be created after the edition enabling,  this avoid us to generate all the edited item when the edit mode is enabled, and freeze the gui. |
 | IMP-13 | linked to IMP-12 ? when edition is disabled, the gui is freezing. |
+| IMP-14 | when a polygon layer is editable, i want to see only the line (and points) composing the edited polygon, it should improve performance ? of course we keep the MVT layer for reference. |
