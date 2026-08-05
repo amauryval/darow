@@ -21,8 +21,18 @@ const props = withDefaults(
     // neighbours reads as a foreign control (§7).
     size?: "xs" | "sm" | "md";
     icon?: Component;
+    // The icon alone, `label` becoming its accessible name and its tooltip:
+    // a grid row states the same action once per line, and a red pill on
+    // every one of them reads as a warning about the data rather than a
+    // control (§7). The confirmation is unchanged — it is where the wording
+    // has to be.
+    iconOnly?: boolean;
+    // Filled red is for a button that stands alone; among a row's icon
+    // actions the destructive one is a ghost that turns red under the
+    // pointer, so the grid is not striped with alarm colour.
+    variant?: "danger" | "ghost";
   }>(),
-  { confirmLabel: "Confirmer", size: "xs" },
+  { confirmLabel: "Confirmer", size: "xs", variant: "danger" },
 );
 
 const emit = defineEmits<{ confirm: [] }>();
@@ -33,7 +43,18 @@ defineExpose({ reset: () => (open.value = false) });
 </script>
 
 <template>
-  <BaseButton variant="danger" :size="size" :icon="icon" @click="open = true">{{ label }}</BaseButton>
+  <BaseButton
+    :variant="variant"
+    :size="size"
+    :icon="icon"
+    :icon-only="iconOnly"
+    :aria-label="iconOnly ? label : undefined"
+    :title="iconOnly ? label : undefined"
+    :class="variant === 'ghost' ? 'text-error/70 hover:text-error' : ''"
+    @click="open = true"
+  >
+    {{ label }}
+  </BaseButton>
   <ConfirmDialog
     v-if="open"
     :message="props.message ?? `${props.label} ? Cette action est irréversible.`"

@@ -311,6 +311,9 @@ func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys
 	if err != nil {
 		return RowWriteResult{}, err
 	}
+	if err := s.checkGeometryFamily(ctx, meta, []map[string]any{prepared}); err != nil {
+		return RowWriteResult{}, err
+	}
 
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -368,6 +371,9 @@ func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, upda
 			geometryPkeys = append(geometryPkeys, update.Pkey)
 		}
 	}
+	if err := s.checkGeometryFamily(ctx, meta, rowValues(prepared)); err != nil {
+		return nil, err
+	}
 
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -410,6 +416,9 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 	if err != nil {
 		return RowWriteResult{}, err
 	}
+	if err := s.checkGeometryFamily(ctx, meta, []map[string]any{prepared}); err != nil {
+		return RowWriteResult{}, err
+	}
 
 	repo, err := s.storage.Table(meta)
 	if err != nil {
@@ -446,6 +455,9 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, 
 		}
 		prepared[i] = values
 		touchesGeometry = touchesGeometry || writesGeometry
+	}
+	if err := s.checkGeometryFamily(ctx, meta, prepared); err != nil {
+		return nil, err
 	}
 
 	repo, err := s.storage.Table(meta)

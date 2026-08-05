@@ -38,14 +38,17 @@ const columnDefs = computed(() => {
     columnHelper.accessor((row) => cellValue(row, col), { id: col, header: col }),
   );
   if (!props.isGeo) return defs;
+  // Same place as in the paginated grid: at the start of the row and pinned
+  // there, so filtering a table does not move the control that reads a
+  // geometry to the far end of a grid that scrolls sideways.
   return [
-    ...defs,
     columnHelper.display({
       id: "actions",
       header: "",
-      meta: { align: "right" },
+      meta: { pinned: "left-0", class: "w-px px-2 whitespace-nowrap" },
       cell: (info) => h(TableRowActions, { isGeo: true, onGeometry: () => emit("geometry", info.row.original.pkey) }),
     }),
+    ...defs,
   ];
 });
 

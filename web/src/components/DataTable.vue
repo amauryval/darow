@@ -36,6 +36,24 @@ function getCellMetaClass(meta: unknown): string | undefined {
   return undefined;
 }
 
+// A column that stays put while the grid scrolls sideways. The caller says
+// where its left edge sits (a Tailwind offset, `left-0` for the first), since
+// only it knows the widths of the ones before. The cell takes the row's own
+// background rather than a colour of its own (`bg-inherit`), so a pinned cell
+// stripes and highlights exactly like the row it belongs to — which is why
+// every row here carries an **opaque** background of its own instead of
+// daisyUI's zebra: a translucent one would let the scrolled columns show
+// through the pinned cells.
+// `level` is the stacking order: a pinned header cell has to stay above the
+// pinned body cells that scroll under it, and both above the ordinary ones.
+function getPinnedClass(meta: unknown, level: 1 | 2): string | undefined {
+  if (typeof meta === 'object' && meta !== null) {
+    const obj = meta as Record<string, unknown>;
+    if (typeof obj.pinned === 'string') return `sticky ${obj.pinned} bg-inherit ${level === 2 ? 'z-[2]' : 'z-[1]'}`;
+  }
+  return undefined;
+}
+
 // title only for plain scalar values: a rich cell (badge, button, link)
 // would otherwise get a redundant/nonsensical tooltip from its coerced text.
 function getCellTitle(value: unknown): string | undefined {
@@ -52,14 +70,18 @@ function isRowClickable(rowClass: string | undefined): boolean {
 
 <template>
   <div class="card min-h-0 flex-1 overflow-auto rounded-lg border border-base-300 bg-base-100">
-    <table class="table table-zebra table-pin-rows w-max min-w-full text-sm">
+    <table class="table table-pin-rows w-max min-w-full text-sm">
       <thead class="text-xs font-medium tracking-wide text-base-content/60 uppercase">
         <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
           <th
             v-for="header in headerGroup.headers"
             :key="header.id"
             class="whitespace-nowrap"
-            :class="{ 'cursor-pointer select-none hover:text-base-content': header.column.getCanSort() }"
+            :class="[
+              getCellMetaAlign(header.column.columnDef.meta),
+              getPinnedClass(header.column.columnDef.meta, 2),
+              { 'cursor-pointer select-none hover:text-base-content': header.column.getCanSort() },
+            ]"
             :title="header.column.getCanSort() ? 'Maj+clic pour trier sur plusieurs colonnes' : undefined"
             @click="header.column.getToggleSortingHandler()?.($event)"
           >
@@ -79,6 +101,7 @@ function isRowClickable(rowClass: string | undefined): boolean {
                real, focusable control; this keydown is only the keyboard
                equivalent of the row-wide mouse shortcut (§0.20, §8.7). -->
           <tr
+            class="bg-base-100 even:bg-base-200"
             :class="rowClass?.(row)"
             :tabindex="isRowClickable(rowClass?.(row)) ? 0 : undefined"
             @click="onRowClick(row, $event)"
@@ -89,7 +112,11 @@ function isRowClickable(rowClass: string | undefined): boolean {
               v-for="cell in row.getVisibleCells()"
               :key="cell.id"
               class="max-w-[280px] truncate"
-              :class="[getCellMetaAlign(cell.column.columnDef.meta), getCellMetaClass(cell.column.columnDef.meta)]"
+              :class="[
+                getCellMetaAlign(cell.column.columnDef.meta),
+                getCellMetaClass(cell.column.columnDef.meta),
+                getPinnedClass(cell.column.columnDef.meta, 1),
+              ]"
               :title="getCellTitle(cell.getValue())"
             >
               <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />

@@ -5,9 +5,11 @@ import type { FilterCondition } from "../client/types";
 import { useMapDraw, type DrawShape } from "../composables/useMapDraw";
 import type { EditableFeature, LayerChanges } from "../composables/useEditLayer";
 import { useOpenLayers } from "../composables/useOpenLayers";
+import { useGeometryTypes } from "../composables/useGeometryTypes";
 import { useMvtLayer } from "../composables/useMvtLayer";
 import { useWfsLayer } from "../composables/useWfsLayer";
 import MapEditBar from "./map/MapEditBar.vue";
+import MapEditLegend from "./map/MapEditLegend.vue";
 import BaseCheckbox from "./ui/BaseCheckbox.vue";
 import FloatingPanel from "./ui/FloatingPanel.vue";
 
@@ -23,8 +25,11 @@ const props = defineProps<{
   // `request-feature`. What is already on the layer is left alone, so a
   // geometry the user moved is never overwritten.
   features?: EditableFeature[];
-  loadingFeatures?: boolean;
   saving?: boolean;
+  // The rows whose cells the session retyped, held by the parent: the map
+  // does not own them, but it holds the bar the one *Enregistrer* stands in,
+  // and a save writes both halves at once (§8.8).
+  rowCount: number;
   // CSS selector of the workspace bar the session's tools are rendered into.
   // The tools act on the map but belong above both panels: a session is a
   // mode of the table, and half of what it offers (adding a row) has nothing
@@ -51,6 +56,10 @@ const emit = defineEmits<{
   releaseFeatures: [pkeys: string[]];
   save: [changes: LayerChanges];
   cancel: [];
+  // How many shapes the session has drawn. On a geo table the drawing is
+  // what creates a row: the grid holds one empty, writable draft per shape,
+  // and it is the map that counts them (§8.3).
+  drawnCount: [count: number];
 }>();
 
 // MVT and WFS are two independent rendering modes for the same table/filter,
@@ -81,6 +90,10 @@ const mvt = useMvtLayer(map, tableId, bbox, conditions, selection, dataVersion);
 const wfs = useWfsLayer(map, tableId, conditions, selection, dataVersion);
 // The session reads the rendering to know what the pointer is over: only the
 // mode actually on the map can answer, and it is the one the user is reading.
+// What the table can hold, read when the session opens and after every write.
+const sessionActive = computed(() => props.editing === true);
+const { family } = useGeometryTypes(tableId, sessionActive, dataVersion);
+
 const draw = useMapDraw(map, {
   pkeyAt: (pixel) => (wfsEnabled.value ? wfs.pkeyAt(pixel) : mvt.pkeyAt(pixel)),
   reach: (pkey) => emit("requestFeature", pkey),
@@ -150,6 +163,11 @@ watch(
   },
 );
 
+watch(
+  () => draw.createdCount.value,
+  (count) => emit("drawnCount", count),
+);
+
 function onSave() {
   emit("save", draw.commit());
 }
@@ -178,8 +196,9 @@ function pick(value: DrawShape) {
          bar has to stay reachable even when the map is the hidden half. -->
     <Teleport v-if="editing" :to="toolbarTarget">
       <MapEditBar
-        :loading-features="loadingFeatures"
         :saving="saving"
+        :row-count="rowCount"
+        :family="family"
         :shape="draw.shape.value"
         :snapping="draw.snapping.value"
         :topological="draw.topological.value"
@@ -199,6 +218,8 @@ function pick(value: DrawShape) {
         @cancel="emit('cancel')"
       />
     </Teleport>
+
+    <MapEditLegend v-if="editing" />
 
     <div ref="container" class="h-full w-full rounded-lg" />
   </div>

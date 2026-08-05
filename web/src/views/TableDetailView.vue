@@ -9,6 +9,7 @@ import TableHeader from "../components/tables/TableHeader.vue";
 import DeriveTableModal from "../components/tables/DeriveTableModal.vue";
 import AddColumnModal from "../components/AddColumnModal.vue";
 import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
+import { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useTableMetadata } from "../composables/useTableMetadata";
 import { useToast } from "../composables/useToast";
 import { useDocumentTitle } from "../composables/useDocumentTitle";
@@ -22,6 +23,12 @@ const { table, columns, rowColumns, loadTable, rename, remove } = useTableMetada
 );
 
 useDocumentTitle(computed(() => table.value?.tableName ?? "Table"));
+
+// Selection is owned here rather than in the data panel: what is selected is
+// a count of the table's rows, and it is stated where the table's other
+// counters are (TableHeader). The panel and the map act on it through this
+// one instance — there is a single selection, map and grid alike (§8.8).
+const selection = useFeatureSelection(toRef(props, "tableId"));
 
 const renaming = ref(false);
 const editingName = ref(false);
@@ -120,9 +127,11 @@ async function onAddColumnSuccess() {
       v-if="table"
       :table="table"
       :editing-name="editingName"
+      :selected-count="selection.selectedPkeys.value.length"
       :renaming="renaming"
       :exporting="exporting"
       @update:editing-name="editingName = $event"
+      @clear-selection="selection.clear"
       @rename="onRename"
       @add-column="openAddColumn"
       @derive="showDerive = true"
@@ -139,6 +148,7 @@ async function onAddColumnSuccess() {
       :visible-columns="visibleColumns"
       :columns="columns"
       :geometry-column="table.geometryColumn"
+      :selection="selection"
       @mutated="loadTable"
       @open-columns="showColumns = true"
     />

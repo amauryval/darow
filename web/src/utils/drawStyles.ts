@@ -22,10 +22,10 @@ import type { Coordinate } from "ol/coordinate";
 //
 // What is coloured is what the session has *done*, because that is what a
 // save is about to write. Amber is the colour a pending write carries
-// everywhere in the application, free here because selection is suspended for
-// the length of a session; violet marks a shape that belongs to no row yet,
-// since saving it is an insert and not an update, and the two fail
-// differently — a new shape with no attributes is what a save refuses.
+// everywhere in the application, and the one the grid tints a retyped cell
+// with; violet marks a shape that belongs to no row yet, since saving it is
+// an insert and not an update — and it is the colour the empty row it raised
+// is drawn in, on the other half of the screen.
 const RESTING = "#64748b";
 const RESTING_DARK = "#475569";
 const CHANGED = "#f59e0b";
@@ -93,13 +93,20 @@ export function verticesOf(geometry: Geometry | RenderFeature | undefined): Mult
 // its vertices are shown and how the move tool grabs it.
 const BODY_ALPHA = 0.02;
 
+// A shape drawn in the session is the exception: nothing is rendered under it
+// — it belongs to no row yet, so no tile and no WFS feature carries it — and
+// an outline over the basemap alone reads as a hole rather than as a surface.
+// It is the one geometry whose fill is not paid twice, so it is the one that
+// gets one.
+const CREATED_ALPHA = 0.3;
+
 // A touched geometry is drawn heavier as well as recoloured: §8.7 asks that
 // information never rest on colour alone, and a stroke width survives a
 // colour-blind reading where a hue does not.
-function bodyStyle(color: string, dark: string, width: number): Style[] {
+function bodyStyle(color: string, dark: string, width: number, alpha = BODY_ALPHA): Style[] {
   return [
     new Style({
-      fill: new Fill({ color: rgba(color, BODY_ALPHA) }),
+      fill: new Fill({ color: rgba(color, alpha) }),
       stroke: new Stroke({ color: dark, width }),
       image: new Circle({ radius: 4, fill: new Fill({ color: dark }) }),
     }),
@@ -129,7 +136,7 @@ function rgba(hex: string, alpha: number): string {
 // every feature of every frame, so it must not allocate.
 const RESTING_STYLE = bodyStyle(RESTING, RESTING_DARK, 1.5);
 const CHANGED_STYLE = bodyStyle(CHANGED, CHANGED_DARK, 3.5);
-const CREATED_STYLE = bodyStyle(CREATED, CREATED_DARK, 3.5);
+const CREATED_STYLE = bodyStyle(CREATED, CREATED_DARK, 3.5, CREATED_ALPHA);
 const RESTING_VERTICES = vertexStyle(RESTING_DARK);
 const CHANGED_VERTICES = vertexStyle(CHANGED_DARK);
 const CREATED_VERTICES = vertexStyle(CREATED_DARK);
@@ -151,7 +158,7 @@ const MOVED_VERTICES = new Style({
   }),
 });
 
-// What the legend in the edit bar names, so the states are readable without
+// What the map's legend names, so the states are readable without
 // decoding the colours (§8.7). The order is the one the bar shows. Being
 // editable is not in it — it is not a state, and nothing on screen announces
 // it.

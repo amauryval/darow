@@ -87,3 +87,11 @@ export function getFilteredExtent(tableId: string, filter: FilterCondition[] = [
 }
 
 
+
+// The distinct geometry types a table actually holds, computed server-side on
+// every call — a geometry column may mix them, so it is not a stored fact.
+// What it is read for: a table already homogeneous refuses a geometry of
+// another family on write, so the editor stops offering to draw one.
+export function getGeometryTypes(tableId: string): Promise<{ types: string[] }> {
+  return get(`/tables/${tableId}/geometry-types`);
+}

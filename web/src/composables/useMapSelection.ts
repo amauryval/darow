@@ -1,4 +1,5 @@
 import { watch, type Ref } from "vue";
+import { shiftKeyOnly } from "ol/events/condition";
 import type Map from "ol/Map";
 import type Layer from "ol/layer/Layer";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
@@ -7,9 +8,11 @@ import type { Pixel } from "ol/pixel";
 export interface FeatureSelection {
   selectedPkeys: Ref<string[]>;
   toggle: (pkey: string) => void;
-  // Whether a click on the map means "select" at all. It does not during an
-  // edit session: the same click places a vertex or grabs a handle, and the
-  // hover cursor would fight the one Modify sets (§8.8).
+  // Whether a **plain** click means "select". It does not during an edit
+  // session: the same click grabs a handle, and the engine inserts a vertex
+  // on pointerdown over a segment — so the session asks for shift instead,
+  // and selecting stays possible while editing (§8.8). The hover cursor
+  // follows the same rule: it would fight the one Modify sets.
   selectable: Ref<boolean>;
 }
 
@@ -57,12 +60,15 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
 
     // One click toggles the clicked feature in and out of the selection, with
     // no modifier key — so the gesture stays usable on a trackpad (§8.8).
+    // Under an edit session that same click belongs to the editor, and only
+    // a shift-click still selects.
     onClick = (event) => {
+      if (!selection.selectable.value && !shiftKeyOnly(event)) return;
       const id = pkeyAt(event.pixel);
       if (id !== null) selection.toggle(id);
     };
     onMove = (event) => {
-      if (event.dragging) return;
+      if (event.dragging || !selection.selectable.value) return;
       m.getTargetElement().style.cursor = pkeyAt(event.pixel) === null ? "" : "pointer";
     };
     m.on("singleclick", onClick);
@@ -82,7 +88,7 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
 
   function activate(target: Layer) {
     layer = target;
-    if (selection.selectable.value) bind();
+    bind();
   }
 
   function deactivate() {
@@ -90,12 +96,14 @@ export function useMapSelection(map: Ref<Map | null>, selection: FeatureSelectio
     layer = null;
   }
 
-  // The layer stays drawn while selection is suspended — only the listeners
-  // go, so the render mode is untouched and the selection is still painted.
+  // The listeners stay bound for the whole life of the layer: what an edit
+  // session suspends is the plain click and the hover cursor, not selecting
+  // itself (the click handler reads `selectable` on every event). What still
+  // has to happen on the switch is giving the cursor back — the session sets
+  // its own, and an inherited pointer over every feature is not it.
   watch(selection.selectable, (on) => {
-    if (!layer) return;
-    if (on) bind();
-    else unbind();
+    const m = map.value;
+    if (!on && m) m.getTargetElement().style.cursor = "";
   });
 
   watch(selection.selectedPkeys, (pkeys) => {

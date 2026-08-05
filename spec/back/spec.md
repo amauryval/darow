@@ -51,7 +51,10 @@ reordered — code comments describe the code itself and do not refer to these n
    triggers nothing. `geometryColumn`, by contrast, is stable configuration, changed only through
    `UpdateMetadata`.
 10. **`geometryType` does not exist as a stored field.** A geo column may mix POINT and POLYGON; the
-    type is computed on demand through `GeoRepository.Types`, never cached.
+    type is computed on demand through `GeoRepository.Types`, never cached. What a table holds is
+    nonetheless a **constraint on what may be written to it**: a table already homogeneous in one
+    family (point, line, area — each covering its `MULTI` form) refuses a geometry of another
+    (rule 23).
 11. **The metadata cache is invalidated explicitly** on every write — never left to expire on its
     own.
 12. **JSON API output = native JSON types**, not a reproduction of the driver's Go types. Explicit
@@ -76,6 +79,13 @@ reordered — code comments describe the code itself and do not refer to these n
     invalidates the tiles with no separate invalidation mechanism.
 21. **Every DuckDB write goes through the adapter's single application-level lock.** DuckDB allows
     only one active writer; unserialized concurrent writes fail.
+23. **A table homogeneous in one geometry family stays homogeneous.** Every write that sets the
+    geometry column is checked against `GeoRepository.Types` first: a polygon layer refuses a point,
+    and the refusal is a `ValidationError` (400) raised before anything is written. An **empty**
+    table takes any family — the first geometry written is what locks it — and a table already
+    mixing families takes any, since the constraint is already broken and refusing would make half
+    its rows unwritable. `GEOMETRYCOLLECTION` belongs to no family and is never refused. The check
+    reads the types once per request, not once per row.
 22. **A write to the geometry column carries its own encoding and its own CRS**
     (`storage.GeometryValue`): WKT through `ST_GeomFromText`, a GeoJSON geometry through
     `ST_GeomFromGeoJSON`, never a direct bind — then `ST_Transform` from the stated CRS
@@ -585,6 +595,14 @@ to `OGC:CRS84`); the service turns the raw JSON value into a `storage.GeometryVa
 WKT, an object is a GeoJSON geometry, anything else is a `ValidationError` — and reads the stored
 geometry back as GeoJSON (`RowWriteResult`), so the client redraws what the server kept rather than
 its own draft. A bulk insert carries the same CRS and echoes nothing.
+
+Before any of that reaches the repository, a write that sets the geometry column is checked against
+what the table already holds (rule 23, `geometry_family.go`): the families of the written geometries
+— read off the WKT type name or the GeoJSON `type`, so nothing is parsed twice — against the
+families of `GeoRepository.Types`. One family stored and another written is a `ValidationError`, and
+the whole request is refused, batch included: a save that half-landed would leave the caller's grid
+and map disagreeing. The types are read **once per request**, which is one distinct scan of the
+geometry column per write.
 
 `UpdateRows` is the multi-row form: each row carries its own values, the whole set is written in one
 transaction, and derived metadata is refreshed once. `UpdateRow` writes every column in **one** statement: a multi-column update is atomic, all or

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { Download, GitBranch, MoreHorizontal, Pencil, Plus, Trash2 } from "@lucide/vue";
+import { Download, GitBranch, MoreHorizontal, Pencil, Plus, Trash2, X } from "@lucide/vue";
 import type { Metadata } from "../../client/types";
 import Badge from "../Badge.vue";
 import BaseButton from "../ui/BaseButton.vue";
@@ -25,9 +25,13 @@ const props = defineProps<{
   editingName: boolean;
   renaming: boolean;
   exporting: boolean;
+  // How many rows are selected, on the map and in the grid alike — a counter
+  // of the table, so it stands with the others rather than above the grid.
+  selectedCount: number;
 }>();
 const emit = defineEmits<{
   "update:editingName": [editing: boolean];
+  clearSelection: [];
   rename: [name: string];
   addColumn: [];
   derive: [];
@@ -83,6 +87,22 @@ function submitRename() {
           {{ table.rowCount.toLocaleString("fr-FR") }} lignes · mis à jour
           {{ new Date(table.updatedAt).toLocaleString("fr-FR") }}
         </Typography>
+        <template v-if="selectedCount > 0">
+          <span class="size-2.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+          <Typography variant="body-sm">
+            {{ selectedCount.toLocaleString("fr-FR") }} sélectionnée{{ selectedCount > 1 ? "s" : "" }}
+          </Typography>
+          <BaseButton
+            size="xs"
+            variant="ghost"
+            :icon="X"
+            icon-only
+            title="Vider la sélection"
+            @click="emit('clearSelection')"
+          >
+            Vider la sélection
+          </BaseButton>
+        </template>
       </template>
     </div>
 

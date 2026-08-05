@@ -25,8 +25,8 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	m = &mocks.Adapter{}
 	tableRepo = &mocks.TableRepository{}
 	rowRepo = &mocks.RowRepository{}
-	m.On("Table", mock.Anything).Return(tableRepo, nil)
-	tableRepo.On("Rows").Return(rowRepo)
+	m.On("Table", mock.Anything).Return(tableRepo, nil).Maybe()
+	tableRepo.On("Rows").Return(rowRepo).Maybe()
 
 	metadataCache := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
@@ -35,6 +35,11 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	svc = NewRowService(m, metadata, schema)
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo
+}
+
+func expectStoredTypes(tableRepo *mocks.TableRepository, geoRepo *mocks.GeoRepository, types []string) {
+	tableRepo.On("Geo").Return(geoRepo, true)
+	geoRepo.On("Types", mock.Anything).Return(types, nil).Once()
 }
 
 func Test_ConvertValue(t *testing.T) {
@@ -205,7 +210,7 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			if c.wantRefresh {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 				geoRepo := &mocks.GeoRepository{}
-				tableRepo.On("Geo").Return(geoRepo, true).Once()
+				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
 				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 
@@ -240,7 +245,7 @@ func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
 			if c.touchesGeometry {
 				written["geom"] = storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
 				geoRepo := &mocks.GeoRepository{}
-				tableRepo.On("Geo").Return(geoRepo, true).Once()
+				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
 				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 			rowRepo.On("Insert", mock.Anything, written).Return("pk-1", nil).Once()
@@ -265,8 +270,11 @@ func Test_RowService_BulkInsertRows_RefreshesBboxOnlyIfAnyRowSetsGeometry(t *tes
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m, rowRepo, _ := setupRowService(t)
+			svc, m, rowRepo, tableRepo := setupRowService(t)
 			meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+			if c.touchesGeometry {
+				expectStoredTypes(tableRepo, &mocks.GeoRepository{}, []string{"POINT"})
+			}
 
 			written := make([]map[string]any, len(c.rows))
 			for i, row := range c.rows {
@@ -381,7 +389,7 @@ func Test_RowService_UpdateRows(t *testing.T) {
 	rowRepo.On("UpdateMany", mock.Anything, expected).Return(nil).Once()
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 	geoRepo := &mocks.GeoRepository{}
-	tableRepo.On("Geo").Return(geoRepo, true).Once()
+	expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
 	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 
 	written, err := svc.UpdateRows(context.Background(), meta, []RowUpdate{

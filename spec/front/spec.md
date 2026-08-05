@@ -209,12 +209,14 @@ One module per subject, no module state, no side effect:
   is true of the whole layer, and painting it over the rendering the user is reading turns the
   screen into a status display — so a reached, untouched geometry is drawn in a neutral slate that
   merely retraces the boundary already there. What is coloured is amber for a row whose geometry
-  moved (the colour a pending write carries everywhere, free here because selection is suspended for
-  the length of a session), violet for a shape that belongs to no row yet, and red for the
+  moved (the colour a pending write carries everywhere, and the same the grid tints a retyped cell
+  with), violet for a shape that belongs to no row yet, and red for the
   individual **nodes a drag moved**: on a boundary of ten thousand points, "this row changed" says
   almost nothing and "these three points changed" says all of it. The first two are also drawn with
   a heavier stroke, so the distinction survives a colour-blind reading (§8.7), and `EDIT_LEGEND` is
-  what names them in the bar. `PKEY_PROPERTY`/`DIRTY_PROPERTY`/`MOVED_PROPERTY` live here, next to
+  what names them, on the map itself (`components/map/MapEditLegend.vue`, a floating panel in the
+  canvas' bottom-left corner) rather than in the bar — a legend is read next to the shapes it names,
+  and the bar stays one row of controls. `PKEY_PROPERTY`/`DIRTY_PROPERTY`/`MOVED_PROPERTY` live here, next to
   the style that reads them on every frame, as do the two rules that keep a session's rendering
   cheap: every state's style is built once and handed back as it is, never rebuilt per feature per
   frame; and `verticesOf` caches a geometry's vertices against its own revision, so a dragged shape
@@ -224,6 +226,9 @@ One module per subject, no module state, no side effect:
   underneath. It is reduced to near-nothing rather than dropped, and that is deliberate: the engine
   hit-tests what a style actually paints, so a polygon with no fill at all could only be reached on
   its outline, and reaching a polygon is how its vertices are shown and how the move tool grabs it.
+  A shape **drawn in the session** is the exception and is properly filled: nothing is rendered under
+  it — it belongs to no row, so no tile and no WFS feature carries it — so its fill hides nothing,
+  and an outline alone over the basemap reads as a hole rather than as a new surface.
   `editStyle` draws a geometry, `focusStyle` draws the
   dots of the one under the pointer, and they are two layers for a reason (§8.8). The moved nodes
   are drawn by **both**: the focus layer sits above the edit layer, so a hover would otherwise bury
@@ -250,10 +255,11 @@ module level and documents it; that is the exception, not the rule.
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner | absent — inline in `App.vue` |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
-| `useTableRows` | a table's rows: current page, sorting, editing, insertion, duplication, deletion — built on `usePaginatedList`. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
+| `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
+| `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
-| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref | present |
+| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, because what is selected is one of the table's counters and is stated with the others in `TableHeader` | present |
 | `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
 | `useMapDraw` | the edit session's lifecycle: the layer it works on, the single interaction over it — a `Modify` to reshape, a `Translate` to move a geometry whole, never both — the contextmenu the right-click delete has to suppress, the `modifystart`/`modifyend` snapshot-and-diff that says which vertices a drag actually moved, `commit` (what the session would write), teardown. It is also where a hover that lands on nothing the session holds is turned into a request for the row underneath: it is given `pkeyAt` (which row of the rendering is under a pixel) and `reach` (ask for it) and knows nothing of either render mode | present |
 | `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the `moving` mode that hands the drag to a `Translate` instead of the `Modify`, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Arming any one of drawing, cutting and moving disarms the others — they all want the same drag. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
@@ -261,8 +267,9 @@ module level and documents it; that is the exception, not the rule.
 | `useMoveLeaders` | what each moved node has *done*: the leader drawn from where it stood before the user touched it to where it stands now. Its own layer above the edit layer and the vertices, for the same reason those are two — a leader is a whole annotation (line, origin ring, arrowhead) and drawing it out of the edited feature's style would rebuild it on every frame of every drag. Each leader carries its own pre-built style (`Feature.setStyle`), so the layer needs no style function at all. A node dragged twice extends its leader instead of getting a second one: the origin the user cares about is the one before they touched it, not the halfway point | present |
 | `useHoleTool` | drawing an interior ring and handing it to whichever polygon contains it (`utils/holes.ts`), rather than to a source: a hole is part of its polygon and is undone by editing its vertices, not by an opposite tool. A ring that belongs to no polygon is refused out loud | present |
 | `useEditFeatures` | the session's **working set**: the geometries the pointer has reached, one row per `reach`, at full resolution and under one session-wide row cap that the ordinary gesture never meets. Holds every pkey it has asked for, answered or not — a hover rests over the same row for many frames and that has to become one request — and gives a pkey back on `release` so a row the session let go of can be reached again. Nothing is loaded on entering the mode | present |
-| `useLayerEditing` | the mode itself: what it is waiting for (the prompt, the row whose geometry is still to be drawn) and what leaving it writes — one update request for what moved, one insert for what was drawn | present |
-| `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners are bound only while the selection is `selectable`, which an edit session turns off — the layer stays drawn and the selection stays painted, only the clicking stops. `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
+| `useLayerEditing` | the session itself and what leaving it writes. Its `save` takes both halves — the geometries the map committed and `useRowEdits`' payloads — and merges the updates by pkey into **one** update request, so a row whose limit moved and whose name changed is written once and never twice; what was drawn is a second, insert request, each shape carrying the attributes of the draft row it raised (in order — the nth shape is the nth draft). It answers whether the session ended, which is what closes the mode | present |
+| `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
+| `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
 | `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds. WFS is a vector source loading over the XYZ grid the tile endpoint is cut along, the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
@@ -292,10 +299,10 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
-| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size` and `icon` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
+| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
 | `Badge` | status pill, **semantic** tones (neutral, primary, success, warning, error) — never colour names. `warning` is the amber a pending write is shown in everywhere, including the edit bar's count of touched geometries |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
-| `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
+| `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
@@ -319,7 +326,8 @@ single, link-less entry naming the page.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
-- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update) and
+- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update, and
+  how many of its rows are selected, with one icon button to empty the selection) and
   what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
   *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
   *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
@@ -375,20 +383,29 @@ single, link-less entry naming the page.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: OpenLayers is the bundle’s largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
-- `TableRowsPanel` (`components/tables/`) — row grid: the pinned
-  selection, infinite scroll, and the per-row action column. That column is **always** rendered:
+- `TableRowsPanel` (`components/tables/`) — row grid and nothing else: the rows selected on the map
+  pinned at its top, infinite scroll, and the per-row action column. How many are selected, and the
+  control that empties the selection, are **not** here — that is a counter of the table and it is
+  stated with the table's other counters (`TableHeader`), where a count belongs. That column and the row number are the
+  grid's first two, pinned there: a grid wider than its panel otherwise hid the number that names a
+  row and pushed its actions past every attribute. The actions are icons alone — the same three on
+  every line, each with its name in its tooltip and to assistive tech (§8.7) — because a row of
+  labelled buttons, one of them a red *Supprimer* pill, repeated down the grid reads as a warning
+  about the data rather than as controls. That column is **always** rendered:
   reading a row's geometry is a read, so arming edit mode to reach it would be a trap. It receives
-  the `useTableRows` state its parent owns and emits intentions (`toggleEditMode`, `updateCell`,
-  `geometry`, `editGeometry`), never mutating that prop itself. Switching between the
+  the `useTableRows` state and the `useRowEdits` draft its parent owns and emits intentions
+  (`geometry`, `rowClick`), never reloading or writing anything itself. Which
+  columns a session may retype is told to it (`editableColumns`), never guessed: the geometry is
+  drawn and not typed, and the pkey is the server's. Switching between the
   filtered, read-only `DataTable` and the paginated one (`filter.filterActive`) carries a distinct
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `AddColumnModal`, `AddRowModal`, `ColumnsModal`, `GeometryModal` — one modal = one file, never
-  inline modal markup in a view. `GeometryModal` (`components/tables/`) shows one row's geometry in
-  both encodings with a copy button each, rendering a bounded excerpt while the clipboard carries
-  the whole value; `AddRowModal` collects attributes only — on a geo table the geometry is drawn
-  next, on the map.
+- `AddColumnModal`, `ColumnsModal`, `GeometryModal` — one modal = one file, never inline modal
+  markup in a view. `GeometryModal` (`components/tables/`) shows one row's geometry in both
+  encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
+  whole value. There is **no** add-row modal: a row is created empty, in the grid, by the session
+  itself (§8.3).
 - **Deriving is two modes in one modal**, in `components/tables/`. `DeriveTableModal` is the shell:
   the tab pair, the new table's name, the submit, and the one `useDeriveTable` instance both tabs
   work through. `DeriveFromTableForm` is the guided tab — the column picker, the computed-column
@@ -557,12 +574,12 @@ This is the product's main screen; it follows fixed rules.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with
   an obvious way to deselect everything.
 - Basemap attribution displayed, navigation controls present.
-- **A table is edited in two halves, and never in both at once.** The attributes are edited in the
-  grid, the geometries on the map, and each is armed by its own button in the panel's action bar:
-  *Éditer la table* and *Éditer la géométrie*. A table without geometry has only the first, and its
-  button says just *Mode édition* — there is no second half to distinguish it from. Arming one
-  disarms the other, so there is only ever one thing the screen is waiting for.
-- **One door per mode.** *Éditer la géométrie* is the only way into the map's edit mode: a row's
+- **A table is edited in one session, both halves at once.** The attributes are retyped in the grid
+  and the geometries reshaped on the map, under a single *Éditer* toggle: they are two halves of the
+  same object, and a mode that made the user choose between them would be asking a question they
+  cannot answer before touching anything. The session ends the same way for both — one
+  *Enregistrer*, one *Annuler*.
+- **One door per mode.** *Éditer* is the only way into the edit mode: a row's
   actions offer reading its geometry, never editing it. A second entry point onto the same mode is a
   second thing to explain and a second place to keep true, and it would suggest the mode is about
   that one row when it is about the whole layer.
@@ -603,12 +620,52 @@ This is the product's main screen; it follows fixed rules.
   carry — the row actions always, the map's tools only on a geo table. Those tools stay owned by
   `MapView` (the OpenLayers session is theirs, and OpenLayers must not reach the initial bundle
   through the bar) and are rendered into it by a `Teleport`, which is also what keeps *Enregistrer*
-  and *Annuler* reachable while the map is the hidden half of a maximized table.
+  and *Annuler* reachable while the map is the hidden half of a maximized table. That pair
+  (`EditSessionActions`, with the session's counts) is rendered once per table: inside the map's
+  tools on a geo table, in the bar itself on a table that has none.
+- **The editor does not offer what the server would refuse.** A table already homogeneous in one
+  geometry family rejects a geometry of another (back rule 23), so *Polygone / Ligne / Point* are
+  read against what the table actually holds (`/geometry-types`, re-read after every write since the
+  first shape drawn into an empty table is what locks it) and the two that do not apply are
+  **disabled**, with the reason in their tooltip — not hidden: what a table cannot hold is worth
+  reading once, and a bar whose buttons come and go from one table to the next has to be re-learned
+  each time. The read is best-effort (`useGeometryTypes`): it only removes tools the server would
+  refuse anyway, so a failed read leaves all three armed and the write is what says no.
+- **Creating a row is one gesture, and on a geo table that gesture is a drawing.** *Polygone /
+  Ligne / Point* do not draw a shape to be attached to something later: each closes a shape **and**
+  raises the empty row it belongs to, at the top of the grid, violet like the shape itself. Its
+  attributes are then typed in the grid like any others, and the save writes the two together. That
+  is why there is no add-row modal and no *Ajouter une ligne* on a geo table: a form asking for
+  attributes at the exact moment the user is looking at the map is a form asked at the wrong time,
+  and it was the only reason a session could be left waiting for a geometry that never came. A table
+  with nothing to draw keeps the same *Créer* group with the one button that still means something
+  — a `+` that raises the same empty row.
+- **A draft row is dropped where it was raised.** In the grid on a table without geometry, since the
+  grid is what created it; with the whole session on a geo table, since the shape drawn for it is
+  part of what would have to go with it (LIM-F5).
+- **The mode is what makes a cell writable, not a button per row.** Under a session every editable
+  column of every row is a field (`TableRowEditCell`) — a grid is read one column across many rows,
+  and a mode that had to be armed row by row made the ordinary correction (the same typo in twenty
+  rows) twenty gestures. So the row's action column carries no edit/save/cancel trio: what stays
+  there is what a single click does on the spot — read a geometry, duplicate a row, delete one. A
+  cell the session would write is drawn in the amber a pending write carries everywhere, the same
+  the map draws a moved geometry in, and a value brought back to what it was stops being one.
 - **Creating and modifying are two intentions, and the bar says so.** The session's toolbar
   (`components/map/MapEditBar.vue`) groups *Polygone / Ligne / Point* under
   **Créer** — each adds a row that does not exist yet — and *Trou / Déplacer / Annuler le point*
-  under **Modifier**, which act on a shape already there. Undifferentiated, *Trou* read as a fourth
-  shape to draw rather than as a cut into an existing polygon.
+  under **Modifier**, which act on a shape already there, and the aimantation/topologie switches
+  under **Aides**, which change how the other two behave without doing anything themselves.
+  Undifferentiated, *Trou* read as a fourth shape to draw rather than as a cut into an existing
+  polygon. The three groups are one row of welded button groups separated by rules, ending in the
+  session's counts and its *Annuler* / *Enregistrer*: only one button of the whole bar is filled —
+  the save — the `+` that raises a row is an outline like every tool, so the bar carries one primary
+  intention rather than three competing ones.
+- **Selecting survives an edit session, under a modifier.** A plain click under a session belongs to
+  the editor — it grabs a handle, and the engine inserts a vertex on *pointerdown* over a segment —
+  so selecting a feature to find its row in the grid is **Maj+clic**, and the `Modify`'s
+  `insertVertexCondition` lets that modifier through so the click cannot reshape the geometry it was
+  aimed at. It is the session's one gesture that is not on a button, so the map's legend states it.
+  Outside a session nothing changes: one click, no modifier, trackpad-friendly (§8.8).
 - **One gesture per operation, the desktop-GIS ones.** Dragging a vertex moves it, dragging anywhere
   on a segment creates a vertex there, a right-click on a vertex removes it. A shape is added by
   arming one of *Polygone* / *Ligne* / *Point* in the bar, clicking its vertices and closing it with
@@ -664,9 +721,9 @@ This is the product's main screen; it follows fixed rules.
   what the view holds. Nothing is
   written until *Enregistrer* is clicked: a drag is not a submission, and *Annuler* drops the whole
   session. What is drawn again after the write is what the server answers, never the local state.
-  The bar states the update and insert counts separately — they are the two requests a save makes,
-  and they fail differently — and a legend names what is coloured, so none of it rests on colour
-  alone (§8.7).
+  The bar states its three counts separately — rows retyped, geometries moved, shapes drawn — next
+  to the two buttons that decide the session's fate — they are the two requests a save makes, and they fail differently — and the map's
+  own legend names what is coloured, so none of it rests on colour alone (§8.7).
 - **What is edited is never what is rendered.** A vector tile's geometry is simplified for its zoom
   and clipped at its borders. The engine can rebuild it into an editable feature, and saving that
   would quietly write a degraded shape back over a correct one — so it never does. The rendering is
@@ -713,11 +770,9 @@ This is the product's main screen; it follows fixed rules.
   instead of moving it — the shared node looks duplicated and nothing moves.
 - **A save is one write per kind.** Every moved geometry goes in a single update request, so a limit
   two rows share is never left moved on one side only; the shapes drawn that belong to no row yet go
-  in a single insert. Adding a row on a geo table is still two steps — the attributes are collected
-  in the grid, and the first shape drawn in the session that follows takes them — so a row never
-  lands without its geometry. That session says what it is waiting for while the shape is missing,
-  refuses to save until it is drawn, and states that the row was not created if the session is
-  cancelled instead: attributes the user typed never disappear without a word (§8.3).
+  in a single insert, each carrying the attributes of the draft row it raised — the nth shape is the
+  nth draft, in order. A row therefore never lands without its geometry, and no session can be left
+  waiting for one: there is nothing to wait for, since the shape is what created the row.
 - **A write invalidates what the map shows.** A tile is cached by URL, so the
   panel bumps a data version after every row write and the layers ask again — an edited geometry is
   visible immediately, not at the next zoom.

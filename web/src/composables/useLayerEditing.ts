@@ -1,14 +1,15 @@
-import { computed, ref, watch, type Ref } from "vue";
+import { ref, watch, type Ref } from "vue";
 import { addRows, updateRows } from "../client/tables";
 import { errorMessage } from "../client/http";
 import type { LayerChanges } from "./useEditLayer";
+import type { RowUpdate } from "./useRowEdits";
 import { useEditFeatures } from "./useEditFeatures";
 import { summarizeWrites } from "../utils/editPrompts";
 import { useToast } from "./useToast";
 
-// Editing a geo table's geometries, as a mode of the layer rather than of one
-// row: what the mode is waiting for, and what leaving it writes. What the
-// session carries on the map is useEditFeatures'.
+// The edit session of a table: what the mode is waiting for, and what leaving
+// it writes. What it carries on the map is useEditFeatures'; the cells it has
+// retyped are useRowEdits' — this is where the two are written, together.
 //
 // The write is server-authoritative: nothing is drawn as saved until the
 // server answers, and every moved geometry goes in one request so a limit
@@ -17,86 +18,82 @@ export function useLayerEditing(tableId: Ref<string>, geometryColumn: Ref<string
   const toast = useToast();
   const active = ref(false);
   const saving = ref(false);
-  // A row created from the grid brings its attributes with it; its geometry
-  // is the first shape drawn in the session that follows.
-  const draftValues = ref<Record<string, unknown>>({});
   const loaded = useEditFeatures(tableId, active);
-
-  const pendingRow = computed(() => Object.keys(draftValues.value).length > 0);
 
   function reset() {
     active.value = false;
-    draftValues.value = {};
     loaded.reset();
   }
 
-  function start(values: Record<string, unknown> = {}) {
+  function start() {
     reset();
-    draftValues.value = values;
     active.value = true;
   }
 
-  // A row whose attributes were collected in the grid: its geometry is the
-  // first shape drawn from here on. The session is not restarted — it is
-  // already open, and resetting it would drop everything loaded and every
-  // reshape made since (§8.3).
-  function awaitGeometry(values: Record<string, unknown>) {
-    draftValues.value = values;
-    if (!active.value) active.value = true;
-  }
-
-  async function save(changes: LayerChanges) {
+  // What the session writes, both halves at once: the geometries it reshaped
+  // and the cells it retyped (useRowEdits). They land in a single request
+  // when they touch the same row — a row whose limit moved *and* whose name
+  // changed is one write, not two, and a save that half-failed would leave
+  // the grid disagreeing with the map. Returns whether the session ended.
+  async function save(
+    changes: LayerChanges,
+    rowUpdates: RowUpdate[] = [],
+    rowInserts: Record<string, unknown>[] = [],
+  ): Promise<boolean> {
     const column = geometryColumn.value;
-    if (!column) {
-      toast.error("Cette table n'a pas de colonne géométrique : rien ne peut être enregistré.");
-      return;
-    }
     const { updates, inserts } = changes;
-    // The attributes collected before the session belong to the first shape
-    // drawn in it. Saving without one would drop them silently, and the row
-    // the user asked for would never exist (§8.3).
-    if (pendingRow.value && inserts.length === 0) {
-      toast.error("La nouvelle ligne attend sa géométrie : dessinez-la avant d'enregistrer, ou annulez.");
-      return;
+    if (!column && (updates.size > 0 || inserts.length > 0)) {
+      toast.error("Cette table n'a pas de colonne géométrique : rien ne peut être enregistré.");
+      return false;
     }
-    if (updates.size === 0 && inserts.length === 0) {
+    if (updates.size === 0 && rowUpdates.length === 0 && rowInserts.length === 0) {
       reset();
-      return;
+      return true;
+    }
+
+    // One entry per row, whichever half touched it — the two are merged here
+    // rather than sent one after the other, so a row is never written twice
+    // in the same save.
+    const merged = new Map<string, Record<string, unknown>>();
+    for (const { pkey, values } of rowUpdates) merged.set(pkey, { ...values });
+    if (column) {
+      for (const [pkey, geometry] of updates) merged.set(pkey, { ...merged.get(pkey), [column]: geometry });
     }
 
     saving.value = true;
     try {
-      // Every moved geometry in one request: the server writes them in a
-      // single transaction, so a shared limit is never half-written.
-      if (updates.size > 0) {
+      // Every touched row in one request: the server writes them in a single
+      // transaction, so a shared limit is never half-written.
+      if (merged.size > 0) {
         await updateRows(
           tableId.value,
-          [...updates].map(([pkey, geometry]) => ({ pkey, values: { [column]: geometry } })),
+          [...merged].map(([pkey, values]) => ({ pkey, values })),
         );
       }
-      if (inserts.length > 0) {
-        // Anything drawn after the first shape is geometry alone, and its
-        // columns are filled from the grid.
+      // One drawn shape is one row, in order: the nth shape is the geometry
+      // of the nth draft row of the grid, which is the row the drawing itself
+      // created (§8.3). A table without geometry has drafts and no shapes.
+      if (rowInserts.length > 0) {
         await addRows(
           tableId.value,
-          inserts.map((geometry, index) => ({ ...(index === 0 ? draftValues.value : {}), [column]: geometry })),
+          rowInserts.map((values, index) =>
+            column && inserts[index] !== undefined ? { ...values, [column]: inserts[index] } : values,
+          ),
         );
       }
-      toast.success(summarizeWrites(updates.size, inserts.length));
+      toast.success(summarizeWrites(updates.size, rowInserts.length, rowUpdates.length));
       reset();
       onMutated();
+      return true;
     } catch (e) {
-      toast.error(errorMessage(e, "Impossible d'enregistrer les géométries"));
+      toast.error(errorMessage(e, "Impossible d'enregistrer les modifications"));
+      return false;
     } finally {
       saving.value = false;
     }
   }
 
   function cancel() {
-    // Dropping a session that was opened to give a new row its geometry drops
-    // the row too — the user typed those attributes and has to be told they
-    // went nowhere.
-    if (pendingRow.value) toast.error("Ligne non créée : sa géométrie n'a pas été dessinée.");
     reset();
   }
 
@@ -107,13 +104,11 @@ export function useLayerEditing(tableId: Ref<string>, geometryColumn: Ref<string
   return {
     active,
     saving,
-    draftValues,
     loading: loaded.loading,
     features: loaded.features,
     reach: loaded.reach,
     release: loaded.release,
     start,
-    awaitGeometry,
     save,
     cancel,
   };

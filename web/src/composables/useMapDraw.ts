@@ -5,6 +5,7 @@ import type Feature from "ol/Feature";
 import type Geometry from "ol/geom/Geometry";
 import Modify, { type ModifyEvent } from "ol/interaction/Modify";
 import Translate, { type TranslateEvent } from "ol/interaction/Translate";
+import { shiftKeyOnly } from "ol/events/condition";
 import type { Condition } from "ol/events/condition";
 import type { Coordinate } from "ol/coordinate";
 import type { Pixel } from "ol/pixel";
@@ -19,6 +20,12 @@ export type { DrawShape } from "./useEditTools";
 // default, a keyboard modifier on a gesture that has a dedicated button.
 const rightClick: Condition = (event) =>
   event.type === "pointerdown" && event.originalEvent instanceof PointerEvent && event.originalEvent.button === 2;
+
+// Shift is the session's "select" (useMapSelection): the engine inserts a
+// vertex on **pointerdown** over a segment, so a shift-click meant to select
+// a feature would silently reshape the very geometry it was aimed at unless
+// the insertion lets that modifier through (§8.8).
+const noShift: Condition = (event) => !shiftKeyOnly(event);
 
 // The edit session's lifecycle: the layer it works on, the single interaction
 // over it, and the teardown. Which tool the bar has armed is useEditTools'.
@@ -140,6 +147,7 @@ export function useMapDraw(map: Ref<OlMap | null>, options: MapDrawOptions) {
       ...(tools.topological.value ? { source: layer.source } : { features: layer.solo }),
       style: handleStyle,
       deleteCondition: rightClick,
+      insertVertexCondition: noShift,
     });
     modify.on("modifystart", onModifyStart);
     modify.on("modifyend", onModifyEnd);

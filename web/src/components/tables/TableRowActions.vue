@@ -1,30 +1,40 @@
 <script setup lang="ts">
-import { Copy, Shapes } from "@lucide/vue";
+import { Copy, Shapes, Trash2 } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ConfirmButton from "../ConfirmButton.vue";
 
-// editable is what the attribute edit mode turns on. Reading a row's geometry
-// is a read, available whether or not the grid is armed. There is no geometry
+// What a single click does to one row, on the spot: read its geometry,
+// duplicate it, delete it. Retyping is not one of them — the mode makes every
+// cell writable and the session's own *Enregistrer* writes them all, so there
+// is no per-row edit/save/cancel trio to fill this column with (§8.8).
+//
+// Icons alone, at the **start** of the row, next to its number: they are the
+// same three actions on every line, so naming each one on each line said
+// nothing and pushed them to the far right of a grid that scrolls sideways —
+// where they were reached only after scrolling past every column. Each keeps
+// its accessible name and its tooltip (§8.7), and deleting keeps its
+// confirmation (§8.3).
+//
+// editable is what the edit mode turns on. Reading a row's geometry is a
+// read, available whether or not the grid is armed. There is no geometry
 // *edit* action here on purpose: geometries are edited in one place, the map,
 // through one button (§8.8) — a second door onto the same mode is a second
 // thing to explain.
 withDefaults(
   defineProps<{
+    // A row the session is about to create: it exists nowhere yet, so the
+    // only thing that applies to it is dropping it.
+    draft?: boolean;
     editable?: boolean;
     isGeo?: boolean;
-    isEditing?: boolean;
-    isSaving?: boolean;
     isDeletingPkey?: string;
     isDuplicating?: boolean;
     deletingPkey?: string;
   }>(),
-  { editable: false, isGeo: false, isEditing: false, isSaving: false, isDuplicating: false },
+  { draft: false, editable: false, isGeo: false, isDuplicating: false },
 );
 
 defineEmits<{
-  save: [];
-  cancel: [];
-  edit: [];
   duplicate: [];
   delete: [];
   geometry: [];
@@ -32,50 +42,51 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="flex justify-end gap-2">
-    <template v-if="editable && isEditing">
-      <!-- Same size as the read-mode pair: a larger edit-mode button resized
-           the actions column and shifted the whole row on every edit. -->
-      <BaseButton size="xs" variant="primary" :busy="isSaving" :disabled="isSaving" @click="$emit('save')">
-        {{ isSaving ? "…" : "Enregistrer" }}
-      </BaseButton>
-      <BaseButton size="xs" variant="secondary" @click="$emit('cancel')">Annuler</BaseButton>
-    </template>
-    <template v-else>
+  <div class="flex items-center gap-0.5">
+    <ConfirmButton
+      v-if="draft"
+      label="Retirer cette ligne"
+      variant="ghost"
+      :icon="Trash2"
+      icon-only
+      message="Retirer cette ligne, avec ce qui y a été saisi ?"
+      @confirm="$emit('delete')"
+    />
+    <BaseButton
+      v-else-if="isGeo"
+      size="xs"
+      variant="ghost"
+      :icon="Shapes"
+      icon-only
+      title="Voir la géométrie (WKT, GeoJSON)"
+      @click="$emit('geometry')"
+    >
+      Géométrie
+    </BaseButton>
+    <template v-if="editable">
+      <!-- Duplicating is not confirmed: it adds, and what it added is
+           deleted by the button next to it (§8.3). -->
       <BaseButton
-        v-if="isGeo"
         size="xs"
         variant="ghost"
-        :icon="Shapes"
+        :icon="Copy"
         icon-only
-        title="Voir la géométrie (WKT, GeoJSON)"
-        @click="$emit('geometry')"
+        :busy="isDuplicating"
+        :disabled="isDuplicating"
+        title="Dupliquer cette ligne"
+        @click="$emit('duplicate')"
       >
-        Géométrie
+        Dupliquer
       </BaseButton>
-      <template v-if="editable">
-        <BaseButton variant="secondary" size="xs" @click="$emit('edit')">Modifier</BaseButton>
-        <!-- Duplicating is not confirmed: it adds, and what it added is
-             deleted by the button next to it (§8.3). -->
-        <BaseButton
-          size="xs"
-          variant="ghost"
-          :icon="Copy"
-          icon-only
-          :busy="isDuplicating"
-          :disabled="isDuplicating"
-          title="Dupliquer cette ligne"
-          @click="$emit('duplicate')"
-        >
-          Dupliquer
-        </BaseButton>
-        <ConfirmButton
-          label="Supprimer"
-          message="Supprimer définitivement cette ligne ?"
-          :busy="isDeletingPkey === deletingPkey"
-          @confirm="$emit('delete')"
-        />
-      </template>
+      <ConfirmButton
+        label="Supprimer cette ligne"
+        variant="ghost"
+        :icon="Trash2"
+        icon-only
+        message="Supprimer définitivement cette ligne ?"
+        :busy="isDeletingPkey === deletingPkey"
+        @confirm="$emit('delete')"
+      />
     </template>
   </div>
 </template>

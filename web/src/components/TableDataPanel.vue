@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, toRef, watch } from "vue";
 import type { ColumnSchema, Row } from "../client/types";
-import { useFeatureSelection } from "../composables/useFeatureSelection";
+import type { LayerChanges } from "../composables/useEditLayer";
+import type { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useLayerEditing } from "../composables/useLayerEditing";
+import { isDraft, useRowEdits } from "../composables/useRowEdits";
 import { useRowFilter } from "../composables/useRowFilter";
 import { useRowGeometry } from "../composables/useRowGeometry";
 import { useTableRows } from "../composables/useTableRows";
 import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
-import AddRowModal from "./AddRowModal.vue";
 import GeometryModal from "./tables/GeometryModal.vue";
 import TableEditBar from "./tables/TableEditBar.vue";
 import TableRowsPanel from "./tables/TableRowsPanel.vue";
@@ -25,6 +26,10 @@ const props = defineProps<{
   visibleColumns: string[];
   columns: ColumnSchema[];
   geometryColumn?: string;
+  // Owned by the view: what is selected is one of the table's counters, and
+  // it is stated with the others (TableHeader). One instance, so the map and
+  // the grid share the single selection they are supposed to (§8.8).
+  selection: ReturnType<typeof useFeatureSelection>;
 }>();
 // mutated: after any row add/edit/delete, since that changes the table's
 // rowCount — the parent owns table metadata and reloads it.
@@ -43,11 +48,12 @@ const geometryColumn = toRef(props, "geometryColumn");
 const dataVersion = ref(0);
 
 const filter = useRowFilter(tableId, columns, isGeo);
-const selection = useFeatureSelection(tableId);
-const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), columns, geometryColumn, () => {
+const selection = props.selection;
+const rowsState = useTableRows(tableId, toRef(props, "rowColumns"), geometryColumn, () => {
   dataVersion.value += 1;
   emit("mutated");
 });
+const rowEdits = useRowEdits(columns, toRef(props, "rowColumns"));
 const rowGeometry = useRowGeometry(tableId);
 const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
   dataVersion.value += 1;
@@ -60,18 +66,32 @@ const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
 // before they have touched anything is asking a question they cannot answer
 // yet. What the mode offers is what the table can carry — a table without
 // geometry simply has no geometry tools (§8.8).
-const editing = computed(() => rowsState.editMode.value || layerEditing.active.value);
+const editing = computed(() => rowEdits.active.value || layerEditing.active.value);
 
 function toggleEditing() {
   if (editing.value) {
-    // Cancelling says what it drops: a session opened to give a new row its
-    // geometry loses that row (useLayerEditing.cancel).
-    layerEditing.cancel();
-    rowsState.editMode.value = false;
+    cancelEditing();
     return;
   }
-  rowsState.editMode.value = true;
+  rowEdits.start();
   if (props.isGeo) layerEditing.start();
+}
+
+// Leaving the mode drops both halves at once — the reshapes and the retyped
+// cells are one session. Cancelling says what it drops: a session opened to
+// give a new row its geometry loses that row (useLayerEditing.cancel).
+function cancelEditing() {
+  layerEditing.cancel();
+  rowEdits.stop();
+}
+
+// One *Enregistrer* for the whole session, wherever its button stands: the
+// geometries the map committed and the cells the grid holds are written
+// together, and the mode only closes if the write landed.
+const NO_GEOMETRY_CHANGES: LayerChanges = { updates: new Map(), inserts: [] };
+
+async function saveEditing(changes: LayerChanges = NO_GEOMETRY_CHANGES) {
+  if (await layerEditing.save(changes, rowEdits.pendingUpdates.value, rowEdits.pendingInserts.value)) rowEdits.stop();
 }
 
 // The tools the map owns are rendered into the bar above both panels: they
@@ -97,49 +117,47 @@ const mapHidden = computed(() => focusPanel.value === "table");
 // table's extent, cleared back to the table's bbox once inactive.
 const mapBbox = computed(() => filter.filteredBbox.value ?? props.bbox);
 
-const showAddRow = ref(false);
-const addRowModalRef = ref<InstanceType<typeof AddRowModal>>();
-
-function openAddRow() {
-  showAddRow.value = true;
-  addRowModalRef.value?.openModal();
-}
-
-// On a geo table the attributes are collected first and the geometry drawn
-// second: the row is only posted once both are in hand, so a row without its
-// geometry never lands in the table. The session that opens is the ordinary
-// layer-wide one — the shape drawn first is the one that takes these values.
-async function onAddRow(values: Record<string, string>) {
-  if (props.isGeo) {
-    // The session is already open — it is the same mode the button was
-    // reached from — so its values are attached to it rather than starting it
-    // over, which would drop everything loaded and every reshape made since.
-    layerEditing.awaitGeometry(rowsState.coerceValues(values));
-    return;
-  }
-  await rowsState.addRow(values);
+// Creating a row is one gesture, and on a geo table it is a **drawing**: the
+// shape closed on the map raises the empty row it belongs to, at the top of
+// the grid, where its attributes are typed like any others. A table with no
+// geometry has nothing to draw, so its *Créer* is a plain `+`.
+function addDraftRow() {
+  rowEdits.addDraft();
 }
 
 const displayRows = computed(() => {
-  if (selection.selectedRows.value.length === 0) return rowsState.rows.value;
+  // The rows the session is about to create come first: they are empty, and
+  // a row that has no value to sort on has no place among the sorted ones.
+  const drafts = rowEdits.draftRows.value;
+  if (selection.selectedRows.value.length === 0) return [...drafts, ...rowsState.rows.value];
   const selectedSet = new Set(selection.selectedRows.value.map((row) => row.pkey));
-  return [...selection.selectedRows.value, ...rowsState.rows.value.filter((row) => !selectedSet.has(row.pkey))];
+  return [
+    ...drafts,
+    ...selection.selectedRows.value,
+    ...rowsState.rows.value.filter((row) => !selectedSet.has(row.pkey)),
+  ];
 });
 
 function rowClassFor(row: { original: Row }) {
+  // Violet, the colour a shape that belongs to no row yet is drawn in on the
+  // map: the same object, the same state, on both halves of the screen.
+  if (isDraft(row.original.pkey)) return "row-draft";
   if (!props.isGeo) return "";
   return selection.selectedPkeys.value.includes(row.original.pkey)
-    ? "bg-warning/10 hover:bg-warning/20 cursor-pointer"
+    ? "row-selected cursor-pointer"
     : "cursor-pointer";
 }
 
 // One click on a row toggles it in and out of the selection, exactly as one
 // click on its feature does — map selection and table selection are the same
 // selection, so the gesture that reverses it has to be the same too (§8.8).
-// A row open for editing is not a target: the click is aimed at the field
-// under the pointer, and DataTable has already filtered out the controls.
+// A click that landed in a cell's field belongs to the field, not to the row:
+// DataTable has already filtered those out, so what reaches here is a click on
+// the row itself.
 function onRowClick(row: { original: Row }) {
-  if (!props.isGeo || rowsState.editingPkey.value === row.original.pkey) return;
+  // A row that does not exist yet cannot be selected: there is nothing on the
+  // map to show, and its own geometry is the shape being drawn.
+  if (!props.isGeo || isDraft(row.original.pkey)) return;
   selection.toggle(row.original.pkey);
 }
 </script>
@@ -158,7 +176,17 @@ function onRowClick(row: { original: Row }) {
       @open-columns="emit('openColumns')"
     />
 
-    <TableEditBar v-if="editing" :is-geo="isGeo" :tools-id="MAP_TOOLS_ID" @add-row="openAddRow" />
+    <TableEditBar
+      v-if="editing"
+      :is-geo="isGeo"
+      :tools-id="MAP_TOOLS_ID"
+      :row-count="rowEdits.dirtyCount.value"
+      :draft-count="rowEdits.draftCount.value"
+      :saving="layerEditing.saving.value"
+      @add-row="addDraftRow"
+      @save="saveEditing()"
+      @cancel="cancelEditing"
+    />
 
     <div class="flex min-h-0 flex-1 gap-4">
       <div
@@ -185,14 +213,13 @@ function onRowClick(row: { original: Row }) {
           v-else
           key="rows"
           :state="rowsState"
+          :edits="rowEdits"
+          :editable-columns="rowColumns"
           :display-rows="displayRows"
           :visible-columns="visibleColumns"
           :is-geo="isGeo"
-          :selected-count="selection.selectedPkeys.value.length"
           :row-class="rowClassFor"
-          @update-cell="(column, value) => (rowsState.editValues[column] = value)"
           @geometry="rowGeometry.open"
-          @clear-selection="selection.clear"
           @row-click="onRowClick"
         />
       </div>
@@ -212,28 +239,21 @@ function onRowClick(row: { original: Row }) {
           :selected-pkeys="selection.selectedPkeys.value"
           :editing="layerEditing.active.value"
           :features="layerEditing.features.value"
-          :loading-features="layerEditing.loading.value"
           :saving="layerEditing.saving.value"
+          :row-count="rowEdits.dirtyCount.value"
+          :draft-count="rowEdits.draftCount.value"
           :toolbar-target="`#${MAP_TOOLS_ID}`"
           :data-version="dataVersion"
           @toggle-selection="selection.toggle"
           @request-feature="layerEditing.reach"
           @release-features="layerEditing.release"
-          @save="layerEditing.save"
-          @cancel="layerEditing.cancel"
+          @drawn-count="rowEdits.syncDrafts"
+          @save="saveEditing"
+          @cancel="cancelEditing"
         />
       </div>
     </div>
   </div>
-
-  <AddRowModal
-    v-if="showAddRow"
-    ref="addRowModalRef"
-    :editable-columns="rowColumns"
-    :is-geo="isGeo"
-    @add="onAddRow"
-    @close="showAddRow = false"
-  />
 
   <GeometryModal
     v-if="rowGeometry.pkey.value"
