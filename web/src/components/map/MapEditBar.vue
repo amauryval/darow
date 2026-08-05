@@ -125,15 +125,15 @@ const shapes: Array<{ value: DrawShape; label: string; icon: typeof Spline }> = 
           "
           @click="emit('toggleTopology')"
         />
-        
-        <div class="flex gap-2 ml-auto">
-          <Badge v-if="changedCount > 0" tone="warning">
-            {{ changedCount }} modifiée{{ changedCount > 1 ? "s" : "" }}
-          </Badge>
-          <Badge v-if="createdCount > 0" tone="primary">
-            {{ createdCount }} nouvelle{{ createdCount > 1 ? "s" : "" }}
-          </Badge>
-        </div>
+      </div>
+
+      <div class="flex gap-2 ml-auto">
+        <Badge v-if="changedCount > 0" tone="warning">
+          {{ changedCount }} modifiée{{ changedCount > 1 ? "s" : "" }}
+        </Badge>
+        <Badge v-if="createdCount > 0" tone="primary">
+          {{ createdCount }} nouvelle{{ createdCount > 1 ? "s" : "" }}
+        </Badge>
       </div>
 
       <div class="flex flex-col gap-2 ml-auto">
