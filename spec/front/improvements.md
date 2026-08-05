@@ -22,3 +22,10 @@ Each entry carries a stable identifier (`IMP-Fn`); a retired identifier is never
 | IMP-F1 | Show what is left to load in paginated lists ("50 of 1,240") now that `total` is known | The user cannot tell a complete list from its first screen | §8.6 |
 | IMP-F2 | Show upload progress | A large file leaves with no feedback at all until it is done | §8.2 |
 | IMP-F3 | Show tile loading | A map pan in WFS mode signals nothing as long as nothing is rendered | §8.8 |
+| IMP-7 | data table must scroll to display other item not the 20 first ones... |  |
+| IMP-8 | I want to be able to move a geometry when the edit mode is enabled |  |
+| IMP-9 | I want to be able to duplicate a row |  |
+| IMP-10 | Add the row number on the table... |  |
+| IMP-11 | I want to be able select a row by clicking on it |  |
+| IMP-12 | when edition is enabled, feature edited must be pass to the edit state when mouse is hover on it, they must not be created after the edition enabling,  this avoid us to generate all the edited item when the edit mode is enabled, and freeze the gui. |
+| IMP-13 | linked to IMP-12 ? when edition is disabled, the gui is freezing. |
