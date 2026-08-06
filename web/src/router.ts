@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import DashboardView from './views/DashboardView.vue'
 import SourcesView from './views/SourcesView.vue'
 import TablesView from './views/TablesView.vue'
 import TableDetailView from './views/TableDetailView.vue'
@@ -13,7 +14,13 @@ declare module 'vue-router' {
 export const router = createRouter({
     history: createWebHistory('/ui/'),
     routes: [
-        { path: '/', redirect: '/tables' },
+        { path: '/', redirect: '/dashboard' },
+        {
+            path: '/dashboard',
+            name: 'dashboard',
+            component: DashboardView,
+            meta: { title: 'Tableau de bord' }
+        },
         { path: '/sources', name: 'sources', component: SourcesView, meta: { title: 'Sources' } },
         {
             path: '/tables',

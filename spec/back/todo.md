@@ -25,16 +25,13 @@ Write the instruction, not the patch — the code is written later, against the 
 established by the audit of 2026-08-06, which took up every lead `improvements.md` held (IMP-1
 through IMP-7 became TODO-9 through TODO-15) and left that file empty.
 
-0. **The blockers come first**, before any entry below — [blockers.md](blockers.md)'s own rule. All
-   three (BLK-3, a deleted table leaving its source displayed as loaded; BLK-2, a DuckDB `INTERNAL`
-   error leaving `Adapter` handing out connections onto a dead instance; BLK-1, no type allowlist on
-   `POST /tables/{tableId}/columns`) are fixed. BLK-1 landing is also what makes TODO-10 worth doing
-   at all — a `GEOMETRY` column added behind the catalogue's back is exactly the disagreement
-   TODO-10 removes the possibility of — so TODO-10 now has one less case to reconcile.
 1. **TODO-8 and TODO-13 together, as one API-contract pass.** Both change the REST contract and both
    force the front to be realigned; done separately the front pays the realignment twice. This is
    the one pass in the plan that is breaking, and it should be a single one.
-2. **TODO-10 and TODO-11 are independent** of everything else and of one another.
+2. **TODO-10 and TODO-11 are independent** of everything else and of one another. BLK-1's fix (a type
+   allowlist on `POST /tables/{tableId}/columns`) is what makes TODO-10 worth doing at all — a
+   `GEOMETRY` column added behind the catalogue's back is exactly the disagreement TODO-10 removes
+   the possibility of — so TODO-10 now has one less case to reconcile.
 3. **TODO-14 last.** It is the largest single chantier here, it is additive, and it is the only one
    whose shape is still partly open.
 

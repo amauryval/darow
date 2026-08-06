@@ -1,3 +1,10 @@
+export interface Diagnostics {
+    databaseSizeBytes: number
+    memoryUsageBytes: number
+    temporaryFilesBytes: number
+    extensions: string[]
+}
+
 export interface Metadata {
     tableId: string
     physicalName: string

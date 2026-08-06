@@ -3,6 +3,7 @@ import { useStorage } from '@vueuse/core'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
     FolderOpen,
+    LayoutDashboard,
     LayoutGrid,
     LogIn,
     MapPinned,
@@ -36,6 +37,7 @@ const statusBadgeTone: Record<ServerStatus, 'neutral' | 'success' | 'error'> = {
 const collapsed = useStorage('darow-nav-collapsed', false)
 
 const links = [
+    { to: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { to: '/tables', label: 'Tables disponibles', icon: LayoutGrid },
     { to: '/sources', label: 'Sources', icon: FolderOpen },
     { to: '/settings', label: 'Paramètres', icon: SettingsIcon }

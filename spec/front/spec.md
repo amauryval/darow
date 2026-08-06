@@ -315,26 +315,46 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
 | `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
 | `Tabs` | daisyUI `tabs`/`tab`/`tab-active` plus the `role="tablist"`/`role="tab"`/`aria-selected` wiring, `v-model` over a caller-supplied `{ value, label }[]`. Generic over the mode's own union so a caller's `v-model` stays typed to its two or three modes rather than widening to a bare string |
+| `StatTile` | a single-number KPI card, on daisyUI's own `stats`/`stat` component — `label`, `value`, optional `hint` and `icon` |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
 rich cells (source actions, EPSG input, row actions, editable cell) are of this kind — that is what
 replaces the `h()` trees.
 
+**`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
+`ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
+fixed hue order — `var(--color-primary)`/`--color-secondary`/`--color-info`, folding anything past
+the third slice into a neutral "Autres" bucket rather than generating a fourth hue). D3
+(`d3-scale`/`d3-shape`/`d3-array`) computes geometry only — scales, a pie layout, an arc generator —
+and Vue owns every DOM node via `v-for` over a `computed`; D3 never calls `.select()`/`.append()`
+itself. Props in, no fetch, no store, same contract as `ui/`.
+
 ---
 
 ## 6. Views and sub-views (`src/views/`)
 
 One view per route; its sub-views live in a directory named after it. Every view opens with a
-`Breadcrumbs` trail (§5) — `TableDetailView`'s is `Tables > {tableName}`, the two others are a
+`Breadcrumbs` trail (§5) — `TableDetailView`'s is `Tables > {tableName}`, the others are a
 single, link-less entry naming the page.
 
 | Route | View | Role |
 |---|---|---|
+| `/dashboard` | `DashboardView` | landing route (`/` redirects here). Server diagnostics (`GET /diagnostics`) and data stats aggregated client-side from every page of `GET /tables` — table count, row totals, geo/non-geo split, SRID distribution, top tables by row count |
 | `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
 | `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, saved as a diff-only patch, per-field refusals attached to their own input |
+
+**`DashboardView`** composes two independent sections, each owning its own four-state load
+(`components/dashboard/`): `ServerHealthSection` (`useDiagnostics`) and `DataOverviewSection`
+(`useDashboardStats`). The two composables stay separate rather than merging into one — different
+endpoints, different latency/failure profiles, and a shared retry would re-trigger both on one
+section's failure. `useDashboardStats` is the one composable allowed to page a listing
+(`listTables`) to completion instead of going through `usePaginatedList`'s infinite scroll: the
+dashboard needs the whole catalogue to sum/aggregate (`utils/dashboardStats.ts`'s
+`computeDashboardStats`), not a displayed page — it loops at `useSettings().current.maxListLimit`
+per page (the server's own live cap) until the reported `total` is reached.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
