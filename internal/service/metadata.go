@@ -82,18 +82,27 @@ func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortFie
 }
 
 // invalidateMetadataCache must be called after any write that changes
-// metadata: UpdateMetadata, RefreshDerived, RemoveTable,
-// Rollback.
+// metadata: UpdateMetadata, RefreshDerived, RemoveTable.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
 	s.cache.Remove(tableId)
 }
 
-// Create registers a new logical table's metadata row, used by
-// DeriveService/ImportService before materializing its physical table.
-func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	tableId, err := s.storage.Create(ctx, tableName, isGeo, geometryColumn)
+// CreateFromQuery registers a new logical table and materializes it from
+// sourceQuery, both inside a single transaction — used by DeriveService.
+func (s *MetadataService) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
+	tableId, err := s.storage.CreateFromQuery(ctx, tableName, sourceQuery, args...)
 	if err != nil {
-		return "", NewDisplayError(fmt.Sprintf("unable to create table %q", tableName), err)
+		return "", NewDisplayError(fmt.Sprintf("unable to derive table %q from the given query", tableName), err)
+	}
+	return tableId, nil
+}
+
+// CreateFromFile registers a new logical table and materializes it from a
+// source file, both inside a single transaction — used by ImportService.
+func (s *MetadataService) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
+	tableId, err := s.storage.CreateFromFile(ctx, tableName, sourceName, sourcePath, layer, sridOverride)
+	if err != nil {
+		return "", NewDisplayError(fmt.Sprintf("unable to import %q", tableName), err)
 	}
 	return tableId, nil
 }
@@ -132,21 +141,6 @@ func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, to
 	}
 	s.invalidateMetadataCache(tableId)
 	return nil
-}
-
-// Rollback removes tableId's metadata row (and any partially materialized
-// physical table, via storage.Remove's DROP TABLE IF EXISTS) after a
-// failure partway through DeriveService/ImportService's table creation,
-// so a failed creation never leaves a metadata row with no matching
-// physical table.
-func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause error) error {
-	if err := s.RemoveTable(ctx, tableId); err != nil {
-		return NewDisplayError(
-			fmt.Sprintf("table creation failed, and cleaning up the partial table %q also failed", tableId),
-			fmt.Errorf("%w (cleanup also failed: %v)", cause, err),
-		)
-	}
-	return cause
 }
 
 // LoadedSourceNames maps each already-loaded source file name (or, for a

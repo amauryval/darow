@@ -72,3 +72,99 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, exists, "metadata row must survive a rolled-back cascade")
 }
+
+func Test_Catalog_CreateFromQuery(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.CreateFromQuery(ctx, "widgets", "SELECT 1")
+	require.NoError(t, err)
+
+	exists, err := c.TableExists(ctx, tableId)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	assert.Equal(t, "widgets", meta.TableName)
+}
+
+func Test_Catalog_CreateFromQuery_RollsBackOnMaterializationFailure(t *testing.T) {
+	failing := errors.New("materialization failed")
+	c := newTestCatalogWithCreators(t, fakeFileCreator(nil), fakeQueryCreator(failing))
+	ctx := context.Background()
+
+	before, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = c.CreateFromQuery(ctx, "widgets", "SELECT 1")
+	require.ErrorIs(t, err, failing)
+
+	after, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "no metadata row must survive a rolled-back create")
+}
+
+func Test_Catalog_CreateFromQuery_CascadesToRegisteredRepositories(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	child := &fakeAttachment{}
+	c.Register(child)
+
+	tableId, err := c.CreateFromQuery(ctx, "widgets", "SELECT 1")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{tableId}, child.createCalls)
+}
+
+func Test_Catalog_CreateFromQuery_RollsBackOnAttachmentFailure(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	before, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+
+	failing := errors.New("attachment create failed")
+	c.Register(&fakeAttachment{err: failing})
+
+	_, err = c.CreateFromQuery(ctx, "widgets", "SELECT 1")
+	require.ErrorIs(t, err, failing)
+
+	after, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "no metadata row must survive a rolled-back create")
+}
+
+func Test_Catalog_CreateFromFile(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.CreateFromFile(ctx, "widgets", "widgets.geojson", "/data/widgets.geojson", "", 0)
+	require.NoError(t, err)
+
+	exists, err := c.TableExists(ctx, tableId)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	assert.Equal(t, "widgets", meta.TableName)
+	assert.Equal(t, "widgets.geojson", meta.SourceName)
+}
+
+func Test_Catalog_CreateFromFile_RollsBackOnMaterializationFailure(t *testing.T) {
+	failing := errors.New("materialization failed")
+	c := newTestCatalogWithCreators(t, fakeFileCreator(failing), fakeQueryCreator(nil))
+	ctx := context.Background()
+
+	before, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = c.CreateFromFile(ctx, "widgets", "widgets.geojson", "/data/widgets.geojson", "", 0)
+	require.ErrorIs(t, err, failing)
+
+	after, err := c.TableIds(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "no metadata row must survive a rolled-back create")
+}

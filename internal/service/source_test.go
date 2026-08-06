@@ -205,12 +205,7 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
-	wantSourceName, wantSourceLayer := "buildings.geojson", ""
-	m.On("UpdateMetadata", mock.Anything, "id-new", storage.MetadataPatch{SourceName: &wantSourceName, SourceLayer: &wantSourceLayer}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-new", true).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "buildings.geojson"), "", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 
@@ -237,12 +232,7 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "buildings.geojson"), "", 0).Return("", false, 0, nil).Once()
-	wantSourceName, wantSourceLayer := "buildings.geojson", ""
-	m.On("UpdateMetadata", mock.Anything, "id-new", storage.MetadataPatch{SourceName: &wantSourceName, SourceLayer: &wantSourceLayer}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-new", true).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "buildings.geojson"), "", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 	require.NoError(t, err)
@@ -451,14 +441,7 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("geom", true, 4326, nil).Once()
-	wantSourceName, wantSourceLayer, wantIsGeo, wantGeom, wantSrid := "regions.gpkg", "communes", true, "geom", 4326
-	m.On("UpdateMetadata", mock.Anything, "id-new", storage.MetadataPatch{
-		SourceName: &wantSourceName, SourceLayer: &wantSourceLayer, IsGeo: &wantIsGeo, GeometryColumn: &wantGeom, Srid: &wantSrid,
-	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-new", true).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "regions.gpkg::communes", "regions.gpkg", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "regions.gpkg", "communes", 0)
 
@@ -503,14 +486,7 @@ func Test_SourceService_Load_ForwardsSridOverride(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-new", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-new").Return(storage.Metadata{TableId: "id-new", PhysicalName: "t_new"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_new", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("geom", true, 2154, nil).Once()
-	wantSourceName, wantSourceLayer, wantIsGeo, wantGeom, wantSrid := "lambert.geojson", "", true, "geom", 2154
-	m.On("UpdateMetadata", mock.Anything, "id-new", storage.MetadataPatch{
-		SourceName: &wantSourceName, SourceLayer: &wantSourceLayer, IsGeo: &wantIsGeo, GeometryColumn: &wantGeom, Srid: &wantSrid,
-	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-new", true).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "lambert.geojson", "lambert.geojson", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "lambert.geojson", "", 2154)
 

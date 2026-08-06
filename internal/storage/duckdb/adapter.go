@@ -85,13 +85,22 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 		return nil, err
 	}
 
-	// The catalogue takes its two links to duckdb/tables directly: dropping
-	// and listing the physical tables need a transaction and a connection,
-	// nothing the materializer holds. Only the materializer depends on a
-	// built catalogue (a derived query's physical-name allowlist), so the
-	// two constructions simply run in that order.
+	// The catalogue takes its links to duckdb/tables directly: dropping and
+	// listing the physical tables need a transaction and a connection,
+	// nothing the materializer holds. fileCreator/queryCreator close over
+	// a.catalog for the same reason ExistingTables does — they only run
+	// after New returns, by which point a.catalog is set. Only the
+	// materializer depends on a built catalogue (a derived query's
+	// physical-name allowlist), so the two constructions simply run in
+	// that order.
 	a := &Adapter{db: db, path: path, maxOpenConns: maxOpenConns}
-	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a))
+	fileCreator := func(ctx context.Context, tx *sql.Tx, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
+		return tables.NewTxMaterializer(tx, a.catalog).CreateFromFile(ctx, physicalName, sourcePath, layer, sridOverride)
+	}
+	queryCreator := func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (string, bool, error) {
+		return tables.NewTxMaterializer(tx, a.catalog).CreateFromQuery(ctx, physicalName, sourceQuery, args...)
+	}
+	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), fileCreator, queryCreator)
 	a.materializer = tables.NewMaterializer(a, a, a.catalog)
 
 	// Registered at construction, so deleting a table can never forget the

@@ -138,27 +138,13 @@ type GeoRepository interface {
 	Types(ctx context.Context) ([]string, error)
 }
 
-// TableMaterializer materializes a logical table's physical backing store —
-// from a source file or a derived SELECT query — applying the indexing and
-// clustering rule 19 requires (an RTREE spatial index, a unique __pkey
-// index, and Hilbert clustering created after them, since clustering
-// rebuilds the table), and answers questions about a source file before any
-// table exists. A TableRepository assumes a table already in that state;
-// TableMaterializer is what puts it there.
+// TableMaterializer answers questions about a source file before any table
+// is created from it — the layers it holds, its declared CRS, whether it
+// carries geometry at all. The materialization itself (CTAS, indexing,
+// reprojection, Hilbert clustering) runs transactionally through
+// storage.Catalog's CreateFromFile/CreateFromQuery instead, so no method
+// here creates a table.
 type TableMaterializer interface {
-	// CreateFromFile materializes physicalName from a source file readable
-	// by ST_Read (GeoJSON, Shapefile, CSV, GeoPackage, ...). layer selects
-	// one layer of a multi-layer source; pass "" for a single-layer
-	// source. sridOverride pins the source CRS explicitly (EPSG:<code>),
-	// or 0 to detect it from the file; a geo source whose CRS can be
-	// neither detected nor overridden fails rather than being guessed.
-	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
-	// CreateFromQuery materializes physicalName from a caller-provided
-	// SELECT query, restricted to already-registered tables. args binds
-	// sourceQuery's placeholders: a query the server assembles around a
-	// BuildFilter clause carries the filter's values as parameters, so
-	// rule 5 holds on the derivation path exactly as it does on a read.
-	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (geometryColumn string, isGeo bool, err error)
 	// ListLayers returns the names of every layer sourcePath exposes, for
 	// formats that can hold more than one.
 	ListLayers(ctx context.Context, sourcePath string) ([]string, error)

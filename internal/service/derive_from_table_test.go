@@ -34,15 +34,11 @@ func expectSourceSchema(m *mocks.Adapter, repo *mocks.TableRepository) {
 	}, nil).Once()
 }
 
-// expectMaterialization sets up the create sequence a successful derivation
-// runs, asserting the exact query and bound parameters it assembled.
+// expectMaterialization sets up the create call a successful derivation
+// makes, asserting the exact query and bound parameters it assembled.
 func expectMaterialization(m *mocks.Adapter, query string, args ...any) {
-	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-derived").
-		Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-	m.On("CreateFromQuery", append([]any{mock.Anything, "t_derived", query}, args...)...).
-		Return("", false, nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
+	m.On("CreateFromQuery", append([]any{mock.Anything, "derived", query}, args...)...).
+		Return("id-derived", nil).Once()
 }
 
 func Test_DeriveService_DeriveFromTable_AssemblesQuery(t *testing.T) {
@@ -123,7 +119,8 @@ func Test_DeriveService_DeriveFromTable_NonGeoSource(t *testing.T) {
 }
 
 // Every rejection below happens before a single catalogue row is created:
-// the mock adapter would fail its expectations if Create were reached.
+// the mock adapter would fail its expectations if CreateFromQuery were
+// reached.
 func Test_DeriveService_DeriveFromTable_Rejections(t *testing.T) {
 	cases := []struct {
 		name string

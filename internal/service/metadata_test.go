@@ -170,14 +170,78 @@ func Test_MetadataService_RemoveTable_ToleratesUnsetSourceInvalidator(t *testing
 	require.NoError(t, err)
 }
 
-func Test_MetadataService_Rollback_ReportsOriginalErrorWhenCleanupAlsoFails(t *testing.T) {
-	svc, m, _ := setupMetadataService(t)
+func Test_MetadataService_CreateFromQuery(t *testing.T) {
+	cases := []struct {
+		name        string
+		failStorage bool
+		wantErr     bool
+	}{
+		{name: "registers and materializes the table"},
+		{name: "storage failure is wrapped in a DisplayError", failStorage: true, wantErr: true},
+	}
 
-	m.On("Remove", mock.Anything, "id-1").Return(errors.New("db locked")).Once()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, _ := setupMetadataService(t)
 
-	err := svc.Rollback(context.Background(), "id-1", errors.New("corrupt file"))
+			if c.failStorage {
+				cause := errors.New("unknown table")
+				m.On("CreateFromQuery", mock.Anything, "derived", "SELECT 1").Return("", cause).Once()
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "corrupt file")
-	assert.Contains(t, err.Error(), "db locked")
+				_, err := svc.CreateFromQuery(context.Background(), "derived", "SELECT 1")
+
+				require.Error(t, err)
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr)
+				assert.Contains(t, displayErr.DisplayMessage(), "derived")
+				assert.Same(t, cause, displayErr.Unwrap())
+				return
+			}
+
+			m.On("CreateFromQuery", mock.Anything, "derived", "SELECT 1").Return("id-1", nil).Once()
+
+			tableId, err := svc.CreateFromQuery(context.Background(), "derived", "SELECT 1")
+
+			require.NoError(t, err)
+			assert.Equal(t, "id-1", tableId)
+		})
+	}
+}
+
+func Test_MetadataService_CreateFromFile(t *testing.T) {
+	cases := []struct {
+		name        string
+		failStorage bool
+		wantErr     bool
+	}{
+		{name: "registers and materializes the table"},
+		{name: "storage failure is wrapped in a DisplayError", failStorage: true, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, _ := setupMetadataService(t)
+
+			if c.failStorage {
+				cause := errors.New("corrupt file")
+				m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("", cause).Once()
+
+				_, err := svc.CreateFromFile(context.Background(), "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0)
+
+				require.Error(t, err)
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr)
+				assert.Contains(t, displayErr.DisplayMessage(), "buildings.geojson")
+				assert.Same(t, cause, displayErr.Unwrap())
+				return
+			}
+
+			m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("id-1", nil).Once()
+
+			tableId, err := svc.CreateFromFile(context.Background(), "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0)
+
+			require.NoError(t, err)
+			assert.Equal(t, "id-1", tableId)
+		})
+	}
 }

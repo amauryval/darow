@@ -43,16 +43,10 @@ func newTable(t *testing.T, a *Adapter) storage.Metadata {
 	}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	tableId, err := a.Catalog().Create(ctx, "points", false, "")
+	tableId, err := a.Catalog().CreateFromFile(ctx, "points", "points.geojson", path, "", 0)
 	require.NoError(t, err)
+
 	meta, err := a.Catalog().GetMetadata(ctx, tableId)
-	require.NoError(t, err)
-
-	geometryColumn, isGeo, _, err := a.Materializer().CreateFromFile(ctx, meta.PhysicalName, path, "", 0)
-	require.NoError(t, err)
-	require.NoError(t, a.Catalog().UpdateMetadata(ctx, tableId, storage.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn}))
-
-	meta, err = a.Catalog().GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 	return meta
 }
@@ -154,16 +148,30 @@ func Test_Adapter_CreateFromQuery_ResolvesAgainstTheCatalogue(t *testing.T) {
 	source := newTable(t, a)
 	ctx := context.Background()
 
-	derivedId, err := a.Catalog().Create(ctx, "derived", false, "")
-	require.NoError(t, err)
-	derived, err := a.Catalog().GetMetadata(ctx, derivedId)
+	_, err := a.Catalog().CreateFromQuery(ctx, "derived", "SELECT name FROM "+source.PhysicalName)
 	require.NoError(t, err)
 
-	_, _, err = a.Materializer().CreateFromQuery(ctx, derived.PhysicalName, "SELECT name FROM "+source.PhysicalName)
-	require.NoError(t, err)
-
-	_, _, err = a.Materializer().CreateFromQuery(ctx, derived.PhysicalName, "SELECT * FROM t_not_registered")
+	_, err = a.Catalog().CreateFromQuery(ctx, "derived-2", "SELECT * FROM t_not_registered")
 	assert.Error(t, err, "a table absent from the catalogue is not derivable")
+}
+
+// A table's creation is transactional end to end: a materialization failure
+// (here, a source file that does not exist) must leave neither a metadata
+// row nor a physical table behind — the create-path counterpart of
+// Test_Adapter_CatalogRemove_DropsThePhysicalTable.
+func Test_Adapter_CatalogCreateFromFile_RollsBackOnMaterializationFailure(t *testing.T) {
+	a := setupAdapter(t)
+	ctx := context.Background()
+
+	before, err := a.Catalog().TableIds(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = a.Catalog().CreateFromFile(ctx, "missing", "missing.geojson", "/does/not/exist.geojson", "", 0)
+	require.Error(t, err)
+
+	after, err := a.Catalog().TableIds(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "no metadata row must survive a rolled-back create")
 }
 
 // Ping backs /readyz: it answers for the spatial extension too, since

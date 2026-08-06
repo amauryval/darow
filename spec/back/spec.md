@@ -392,18 +392,22 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 
 | Interface           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `Create`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone — an interrupted rollback — reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
+| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `CreateFromFile`, `CreateFromQuery`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
 | `TableRepository`   | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `RowRepository`     | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete`                                                                                                                                                                                                                       |
 | `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
-| `TableMaterializer` | `CreateFromFile`, `CreateFromQuery` — materializes (from a source file or a derived SELECT), indexes and clusters a table's physical backing store; `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. A `TableRepository` assumes a table already materialized                                                                                                                                                                                                     |
+| `TableMaterializer` | `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. The materialization itself (CTAS, indexing, clustering, from a source file or a derived SELECT) is not on this interface — it runs transactionally through `Catalog.CreateFromFile`/`CreateFromQuery` (below) instead                                                                                                                                                                                          |
 
-The delete cascade is deliberately absent from these interfaces: `duckdb/catalog.Catalog.Remove`
-drops the physical table through a `Dropper` and cascades to every registered `Attachment`
-(`DeleteAttached(ctx, tx *sql.Tx, tableId string) error`), both declared in `duckdb/catalog` and
-both naming `*sql.Tx` directly. `Register(Attachment)` is a construction-time extension point on
-that concrete type — the point through which a catalogue-attached repository joins the whole-table
-delete cascade — not a method any service reaches through `storage.Catalog`.
+Both the delete cascade and the create path are deliberately absent from these interfaces:
+`duckdb/catalog.Catalog.Remove` drops the physical table through a `Dropper` and cascades to every
+registered `Attachment`'s `DeleteAttached(ctx, tx *sql.Tx, tableId string) error`;
+`Catalog.CreateFromFile`/`CreateFromQuery` register the metadata row, materialize the physical
+table through a `FileCreator`/`QueryCreator` function value, and cascade to every registered
+`Attachment`'s `CreateAttached(ctx, tx *sql.Tx, tableId string) error` — all four (`Dropper`,
+`FileCreator`, `QueryCreator`, `Attachment`) declared in `duckdb/catalog` and naming `*sql.Tx`
+directly. `Register(Attachment)` is a construction-time extension point on that concrete type — the
+point through which a catalogue-attached repository joins both the whole-table delete cascade and
+the create transaction — not a method any service reaches through `storage.Catalog`.
 
 No service depends on the interfaces above directly: each declares its own narrow interface over the
 subset it actually calls. `core.storageAdapter` documents the full surface an adapter must satisfy —
@@ -412,7 +416,8 @@ subset it actually calls. `core.storageAdapter` documents the full surface an ad
 than a flattened union of every storage method.
 
 **Naming.** `Catalog.Remove` deletes a whole table (metadata and physical table, in a single
-transaction through `duckdb/catalog.Catalog.Remove`), `RowRepository.Delete` deletes rows.
+transaction), `Catalog.CreateFromFile`/`CreateFromQuery` create one (metadata and physical table,
+equally in a single transaction), `RowRepository.Delete` deletes rows.
 
 **Cross-cutting data types.** `Metadata` (+ `MetadataPatch`, `SourceKey`), `Row` (pkey + values, no
 geometry), `GeoFeature` (pkey + raw GeoJSON fragment + values), `GeoQuery` (`BuildFilter` clause +
@@ -483,16 +488,21 @@ forwards nothing: each accessor returns the sub-package type that implements the
 sub-packages never import each other — `New` wires the catalogue's `Dropper` and its
 `ExistingTables` reader straight to `duckdb/tables.DropTable` and `tables.ExistingTables(conn)`,
 both function values needing nothing but a transaction or a connection, and the materializer's
-physical-name allowlist to the catalogue. Only that last link needs an already-built dependency, so
-the two constructions run in that order rather than through a deferred closure.
+physical-name allowlist to the catalogue. `New` also wires the catalogue's `FileCreator`/
+`QueryCreator` to two closures over `tables.NewTxMaterializer` — a tx-scoped `*tables.Materializer`
+built fresh per call, its `Querier`/`TxRunner` backed by the `*sql.Tx` the create transaction
+already opened, so `CreateFromFile`/`CreateFromQuery`'s existing CTAS/index/reproject/cluster
+statements join it unchanged rather than being rewritten to take a `*sql.Tx` directly. Only that
+last link (the materializer's physical-name allowlist) needs an already-built dependency, so the two
+constructions run in that order rather than through a deferred closure.
 
 -   **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
     creation of the parent directory, then schema migration.
 -   **Readiness**: `Ping` is the connection ping **plus** the assertion that `spatial` is loaded
     (§4.8) — the extension is loaded once at open (rule 3) and every geo route depends on it.
 -   **Write serialization**: a single application-level mutex (`writeMu`) covers `Exec`.
-    `BulkInsert` and `Catalog.Remove` take it themselves for the whole duration of their
-    transaction, rather than per statement.
+    `BulkInsert`, `Catalog.Remove` and `Catalog.CreateFromFile`/`CreateFromQuery` take it themselves
+    for the whole duration of their transaction, rather than per statement.
 -   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error invalidates the whole
     instance, not just the query that raised it. Every call that reaches the connection (`Query`,
     `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError` and, on a
@@ -591,12 +601,14 @@ Every other service goes through it to read or write metadata, through a narrow 
 independently (rule 11). The cache is a bounded LRU with a TTL.
 
 It invalidates the entry concerned after **every** write: `UpdateMetadata`, `RefreshDerived`,
-`RemoveTable`, `Rollback`. `RemoveTable` additionally invalidates two other services' caches, each
-through its own narrow port: `SchemaService`'s, through `schemaInvalidator` — deleting a table
-changes its structure just as surely as `AddColumn` does, and the entry would otherwise survive
-until its TTL — and `SourceService`'s, through `sourceInvalidator`, so a deleted table's source
-stops being reported as loaded. These are `MetadataService`'s only dependencies on another service,
-and they only go that way — neither `SchemaService` nor `SourceService` knows `MetadataService`.
+`RemoveTable`. A newly created `tableId` was never cached, so `CreateFromFile`/`CreateFromQuery`
+need no invalidation of their own. `RemoveTable` additionally invalidates two other services'
+caches, each through its own narrow port: `SchemaService`'s, through `schemaInvalidator` —
+deleting a table changes its structure just as surely as `AddColumn` does, and the entry would
+otherwise survive until its TTL — and `SourceService`'s, through `sourceInvalidator`, so a deleted
+table's source stops being reported as loaded. These are `MetadataService`'s only dependencies on
+another service, and they only go that way — neither `SchemaService` nor `SourceService` knows
+`MetadataService`.
 `schemaInvalidator` is wired through the constructor; `sourceInvalidator` cannot be, since
 `SourceService` is built from `ImportService`, itself built from `MetadataService` —
 `core.NewServices` wires it in with `SetSourceInvalidator` once `SourceService` exists, and
@@ -604,9 +616,9 @@ and they only go that way — neither `SchemaService` nor `SourceService` knows 
 e.g. in tests).
 
 -   `ListTables` paginates over `TableIds`'s deterministic order and also returns the total.
--   `Rollback` deletes the metadata row (and, through `Remove`, the possibly half-materialized
-    physical table) after a failure mid-creation, and returns the original cause, enriched. This is
-    what guarantees that no catalogue row survives without a physical table.
+-   `CreateFromFile`/`CreateFromQuery` thinly wrap `storage.Catalog`'s methods of the same name
+    (§5.4): the transaction that guarantees a catalogue row never survives without a physical table
+    is owned by `duckdb/catalog`, not by this service.
 -   `LoadedSourceNames` builds the source → `tableId` lookup used by `SourceService.Refresh`, keyed
     on `sourceName`(`::sourceLayer`).
 
@@ -653,25 +665,25 @@ never produce the second geometry column the rest of the domain assumes cannot e
 `colType` into the `ALTER TABLE` statement, checks it again with the same function — the repository
 never trusts a caller other than this service to have validated first.
 
-### 5.4 `DeriveService` and `ImportService` — creating a table, with rollback
+### 5.4 `DeriveService` and `ImportService` — creating a table, transactionally
 
-The same sequence in both cases:
-
-1. Create the catalogue row (obtain `tableId` and `physicalName`).
-2. Materialize the physical table (CTAS from a file or from a query).
-3. Persist the resolved geometry column / SRID / source through `UpdateMetadata`.
-4. `RefreshDerived`.
-
-Any failure after step 1 goes through `Rollback`. `ImportService` additionally carries the
-assignment of `sourceName`/`sourceLayer` (§3.2) and the passing of the layer and of the explicit
-SRID.
+Neither service owns the create transaction: each calls one method on `MetadataService`
+(`CreateFromQuery`/`CreateFromFile`), which itself thinly wraps `storage.Catalog`'s method of the
+same name. `duckdb/catalog.Catalog.CreateFromFile`/`CreateFromQuery` register the metadata row,
+materialize the physical table (CTAS from a file or from a query, via the `FileCreator`/
+`QueryCreator` function value `duckdb.New` wired in — §4.6), persist the resolved geometry column /
+SRID / source, and cascade to every registered `Attachment`'s `CreateAttached`, all inside one
+transaction (§4.4): a failure at any step leaves neither a metadata row nor a physical table
+behind, rolled back together — the create path's counterpart to `Catalog.Remove`'s cascade.
+`ImportService` additionally computes `sourceName`/`sourceLayer` (§3.2) from the layer suffix before
+calling `CreateFromFile`.
 
 `DeriveService` applies a cheap fail-fast on the query's shape (a single statement, starting with
-`SELECT`) — **this is not the authoritative check**: the real validation is done by DuckDB's parser
-on the storage side (§8). It serves both derivation modes: `DeriveTable` takes the query as given,
-`DeriveFromTable` assembles one from a `DeriveSpec` (§8.1), and both then run the same `materialize`
-sequence. Building a spec's query needs the source table's structure, so this is the one service
-besides the router to hold a port onto `SchemaService`.
+`SELECT`) before ever calling `CreateFromQuery` — **this is not the authoritative check**: the real
+validation is done by DuckDB's parser on the storage side (§8). It serves both derivation modes:
+`DeriveTable` takes the query as given, `DeriveFromTable` assembles one from a `DeriveSpec` (§8.1),
+and both then run the same `materialize` helper. Building a spec's query needs the source table's
+structure, so this is the one service besides the router to hold a port onto `SchemaService`.
 
 ### 5.5 `GeoService` — tile cache
 
