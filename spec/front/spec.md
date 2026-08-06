@@ -151,7 +151,7 @@ The endpoint contracts (pagination, sorting, filter DSL, formats) are described 
 One module per subject, no module state, no side effect:
 
 - `tileGrid.ts` — the per-zoom simplification tolerance, aligned on the server formula
-  (`internal/storage/duckdb/data/geo.go`), and `xyzGrid`, the 256-pixel XYZ grid both tile
+  (`internal/storage/duckdb/tables/geo.go`), and `xyzGrid`, the 256-pixel XYZ grid both tile
   endpoints are cut along. Any change to the tolerance on one side requires the same on the other.
   The grid is the engine's (`createXYZ`) but it is **stated, never defaulted**: a vector-tile source
   left to itself uses 512-pixel tiles, which asks for a different zoom for the same view than the

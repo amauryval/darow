@@ -92,6 +92,7 @@ function refused(shape: (typeof shapes)[number]): string {
           :disabled="refused(s) !== ''"
           :title="refused(s) || `Dessiner ${s.label.toLowerCase()} — crée la ligne qui la portera`"
           @click="emit('pick', s.value)"
+          iconOnly
         />
       </ButtonGroup>
     </div>
@@ -117,6 +118,7 @@ function refused(shape: (typeof shapes)[number]): string {
               : 'Aucun polygone dans la session : survolez-en un pour le rendre modifiable'
           "
           @click="emit('toggleHole')"
+          iconOnly
         />
         <BaseButton
           joined
@@ -127,6 +129,7 @@ function refused(shape: (typeof shapes)[number]): string {
           :aria-pressed="moving"
           title="Déplacer la géométrie entière survolée, au lieu d’un seul de ses sommets"
           @click="emit('toggleMoving')"
+          iconOnly
         />
         <BaseButton
           joined
@@ -136,6 +139,7 @@ function refused(shape: (typeof shapes)[number]): string {
           :disabled="!drawing"
           :title="drawing ? 'Retirer le dernier point posé' : 'Aucune forme en cours de dessin'"
           @click="emit('undo')"
+          iconOnly
         />
       </ButtonGroup>
     </div>
@@ -154,6 +158,7 @@ function refused(shape: (typeof shapes)[number]): string {
           :aria-pressed="snapping"
           title="Aimanter un sommet posé sur les sommets et segments voisins"
           @click="emit('toggleSnapping')"
+          iconOnly
         />
         <BaseButton
           joined
@@ -168,6 +173,7 @@ function refused(shape: (typeof shapes)[number]): string {
               : 'Seule la géométrie sous le pointeur est déplacée, ses voisines gardent leur sommet'
           "
           @click="emit('toggleTopology')"
+          iconOnly
         />
       </ButtonGroup>
     </div>

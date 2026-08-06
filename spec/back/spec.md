@@ -120,14 +120,14 @@ identifier, storage knows neither HTTP nor the application caches.
 |---|---|
 | `cmd/server` | entrypoint: config, bootstrap, HTTP server, graceful shutdown |
 | `internal/config` | YAML loading + environment overrides + validation |
-| `internal/core` | wiring: builds the eight services and the caches from the config |
+| `internal/core` | wiring: builds the nine services and the caches from the config |
 | `internal/router` | `chi` router, middlewares, mounting of the SPA and of Swagger |
 | `internal/router/handlers` | one handler per endpoint family + the ports to the services |
 | `internal/router/validation` | `{tableId}` resolution, column-name validation |
 | `internal/router/response` | JSON writing, standard error body, error → status mapping |
 | `internal/service` | application logic, caches, orchestration |
 | `internal/storage` | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`/`StoredFilter`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer`, `FilterStore` |
-| `internal/storage/duckdb` | the single implementation (sub-packages `catalog/` and `data/`) |
+| `internal/storage/duckdb` | the single implementation (sub-packages `catalog/` and `tables/`) |
 | `internal/storage/mocks` | testify doubles of `storage`'s interfaces (`Adapter`, the three repositories), one file per file of `storage` declaring them |
 | `internal/webui` | `go:embed` of the Vue SPA's production build |
 
@@ -138,7 +138,7 @@ services never know the full adapter. The files concerned: `router/handlers/port
 `service/source.go`, `core/core.go`.
 
 **Bootstrap** (`core/core.go`): `Setup` opens DuckDB, creates `workDir` if absent, builds the three
-LRU caches from the config, wires the eight services, then makes a first scan of `workDir`. The
+LRU caches from the config, wires the nine services, then makes a first scan of `workDir`. The
 caller must defer `Close`. `NewServices` does the wiring alone, with no connection — that is what
 the tests use with a mock.
 
@@ -168,6 +168,7 @@ File: `internal/config/config.go`.
 | Field | Default | Env variable |
 |---|---|---|
 | `path` | `./data/geo.db` | `GEOAPI_DUCKDB_PATH` |
+| `maxOpenConns` | 4 | `GEOAPI_DUCKDB_MAX_OPEN_CONNS` |
 
 The parent directory is created if it does not exist — DuckDB refuses to open a file in a missing
 directory.
@@ -195,8 +196,10 @@ which takes priority over everything else (§2.6).
 | `requestTimeoutSec` | 30 | per-request timeout; `0` disables it |
 | `exportBatchSize` | 1000 | page size of the export streaming |
 | `defaultFeaturesLimit` | 100 | pagination of OGC items and GeoJSON tiles |
+| `maxFeaturesLimit` | 10000 | hard cap on OGC items and GeoJSON tile features |
 | `maxSimplifyTolerance` | 10000 | cap on the `simplify` parameter |
 | `maxPrecision` | 1000 | cap on the `precision` parameter |
+| `tileCacheMaxAgeSec` | 60 | the `Cache-Control: max-age` the MVT route emits (§6.5) |
 
 Matching environment variables: `GEOAPI_API_<FIELD_IN_UPPER_SNAKE>`.
 
@@ -404,7 +407,8 @@ delete cascade — not a method any service reaches through `storage.Catalog`.
 No service depends on the interfaces above directly: each declares its own narrow interface over the
 subset it actually calls. `core.storageAdapter` documents the full surface an adapter must satisfy —
 `Catalog() storage.Catalog`, `Materializer() storage.TableMaterializer`, and `Table(meta) (TableRepository,
-error)`, three accessors rather than a flattened union of every storage method.
+error)`, plus `Filters() storage.FilterStore` — four accessors rather than a flattened union of
+every storage method.
 
 **Naming.** `Catalog.Remove` deletes a whole table (metadata and physical table, in a single
 transaction through `duckdb/catalog.Catalog.Remove`), `RowRepository.Delete` deletes rows.
@@ -543,15 +547,15 @@ keep it portable for.
 
 | Function | Read through | Answers |
 |---|---|---|
-| `duckdb_columns()` | `TableColumns` | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
-| `duckdb_indexes()` | `TableIndexes` | the indexes really created on a table (rule 19's assertion, §4.2) |
-| `duckdb_tables()` | `PhysicalTableNames` | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone |
+| `duckdb_columns()` | `tableColumns` | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
+| `duckdb_indexes()` | `tableIndexes` | the indexes really created on a table (rule 19's assertion, §4.2) |
+| `duckdb_tables()` | `existingTableNames`, reached from outside through the `ExistingTables` function value | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone |
 | `duckdb_extensions()` | `ExtensionLoaded` | whether `spatial` is loaded, for `/readyz` |
 
 The table name is a **bound parameter** in every one of them: no physical name is interpolated to
 list a structure, so rule 1 is structurally satisfied there rather than validated after the fact.
 
-`DESCRIBE` survives in exactly one place, `QueryColumns`: the shape of a `SELECT` that has **not**
+`DESCRIBE` survives in exactly one place, `queryColumns`: the shape of a `SELECT` that has **not**
 been materialized, which by definition has no catalogue entry. It is what `/derive`'s `__pkey`
 collision check reads (§8). Separating the two — a table target goes to the catalogue, a query
 target to `DESCRIBE` — is what removes the interpolation from the common case.
@@ -565,7 +569,7 @@ target to `DESCRIBE` — is what removes the interpolation from the common case.
 
 ## 5. Service layer
 
-Eight services, each the exclusive owner of its state. Files: `internal/service/`.
+Nine services, each the exclusive owner of its state. Files: `internal/service/`.
 
 **Error wrapping.** Every service method that calls into the storage layer wraps a raw failure it
 did not itself construct (a DuckDB error, an `os` error) in `service.DisplayError` (§6.4) before
@@ -967,7 +971,7 @@ only reliable check, and the regex must never be considered sufficient.
 exactly as at import. The query is therefore free to project whatever it wants — partial projection,
 `GROUP BY`, join — knowing nothing about `__pkey`. If it already projects one (typically a
 `SELECT *` on an already imported table), it is excluded from the wrapper rather than colliding —
-detected by describing the still unmaterialized query (`QueryColumns`, §4.8), the one shape the
+detected by describing the still unmaterialized query (`queryColumns`, §4.8), the one shape the
 engine's catalogue cannot answer, since `* EXCLUDE (__pkey)` errors when no such column exists.
 
 **Bound parameters.** `CreateFromQuery` takes the query's parameters alongside it, and DuckDB

@@ -37,6 +37,7 @@ defineEmits<{ addRow: []; save: []; cancel: [] }>();
           :icon="Plus"
           title="Ajouter une ligne vide, à remplir dans la grille"
           @click="$emit('addRow')"
+          iconOnly
         />
       </div>
       <EditSessionActions
