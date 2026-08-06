@@ -8,6 +8,7 @@ import TableDataPanel from '../components/tables/TableDataPanel.vue'
 import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
+import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import { useFeatureSelection } from '../composables/useFeatureSelection'
 import { useTableMetadata } from '../composables/useTableMetadata'
@@ -66,6 +67,7 @@ watch(
 const showColumns = ref(false)
 const showDerive = ref(false)
 const showAddColumn = ref(false)
+const showApiRoutes = ref(false)
 
 const addColumnModalRef = ref<InstanceType<typeof AddColumnModal>>()
 
@@ -148,6 +150,7 @@ async function onColumnAdded(name: string, type: string) {
             @add-column="openAddColumn"
             @derive="showDerive = true"
             @export="onExportTable"
+            @api-routes="showApiRoutes = true"
             @delete="onDeleteTable"
         />
 
@@ -189,6 +192,13 @@ async function onColumnAdded(name: string, type: string) {
             ref="addColumnModalRef"
             :on-add="onColumnAdded"
             @close="showAddColumn = false"
+        />
+
+        <ApiRoutesModal
+            v-if="showApiRoutes && table"
+            :table-id="table.tableId"
+            :is-geo="table.isGeo"
+            @close="showApiRoutes = false"
         />
     </div>
 </template>

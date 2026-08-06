@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Download, GitBranch, Maximize, MoreHorizontal, Pencil, Plus, Trash2, X } from '@lucide/vue'
+import {
+    Download,
+    GitBranch,
+    Link2,
+    Maximize,
+    MoreHorizontal,
+    Pencil,
+    Plus,
+    Trash2,
+    X
+} from '@lucide/vue'
 import type { Metadata } from '../../client/types'
 import Badge from '../ui/Badge.vue'
 import BaseButton from '../ui/BaseButton.vue'
@@ -38,6 +48,7 @@ const emit = defineEmits<{
     addColumn: []
     derive: []
     export: []
+    apiRoutes: []
     delete: []
 }>()
 
@@ -173,6 +184,18 @@ function submitRename() {
                 <MenuItem :icon="Download" :disabled="exporting" @click="emit('export')">
                     {{ exporting ? 'Export en cours…' : 'Exporter' }}
                 </MenuItem>
+
+                <MenuTitle>Intégration</MenuTitle>
+                <MenuItem
+                    :icon="Link2"
+                    @click="
+                        () => {
+                            close()
+                            emit('apiRoutes')
+                        }
+                    "
+                    >Voir les routes API</MenuItem
+                >
 
                 <li><Divider orientation="horizontal" /></li>
                 <MenuItem

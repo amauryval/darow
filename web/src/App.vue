@@ -2,6 +2,7 @@
 import { useStorage } from '@vueuse/core'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
+    BookOpen,
     FolderOpen,
     LayoutDashboard,
     LayoutGrid,
@@ -135,6 +136,19 @@ const links = [
                         </RouterLink>
                     </li>
                 </ul>
+
+                <a
+                    href="/swagger/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="flex items-center gap-2.5 border-t border-base-300 px-4 py-2.5 text-sm text-base-content/70 hover:bg-base-200"
+                    :class="collapsed && 'tooltip tooltip-right justify-center px-0'"
+                    :data-tip="collapsed ? 'Documentation API' : undefined"
+                    :aria-label="collapsed ? 'Documentation API' : undefined"
+                >
+                    <BookOpen :size="18" class="shrink-0" />
+                    <span v-show="!collapsed">Documentation API</span>
+                </a>
 
                 <div
                     class="flex items-center gap-2 border-t border-base-300 px-3 py-3"
