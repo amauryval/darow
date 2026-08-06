@@ -5,5 +5,5 @@
 </script>
 
 <template>
-  <li class="menu-title"><slot /></li>
+    <li class="menu-title"><slot /></li>
 </template>

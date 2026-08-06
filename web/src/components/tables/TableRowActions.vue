@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Copy, Trash2 } from "@lucide/vue";
-import BaseButton from "../ui/BaseButton.vue";
-import ConfirmButton from "../ui/ConfirmButton.vue";
+import { Copy, Trash2 } from '@lucide/vue'
+import BaseButton from '../ui/BaseButton.vue'
+import ConfirmButton from '../ui/ConfirmButton.vue'
 
 // What a single click does to one row, on the spot: duplicate it, delete it.
 // Reading its geometry is not here — that is a column of its own, headed by
@@ -20,59 +20,59 @@ import ConfirmButton from "../ui/ConfirmButton.vue";
 // in one place, the map, through one button (§8.8) — a second door onto the
 // same mode is a second thing to explain.
 withDefaults(
-  defineProps<{
-    // A row the session is about to create: it exists nowhere yet, so the
-    // only thing that applies to it is dropping it.
-    draft?: boolean;
-    editable?: boolean;
-    isDeletingPkey?: string;
-    isDuplicating?: boolean;
-    deletingPkey?: string;
-  }>(),
-  { draft: false, editable: false, isDuplicating: false },
-);
+    defineProps<{
+        // A row the session is about to create: it exists nowhere yet, so the
+        // only thing that applies to it is dropping it.
+        draft?: boolean
+        editable?: boolean
+        isDeletingPkey?: string
+        isDuplicating?: boolean
+        deletingPkey?: string
+    }>(),
+    { draft: false, editable: false, isDuplicating: false }
+)
 
 defineEmits<{
-  duplicate: [];
-  delete: [];
-}>();
+    duplicate: []
+    delete: []
+}>()
 </script>
 
 <template>
-  <div class="flex items-center gap-0.5">
-    <ConfirmButton
-      v-if="draft"
-      label="Retirer cette ligne"
-      variant="ghost"
-      :icon="Trash2"
-      icon-only
-      message="Retirer cette ligne, avec ce qui y a été saisi ?"
-      @confirm="$emit('delete')"
-    />
-    <template v-if="editable">
-      <!-- Duplicating is not confirmed: it adds, and what it added is
+    <div class="flex items-center gap-0.5">
+        <ConfirmButton
+            v-if="draft"
+            label="Retirer cette ligne"
+            variant="ghost"
+            :icon="Trash2"
+            icon-only
+            message="Retirer cette ligne, avec ce qui y a été saisi ?"
+            @confirm="$emit('delete')"
+        />
+        <template v-if="editable">
+            <!-- Duplicating is not confirmed: it adds, and what it added is
            deleted by the button next to it (§8.3). -->
-      <BaseButton
-        size="xs"
-        variant="ghost"
-        :icon="Copy"
-        icon-only
-        :busy="isDuplicating"
-        :disabled="isDuplicating"
-        title="Dupliquer cette ligne"
-        @click="$emit('duplicate')"
-      >
-        Dupliquer
-      </BaseButton>
-      <ConfirmButton
-        label="Supprimer cette ligne"
-        variant="ghost"
-        :icon="Trash2"
-        icon-only
-        message="Supprimer définitivement cette ligne ?"
-        :busy="isDeletingPkey === deletingPkey"
-        @confirm="$emit('delete')"
-      />
-    </template>
-  </div>
+            <BaseButton
+                size="xs"
+                variant="ghost"
+                :icon="Copy"
+                icon-only
+                :busy="isDuplicating"
+                :disabled="isDuplicating"
+                title="Dupliquer cette ligne"
+                @click="$emit('duplicate')"
+            >
+                Dupliquer
+            </BaseButton>
+            <ConfirmButton
+                label="Supprimer cette ligne"
+                variant="ghost"
+                :icon="Trash2"
+                icon-only
+                message="Supprimer définitivement cette ligne ?"
+                :busy="isDeletingPkey === deletingPkey"
+                @confirm="$emit('delete')"
+            />
+        </template>
+    </div>
 </template>

@@ -1,6 +1,6 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @plugin "daisyui" {
-  themes: light --default;
+    themes: light --default;
 }
 
 /* A row the map and the grid both show as selected. Written here, unlayered,
@@ -11,10 +11,10 @@
    sideways and take the row's own background, which a translucent tint would
    let the scrolled columns show through. */
 .row-selected {
-  background-color: color-mix(in oklch, var(--color-warning) 18%, var(--color-base-100));
+    background-color: color-mix(in oklch, var(--color-warning) 18%, var(--color-base-100));
 }
 .row-selected:hover {
-  background-color: color-mix(in oklch, var(--color-warning) 28%, var(--color-base-100));
+    background-color: color-mix(in oklch, var(--color-warning) 28%, var(--color-base-100));
 }
 
 /* A row the session is about to create: violet, the colour a shape that
@@ -22,5 +22,5 @@
    state on both halves of the screen. Unlayered and opaque for the same
    reasons as `.row-selected`. */
 .row-draft {
-  background-color: color-mix(in oklch, var(--color-primary) 12%, var(--color-base-100));
+    background-color: color-mix(in oklch, var(--color-primary) 12%, var(--color-base-100));
 }

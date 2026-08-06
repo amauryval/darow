@@ -5,7 +5,7 @@
 </script>
 
 <template>
-  <div class="join">
-    <slot />
-  </div>
+    <div class="join">
+        <slot />
+    </div>
 </template>

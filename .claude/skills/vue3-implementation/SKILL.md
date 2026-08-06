@@ -13,15 +13,15 @@ description:
 
 # Vue3 Implementation Skill
 
-Guidance for writing idiomatic Vue3/TypeScript in `web/`. **`spec/front/spec.md` is the
-authority** — architecture, layer contracts, target composable/component split, style rules and
-known deviations. Read it before a non-trivial change; this file is the short form.
+Guidance for writing idiomatic Vue3/TypeScript in `web/`. **`spec/front/spec.md` is the authority**
+— architecture, layer contracts, target composable/component split, style rules and known
+deviations. Read it before a non-trivial change; this file is the short form.
 
 ## Core Principles
 
 -   **Business logic never lives in a `.vue` file.** Loading, pagination, mutations, selection,
-    derived state → a composable (`src/composables/`) or a pure function (`src/utils/`). A
-    component wires those up and renders.
+    derived state → a composable (`src/composables/`) or a pure function (`src/utils/`). A component
+    wires those up and renders.
 -   **Factor components and composables rather than duplicating.** A second occurrence of the same
     loading pattern is a composable; a second occurrence of the same markup/classes is a component.
 -   **No network access outside `src/client/`.** No `fetch`, no hand-built API URL anywhere else.
@@ -31,7 +31,7 @@ known deviations. Read it before a non-trivial change; this file is the short fo
     `components/ui/` primitives.
 -   Use `<script setup lang="ts">` for every component. No Options API.
 -   Size caps: 300 lines per `.vue`, 150 per composable, 100 per pure function. Split, never grow.
--   Comments explain the *why* — an invariant, a server constraint, a trap. Never paraphrase the
+-   Comments explain the _why_ — an invariant, a server constraint, a trap. Never paraphrase the
     next line.
 
 ## Type Safety — No Type Assertions
@@ -123,20 +123,20 @@ it.
     reason and what it costs the user.
 -   `improvements.md` — add an entry for a lead you spotted and are not taking (a UX affordance, a
     perceived-performance win).
--   Nothing changed on any of the five? Then nothing to write — an untouched file is a valid outcome,
-    and each file exists even when empty.
+-   Nothing changed on any of the five? Then nothing to write — an untouched file is a valid
+    outcome, and each file exists even when empty.
 
 ### Analysis before implementation
 
 No entry goes straight to code. But the analysis is not the same one from one file to the next, and
 it is not the same person who concludes it:
 
-| Entry | What the analysis produces | Who concludes |
-|---|---|---|
-| `BLK-Fn` | a **diagnosis** — the root cause, not the symptom the entry describes. Skipping it patches the symptom and the blocker comes back under another form | you; whether to fix it is never in question |
-| `TODO-Fn` | a **design** — which composable, which primitive, which files move, what the split breaks. A todo states a problem, never its solution | you, with a check-in when the change crosses layers or touches a shared primitive |
-| `IMP-Fn` | a **decision of opportunity** — is the need real, what scope, what cost for the user, which approach | the user, always. Nothing has been decided about a lead |
-| `LIM-Fn` | nothing while it holds; lifting one is a scope change | the user |
+| Entry     | What the analysis produces                                                                                                                           | Who concludes                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `BLK-Fn`  | a **diagnosis** — the root cause, not the symptom the entry describes. Skipping it patches the symptom and the blocker comes back under another form | you; whether to fix it is never in question                                       |
+| `TODO-Fn` | a **design** — which composable, which primitive, which files move, what the split breaks. A todo states a problem, never its solution               | you, with a check-in when the change crosses layers or touches a shared primitive |
+| `IMP-Fn`  | a **decision of opportunity** — is the need real, what scope, what cost for the user, which approach                                                 | the user, always. Nothing has been decided about a lead                           |
+| `LIM-Fn`  | nothing while it holds; lifting one is a scope change                                                                                                | the user                                                                          |
 
 The consequence differs too. A blocker or a todo can be picked up as soon as its analysis is done —
 they are observed facts, and the code is expected to change. An `IMP-Fn` cannot: implementing it

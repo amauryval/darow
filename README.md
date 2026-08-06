@@ -1,12 +1,14 @@
 # Darow — get your Ducks in A ROW
 
-Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and make sure all your details, tasks, or resources are fully prepared before starting an important project or event
+Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and make
+sure all your details, tasks, or resources are fully prepared before starting an important project
+or event
 
 dictionary.cambridge.org
 
-Backed by DuckDB. Darow is a Go cartographic server: it turns tabular and spatial files into a
-REST API — sources, tables, rows, MVT tiles, and SQL-derived tables — with a Vue 3 admin UI
-embedded in the same binary.
+Backed by DuckDB. Darow is a Go cartographic server: it turns tabular and spatial files into a REST
+API — sources, tables, rows, MVT tiles, and SQL-derived tables — with a Vue 3 admin UI embedded in
+the same binary.
 
 ![DAROW](img/darow.png)
 
@@ -18,8 +20,8 @@ embedded in the same binary.
     and streamed CSV/GeoJSON export.
 -   **Map tiles out of the box** — MVT tiles rendered directly from DuckDB, plus the same tile
     bounds as GeoJSON for clients that need it.
--   **OGC API - WFS Features** — a standard `/ogc` collections endpoint alongside the native REST API,
-    for any OGC-compliant client.
+-   **OGC API - WFS Features** — a standard `/ogc` collections endpoint alongside the native REST
+    API, for any OGC-compliant client.
 -   **SQL-derived tables** — create a new table from a `SELECT` query, with rollback if it fails.
 -   **A Vue 3 admin UI** — browse sources and tables, inspect schemas, edit rows, embedded in the
     server binary, no separate deployment.
@@ -50,8 +52,8 @@ Darow keeps its DuckDB database and uploaded source files under a working direct
 ### Load a file
 
 Upload a source file (GeoJSON, Shapefile, CSV, or GeoPackage — see `sources.allowedExtensions` in
-`config.yaml`) through the admin UI or the `/api/v1/sources` endpoint. Darow imports it into
-DuckDB and exposes it as a table.
+`config.yaml`) through the admin UI or the `/api/v1/sources` endpoint. Darow imports it into DuckDB
+and exposes it as a table.
 
 ### Reach the API and the admin UI
 
@@ -76,15 +78,15 @@ architecture.
 
 All contributor commands go through `mise` (see `mise.toml`):
 
-| Task | Does |
-|---|---|
-| `mise run test` / `test-race` | Go test suite, plain and under the race detector |
-| `mise run lint` | `go vet` plus a `gofmt` check |
-| `mise run docs` | regenerates Swagger from the handler annotations |
-| `mise run ui-install` / `ui-build` / `ui-dev` | UI dependencies / production build / Vite dev server |
-| `mise run ui-lint` / `ui-test` | eslint / vitest on the UI |
-| `mise run build` | the server binary, after regenerating docs and the UI |
-| `mise run run-dev` | runs the server against `config.yaml`, after regenerating docs and the UI |
+| Task                                          | Does                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| `mise run test` / `test-race`                 | Go test suite, plain and under the race detector                          |
+| `mise run lint`                               | `go vet` plus a `gofmt` check                                             |
+| `mise run docs`                               | regenerates Swagger from the handler annotations                          |
+| `mise run ui-install` / `ui-build` / `ui-dev` | UI dependencies / production build / Vite dev server                      |
+| `mise run ui-lint` / `ui-test`                | eslint / vitest on the UI                                                 |
+| `mise run build`                              | the server binary, after regenerating docs and the UI                     |
+| `mise run run-dev`                            | runs the server against `config.yaml`, after regenerating docs and the UI |
 
 CI (`.github/workflows/ci.yml`) runs the same tasks, plus a Docker image build, on every push and
 pull request.
