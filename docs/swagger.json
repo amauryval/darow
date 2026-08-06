@@ -10,12 +10,8 @@
     "paths": {
         "/api/v1/ogc/": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "OGC API - Features landing page",
                 "responses": {
                     "200": {
@@ -30,12 +26,8 @@
         },
         "/api/v1/ogc/collections": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "List OGC API - Features collections",
                 "responses": {
                     "200": {
@@ -50,12 +42,8 @@
         },
         "/api/v1/ogc/collections/{tableId}": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "Get an OGC API - Features collection",
                 "parameters": [
                     {
@@ -84,12 +72,8 @@
         },
         "/api/v1/ogc/collections/{tableId}/items": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "List features of an OGC API - Features collection",
                 "parameters": [
                     {
@@ -161,12 +145,8 @@
         },
         "/api/v1/ogc/collections/{tableId}/items/{featureId}": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "Get a single feature of an OGC API - Features collection",
                 "parameters": [
                     {
@@ -203,12 +183,8 @@
         },
         "/api/v1/ogc/conformance": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "features"
-                ],
+                "produces": ["application/json"],
+                "tags": ["features"],
                 "summary": "Declared OGC API - Features conformance classes",
                 "responses": {
                     "200": {
@@ -228,12 +204,8 @@
         },
         "/api/v1/sources": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sources"
-                ],
+                "produces": ["application/json"],
+                "tags": ["sources"],
                 "summary": "List cached sources",
                 "parameters": [
                     {
@@ -274,12 +246,8 @@
         },
         "/api/v1/sources/refresh": {
             "post": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sources"
-                ],
+                "produces": ["application/json"],
+                "tags": ["sources"],
                 "summary": "Rescan workDir",
                 "parameters": [
                     {
@@ -320,15 +288,9 @@
         },
         "/api/v1/sources/upload": {
             "post": {
-                "consumes": [
-                    "multipart/form-data"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sources"
-                ],
+                "consumes": ["multipart/form-data"],
+                "produces": ["application/json"],
+                "tags": ["sources"],
                 "summary": "Upload a file and load it into a new table",
                 "parameters": [
                     {
@@ -359,9 +321,7 @@
         },
         "/api/v1/sources/{name}": {
             "delete": {
-                "tags": [
-                    "sources"
-                ],
+                "tags": ["sources"],
                 "summary": "Delete a source file",
                 "parameters": [
                     {
@@ -387,12 +347,8 @@
         },
         "/api/v1/sources/{name}/load": {
             "post": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sources"
-                ],
+                "produces": ["application/json"],
+                "tags": ["sources"],
                 "summary": "Load a source file into a new table",
                 "parameters": [
                     {
@@ -436,12 +392,8 @@
         },
         "/api/v1/sources/{name}/metadata": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "sources"
-                ],
+                "produces": ["application/json"],
+                "tags": ["sources"],
                 "summary": "Preview a source's detected CRS",
                 "parameters": [
                     {
@@ -478,12 +430,8 @@
         "/api/v1/tables": {
             "get": {
                 "description": "Liste les tables avec leurs métadonnées, paginées",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "List tables",
                 "parameters": [
                     {
@@ -524,12 +472,8 @@
         },
         "/api/v1/tables/{tableId}": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Get table metadata",
                 "parameters": [
                     {
@@ -557,9 +501,7 @@
             },
             "delete": {
                 "description": "Supprime une table et ses données",
-                "tags": [
-                    "tables"
-                ],
+                "tags": ["tables"],
                 "summary": "Delete a table",
                 "parameters": [
                     {
@@ -583,15 +525,9 @@
                 }
             },
             "patch": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Rename a table",
                 "parameters": [
                     {
@@ -621,15 +557,9 @@
         "/api/v1/tables/{tableId}/bbox": {
             "post": {
                 "description": "bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "geo"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["geo"],
                 "summary": "Filter row pkeys by bounding box",
                 "parameters": [
                     {
@@ -653,15 +583,9 @@
         },
         "/api/v1/tables/{tableId}/columns": {
             "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Add a column",
                 "parameters": [
                     {
@@ -693,12 +617,8 @@
         },
         "/api/v1/tables/{tableId}/columns/{col}/distinct": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "List a column's distinct values",
                 "parameters": [
                     {
@@ -714,6 +634,12 @@
                         "name": "col",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Keep only the values containing this text (case-insensitive)",
+                        "name": "search",
+                        "in": "query"
                     },
                     {
                         "type": "integer",
@@ -747,16 +673,44 @@
         },
         "/api/v1/tables/{tableId}/derive": {
             "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Derive a table from a SELECT query",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/derive-from-table": {
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["tables"],
+                "summary": "Derive a table from this table's columns, expressions and conditions",
                 "parameters": [
                     {
                         "type": "string",
@@ -787,13 +741,8 @@
         },
         "/api/v1/tables/{tableId}/export": {
             "get": {
-                "produces": [
-                    "application/json",
-                    "text/csv"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "produces": ["application/json", "text/csv"],
+                "tags": ["tables"],
                 "summary": "Export a table",
                 "parameters": [
                     {
@@ -828,15 +777,9 @@
         },
         "/api/v1/tables/{tableId}/filter": {
             "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Filter rows by column conditions",
                 "parameters": [
                     {
@@ -866,12 +809,8 @@
         },
         "/api/v1/tables/{tableId}/filtered-extent": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "geo"
-                ],
+                "produces": ["application/json"],
+                "tags": ["geo"],
                 "summary": "Get the bounding box of rows matching a filter",
                 "parameters": [
                     {
@@ -907,14 +846,151 @@
                 }
             }
         },
+        "/api/v1/tables/{tableId}/filters": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["filters"],
+                "summary": "List a table's stored filters",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["filters"],
+                "summary": "Save a named filter on a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.filterDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/filters/{filterId}": {
+            "delete": {
+                "tags": ["filters"],
+                "summary": "Delete a stored filter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter ID",
+                        "name": "filterId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["filters"],
+                "summary": "Update a stored filter's name and/or conditions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter ID",
+                        "name": "filterId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.filterDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tables/{tableId}/geometry-types": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "geo"
-                ],
+                "produces": ["application/json"],
+                "tags": ["geo"],
                 "summary": "List distinct geometry types present in a table",
                 "parameters": [
                     {
@@ -941,14 +1017,43 @@
                 }
             }
         },
+        "/api/v1/tables/{tableId}/neighbours": {
+            "post": {
+                "description": "geometry is a GeoJSON geometry in OGC:CRS84; buffer is a distance in meters",
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["geo"],
+                "summary": "List the features around a geometry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tables/{tableId}/rows": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "rows"
-                ],
+                "produces": ["application/json"],
+                "tags": ["rows"],
                 "summary": "List rows",
                 "parameters": [
                     {
@@ -994,15 +1099,9 @@
                 }
             },
             "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "rows"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["rows"],
                 "summary": "Add one or more rows",
                 "parameters": [
                     {
@@ -1033,19 +1132,50 @@
                         }
                     }
                 }
+            },
+            "patch": {
+                "description": "Every row lands or none does — what a topological edit needs, since it moves a boundary shared by several rows",
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["rows"],
+                "summary": "Update several rows in one transaction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "CRS of the written geometries (default OGC:CRS84)",
+                        "name": "crs",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/api/v1/tables/{tableId}/rows/batch": {
             "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "rows"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["rows"],
                 "summary": "Get multiple rows by pkey in one request",
                 "parameters": [
                     {
@@ -1075,12 +1205,8 @@
         },
         "/api/v1/tables/{tableId}/rows/{pkey}": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "rows"
-                ],
+                "produces": ["application/json"],
+                "tags": ["rows"],
                 "summary": "Get a row by pkey",
                 "parameters": [
                     {
@@ -1115,9 +1241,7 @@
                 }
             },
             "delete": {
-                "tags": [
-                    "rows"
-                ],
+                "tags": ["rows"],
                 "summary": "Delete a row",
                 "parameters": [
                     {
@@ -1142,15 +1266,9 @@
                 }
             },
             "patch": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "rows"
-                ],
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["rows"],
                 "summary": "Update a row",
                 "parameters": [
                     {
@@ -1185,14 +1303,48 @@
                 }
             }
         },
+        "/api/v1/tables/{tableId}/rows/{pkey}/geometry": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["rows"],
+                "summary": "Get a row's geometry, as GeoJSON and as WKT",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Row primary key",
+                        "name": "pkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tables/{tableId}/schema": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
+                "produces": ["application/json"],
+                "tags": ["tables"],
                 "summary": "Get table schema",
                 "parameters": [
                     {
@@ -1216,12 +1368,8 @@
         },
         "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}": {
             "get": {
-                "produces": [
-                    "application/vnd.mapbox-vector-tile"
-                ],
-                "tags": [
-                    "geo"
-                ],
+                "produces": ["application/vnd.mapbox-vector-tile"],
+                "tags": ["geo"],
                 "summary": "Get an MVT tile",
                 "parameters": [
                     {
@@ -1277,12 +1425,8 @@
         },
         "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features": {
             "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "geo"
-                ],
+                "produces": ["application/json"],
+                "tags": ["geo"],
                 "summary": "Get features intersecting an MVT-style tile, as GeoJSON",
                 "parameters": [
                     {
@@ -1369,9 +1513,7 @@
         },
         "/healthz": {
             "get": {
-                "tags": [
-                    "ops"
-                ],
+                "tags": ["ops"],
                 "summary": "Liveness probe",
                 "responses": {
                     "200": {
@@ -1382,9 +1524,7 @@
         },
         "/readyz": {
             "get": {
-                "tags": [
-                    "ops"
-                ],
+                "tags": ["ops"],
                 "summary": "Readiness probe",
                 "responses": {
                     "200": {
@@ -1423,6 +1563,32 @@
             "properties": {
                 "spatial": {
                     "$ref": "#/definitions/handlers.spatialExtentDTO"
+                }
+            }
+        },
+        "handlers.filterDTO": {
+            "type": "object",
+            "properties": {
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/storage.FilterCondition"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "filterId": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tableId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
                 }
             }
         },
@@ -1494,6 +1660,30 @@
                 "requestId": {
                     "type": "string"
                 }
+            }
+        },
+        "storage.FilterCondition": {
+            "type": "object",
+            "properties": {
+                "bool": {
+                    "type": "string"
+                },
+                "column": {
+                    "type": "string"
+                },
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/storage.FilterCondition"
+                    }
+                },
+                "not": {
+                    "type": "boolean"
+                },
+                "operator": {
+                    "type": "string"
+                },
+                "value": {}
             }
         }
     }

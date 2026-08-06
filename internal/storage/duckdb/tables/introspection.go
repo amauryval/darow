@@ -76,8 +76,8 @@ func tableColumns(ctx context.Context, conn Querier, tableName string) ([]catalo
 // unmaterialized query has no catalogue entry. DESCRIBE resolves aliases,
 // wildcards and computed expressions exactly as DuckDB will when the query
 // runs, so callers never parse the query themselves.
-func queryColumns(ctx context.Context, conn Querier, query string) ([]catalogColumn, error) {
-	rows, err := conn.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, query))
+func queryColumns(ctx context.Context, conn Querier, query string, args ...any) ([]catalogColumn, error) {
+	rows, err := conn.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, query), args...)
 	if err != nil {
 		return nil, err
 	}

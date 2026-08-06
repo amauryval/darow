@@ -82,8 +82,8 @@ func (m *RowRepository) Filtered(ctx context.Context, q storage.RowQuery, limit 
 	return rows, callArgs.Error(1)
 }
 
-func (m *RowRepository) Distinct(ctx context.Context, column string, offset, limit int) ([]any, error) {
-	callArgs := m.Called(ctx, column, offset, limit)
+func (m *RowRepository) Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error) {
+	callArgs := m.Called(ctx, column, search, offset, limit)
 	values, _ := callArgs.Get(0).([]any)
 	return values, callArgs.Error(1)
 }
@@ -101,6 +101,11 @@ func (m *RowRepository) InsertMany(ctx context.Context, rows []map[string]any) (
 
 func (m *RowRepository) Update(ctx context.Context, pkeys []string, updates map[string]any) error {
 	return m.Called(ctx, pkeys, updates).Error(0)
+}
+
+func (m *RowRepository) UpdateMany(ctx context.Context, updates []storage.RowUpdate) error {
+	callArgs := m.Called(ctx, updates)
+	return callArgs.Error(0)
 }
 
 func (m *RowRepository) Delete(ctx context.Context, pkeys []string) error {
@@ -151,6 +156,12 @@ func (m *GeoRepository) Extent(ctx context.Context, q storage.GeoQuery) (string,
 }
 
 func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys)
+	result, _ := callArgs.Get(0).(map[string]string)
+	return result, callArgs.Error(1)
+}
+
+func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
 	callArgs := m.Called(ctx, pkeys)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)

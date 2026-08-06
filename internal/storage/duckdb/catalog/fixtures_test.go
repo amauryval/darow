@@ -99,15 +99,22 @@ func (r dbTxRunner) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error
 	return tx.Commit()
 }
 
-// fakeAttachment records every DeleteAttached call it receives, optionally
-// failing with err, to prove Catalog.Remove both cascades and rolls back.
+// fakeAttachment records every DeleteAttached/CreateAttached call it
+// receives, optionally failing with err, to prove Catalog.Remove and
+// Catalog.CreateFromFile/CreateFromQuery both cascade and roll back.
 type fakeAttachment struct {
-	err   error
-	calls []string
+	err         error
+	calls       []string
+	createCalls []string
 }
 
 func (a *fakeAttachment) DeleteAttached(ctx context.Context, tx *sql.Tx, tableId string) error {
 	a.calls = append(a.calls, tableId)
+	return a.err
+}
+
+func (a *fakeAttachment) CreateAttached(ctx context.Context, tx *sql.Tx, tableId string) error {
+	a.createCalls = append(a.createCalls, tableId)
 	return a.err
 }
 
@@ -118,10 +125,43 @@ func dropTable(ctx context.Context, tx *sql.Tx, physicalName string) error {
 	return err
 }
 
+// fakeFileCreator/fakeQueryCreator stand in for duckdb/tables's
+// NewTxMaterializer, materializing physicalName with raw DDL so this
+// package's tests never depend on duckdb/tables. A non-nil err makes
+// materialization fail without touching physicalName at all, to prove a
+// failed create leaves nothing behind.
+func fakeFileCreator(err error) FileCreator {
+	return func(ctx context.Context, tx *sql.Tx, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
+		if err != nil {
+			return "", false, 0, err
+		}
+		if _, execErr := tx.ExecContext(ctx, fmt.Sprintf(`CREATE TABLE %s (__pkey TEXT)`, physicalName)); execErr != nil {
+			return "", false, 0, execErr
+		}
+		return "", false, 0, nil
+	}
+}
+
+func fakeQueryCreator(err error) QueryCreator {
+	return func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (string, bool, error) {
+		if err != nil {
+			return "", false, err
+		}
+		if _, execErr := tx.ExecContext(ctx, fmt.Sprintf(`CREATE TABLE %s (__pkey TEXT)`, physicalName)); execErr != nil {
+			return "", false, execErr
+		}
+		return "", false, nil
+	}
+}
+
 func newTestCatalog(t *testing.T) *Catalog {
+	return newTestCatalogWithCreators(t, fakeFileCreator(nil), fakeQueryCreator(nil))
+}
+
+func newTestCatalogWithCreators(t *testing.T, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
-	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db))
+	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), fileCreator, queryCreator)
 }
 
 // newSpatialTestRepository is newTestRepository with the spatial extension

@@ -78,79 +78,22 @@ func Test_ImportService_DetectCRS(t *testing.T) {
 }
 
 func Test_ImportService_ImportFromFile(t *testing.T) {
-	cases := []struct {
-		name  string
-		isGeo bool
-		srid  int
-	}{
-		{name: "non geo file"},
-		{name: "geo file updates isGeo, geometryColumn and srid", isGeo: true, srid: 4326},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			svc, m := setupImportService(t)
-
-			sourceName, sourceLayer, geom := "buildings.geojson", "", "geom"
-			patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &sourceLayer}
-			if c.isGeo {
-				isGeo, srid := c.isGeo, c.srid
-				patch.IsGeo = &isGeo
-				patch.GeometryColumn = &geom
-				patch.Srid = &srid
-			}
-
-			m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-1", nil).Once()
-			m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-			m.On("CreateFromFile", mock.Anything, "t_id1", "/data/buildings.geojson", "", 0).Return("geom", c.isGeo, c.srid, nil).Once()
-			m.On("UpdateMetadata", mock.Anything, "id-1", patch).Return(nil).Once()
-			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
-
-			tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
-
-			require.NoError(t, err)
-			assert.Equal(t, "id-1", tableId)
-		})
-	}
-}
-
-func Test_ImportService_ImportFromFile_CreateFailurePropagates(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("", errors.New("boom")).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("id-1", nil).Once()
 
-	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
-
-	assert.Error(t, err)
-}
-
-func Test_ImportService_ImportFromFile_ForwardsSridOverride(t *testing.T) {
-	svc, m := setupImportService(t)
-
-	m.On("Create", mock.Anything, "lambert.geojson", false, "").Return("id-1", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/lambert.geojson", "", 2154).Return("geom", true, 2154, nil).Once()
-	sourceName, sourceLayer, isGeo, geom, srid := "lambert.geojson", "", true, "geom", 2154
-	m.On("UpdateMetadata", mock.Anything, "id-1", storage.MetadataPatch{
-		SourceName: &sourceName, SourceLayer: &sourceLayer, IsGeo: &isGeo, GeometryColumn: &geom, Srid: &srid,
-	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
-
-	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
+	tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-1", tableId)
 }
 
-// A failure materializing the physical table must not leave an orphaned
-// metadata row: the Create above it must be rolled back (BUG-2).
-func Test_ImportService_ImportFromFile_RollsBackMetadataOnCreateFromFileFailure(t *testing.T) {
+// A materialization failure must reach the caller wrapped in a
+// DisplayError, produced by the single transactional CreateFromFile call.
+func Test_ImportService_ImportFromFile_WrapsCreateFromFileFailure(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-1", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/buildings.geojson", "", 0).Return("", false, 0, errors.New("corrupt file")).Once()
-	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("", errors.New("corrupt file")).Once()
 
 	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
@@ -160,34 +103,21 @@ func Test_ImportService_ImportFromFile_RollsBackMetadataOnCreateFromFileFailure(
 	assert.Contains(t, displayErr.DisplayMessage(), "buildings.geojson")
 }
 
-// If the rollback itself fails, the caller still needs to see the original
-// failure (not just a cleanup error), plus a hint that cleanup failed too.
-func Test_ImportService_ImportFromFile_ReportsOriginalErrorWhenRollbackAlsoFails(t *testing.T) {
+func Test_ImportService_ImportFromFile_ForwardsSridOverride(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("Create", mock.Anything, "buildings.geojson", false, "").Return("id-1", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/buildings.geojson", "", 0).Return("", false, 0, errors.New("corrupt file")).Once()
-	m.On("Remove", mock.Anything, "id-1").Return(errors.New("db locked")).Once()
+	m.On("CreateFromFile", mock.Anything, "lambert.geojson", "lambert.geojson", "/data/lambert.geojson", "", 2154).Return("id-1", nil).Once()
 
-	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
+	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "corrupt file")
-	assert.Contains(t, err.Error(), "db locked")
+	require.NoError(t, err)
+	assert.Equal(t, "id-1", tableId)
 }
 
 func Test_ImportService_ImportFromFile_ForwardsLayer(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("Create", mock.Anything, "regions.gpkg::communes", false, "").Return("id-1", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", PhysicalName: "t_id1"}, nil).Once()
-	m.On("CreateFromFile", mock.Anything, "t_id1", "/data/regions.gpkg", "communes", 0).Return("geom", true, 4326, nil).Once()
-	sourceName, sourceLayer, isGeo, geom, srid := "regions.gpkg", "communes", true, "geom", 4326
-	m.On("UpdateMetadata", mock.Anything, "id-1", storage.MetadataPatch{
-		SourceName: &sourceName, SourceLayer: &sourceLayer, IsGeo: &isGeo, GeometryColumn: &geom, Srid: &srid,
-	}).Return(nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "regions.gpkg::communes", "regions.gpkg", "/data/regions.gpkg", "communes", 0).Return("id-1", nil).Once()
 
 	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes", 0)
 

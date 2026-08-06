@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -198,13 +199,14 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 
 // GetDistinctValues returns a page of up to limit of column's distinct
 // values, skipping offset matches first, converted to native
-// JSON types the same way row reads are.
-func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
+// JSON types the same way row reads are. A non-empty search narrows the
+// page to the values containing it, case-insensitively.
+func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
-	values, err := repo.Rows().Distinct(ctx, column, offset, limit)
+	values, err := repo.Rows().Distinct(ctx, column, search, offset, limit)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to list distinct values of column %q in table %q", column, meta.TableId), err)
 	}
@@ -221,66 +223,250 @@ func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadat
 	return converted, nil
 }
 
-// UpdateRow updates every column in updates for the given pkeys in a
-// single storage call, so a multi-column update is atomic: either every
-// column changes or none does. Writing the geometry column triggers
-// RefreshDerived, which recomputes bbox and bumps UpdatedAt — the signal
-// that invalidates GeoService's tile cache and MetadataService's cache.
-// Updating only scalar fields triggers neither.
-func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error {
-	repo, err := s.storage.Table(meta)
-	if err != nil {
-		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
-	}
-	if err := repo.Rows().Update(ctx, pkeys, updates); err != nil {
-		return NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
-	}
-
-	if _, touchesGeometry := updates[meta.GeometryColumn]; touchesGeometry {
-		if err := s.metadata.RefreshDerived(ctx, meta.TableId, true); err != nil {
-			return err
-		}
-	}
-
-	return nil
+// RowWriteResult reports what a row write produced: the row's primary key
+// and, when the write set the geometry, the geometry the server actually
+// stored, as GeoJSON — what a map redraws, instead of the draft it sent.
+type RowWriteResult struct {
+	Pkey     string
+	Geometry string
 }
 
-// InsertRow inserts a single row and refreshes derived metadata,
-// recomputing bbox only if values sets the geometry column.
-func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
+// geometryValue reads the value a caller wrote for the geometry column: a
+// string is Well-Known Text, an object is a GeoJSON geometry, and both are
+// expressed in crs. An empty value writes a NULL geometry.
+func geometryValue(value any, crs string) (storage.GeometryValue, error) {
+	if crs == "" {
+		crs = storage.DefaultGeometryCRS
+	}
+
+	switch v := value.(type) {
+	case nil:
+		return storage.GeometryValue{}, nil
+	case string:
+		return storage.GeometryValue{Literal: v, Format: storage.GeometryWKT, CRS: crs}, nil
+	case map[string]any:
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return storage.GeometryValue{}, &ValidationError{msg: "the geometry object cannot be encoded as GeoJSON"}
+		}
+		return storage.GeometryValue{Literal: string(encoded), Format: storage.GeometryGeoJSON, CRS: crs}, nil
+	default:
+		return storage.GeometryValue{}, &ValidationError{msg: "the geometry must be a WKT string or a GeoJSON geometry object"}
+	}
+}
+
+// prepareWrite turns the raw values of a written row into what the
+// repository expects, replacing the geometry column's value by a typed
+// storage.GeometryValue carrying its encoding and its CRS. The caller's map
+// is left untouched.
+func prepareWrite(meta storage.Metadata, values map[string]any, crs string) (map[string]any, bool, error) {
+	raw, touchesGeometry := values[meta.GeometryColumn]
+	if !touchesGeometry || meta.GeometryColumn == "" {
+		return values, false, nil
+	}
+
+	geometry, err := geometryValue(raw, crs)
+	if err != nil {
+		return nil, false, err
+	}
+
+	prepared := make(map[string]any, len(values))
+	for col, value := range values {
+		prepared[col] = value
+	}
+	prepared[meta.GeometryColumn] = geometry
+	return prepared, true, nil
+}
+
+// storedGeometry reads back the geometry a write just stored, as GeoJSON.
+// This is a named exception to never returning the geometry column: the
+// client that drew it needs what the server kept, reprojected, to redraw
+// it.
+func (s *RowService) storedGeometry(ctx context.Context, meta storage.Metadata, pkey string) (string, error) {
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return "", NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
-	pkey, err := repo.Rows().Insert(ctx, values)
+	geo, ok := repo.Geo()
+	if !ok {
+		return "", nil
+	}
+
+	geometries, err := geo.GeoJSONByPkey(ctx, []string{pkey})
 	if err != nil {
-		return "", NewDisplayError(fmt.Sprintf("unable to insert a row into table %q", meta.TableId), err)
+		return "", NewDisplayError(fmt.Sprintf("unable to read back the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}
-	_, touchesGeometry := values[meta.GeometryColumn]
-	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
-		return "", err
-	}
-	return pkey, nil
+	return geometries[pkey], nil
 }
 
-// BulkInsertRows inserts every row in a single transaction and refreshes
-// derived metadata, recomputing bbox only if at least
-// one row sets the geometry column.
-func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error) {
+// UpdateRow updates every column in updates for the given pkeys in a
+// single storage call, so a multi-column update is atomic: either every
+// column changes or none does. crs names the CRS a written geometry is
+// expressed in. Writing the geometry column triggers RefreshDerived, which
+// recomputes bbox and bumps UpdatedAt — the signal that invalidates
+// GeoService's tile cache and MetadataService's cache. Updating only scalar
+// fields triggers neither.
+func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any, crs string) (RowWriteResult, error) {
+	prepared, touchesGeometry, err := prepareWrite(meta, updates, crs)
+	if err != nil {
+		return RowWriteResult{}, err
+	}
+	if err := s.checkGeometryFamily(ctx, meta, []map[string]any{prepared}); err != nil {
+		return RowWriteResult{}, err
+	}
+
+	repo, err := s.storage.Table(meta)
+	if err != nil {
+		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+	}
+	if err := repo.Rows().Update(ctx, pkeys, prepared); err != nil {
+		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
+	}
+
+	if !touchesGeometry {
+		return RowWriteResult{}, nil
+	}
+	if err := s.metadata.RefreshDerived(ctx, meta.TableId, true); err != nil {
+		return RowWriteResult{}, err
+	}
+	if len(pkeys) != 1 {
+		return RowWriteResult{}, nil
+	}
+
+	geometry, err := s.storedGeometry(ctx, meta, pkeys[0])
+	if err != nil {
+		return RowWriteResult{}, err
+	}
+	return RowWriteResult{Pkey: pkeys[0], Geometry: geometry}, nil
+}
+
+// RowUpdate is one row's share of a multi-row write, as the caller states
+// it: the row, and the raw values it receives.
+type RowUpdate struct {
+	Pkey   string
+	Values map[string]any
+}
+
+// UpdateRows applies its own values to each row in a single transaction and
+// refreshes derived metadata once. This is what a topological edit writes
+// through: moving a shared boundary changes the edited row and every
+// neighbour carrying the same vertex, and half of that landing is a
+// corrupted boundary, not a partial success. crs names the CRS the written
+// geometries are expressed in; the stored geometry of every row that set
+// one comes back in the result.
+func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, updates []RowUpdate, crs string) ([]RowWriteResult, error) {
+	if len(updates) == 0 {
+		return nil, nil
+	}
+
+	prepared := make([]storage.RowUpdate, len(updates))
+	geometryPkeys := []string{}
+	for i, update := range updates {
+		values, touchesGeometry, err := prepareWrite(meta, update.Values, crs)
+		if err != nil {
+			return nil, err
+		}
+		prepared[i] = storage.RowUpdate{Pkey: update.Pkey, Values: values}
+		if touchesGeometry {
+			geometryPkeys = append(geometryPkeys, update.Pkey)
+		}
+	}
+	if err := s.checkGeometryFamily(ctx, meta, rowValues(prepared)); err != nil {
+		return nil, err
+	}
+
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
 	}
-	pkeys, err := repo.Rows().InsertMany(ctx, rows)
+	if err := repo.Rows().UpdateMany(ctx, prepared); err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
+	}
+	if err := s.metadata.RefreshDerived(ctx, meta.TableId, len(geometryPkeys) > 0); err != nil {
+		return nil, err
+	}
+
+	results := make([]RowWriteResult, len(updates))
+	for i, update := range updates {
+		results[i] = RowWriteResult{Pkey: update.Pkey}
+	}
+	if len(geometryPkeys) == 0 {
+		return results, nil
+	}
+
+	geo, ok := repo.Geo()
+	if !ok {
+		return results, nil
+	}
+	geometries, err := geo.GeoJSONByPkey(ctx, geometryPkeys)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to read back the geometries of table %q", meta.TableId), err)
+	}
+	for i := range results {
+		results[i].Geometry = geometries[results[i].Pkey]
+	}
+	return results, nil
+}
+
+// InsertRow inserts a single row and refreshes derived metadata,
+// recomputing bbox only if values sets the geometry column. crs names the
+// CRS a written geometry is expressed in.
+func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any, crs string) (RowWriteResult, error) {
+	prepared, touchesGeometry, err := prepareWrite(meta, values, crs)
+	if err != nil {
+		return RowWriteResult{}, err
+	}
+	if err := s.checkGeometryFamily(ctx, meta, []map[string]any{prepared}); err != nil {
+		return RowWriteResult{}, err
+	}
+
+	repo, err := s.storage.Table(meta)
+	if err != nil {
+		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+	}
+	pkey, err := repo.Rows().Insert(ctx, prepared)
+	if err != nil {
+		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to insert a row into table %q", meta.TableId), err)
+	}
+	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
+		return RowWriteResult{}, err
+	}
+
+	result := RowWriteResult{Pkey: pkey}
+	if touchesGeometry {
+		if result.Geometry, err = s.storedGeometry(ctx, meta, pkey); err != nil {
+			return RowWriteResult{}, err
+		}
+	}
+	return result, nil
+}
+
+// BulkInsertRows inserts every row in a single transaction and refreshes
+// derived metadata, recomputing bbox only if at least
+// one row sets the geometry column. crs names the CRS the written
+// geometries are expressed in.
+func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error) {
+	prepared := make([]map[string]any, len(rows))
+	touchesGeometry := false
+	for i, row := range rows {
+		values, writesGeometry, err := prepareWrite(meta, row, crs)
+		if err != nil {
+			return nil, err
+		}
+		prepared[i] = values
+		touchesGeometry = touchesGeometry || writesGeometry
+	}
+	if err := s.checkGeometryFamily(ctx, meta, prepared); err != nil {
+		return nil, err
+	}
+
+	repo, err := s.storage.Table(meta)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+	}
+	pkeys, err := repo.Rows().InsertMany(ctx, prepared)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to insert rows into table %q", meta.TableId), err)
-	}
-	touchesGeometry := false
-	for _, row := range rows {
-		if _, ok := row[meta.GeometryColumn]; ok {
-			touchesGeometry = true
-			break
-		}
 	}
 	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
 		return nil, err

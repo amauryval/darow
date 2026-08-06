@@ -76,7 +76,15 @@ type Catalog interface {
 	// only tables a /derive query is allowed to reference.
 	PhysicalNames(ctx context.Context) (map[string]bool, error)
 
-	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (tableId string, err error)
+	// CreateFromQuery registers tableName and materializes it from
+	// sourceQuery, both inside a single transaction: a failure at any
+	// step leaves neither a metadata row nor a physical table behind.
+	CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (tableId string, err error)
+	// CreateFromFile registers tableName and materializes it from a
+	// source file, both inside a single transaction, exactly as
+	// CreateFromQuery does. sourceName and layer are recorded as the
+	// table's source (§3.2) regardless of whether it carries geometry.
+	CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (tableId string, err error)
 	// Remove deletes a logical table's metadata, drops its physical table and
 	// cascades to every attached repository, in a single transaction.
 	Remove(ctx context.Context, tableId string) error

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_parseGeoQuery(t *testing.T) {
@@ -16,7 +18,7 @@ func Test_parseGeoQuery(t *testing.T) {
 		filter       string
 		simplify     string
 		precision    string
-		validColumns []string
+		validColumns []storage.ColumnInfo
 		wantErr      bool
 		wantFilter   string
 		wantArgs     []any
@@ -27,8 +29,8 @@ func Test_parseGeoQuery(t *testing.T) {
 		{
 			name:         "valid filter builds a clause",
 			filter:       `[{"column":"status","operator":"=","value":"a"}]`,
-			validColumns: []string{"status"},
-			wantFilter:   `"status" = ?`,
+			validColumns: []storage.ColumnInfo{{Name: "status", Type: "VARCHAR"}},
+			wantFilter:   `"status" = TRY_CAST(? AS VARCHAR)`,
 			wantArgs:     []any{"a"},
 		},
 		{name: "invalid filter JSON is rejected", filter: `not-json`, wantErr: true},

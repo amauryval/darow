@@ -26,6 +26,7 @@ type Router struct {
 	geo      *handlers.GeoHandler
 	features *handlers.FeaturesHandler
 	sources  *handlers.SourcesHandler
+	filters  *handlers.FiltersHandler
 	export   *handlers.ExportHandler
 	ops      *handlers.OpsHandler
 	apiCfg   config.APIConfig
@@ -41,10 +42,11 @@ func NewRouter(
 ) *Router {
 	return &Router{
 		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
-		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, apiCfg),
+		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, apiCfg),
 		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
 		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
+		filters:  handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
 		ops:      handlers.NewOpsHandler(ready),
 		apiCfg:   apiCfg,
@@ -110,17 +112,27 @@ func (rt *Router) Setup() http.Handler {
 					sub.Get("/schema", rt.tables.GetSchema)
 					sub.Post("/columns", rt.tables.AddColumn)
 					sub.Post("/derive", rt.tables.DeriveTable)
+					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
+
+					sub.Route("/filters", func(sub chi.Router) {
+						sub.Get("/", rt.filters.ListFilters)
+						sub.Post("/", rt.filters.CreateFilter)
+						sub.Patch("/{filterId}", rt.filters.UpdateFilter)
+						sub.Delete("/{filterId}", rt.filters.DeleteFilter)
+					})
 					sub.Get("/columns/{col}/distinct", rt.tables.GetDistinctValues)
 
 					sub.Route("/rows", func(sub chi.Router) {
 						sub.Get("/", rt.rows.ListRows)
 						sub.Post("/", rt.rows.AddRows)
+						sub.Patch("/", rt.rows.UpdateRows)
 						sub.Post("/batch", rt.rows.GetRowsByPkey)
 						sub.Route("/{pkey}", func(sub chi.Router) {
 							sub.Get("/", rt.rows.GetRow)
 							sub.Patch("/", rt.rows.UpdateRow)
 							sub.Delete("/", rt.rows.DeleteRow)
+							sub.Get("/geometry", rt.rows.GetRowGeometry)
 						})
 					})
 
@@ -128,6 +140,7 @@ func (rt *Router) Setup() http.Handler {
 					sub.Get("/tiles/{z}/{x}/{y}/features", rt.geo.GetTileFeatures)
 					sub.Get("/geometry-types", rt.geo.GetGeometryTypes)
 					sub.Post("/bbox", rt.geo.FilterByBbox)
+					sub.Post("/neighbours", rt.geo.FindNeighbours)
 					sub.Get("/filtered-extent", rt.geo.GetFilteredExtent)
 				})
 			})

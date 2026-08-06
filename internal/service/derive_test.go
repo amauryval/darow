@@ -18,8 +18,9 @@ import (
 func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
+	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
-	svc := NewDeriveService(metadata, m)
+	svc := NewDeriveService(metadata, NewSchemaService(m, schemaCache))
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
 }
@@ -54,22 +55,13 @@ func Test_ValidateSelectOnly(t *testing.T) {
 
 func Test_DeriveService_DeriveTable(t *testing.T) {
 	cases := []struct {
-		name        string
-		query       string
-		isGeo       bool
-		wantErr     bool
-		wantCreated bool
+		name    string
+		query   string
+		wantErr bool
 	}{
 		{
-			name:        "select only query derives a non geo table",
-			query:       "SELECT * FROM t_source WHERE height > 10",
-			wantCreated: true,
-		},
-		{
-			name:        "select only query derives a geo table",
-			query:       "SELECT * FROM t_source WHERE height > 10",
-			isGeo:       true,
-			wantCreated: true,
+			name:  "select only query derives a table",
+			query: "SELECT * FROM t_source WHERE height > 10",
 		},
 		{
 			name:    "non select query rejected before touching storage",
@@ -88,14 +80,7 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 				return
 			}
 
-			m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-			m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-			m.On("CreateFromQuery", mock.Anything, "t_derived", c.query).Return("geom", c.isGeo, nil).Once()
-			if c.isGeo {
-				wantIsGeo, wantGeom := true, "geom"
-				m.On("UpdateMetadata", mock.Anything, "id-derived", storage.MetadataPatch{IsGeo: &wantIsGeo, GeometryColumn: &wantGeom}).Return(nil).Once()
-			}
-			m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
+			m.On("CreateFromQuery", mock.Anything, "derived", c.query).Return("id-derived", nil).Once()
 
 			tableId, err := svc.DeriveTable(context.Background(), c.query, "derived")
 
@@ -105,16 +90,13 @@ func Test_DeriveService_DeriveTable(t *testing.T) {
 	}
 }
 
-// A failure materializing the derived table must not leave an orphaned
-// metadata row: the Create above it must be rolled back (BUG-2).
-func Test_DeriveService_DeriveTable_RollsBackMetadataOnCreateFromQueryFailure(t *testing.T) {
+// A materialization failure must reach the caller wrapped in a
+// DisplayError, produced by the single transactional CreateFromQuery call.
+func Test_DeriveService_DeriveTable_WrapsCreateFromQueryFailure(t *testing.T) {
 	svc, m := setupDeriveService(t)
 	cause := errors.New("unknown table")
 
-	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-derived").Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-	m.On("CreateFromQuery", mock.Anything, "t_derived", "SELECT * FROM t_source").Return("", false, cause).Once()
-	m.On("Remove", mock.Anything, "id-derived").Return(nil).Once()
+	m.On("CreateFromQuery", mock.Anything, "derived", "SELECT * FROM t_source").Return("", cause).Once()
 
 	_, err := svc.DeriveTable(context.Background(), "SELECT * FROM t_source", "derived")
 

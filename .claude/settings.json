@@ -1,42 +1,44 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "permissions": {
-    "allow": [
-      "Bash(git status)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(go build:*)",
-      "Bash(go test:*)",
-      "Bash(go vet:*)",
-      "Bash(go mod tidy:*)",
-      "Bash(gofmt:*)",
-      "Bash(go list:*)",
-      "Bash(npm run build)"
-    ],
-    "deny": [
-      "Bash(git merge:*)",
-      "Bash(git stash:*)",
-      "Bash(git push:*)",
-      "Bash(git commit:*)",
-      "Bash(git checkout:*)",
-      "Bash(git rebase:*)",
-      "Bash(git reset:*)",
-      "Bash(git branch:*)",
-      "Bash(git switch:*)",
-      "Bash(git worktree add:*)",
-      "Bash(git worktree remove:*)",
-      "Bash(git branch -D:*)",
-      "Bash(go run:*)",
-      "Bash(vite:*)",
-      "Bash(npx vite:*)",
-      "Bash(mise:*)",
-      "Bash(rm -rf *)",
-      "Read(**/.env)",
-      "Read(**/.env.*)",
-      "Read(**/*.pem)",
-      "Read(**/id_rsa)",
-      "Read(**/id_ed25519)"
-    ]
-  }
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "permissions": {
+        "allow": [
+            "Bash(git status)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git show:*)",
+            "Bash(go build:*)",
+            "Bash(go test:*)",
+            "Bash(go vet:*)",
+            "Bash(go mod tidy:*)",
+            "Bash(gofmt:*)",
+            "Bash(go list:*)",
+            "Bash(npm run build)",
+            "Bash(echo \"tsc exit: $?\")",
+            "Bash(echo \"eslint exit: $?\")"
+        ],
+        "deny": [
+            "Bash(git merge:*)",
+            "Bash(git stash:*)",
+            "Bash(git push:*)",
+            "Bash(git commit:*)",
+            "Bash(git checkout:*)",
+            "Bash(git rebase:*)",
+            "Bash(git reset:*)",
+            "Bash(git branch:*)",
+            "Bash(git switch:*)",
+            "Bash(git worktree add:*)",
+            "Bash(git worktree remove:*)",
+            "Bash(git branch -D:*)",
+            "Bash(go run:*)",
+            "Bash(vite:*)",
+            "Bash(npx vite:*)",
+            "Bash(mise:*)",
+            "Bash(rm -rf *)",
+            "Read(**/.env)",
+            "Read(**/.env.*)",
+            "Read(**/*.pem)",
+            "Read(**/id_rsa)",
+            "Read(**/id_ed25519)"
+        ]
+    }
 }

@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"darow/internal/storage"
-	"fmt"
 	"regexp"
 	"strings"
+
+	"darow/internal/storage"
 )
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
@@ -26,70 +26,50 @@ func validateSelectOnly(query string) error {
 	return nil
 }
 
-// metadataStore is what DeriveService/ImportService need from
-// MetadataService to register a new logical table and clean up if
-// materializing its physical table fails — declared here, the consumer,
-// rather than depending on the concrete *MetadataService.
+// metadataStore is what DeriveService needs from MetadataService to
+// register and transactionally materialize a new logical table — declared
+// here, the consumer, rather than depending on the concrete
+// *MetadataService.
 type metadataStore interface {
-	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
-	Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error)
-	UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error
-	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
-	Rollback(ctx context.Context, tableId string, cause error) error
+	CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (tableId string, err error)
 }
 
-// queryMaterializer is what DeriveService needs from the storage layer.
-type queryMaterializer interface {
-	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
+// schemaReader is what DeriveService needs from SchemaService to build a
+// guided derivation's projection and validate its conditions against the
+// source table's real columns.
+type schemaReader interface {
+	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 }
 
 // DeriveService materializes new tables from caller-provided SELECT
-// queries.
+// queries, and from the guided per-table specification of
+// derive_from_table.go.
 type DeriveService struct {
 	metadata metadataStore
-	storage  queryMaterializer
+	schema   schemaReader
 }
 
-// NewDeriveService builds a DeriveService registering new tables via
-// metadata and materializing them via storage.
-func NewDeriveService(metadata metadataStore, storage queryMaterializer) *DeriveService {
-	return &DeriveService{metadata: metadata, storage: storage}
+// NewDeriveService builds a DeriveService registering and materializing new
+// tables via metadata, and reading source structure via schema.
+func NewDeriveService(metadata metadataStore, schema schemaReader) *DeriveService {
+	return &DeriveService{metadata: metadata, schema: schema}
 }
 
 // DeriveTable materializes a new table from a caller-provided SELECT query
-// (anything else is rejected before reaching Exec). The derived
-// table is a frozen snapshot, never a view and never synced
-// with its source.
+// (anything else is rejected before reaching Exec). The query is free to
+// read **any** registered table, not only one: this is the free-SQL mode,
+// as opposed to DeriveFromTable's single-source one.
 func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
+	return s.materialize(ctx, query, nil, newTableName)
+}
+
+// materialize is what both derivation modes share: reject anything but a
+// single SELECT, then register and materialize the new table in one
+// transaction through MetadataService.CreateFromQuery. The derived table is
+// a frozen snapshot, never a view and never synced with its source.
+func (s *DeriveService) materialize(ctx context.Context, query string, args []any, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {
 		return "", err
 	}
-
-	tableId, err := s.metadata.Create(ctx, newTableName, false, "")
-	if err != nil {
-		return "", err
-	}
-
-	meta, err := s.metadata.GetMetadata(ctx, tableId)
-	if err != nil {
-		return "", s.metadata.Rollback(ctx, tableId, err)
-	}
-
-	geometryColumn, isGeo, err := s.storage.CreateFromQuery(ctx, meta.PhysicalName, query)
-	if err != nil {
-		return "", s.metadata.Rollback(ctx, tableId, NewDisplayError(fmt.Sprintf("unable to derive table %q from the given query", newTableName), err))
-	}
-
-	if isGeo {
-		if err := s.metadata.UpdateMetadata(ctx, tableId, storage.MetadataPatch{
-			IsGeo: &isGeo, GeometryColumn: &geometryColumn,
-		}); err != nil {
-			return "", s.metadata.Rollback(ctx, tableId, err)
-		}
-	}
-
-	if err := s.metadata.RefreshDerived(ctx, tableId, true); err != nil {
-		return "", s.metadata.Rollback(ctx, tableId, err)
-	}
-	return tableId, nil
+	return s.metadata.CreateFromQuery(ctx, newTableName, query, args...)
 }

@@ -20,9 +20,12 @@ func Test_newRowsHandler(t *testing.T) {
 	rowSvc := &mockRowAPI{}
 	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}
 
-	rh := NewRowsHandler(metadataSvc, schemaSvc, rowSvc, apiCfg)
+	geoSvc := &mockGeoAPI{}
+
+	rh := NewRowsHandler(metadataSvc, schemaSvc, rowSvc, geoSvc, apiCfg)
 
 	assert.Same(t, rowSvc, rh.rowService)
+	assert.Same(t, geoSvc, rh.geoService)
 	assert.Equal(t, apiCfg, rh.apiCfg)
 
 	meta := storage.Metadata{TableId: "t1"}
@@ -169,9 +172,9 @@ func Test_rowsHandler_addRows(t *testing.T) {
 			rowsBody := c.body.(map[string]any)["rows"].([]map[string]any)
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil && len(rowsBody) == 1 {
-				rowSvc.On("InsertRow", mock.Anything, meta, rowsBody[0]).Return("pk-1", c.insertErr).Once()
+				rowSvc.On("InsertRow", mock.Anything, meta, rowsBody[0], storage.DefaultGeometryCRS).Return(service.RowWriteResult{Pkey: "pk-1"}, c.insertErr).Once()
 			} else if c.lookupErr == nil && len(rowsBody) > 1 {
-				rowSvc.On("BulkInsertRows", mock.Anything, meta, rowsBody).Return([]string{"pk-1", "pk-2"}, c.insertErr).Once()
+				rowSvc.On("BulkInsertRows", mock.Anything, meta, rowsBody, storage.DefaultGeometryCRS).Return([]string{"pk-1", "pk-2"}, c.insertErr).Once()
 			}
 
 			rec := doHandlerRequest(rh.AddRows, http.MethodPost, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
@@ -280,7 +283,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 			updates := map[string]any{"name": "b"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
-				rowSvc.On("UpdateRow", mock.Anything, meta, []string{"1"}, updates).Return(c.updateErr).Once()
+				rowSvc.On("UpdateRow", mock.Anything, meta, []string{"1"}, updates, storage.DefaultGeometryCRS).Return(service.RowWriteResult{}, c.updateErr).Once()
 			}
 			if c.lookupErr == nil && c.updateErr == nil {
 				rowSvc.On("GetRow", mock.Anything, meta, "1").Return(c.row, c.getErr).Once()
@@ -323,6 +326,113 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			metadataSvc.AssertExpectations(t)
+			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_rowsHandler_getRowGeometry(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		geometry   *service.RowGeometry
+		geoErr     error
+		wantStatus int
+	}{
+		{name: "returns both encodings", geometry: &service.RowGeometry{Pkey: "1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)"}, wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "unknown row returns 404", wantStatus: http.StatusNotFound},
+		{name: "a scalar table returns 404", geoErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
+		{name: "storage failure returns 500", geoErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			geoSvc := &mockGeoAPI{}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
+
+			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				geoSvc.On("RowGeometry", mock.Anything, meta, "1").Return(c.geometry, c.geoErr).Once()
+			}
+
+			rec := doHandlerRequest(rh.GetRowGeometry, http.MethodGet, "/api/v1/tables/t1/rows/1/geometry", nil, map[string]string{"tableId": "t1", "pkey": "1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				assert.Contains(t, rec.Body.String(), `"wkt":"POINT (1 2)"`)
+				assert.Contains(t, rec.Body.String(), `"geometry":{"type":"Point"}`)
+			}
+			metadataSvc.AssertExpectations(t)
+			geoSvc.AssertExpectations(t)
+		})
+	}
+}
+
+// A geometry written on the map is echoed back as the server stored it, so
+// the client redraws what was kept rather than its own draft.
+func Test_rowsHandler_addRows_EchoesTheStoredGeometry(t *testing.T) {
+	metadataSvc := &mockMetadataAPI{}
+	rowSvc := &mockRowAPI{}
+	rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+
+	meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
+	values := map[string]any{"geom": "POINT(2.35 48.85)"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	rowSvc.On("InsertRow", mock.Anything, meta, values, "EPSG:2154").
+		Return(service.RowWriteResult{Pkey: "pk-1", Geometry: `{"type":"Point"}`}, nil).Once()
+
+	rec := doHandlerRequest(rh.AddRows, http.MethodPost, "/api/v1/tables/t1/rows?crs=EPSG:2154", map[string]any{"rows": []map[string]any{values}}, map[string]string{"tableId": "t1"})
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"geometry":{"type":"Point"}`)
+	rowSvc.AssertExpectations(t)
+}
+
+func Test_rowsHandler_updateRows(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		updateErr  error
+		wantStatus int
+	}{
+		{
+			name:       "updates every row",
+			body:       map[string]any{"updates": []map[string]any{{"pkey": "1", "values": map[string]any{"name": "a"}}}},
+			wantStatus: http.StatusOK,
+		},
+		{name: "an empty list is rejected", body: map[string]any{"updates": []map[string]any{}}, wantStatus: http.StatusBadRequest},
+		{
+			name:       "an update without a pkey is rejected",
+			body:       map[string]any{"updates": []map[string]any{{"values": map[string]any{"name": "a"}}}},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "a storage failure maps to 500",
+			body:       map[string]any{"updates": []map[string]any{{"pkey": "1", "values": map[string]any{"name": "a"}}}},
+			updateErr:  assert.AnError,
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			rowSvc := &mockRowAPI{}
+			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			if c.wantStatus != http.StatusBadRequest {
+				rowSvc.On("UpdateRows", mock.Anything, meta, []service.RowUpdate{{Pkey: "1", Values: map[string]any{"name": "a"}}}, storage.DefaultGeometryCRS).
+					Return([]service.RowWriteResult{{Pkey: "1"}}, c.updateErr).Once()
+			}
+
+			rec := doHandlerRequest(rh.UpdateRows, http.MethodPatch, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
 			rowSvc.AssertExpectations(t)
 		})
 	}

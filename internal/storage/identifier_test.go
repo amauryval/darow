@@ -36,6 +36,39 @@ func Test_ValidateIdentifier(t *testing.T) {
 	}
 }
 
+func Test_ValidateColumnType(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "plain scalar type", input: "INTEGER"},
+		{name: "lowercase is accepted", input: "integer"},
+		{name: "double", input: "DOUBLE"},
+		{name: "varchar with length parameter", input: "VARCHAR(255)"},
+		{name: "decimal with precision and scale", input: "DECIMAL(10,2)"},
+		{name: "decimal with a space after the comma", input: "DECIMAL(10, 2)"},
+		{name: "geometry is rejected", input: "GEOMETRY", wantErr: true},
+		{name: "unknown type is rejected", input: "NOT_A_TYPE", wantErr: true},
+		{name: "empty string", input: "", wantErr: true},
+		{name: "trailing SQL is rejected", input: "INTEGER; DROP TABLE t", wantErr: true},
+		{name: "non-numeric parameter is rejected", input: "VARCHAR(x)", wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidateColumnType(c.input)
+
+			if c.wantErr {
+				var validationErr *ValidationError
+				assert.ErrorAs(t, err, &validationErr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func Test_QuoteIdentifier(t *testing.T) {
 	cases := []struct {
 		name    string

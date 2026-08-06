@@ -122,18 +122,31 @@ func (r *tableRows) Filtered(ctx context.Context, q storage.RowQuery, limit int)
 	return scanRows(rows)
 }
 
+// searchEscaper neutralises LIKE's own wildcards so a searched value is
+// matched literally, paired with ESCAPE '\' in the query.
+var searchEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // Distinct returns a page of up to limit distinct values found in column,
 // skipping offset matches first, ordered by column itself so paging is
-// deterministic across calls.
-func (r *tableRows) Distinct(ctx context.Context, column string, offset, limit int) ([]any, error) {
+// deterministic across calls. A non-empty search keeps only the values
+// containing it, case-insensitively, matched against their text form so
+// the same query works whatever the column's type.
+func (r *tableRows) Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error) {
 	quotedCol, err := storage.QuoteIdentifier(column)
 	if err != nil {
 		return nil, err
 	}
 
+	where, args := "", []any{}
+	if search != "" {
+		where = fmt.Sprintf(` WHERE CAST(%s AS VARCHAR) ILIKE ? ESCAPE '\'`, quotedCol)
+		args = append(args, "%"+searchEscaper.Replace(search)+"%")
+	}
+	args = append(args, limit, offset)
+
 	rows, err := r.conn.Query(ctx, fmt.Sprintf(
-		`SELECT DISTINCT %s FROM %s ORDER BY %s LIMIT ? OFFSET ?`, quotedCol, r.ref.PhysicalName, quotedCol,
-	), limit, offset)
+		`SELECT DISTINCT %s FROM %s%s ORDER BY %s LIMIT ? OFFSET ?`, quotedCol, r.ref.PhysicalName, where, quotedCol,
+	), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,15 +164,52 @@ func (r *tableRows) Distinct(ctx context.Context, column string, offset, limit i
 }
 
 // wrapWriteError classifies a failed insert/update: when the write touched
-// the geometry column, the most likely cause is a value that isn't valid
-// WKT — a caller mistake, not a server failure — so it's reported as a
+// the geometry column, the most likely cause is a literal the parser
+// rejects — a caller mistake, not a server failure — so it's reported as a
 // storage.ValidationError (400) instead of the 500 an unclassified DuckDB
 // error would get.
 func wrapWriteError(err error, writesGeometry bool) error {
 	if !writesGeometry {
 		return err
 	}
-	return storage.NewValidationError(fmt.Sprintf("invalid geometry (expected WKT): %s", err))
+	return storage.NewValidationError(fmt.Sprintf("invalid geometry (expected WKT or a GeoJSON geometry): %s", err))
+}
+
+// geometryValueOf reads the geometry a caller wrote for the geometry
+// column. A bare string is Well-Known Text in the default CRS, which is
+// what every caller predating GeometryValue sends.
+func geometryValueOf(value any) storage.GeometryValue {
+	geom, ok := value.(storage.GeometryValue)
+	if !ok {
+		text, isText := value.(string)
+		if !isText {
+			return storage.GeometryValue{}
+		}
+		geom = storage.GeometryValue{Literal: text, Format: storage.GeometryWKT}
+	}
+	if geom.CRS == "" {
+		geom.CRS = storage.DefaultGeometryCRS
+	}
+	return geom
+}
+
+// geometryExpr builds the SQL expression writing value into the geometry
+// column: the literal is parsed according to its encoding, then reprojected
+// from the CRS it is expressed in to the EPSG:3857 the column stores — the
+// exact mirror of the ST_Transform every geometry read applies. The CRS is
+// bound, never interpolated, like the one reprojectToWebMercator uses at
+// import.
+func geometryExpr(value any) (string, []any) {
+	geom := geometryValueOf(value)
+	if geom.Literal == "" {
+		return "NULL", nil
+	}
+
+	parse := "ST_GeomFromText"
+	if geom.Format == storage.GeometryGeoJSON {
+		parse = "ST_GeomFromGeoJSON"
+	}
+	return fmt.Sprintf("ST_Transform(%s(CAST(? AS VARCHAR)), ?, 'EPSG:3857')", parse), []any{geom.Literal, geom.CRS}
 }
 
 func newPkey() string {
@@ -167,8 +217,8 @@ func newPkey() string {
 }
 
 // buildInsert builds the INSERT statement and args for a single row,
-// converting the geometry column's WKT value via ST_GeomFromText
-// instead of binding it directly like a scalar value.
+// parsing and reprojecting the geometry column's value through
+// geometryExpr instead of binding it directly like a scalar value.
 func buildInsert(ref tableRef, values map[string]any) (pkey, query string, args []any, writesGeometry bool, err error) {
 	pkey = newPkey()
 
@@ -187,11 +237,13 @@ func buildInsert(ref tableRef, values map[string]any) (pkey, query string, args 
 		}
 		cols = append(cols, quotedCol)
 		if col == ref.Meta.GeometryColumn {
-			placeholderExprs = append(placeholderExprs, "ST_GeomFromText(CAST(? AS VARCHAR))")
+			expr, geomArgs := geometryExpr(val)
+			placeholderExprs = append(placeholderExprs, expr)
+			args = append(args, geomArgs...)
 			writesGeometry = true
-		} else {
-			placeholderExprs = append(placeholderExprs, "?")
+			continue
 		}
+		placeholderExprs = append(placeholderExprs, "?")
 		args = append(args, val)
 	}
 
@@ -239,6 +291,34 @@ func (r *tableRows) InsertMany(ctx context.Context, rows []map[string]any) ([]st
 	return pkeys, nil
 }
 
+// buildUpdate builds the UPDATE statement and args setting every column in
+// updates on the given rows — one statement, so a multi-column update is
+// atomic rather than one Exec per column.
+func buildUpdate(ref tableRef, pkeys []string, updates map[string]any) (query string, args []any, writesGeometry bool, err error) {
+	setClauses := make([]string, 0, len(updates))
+	args = make([]any, 0, len(updates)+len(pkeys))
+	for column, value := range updates {
+		quotedCol, err := storage.QuoteIdentifier(column)
+		if err != nil {
+			return "", nil, false, err
+		}
+		if column == ref.Meta.GeometryColumn {
+			expr, geomArgs := geometryExpr(value)
+			setClauses = append(setClauses, fmt.Sprintf("%s = %s", quotedCol, expr))
+			args = append(args, geomArgs...)
+			writesGeometry = true
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", quotedCol))
+		args = append(args, value)
+	}
+
+	pkeyIn, pkeyArgs := pkeyInClause(pkeys)
+	args = append(args, pkeyArgs...)
+	query = fmt.Sprintf(`UPDATE %s SET %s WHERE %s`, ref.PhysicalName, strings.Join(setClauses, ", "), pkeyIn)
+	return query, args, writesGeometry, nil
+}
+
 // Update sets every column in updates for the given rows in a single
 // statement — a multi-column update is atomic, not one Exec per column.
 func (r *tableRows) Update(ctx context.Context, pkeys []string, updates map[string]any) error {
@@ -246,30 +326,40 @@ func (r *tableRows) Update(ctx context.Context, pkeys []string, updates map[stri
 		return nil
 	}
 
-	setClauses := make([]string, 0, len(updates))
-	args := make([]any, 0, len(updates)+len(pkeys))
-	writesGeometry := false
-	for column, value := range updates {
-		quotedCol, err := storage.QuoteIdentifier(column)
-		if err != nil {
-			return err
-		}
-		if column == r.ref.Meta.GeometryColumn {
-			setClauses = append(setClauses, fmt.Sprintf("%s = ST_GeomFromText(CAST(? AS VARCHAR))", quotedCol))
-			writesGeometry = true
-		} else {
-			setClauses = append(setClauses, fmt.Sprintf("%s = ?", quotedCol))
-		}
-		args = append(args, value)
+	query, args, writesGeometry, err := buildUpdate(r.ref, pkeys, updates)
+	if err != nil {
+		return err
 	}
-	pkeyIn, pkeyArgs := pkeyInClause(pkeys)
-	args = append(args, pkeyArgs...)
-
-	query := fmt.Sprintf(`UPDATE %s SET %s WHERE %s`, r.ref.PhysicalName, strings.Join(setClauses, ", "), pkeyIn)
 	if _, err := r.conn.Exec(ctx, query, args...); err != nil {
 		return wrapWriteError(err, writesGeometry)
 	}
 	return nil
+}
+
+// UpdateMany applies a different set of values to each row, in a single
+// transaction held under writeMu for its whole duration: a topological edit
+// moves a shared boundary on several rows at once, and half of it landing
+// is a corrupted boundary, not a partial success.
+func (r *tableRows) UpdateMany(ctx context.Context, updates []storage.RowUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	return r.tx.WithTx(ctx, func(tx *sql.Tx) error {
+		for _, update := range updates {
+			if len(update.Values) == 0 {
+				continue
+			}
+			query, args, writesGeometry, err := buildUpdate(r.ref, []string{update.Pkey}, update.Values)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return wrapWriteError(err, writesGeometry)
+			}
+		}
+		return nil
+	})
 }
 
 // Delete removes the given rows from the underlying table.

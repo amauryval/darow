@@ -1,30 +1,55 @@
 {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "properties": { "name": "Paris", "population": 2145906, "country": "France", "capital": true },
-      "geometry": { "type": "Point", "coordinates": [2.3522, 48.8566] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "Lyon", "population": 522969, "country": "France", "capital": false },
-      "geometry": { "type": "Point", "coordinates": [4.8357, 45.7640] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "Marseille", "population": 870018, "country": "France", "capital": false },
-      "geometry": { "type": "Point", "coordinates": [5.3698, 43.2965] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "Toulouse", "population": 493465, "country": "France", "capital": false },
-      "geometry": { "type": "Point", "coordinates": [1.4442, 43.6047] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "name": "Bordeaux", "population": 260958, "country": "France", "capital": false },
-      "geometry": { "type": "Point", "coordinates": [-0.5792, 44.8378] }
-    }
-  ]
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Paris",
+                "population": 2145906,
+                "country": "France",
+                "capital": true
+            },
+            "geometry": { "type": "Point", "coordinates": [2.3522, 48.8566] }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Lyon",
+                "population": 522969,
+                "country": "France",
+                "capital": false
+            },
+            "geometry": { "type": "Point", "coordinates": [4.8357, 45.764] }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Marseille",
+                "population": 870018,
+                "country": "France",
+                "capital": false
+            },
+            "geometry": { "type": "Point", "coordinates": [5.3698, 43.2965] }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Toulouse",
+                "population": 493465,
+                "country": "France",
+                "capital": false
+            },
+            "geometry": { "type": "Point", "coordinates": [1.4442, 43.6047] }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bordeaux",
+                "population": 260958,
+                "country": "France",
+                "capital": false
+            },
+            "geometry": { "type": "Point", "coordinates": [-0.5792, 44.8378] }
+        }
+    ]
 }

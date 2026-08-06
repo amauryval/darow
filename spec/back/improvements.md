@@ -12,7 +12,9 @@ Each entry carries a stable identifier (`IMP-n`); a retired identifier is never 
 
 | # | Lead | Motivation | Reference |
 |---|---|---|---|
-| IMP-1 | `catalog.MetadataReader.TableExists`: give it a caller or drop it from the contract | Present as a cheap existence primitive, with no production caller today — a contract carries what is used | `spec.md` §4.4 |
-| IMP-3 | Stop storing `isGeo` and `geometryColumn` in `metadata` and derive both from `duckdb_columns()` when a table is resolved | Two catalogue config columns duplicate what the engine already knows and can disagree with it (BLK-1). `tables.TableColumns` + `GeometryColumn` already answer exactly this question, so the lead is now one call, not a new query. Against: `tables.Resolve` builds a table's identifiers from a cached `Metadata` with no query at all today, so deriving costs a catalogue read per resolution. `rowCount`, `bbox`, `createdAt`/`updatedAt`, `srid`, `sourceName`/`sourceLayer` are not derivable and stay whatever is decided | `spec.md` §4.1, §4.2, §4.8 |
-| IMP-4 | Expose a diagnostics endpoint fed by DuckDB's own system tables — `pragma_database_size()`, `duckdb_memory()`, `duckdb_temporary_files()`, `duckdb_settings()`, `duckdb_extensions()` — for the admin UI | These answer questions the server cannot answer from its own state (on-disk size, buffer-manager pressure, whether a query is spilling to disk), at no scan cost. It is the only class of DuckDB-metadata read that buys something today: the row counts stay exact (`estimated_size` is a stale per-row-group estimate, measured 1,000,000 rows off right after a `DELETE` and still 16,960 off after a `CHECKPOINT`), so no `COUNT(*)` in the code can be replaced by one. Undecided: what is exposed, to whom, and whether it belongs to `/readyz`'s neighbourhood or to the business API | `spec.md` §4.8, §6.1 |
-| IMP-2 | Give table creation the same transactional composition deletion already has: today the catalogue cascades on delete only, while the create sequence relies on `MetadataService.Rollback`'s compensating action | With attached repositories (TODO-3, TODO-4) the create path gains one more thing to undo per attachment, each a chance to leave a half-created table behind — deletion's guarantee comes from a transaction, creation's from remembering to compensate | `spec.md` §5.1, §5.4 |
+
+_Aucun lead non décidé à ce jour._
+
+The seven leads this file held (IMP-1 through IMP-7) were all taken up in the audit of 2026-08-06
+and became [todo.md](todo.md) entries TODO-9 through TODO-15. A retired identifier is never reused,
+so the next lead recorded here takes `IMP-8`.

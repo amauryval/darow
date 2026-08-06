@@ -11,7 +11,7 @@ func Test_BuildFilter(t *testing.T) {
 	cases := []struct {
 		name         string
 		conditions   []FilterCondition
-		validColumns []string
+		validColumns []ColumnInfo
 		wantErr      bool
 		wantFilter   string
 		wantArgs     []any
@@ -19,17 +19,74 @@ func Test_BuildFilter(t *testing.T) {
 		{
 			name:         "no conditions",
 			conditions:   nil,
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantFilter:   "",
 		},
 		{
-			name: "single valid condition",
+			name: "single valid condition casts the value to the column type",
 			conditions: []FilterCondition{
 				{Column: "height", Operator: ">", Value: 10},
 			},
-			validColumns: []string{"height"},
-			wantFilter:   `"height" > ?`,
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
+			wantFilter:   `"height" > TRY_CAST(? AS INTEGER)`,
 			wantArgs:     []any{10},
+		},
+		{
+			name: "LIKE compares the column as text, whatever its type",
+			conditions: []FilterCondition{
+				{Column: "height", Operator: "LIKE", Value: "1%"},
+			},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
+			wantFilter:   `CAST("height" AS VARCHAR) LIKE TRY_CAST(? AS VARCHAR)`,
+			wantArgs:     []any{"1%"},
+		},
+		{
+			name: "NOT LIKE compares the column as text too",
+			conditions: []FilterCondition{
+				{Column: "name", Operator: "NOT LIKE", Value: "%a%"},
+			},
+			validColumns: []ColumnInfo{{Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `CAST("name" AS VARCHAR) NOT LIKE TRY_CAST(? AS VARCHAR)`,
+			wantArgs:     []any{"%a%"},
+		},
+		{
+			name: "IS NULL binds no parameter",
+			conditions: []FilterCondition{
+				{Column: "name", Operator: "IS NULL"},
+			},
+			validColumns: []ColumnInfo{{Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `"name" IS NULL`,
+			wantArgs:     []any{},
+		},
+		{
+			name: "IS NOT NULL binds no parameter",
+			conditions: []FilterCondition{
+				{Column: "name", Operator: "IS NOT NULL"},
+			},
+			validColumns: []ColumnInfo{{Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `"name" IS NOT NULL`,
+			wantArgs:     []any{},
+		},
+		{
+			name: "a negated leaf is wrapped in NOT",
+			conditions: []FilterCondition{
+				{Column: "height", Operator: ">", Value: 10, Not: true},
+			},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
+			wantFilter:   `NOT ("height" > TRY_CAST(? AS INTEGER))`,
+			wantArgs:     []any{10},
+		},
+		{
+			name: "a negated group is wrapped in NOT as a whole",
+			conditions: []FilterCondition{
+				{Not: true, Bool: "OR", Conditions: []FilterCondition{
+					{Column: "name", Operator: "=", Value: "a"},
+					{Column: "name", Operator: "=", Value: "b"},
+				}},
+			},
+			validColumns: []ColumnInfo{{Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `NOT (("name" = TRY_CAST(? AS VARCHAR) OR "name" = TRY_CAST(? AS VARCHAR)))`,
+			wantArgs:     []any{"a", "b"},
 		},
 		{
 			name: "multiple conditions joined by AND",
@@ -37,17 +94,35 @@ func Test_BuildFilter(t *testing.T) {
 				{Column: "height", Operator: ">", Value: 10},
 				{Column: "name", Operator: "LIKE", Value: "%foo%"},
 			},
-			validColumns: []string{"height", "name"},
-			wantFilter:   `"height" > ? AND "name" LIKE ?`,
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}, {Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `"height" > TRY_CAST(? AS INTEGER) AND CAST("name" AS VARCHAR) LIKE TRY_CAST(? AS VARCHAR)`,
 			wantArgs:     []any{10, "%foo%"},
+		},
+		{
+			name: "parameterised type keeps its precision as a cast target",
+			conditions: []FilterCondition{
+				{Column: "price", Operator: "<=", Value: "12.34"},
+			},
+			validColumns: []ColumnInfo{{Name: "price", Type: "DECIMAL(10,2)"}},
+			wantFilter:   `"price" <= TRY_CAST(? AS DECIMAL(10,2))`,
+			wantArgs:     []any{"12.34"},
+		},
+		{
+			name: "non-castable type falls back to a bare parameter",
+			conditions: []FilterCondition{
+				{Column: "tags", Operator: "=", Value: "a"},
+			},
+			validColumns: []ColumnInfo{{Name: "tags", Type: "VARCHAR[]"}},
+			wantFilter:   `"tags" = ?`,
+			wantArgs:     []any{"a"},
 		},
 		{
 			name: "accented column name is whitelisted and quoted, not rejected",
 			conditions: []FilterCondition{
 				{Column: "nom_région", Operator: "=", Value: "Bretagne"},
 			},
-			validColumns: []string{"nom_région"},
-			wantFilter:   `"nom_région" = ?`,
+			validColumns: []ColumnInfo{{Name: "nom_région", Type: "VARCHAR"}},
+			wantFilter:   `"nom_région" = TRY_CAST(? AS VARCHAR)`,
 			wantArgs:     []any{"Bretagne"},
 		},
 		{
@@ -55,7 +130,7 @@ func Test_BuildFilter(t *testing.T) {
 			conditions: []FilterCondition{
 				{Column: "geom", Operator: "=", Value: "x"},
 			},
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantErr:      true,
 		},
 		{
@@ -63,7 +138,7 @@ func Test_BuildFilter(t *testing.T) {
 			conditions: []FilterCondition{
 				{Column: "height", Operator: "; DROP TABLE x --", Value: "x"},
 			},
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantErr:      true,
 		},
 		{
@@ -71,8 +146,17 @@ func Test_BuildFilter(t *testing.T) {
 			conditions: []FilterCondition{
 				{Column: "height; DROP TABLE x", Operator: "=", Value: 1},
 			},
-			validColumns: []string{"height; DROP TABLE x"},
-			wantFilter:   `"height; DROP TABLE x" = ?`,
+			validColumns: []ColumnInfo{{Name: "height; DROP TABLE x", Type: "INTEGER"}},
+			wantFilter:   `"height; DROP TABLE x" = TRY_CAST(? AS INTEGER)`,
+			wantArgs:     []any{1},
+		},
+		{
+			name: "a declared type carrying anything but numeric parameters is never interpolated",
+			conditions: []FilterCondition{
+				{Column: "height", Operator: "=", Value: 1},
+			},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER) FROM x; DROP TABLE y --("}},
+			wantFilter:   `"height" = ?`,
 			wantArgs:     []any{1},
 		},
 		{
@@ -84,8 +168,8 @@ func Test_BuildFilter(t *testing.T) {
 					{Column: "name", Operator: "=", Value: "b"},
 				}},
 			},
-			validColumns: []string{"height", "name"},
-			wantFilter:   `"height" > ? AND ("name" = ? OR "name" = ?)`,
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}, {Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `"height" > TRY_CAST(? AS INTEGER) AND ("name" = TRY_CAST(? AS VARCHAR) OR "name" = TRY_CAST(? AS VARCHAR))`,
 			wantArgs:     []any{10, "a", "b"},
 		},
 		{
@@ -99,8 +183,8 @@ func Test_BuildFilter(t *testing.T) {
 					{Column: "name", Operator: "=", Value: "b"},
 				}},
 			},
-			validColumns: []string{"height", "name"},
-			wantFilter:   `(("height" > ? AND "name" = ?) OR "name" = ?)`,
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}, {Name: "name", Type: "VARCHAR"}},
+			wantFilter:   `(("height" > TRY_CAST(? AS INTEGER) AND "name" = TRY_CAST(? AS VARCHAR)) OR "name" = TRY_CAST(? AS VARCHAR))`,
 			wantArgs:     []any{10, "a", "b"},
 		},
 		{
@@ -110,7 +194,7 @@ func Test_BuildFilter(t *testing.T) {
 					{Column: "height", Operator: ">", Value: 10},
 				}},
 			},
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantErr:      true,
 		},
 		{
@@ -118,7 +202,7 @@ func Test_BuildFilter(t *testing.T) {
 			conditions: []FilterCondition{
 				{Bool: "AND", Conditions: nil},
 			},
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantErr:      true,
 		},
 		{
@@ -128,7 +212,7 @@ func Test_BuildFilter(t *testing.T) {
 					{Column: "geom", Operator: "=", Value: "x"},
 				}},
 			},
-			validColumns: []string{"height"},
+			validColumns: []ColumnInfo{{Name: "height", Type: "INTEGER"}},
 			wantErr:      true,
 		},
 	}

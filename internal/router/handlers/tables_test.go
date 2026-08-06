@@ -312,6 +312,78 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 	}
 }
 
+// The guided derivation's body is a structure, not SQL: what the handler
+// owes the service is the resolved metadata plus a faithful DeriveSpec.
+func Test_tablesHandler_deriveFromTable(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		deriveErr  error
+		wantStatus int
+	}{
+		{name: "derives from the resolved table", wantStatus: http.StatusCreated},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "a rejected spec maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			deriveSvc := &mockDeriveAPI{}
+			th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			meta := storage.Metadata{TableId: "t1"}
+
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				deriveSvc.On("DeriveFromTable", mock.Anything, meta, service.DeriveSpec{
+					NewTableName: "derived",
+					Columns:      []string{"name"},
+					Computed:     []service.ComputedColumn{{Alias: "double", Expression: "height * 2"}},
+					Conditions:   []storage.FilterCondition{{Column: "height", Operator: ">", Value: float64(10)}},
+				}).Return("t2", c.deriveErr).Once()
+			}
+
+			body := map[string]any{
+				"newTableName": "derived",
+				"columns":      []string{"name"},
+				"computed":     []map[string]string{{"alias": "double", "expression": "height * 2"}},
+				"conditions":   []map[string]any{{"column": "height", "operator": ">", "value": 10}},
+			}
+			rec := doHandlerRequest(th.DeriveFromTable, http.MethodPost, "/api/v1/tables/t1/derive-from-table", body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusCreated {
+				assert.Contains(t, rec.Body.String(), "t2")
+				assert.Equal(t, "/tables/t2", rec.Header().Get("Location"))
+			}
+			metadataSvc.AssertExpectations(t)
+			deriveSvc.AssertExpectations(t)
+		})
+	}
+}
+
+// An empty spec is legitimate: it derives the whole source table. The
+// handler must not invent a nil-vs-empty distinction the service then has
+// to guess at.
+func Test_tablesHandler_deriveFromTable_EmptySpec(t *testing.T) {
+	metadataSvc := &mockMetadataAPI{}
+	deriveSvc := &mockDeriveAPI{}
+	th := &TablesHandler{TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+	meta := storage.Metadata{TableId: "t1"}
+
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	deriveSvc.On("DeriveFromTable", mock.Anything, meta, service.DeriveSpec{
+		NewTableName: "derived",
+		Computed:     []service.ComputedColumn{},
+	}).Return("t2", nil).Once()
+
+	body := map[string]any{"newTableName": "derived"}
+	rec := doHandlerRequest(th.DeriveFromTable, http.MethodPost, "/api/v1/tables/t1/derive-from-table", body, map[string]string{"tableId": "t1"})
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	deriveSvc.AssertExpectations(t)
+}
+
 func Test_tablesHandler_filterRows(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -369,12 +441,14 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 func Test_tablesHandler_getDistinctValues(t *testing.T) {
 	cases := []struct {
 		name        string
+		search      string
 		lookupErr   error
 		schemaErr   error
 		distinctErr error
 		wantStatus  int
 	}{
 		{name: "returns distinct values", wantStatus: http.StatusOK},
+		{name: "search is forwarded to the service", search: "ab", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "unknown column is rejected", schemaErr: nil, wantStatus: http.StatusBadRequest},
 		{name: "distinct lookup failure returns 500", distinctErr: assert.AnError, wantStatus: http.StatusInternalServerError},
@@ -403,10 +477,14 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}}, nil).Once()
 			}
 			if c.lookupErr == nil && col == "status" {
-				rowSvc.On("GetDistinctValues", mock.Anything, meta, col, 0, 100).Return([]any{"a", "b"}, c.distinctErr).Once()
+				rowSvc.On("GetDistinctValues", mock.Anything, meta, col, c.search, 0, 100).Return([]any{"a", "b"}, c.distinctErr).Once()
 			}
 
-			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, "/api/v1/tables/t1/columns/"+col+"/distinct", nil,
+			url := "/api/v1/tables/t1/columns/" + col + "/distinct"
+			if c.search != "" {
+				url += "?search=" + c.search
+			}
+			rec := doHandlerRequest(th.GetDistinctValues, http.MethodGet, url, nil,
 				map[string]string{"tableId": "t1", "col": col})
 
 			assert.Equal(t, c.wantStatus, rec.Code)

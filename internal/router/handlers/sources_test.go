@@ -194,14 +194,43 @@ func Test_sourcesHandler_loadSource(t *testing.T) {
 
 func Test_sourcesHandler_getSourceMetadata(t *testing.T) {
 	cases := []struct {
-		name       string
-		authCode   int
-		detectErr  error
-		wantStatus int
+		name        string
+		hasGeometry bool
+		authCode    int
+		geometryErr error
+		detectErr   error
+		wantStatus  int
+		wantBody    map[string]any
 	}{
-		{name: "returns detected CRS", authCode: 2154, wantStatus: http.StatusOK},
-		{name: "returns null srid when undetected", authCode: 0, wantStatus: http.StatusOK},
-		{name: "unknown source returns its mapped error", detectErr: &service.NotFoundError{}, wantStatus: http.StatusNotFound},
+		{
+			name:        "returns detected CRS",
+			hasGeometry: true,
+			authCode:    2154,
+			wantStatus:  http.StatusOK,
+			wantBody:    map[string]any{"authName": "EPSG", "srid": float64(2154), "hasGeometry": true},
+		},
+		{
+			name:        "returns null srid when undetected",
+			hasGeometry: true,
+			wantStatus:  http.StatusOK,
+			wantBody:    map[string]any{"authName": "EPSG", "srid": nil, "hasGeometry": true},
+		},
+		{
+			name:       "a source with no geometry is never asked for its CRS",
+			wantStatus: http.StatusOK,
+			wantBody:   map[string]any{"authName": "", "srid": nil, "hasGeometry": false},
+		},
+		{
+			name:        "unknown source returns its mapped error",
+			geometryErr: &service.NotFoundError{},
+			wantStatus:  http.StatusNotFound,
+		},
+		{
+			name:        "a failed detection returns its mapped error",
+			hasGeometry: true,
+			detectErr:   &service.NotFoundError{},
+			wantStatus:  http.StatusNotFound,
+		},
 	}
 
 	for _, c := range cases {
@@ -209,11 +238,17 @@ func Test_sourcesHandler_getSourceMetadata(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
 			sh := &SourcesHandler{sourceService: sourceSvc}
 
-			sourceSvc.On("DetectCRS", mock.Anything, "a.geojson", "").Return("EPSG", c.authCode, c.detectErr).Once()
+			sourceSvc.On("SourceHasGeometry", mock.Anything, "a.geojson", "").Return(c.hasGeometry, c.geometryErr).Once()
+			if c.hasGeometry && c.geometryErr == nil {
+				sourceSvc.On("DetectCRS", mock.Anything, "a.geojson", "").Return("EPSG", c.authCode, c.detectErr).Once()
+			}
 
 			rec := doHandlerRequest(sh.GetSourceMetadata, http.MethodGet, "/api/v1/sources/a.geojson/metadata", nil, map[string]string{"name": "a.geojson"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantBody != nil {
+				assert.Equal(t, c.wantBody, decodeJSON[map[string]any](rec))
+			}
 			sourceSvc.AssertExpectations(t)
 		})
 	}

@@ -27,8 +27,9 @@ func NewColumnValidator(schemaSvc SchemaGetter) ColumnValidator {
 }
 
 // ValidateColumns checks that every name in requested is a real column of
-// meta's table, excluding the geometry column — never surface geometry
-// through a generic column-name path.
+// meta's table, excluding the geometry column and every hidden column
+// (storage.IsHiddenColumn) — neither is ever surfaced through a generic
+// column-name path.
 func (cv ColumnValidator) ValidateColumns(ctx context.Context, meta storage.Metadata, requested []string) error {
 	if len(requested) == 0 {
 		return nil
@@ -41,7 +42,7 @@ func (cv ColumnValidator) ValidateColumns(ctx context.Context, meta storage.Meta
 
 	valid := make([]string, 0, len(schema))
 	for _, col := range schema {
-		if col.Name == meta.GeometryColumn {
+		if col.Name == meta.GeometryColumn || storage.IsHiddenColumn(col.Name) {
 			continue
 		}
 		valid = append(valid, col.Name)

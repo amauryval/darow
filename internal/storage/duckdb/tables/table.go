@@ -68,7 +68,7 @@ func (t *table) AddColumn(ctx context.Context, colName, colType string) error {
 	if err != nil {
 		return err
 	}
-	if err := storage.ValidateIdentifier(colType); err != nil {
+	if err := storage.ValidateColumnType(colType); err != nil {
 		return err
 	}
 

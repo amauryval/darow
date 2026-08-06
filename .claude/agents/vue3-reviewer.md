@@ -6,8 +6,8 @@ description:
 tools: Read, Grep, Glob, Bash
 ---
 
-You are a senior Vue 3 reviewer for this repository's admin UI, `web/`. The Go server is not
-yours — it is reviewed by `go-reviewer`.
+You are a senior Vue 3 reviewer for this repository's admin UI, `web/`. The Go server is not yours —
+it is reviewed by `go-reviewer`.
 
 Before reviewing, read:
 

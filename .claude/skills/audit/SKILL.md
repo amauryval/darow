@@ -3,9 +3,8 @@ name: audit
 description:
     Audits the Go server, the Vue 3 admin UI or the project layer against its spec and records the
     findings in spec/back/, spec/front/ or spec/project/ (blockers.md, limitations.md, todo.md,
-    improvements.md). Use whenever an audit, a review pass,
-    or a "what's left to do / what's broken" inventory is asked for, and whenever findings from any
-    review must be written down.
+    improvements.md). Use whenever an audit, a review pass, or a "what's left to do / what's broken"
+    inventory is asked for, and whenever findings from any review must be written down.
 ---
 
 ## When to Use This Skill
@@ -20,30 +19,30 @@ description:
 # Audit Skill
 
 An audit compares the **code** to its **spec** and turns every gap into exactly one documented
-entry. It never rewrites the spec to match the code, and it never leaves a finding in chat only:
-an unrecorded finding is a lost finding.
+entry. It never rewrites the spec to match the code, and it never leaves a finding in chat only: an
+unrecorded finding is a lost finding.
 
 ## The three families
 
 Each domain owns five independent files, in its own directory: `spec/back/` for the Go server,
-`spec/front/` for the Vue 3 admin UI, `spec/project/` for everything outside both — product
-identity and naming, repository layout, toolchain and `mise` tasks, Docker, CI, outward-facing
-documentation. Same five names in all three:
+`spec/front/` for the Vue 3 admin UI, `spec/project/` for everything outside both — product identity
+and naming, repository layout, toolchain and `mise` tasks, Docker, CI, outward-facing documentation.
+Same five names in all three:
 
-| File | Holds |
-|---|---|
-| `spec.md` | the **stable** state: architecture, contracts, invariants. Read-only during an audit |
-| `blockers.md` | what breaks correct use — fixed before any new feature |
-| `limitations.md` | what is deliberately not done — scope decisions, not defects |
-| `todo.md` | identified debt: gaps between the spec and the code |
-| `improvements.md` | uncommitted leads, to be decided before being planned |
+| File              | Holds                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `spec.md`         | the **stable** state: architecture, contracts, invariants. Read-only during an audit |
+| `blockers.md`     | what breaks correct use — fixed before any new feature                               |
+| `limitations.md`  | what is deliberately not done — scope decisions, not defects                         |
+| `todo.md`         | identified debt: gaps between the spec and the code                                  |
+| `improvements.md` | uncommitted leads, to be decided before being planned                                |
 
 The three families are disjoint. A front finding never lands in a back file, and the reverse; their
 only contact point is the REST API — a mismatch between what the server serves and what the client
 expects is a back finding if the server violates `spec/back/spec.md` §6, a front finding otherwise.
 A finding lands in `project` when fixing it touches neither Go logic nor Vue logic but the
-repository around them: a name, a task, an image, a workflow, a `README`. A rename that reaches
-both codebases is still **one** `project` entry, not one per side.
+repository around them: a name, a task, an image, a workflow, a `README`. A rename that reaches both
+codebases is still **one** `project` entry, not one per side.
 
 The whole of `spec/` is written in English.
 
@@ -71,7 +70,7 @@ Ask the questions in order and stop at the first yes.
 
 1. **Does it make the product produce a wrong result, or break a supported use?** — wrong data
    shown, a feature dead in a configuration the spec supports, a check that fails. → **blockers**.
-   Not "it is ugly", not "it is slow": something is *false* or *unusable*.
+   Not "it is ugly", not "it is slow": something is _false_ or _unusable_.
 2. **Is it a deliberate decision, already stated or now confirmed as such?** — the spec says so, or
    the user confirms the scope excludes it. → **limitations**. A limitation is never a reproach; if
    it reads like one, it belongs in todo.
@@ -93,8 +92,8 @@ Two traps:
 ## Writing an entry
 
 -   **Identifiers are stable.** `BLK-n`, `LIM-n`, `TODO-n`, `IMP-n`, with an `F` for the front
-    (`TODO-F4`) and a `P` for the project (`TODO-P1`). Take the next free number; a retired id is never reused, and existing entries are
-    never renumbered.
+    (`TODO-F4`) and a `P` for the project (`TODO-P1`). Take the next free number; a retired id is
+    never reused, and existing entries are never renumbered.
 -   **One finding, one row.** The columns already in place: the finding, its concrete effect, the
     reference (`spec.md` §x — the sibling file, or the front rule §x).
 -   **A `todo.md` row may be long.** It is the only file whose entries are meant to be acted on, so
@@ -105,10 +104,9 @@ Two traps:
     into the code, not code — together with the file that carries them. **Never a line number**: it
     goes stale the next time anyone touches the file, and a wrong line sends the reader somewhere
     else with full confidence. A symbol is found by search and stays true. The one thing that stays
-    out is **code itself** — no snippet, no full
-    signature, no diff: write the instruction, not the patch. In
-    `blockers.md`, `limitations.md` and `improvements.md`, stay short: nothing there is being
-    implemented yet.
+    out is **code itself** — no snippet, no full signature, no diff: write the instruction, not the
+    patch. In `blockers.md`, `limitations.md` and `improvements.md`, stay short: nothing there is
+    being implemented yet.
 -   **State the effect, not the smell.** "522 lignes, chargement + filtres + sélection + édition"
     beats "trop gros". "Un client qui s'en sert pour paginer se trompe" beats "incorrect".
 -   **English, no code**, like the rest of `spec/`. Cite files and symbols by name; the signatures
@@ -129,5 +127,5 @@ Two traps:
 ## Subagents
 
 `go-reviewer` and `vue3-reviewer` produce raw findings and know nothing about this layout. Their
-output is input to step 5 — you classify, deduplicate against the existing ids, and write. Never
-let a subagent edit the files under `spec/`.
+output is input to step 5 — you classify, deduplicate against the existing ids, and write. Never let
+a subagent edit the files under `spec/`.

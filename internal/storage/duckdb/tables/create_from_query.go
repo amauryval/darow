@@ -30,7 +30,12 @@ type physicalNamesReader interface {
 // column exists in the source query at all. A derived table is always
 // materialized, never a view, and is a frozen snapshot: no sync
 // with its source in either direction.
-func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (string, bool, error) {
+//
+// args binds sourceQuery's placeholders. DuckDB carries them through all
+// three stages unchanged — json_serialize_sql parses a "?" as part of the
+// grammar, DESCRIBE and the CTAS bind them — so a server-assembled query
+// keeps its filter values as parameters instead of interpolating them.
+func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
 	}
@@ -38,7 +43,7 @@ func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, source
 		return "", false, err
 	}
 
-	columns, err := queryColumns(ctx, l.conn, sourceQuery)
+	columns, err := queryColumns(ctx, l.conn, sourceQuery, args...)
 	if err != nil {
 		return "", false, fmt.Errorf("inspecting derived query columns: %w", err)
 	}
@@ -51,7 +56,7 @@ func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, source
 	}
 
 	wrapped := fmt.Sprintf(`SELECT uuid()::TEXT AS __pkey, %s FROM (%s) __derive_source`, wildcard, sourceQuery)
-	if _, err := l.conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, wrapped)); err != nil {
+	if _, err := l.conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, wrapped), args...); err != nil {
 		return "", false, fmt.Errorf("materializing derived table: %w", err)
 	}
 

@@ -2,6 +2,13 @@ package storage
 
 import "context"
 
+// RowUpdate is one row's share of a multi-row write: which row, and the
+// values it receives.
+type RowUpdate struct {
+	Pkey   string
+	Values map[string]any
+}
+
 // RowQuery narrows a RowRepository.Filtered call: Filter/Args must already
 // be a BuildFilter clause.
 type RowQuery struct {
@@ -19,12 +26,26 @@ type RowQuery struct {
 // non-geometry columns populate GeoFeature.Values (nil/empty means every
 // column).
 type FeatureQuery struct {
-	Pkeys  []string
-	Bbox   *[4]float64
-	Attrs  []string
-	Query  GeoQuery
-	Limit  int
-	Offset int
+	Pkeys []string
+	Bbox  *[4]float64
+	// Near restricts the result to the rows whose geometry intersects a
+	// buffer around a caller-supplied geometry — the neighbours of a shape
+	// being edited, which a bbox cannot express (a bbox around an L-shaped
+	// parcel catches what the parcel itself never touches).
+	Near    *NearQuery
+	Exclude []string
+	Attrs   []string
+	Query   GeoQuery
+	Limit   int
+	Offset  int
+}
+
+// NearQuery is a geometry and the distance around it, in meters (the unit
+// of the EPSG:3857 the geometry column is stored in), a neighbour search
+// works with.
+type NearQuery struct {
+	Geometry GeometryValue
+	Buffer   float64
 }
 
 // TableRepository groups every operation on a single resolved data table.
@@ -63,14 +84,20 @@ type RowRepository interface {
 	// column.
 	Filtered(ctx context.Context, q RowQuery, limit int) ([]Row, error)
 	// Distinct returns a page of up to limit distinct values of column,
-	// ordered by column itself for a deterministic offset.
-	Distinct(ctx context.Context, column string, offset, limit int) ([]any, error)
+	// ordered by column itself for a deterministic offset. A non-empty
+	// search keeps only the values whose text form contains it,
+	// case-insensitively, as a literal (its %/_ match themselves).
+	Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error)
 	Insert(ctx context.Context, values map[string]any) (string, error)
 	// InsertMany inserts every row in a single transaction.
 	InsertMany(ctx context.Context, rows []map[string]any) ([]string, error)
 	// Update sets every column in updates for the given rows in a single
 	// statement (atomic: either every column changes or none does).
 	Update(ctx context.Context, pkeys []string, updates map[string]any) error
+	// UpdateMany applies its own values to each row, every statement in a
+	// single transaction — several rows changed by one edit land together
+	// or not at all.
+	UpdateMany(ctx context.Context, updates []RowUpdate) error
 	// Delete removes the given rows. An empty pkeys is a no-op.
 	Delete(ctx context.Context, pkeys []string) error
 }
@@ -103,28 +130,21 @@ type GeoRepository interface {
 	// keyed by pkey — an export-only exception to never returning the
 	// geometry column.
 	GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
+	// WKTByPkey returns each row's geometry as Well-Known Text, keyed by
+	// pkey, at full resolution and in the same OGC:CRS84 lon/lat
+	// GeoJSONByPkey reports.
+	WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
 }
 
-// TableMaterializer materializes a logical table's physical backing store —
-// from a source file or a derived SELECT query — applying the indexing and
-// clustering rule 19 requires (an RTREE spatial index, a unique __pkey
-// index, and Hilbert clustering created after them, since clustering
-// rebuilds the table), and answers questions about a source file before any
-// table exists. A TableRepository assumes a table already in that state;
-// TableMaterializer is what puts it there.
+// TableMaterializer answers questions about a source file before any table
+// is created from it — the layers it holds, its declared CRS, whether it
+// carries geometry at all. The materialization itself (CTAS, indexing,
+// reprojection, Hilbert clustering) runs transactionally through
+// storage.Catalog's CreateFromFile/CreateFromQuery instead, so no method
+// here creates a table.
 type TableMaterializer interface {
-	// CreateFromFile materializes physicalName from a source file readable
-	// by ST_Read (GeoJSON, Shapefile, CSV, GeoPackage, ...). layer selects
-	// one layer of a multi-layer source; pass "" for a single-layer
-	// source. sridOverride pins the source CRS explicitly (EPSG:<code>),
-	// or 0 to detect it from the file; a geo source whose CRS can be
-	// neither detected nor overridden fails rather than being guessed.
-	CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
-	// CreateFromQuery materializes physicalName from a caller-provided
-	// SELECT query, restricted to already-registered tables.
-	CreateFromQuery(ctx context.Context, physicalName, sourceQuery string) (geometryColumn string, isGeo bool, err error)
 	// ListLayers returns the names of every layer sourcePath exposes, for
 	// formats that can hold more than one.
 	ListLayers(ctx context.Context, sourcePath string) ([]string, error)
@@ -132,4 +152,8 @@ type TableMaterializer interface {
 	// CRS, as declared by the source file itself (authCode 0 if
 	// undetectable).
 	DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error)
+
+	// SourceHasGeometry reports whether a source layer carries a geometry
+	// field at all — what decides whether it needs a CRS.
+	SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error)
 }

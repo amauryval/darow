@@ -67,20 +67,28 @@ func (m *mockRowAPI) GetRowsByPkey(ctx context.Context, meta storage.Metadata, p
 	return rows, args.Error(1)
 }
 
-func (m *mockRowAPI) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error) {
-	args := m.Called(ctx, meta, values)
-	return args.String(0), args.Error(1)
+func (m *mockRowAPI) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any, crs string) (service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, values, crs)
+	written, _ := args.Get(0).(service.RowWriteResult)
+	return written, args.Error(1)
 }
 
-func (m *mockRowAPI) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error) {
-	args := m.Called(ctx, meta, rows)
+func (m *mockRowAPI) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error) {
+	args := m.Called(ctx, meta, rows, crs)
 	pkeys, _ := args.Get(0).([]string)
 	return pkeys, args.Error(1)
 }
 
-func (m *mockRowAPI) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error {
-	args := m.Called(ctx, meta, pkeys, updates)
-	return args.Error(0)
+func (m *mockRowAPI) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any, crs string) (service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, pkeys, updates, crs)
+	written, _ := args.Get(0).(service.RowWriteResult)
+	return written, args.Error(1)
+}
+
+func (m *mockRowAPI) UpdateRows(ctx context.Context, meta storage.Metadata, updates []service.RowUpdate, crs string) ([]service.RowWriteResult, error) {
+	args := m.Called(ctx, meta, updates, crs)
+	written, _ := args.Get(0).([]service.RowWriteResult)
+	return written, args.Error(1)
 }
 
 func (m *mockRowAPI) RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error {
@@ -94,8 +102,8 @@ func (m *mockRowAPI) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 	return rows, args.Error(1)
 }
 
-func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column string, offset, limit int) ([]any, error) {
-	args := m.Called(ctx, meta, column, offset, limit)
+func (m *mockRowAPI) GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error) {
+	args := m.Called(ctx, meta, column, search, offset, limit)
 	values, _ := args.Get(0).([]any)
 	return values, args.Error(1)
 }
@@ -124,6 +132,11 @@ func (m *mockDeriveAPI) DeriveTable(ctx context.Context, query, newTableName str
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockDeriveAPI) DeriveFromTable(ctx context.Context, meta storage.Metadata, spec service.DeriveSpec) (string, error) {
+	args := m.Called(ctx, meta, spec)
+	return args.String(0), args.Error(1)
+}
+
 type mockGeoAPI struct{ mock.Mock }
 
 var _ geoAPI = (*mockGeoAPI)(nil)
@@ -138,6 +151,18 @@ func (m *mockGeoAPI) FilteredExtent(ctx context.Context, meta storage.Metadata, 
 	args := m.Called(ctx, meta, q)
 	bbox, _ := args.Get(0).(string)
 	return bbox, args.Error(1)
+}
+
+func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, near, exclude, limit)
+	features, _ := args.Get(0).([]storage.GeoFeature)
+	return features, args.Error(1)
+}
+
+func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*service.RowGeometry, error) {
+	args := m.Called(ctx, meta, pkey)
+	geometry, _ := args.Get(0).(*service.RowGeometry)
+	return geometry, args.Error(1)
 }
 
 func (m *mockGeoAPI) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {
@@ -206,6 +231,11 @@ func (m *mockSourceAPI) DetectCRS(ctx context.Context, name, layer string) (stri
 	return args.String(0), args.Int(1), args.Error(2)
 }
 
+func (m *mockSourceAPI) SourceHasGeometry(ctx context.Context, name, layer string) (bool, error) {
+	args := m.Called(ctx, name, layer)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockSourceAPI) MaxUploadBytes() int64 {
 	args := m.Called()
 	return int64(args.Int(0))
@@ -256,4 +286,31 @@ func multipartFileRequest(t *testing.T, path, fieldName, filename, content strin
 	req := httptest.NewRequest(http.MethodPost, path, &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
+}
+
+type mockFilterAPI struct{ mock.Mock }
+
+var _ filterAPI = (*mockFilterAPI)(nil)
+
+func (m *mockFilterAPI) List(ctx context.Context, meta storage.Metadata) ([]storage.StoredFilter, error) {
+	args := m.Called(ctx, meta)
+	filters, _ := args.Get(0).([]storage.StoredFilter)
+	return filters, args.Error(1)
+}
+
+func (m *mockFilterAPI) Create(ctx context.Context, meta storage.Metadata, name string, conditions []storage.FilterCondition) (storage.StoredFilter, error) {
+	args := m.Called(ctx, meta, name, conditions)
+	filter, _ := args.Get(0).(storage.StoredFilter)
+	return filter, args.Error(1)
+}
+
+func (m *mockFilterAPI) Update(ctx context.Context, meta storage.Metadata, filterId string, patch storage.StoredFilterPatch) (storage.StoredFilter, error) {
+	args := m.Called(ctx, meta, filterId, patch)
+	filter, _ := args.Get(0).(storage.StoredFilter)
+	return filter, args.Error(1)
+}
+
+func (m *mockFilterAPI) Delete(ctx context.Context, meta storage.Metadata, filterId string) error {
+	args := m.Called(ctx, meta, filterId)
+	return args.Error(0)
 }
