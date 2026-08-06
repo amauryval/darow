@@ -172,9 +172,15 @@ File: `internal/config/config.go`.
 | -------------- | --------------- | ------------------------------ |
 | `path`         | `./data/geo.db` | `GEOAPI_DUCKDB_PATH`           |
 | `maxOpenConns` | 4               | `GEOAPI_DUCKDB_MAX_OPEN_CONNS` |
+| `maxSizeBytes` | 0 (unlimited)   | `GEOAPI_DUCKDB_MAX_SIZE_BYTES` |
 
 The parent directory is created if it does not exist — DuckDB refuses to open a file in a missing
 directory.
+
+`maxSizeBytes` is a hard cap on the database's on-disk size, enforced by `service.SizeGuardService`
+(§5.10) — an operator decision about the disk the process runs on, and deliberately config-only:
+unlike the settings table (§2.4), it is never exposed through `PATCH /api/v1/settings`, so raising it
+always requires a restart.
 
 ### 2.3 `sources`
 
@@ -562,7 +568,14 @@ keep it portable for.
 | `duckdb_columns()`    | `tableColumns`                                                                         | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
 | `duckdb_indexes()`    | `tableIndexes`                                                                         | the indexes really created on a table (rule 19's assertion, §4.2)                                                                          |
 | `duckdb_tables()`     | `existingTableNames`, reached from outside through the `ExistingTables` function value | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone                    |
-| `duckdb_extensions()` | `ExtensionLoaded`                                                                      | whether `spatial` is loaded, for `/readyz`                                                                                                 |
+| `duckdb_extensions()` | `ExtensionLoaded`, `loadedExtensions`                                                  | whether `spatial` is loaded, for `/readyz`; the full loaded list, for `/diagnostics`                                                       |
+| `pragma_database_size()` | `databaseSizeBytes`                                                                 | on-disk size, from the exact `total_blocks`/`block_size` columns — never the human-readable ones, not meant to be parsed back              |
+| `duckdb_memory()`     | `memoryUsageBytes`                                                                     | buffer-manager memory usage, summed across tags                                                                                            |
+| `duckdb_temporary_files()` | `temporaryFilesBytes`                                                            | bytes currently spilled to disk, summed across files — zero when nothing is spilling                                                       |
+
+`Diagnostics` (also in `introspection.go`) composes the four into a `storage.Diagnostics` value, read
+by `duckdb.Adapter.Diagnostics` and served whole by `GET /diagnostics` (§6.1) — no
+`duckdb_settings()` involved, that surface staying out of scope (rule 16).
 
 The table name is a **bound parameter** in every one of them: no physical name is interpolated to
 list a structure, so rule 1 is structurally satisfied there rather than validated after the fact.
@@ -596,7 +609,7 @@ stamping `updatedAt`.
 
 ## 5. Service layer
 
-Ten services, each the exclusive owner of its state. Files: `internal/service/`.
+Twelve services, each the exclusive owner of its state. Files: `internal/service/`.
 
 **Error wrapping.** Every service method that calls into the storage layer wraps a raw failure it
 did not itself construct (a DuckDB error, an `os` error) in `service.DisplayError` (§6.4) before
@@ -760,12 +773,40 @@ migration. Every other setting (row/list limits, `maxBodyBytes`, `requestTimeout
 callback at all: `Router` and every handler read it live off `Current()` on each request instead
 (§6.3), and `ExportService` off `Current().ExportBatchSize` on each export.
 
+### 5.9 `DiagnosticsService`
+
+A single pass-through onto `storage.DiagnosticsReader` (§4.8): `Diagnostics` reads live off
+`duckdb.Adapter.Diagnostics` and wraps a raw storage failure in `service.DisplayError`, same as every
+other service. It owns no cache — a stale spike would misreport the one thing a caller of
+`GET /diagnostics` (§6.1) is asking about.
+
+### 5.10 `SizeGuardService` — enforcing `duckdb.maxSizeBytes`
+
+Every data-growing write — `RowService.InsertRow`/`BulkInsertRows`, `ImportService.ImportFromFile`,
+`DeriveService`'s shared `materialize` (both `DeriveTable` and `DeriveFromTable` go through it) —
+calls `Check(ctx)` before writing and `Grew()` right after the write succeeds. `Check` refuses with a
+`QuotaExceededError` (mapped to `507` by `response.MapServiceError`, §6.4) once the database's size is
+at or over `duckdb.maxSizeBytes`; `duckdb.maxSizeBytes` ≤ 0 disables the guard, `Check` always
+succeeding.
+
+The size itself is **not** read on every write: `Check` answers off a cached value, read through the
+same `storage.DiagnosticsReader` `DiagnosticsService` uses. `Grew` invalidates that cache so the next
+`Check` re-reads it; a `ttl` (`core.NewServices`' `sizeGuardTTL`, 5s) is a backstop, not the primary
+invalidation path, for the rare case a write path forgets to call `Grew`. The cap is therefore
+enforced with at most one write's worth of drift, never with a `pragma_database_size` query added to
+every single write in the server.
+
+Deliberately out of the guard's scope: `UpdateRow`/`UpdateRows`/`RemoveRows`, `AddColumn`, rename and
+every metadata patch — none of them can push the database further over the limit, and blocking them
+would lock an operator out of the very moves (deleting rows, dropping a table) that shrink it back
+down.
+
 ---
 
 ## 6. REST API
 
 The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`, `/readyz`,
-`/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
+`/diagnostics`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
 
 ### 6.1 Endpoints
 
@@ -775,6 +816,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/healthz` | liveness — the process answers, regardless of the storage's state                                                                                         |
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
+| GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy" |
 
 **Sources**
 
@@ -946,6 +988,7 @@ overrun budget from a genuine internal failure.
 | `storage.InvalidSortError`      | 400                                                 |
 | `service.NotFoundError`         | 404                                                 |
 | `service.ConflictError`         | 409                                                 |
+| `service.QuotaExceededError`    | 507 (`duckdb.maxSizeBytes`, §2.2, §5.10)            |
 | `context.DeadlineExceeded`      | 504                                                 |
 | `context.Canceled`              | 499 (non-standard, nginx's "client closed request") |
 | everything else                 | 500                                                 |

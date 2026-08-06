@@ -26,6 +26,7 @@ var (
 	_ storage.TableMaterializer = (*Adapter)(nil)
 	_ storage.FilterStore       = (*Adapter)(nil)
 	_ storage.SettingsStore     = (*Adapter)(nil)
+	_ storage.DiagnosticsReader = (*Adapter)(nil)
 )
 
 // Catalog returns m itself: Adapter already implements storage.Catalog, so
@@ -171,4 +172,10 @@ func (m *Adapter) UpdateSettings(ctx context.Context, patch storage.SettingsPatc
 	callArgs := m.Called(ctx, patch)
 	s, _ := callArgs.Get(0).(storage.Settings)
 	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) Diagnostics(ctx context.Context) (storage.Diagnostics, error) {
+	callArgs := m.Called(ctx)
+	d, _ := callArgs.Get(0).(storage.Diagnostics)
+	return d, callArgs.Error(1)
 }

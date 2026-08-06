@@ -78,6 +78,11 @@ type settingsAPI interface {
 	UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error)
 }
 
+// diagnosticsAPI is everything the router calls on *service.DiagnosticsService.
+type diagnosticsAPI interface {
+	Diagnostics(ctx context.Context) (storage.Diagnostics, error)
+}
+
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
@@ -91,12 +96,13 @@ type sourceAPI interface {
 }
 
 var (
-	_ metadataAPI = (*service.MetadataService)(nil)
-	_ rowAPI      = (*service.RowService)(nil)
-	_ schemaAPI   = (*service.SchemaService)(nil)
-	_ deriveAPI   = (*service.DeriveService)(nil)
-	_ geoAPI      = (*service.GeoService)(nil)
-	_ sourceAPI   = (*service.SourceService)(nil)
-	_ filterAPI   = (*service.FilterService)(nil)
-	_ settingsAPI = (*service.SettingsService)(nil)
+	_ metadataAPI    = (*service.MetadataService)(nil)
+	_ rowAPI         = (*service.RowService)(nil)
+	_ schemaAPI      = (*service.SchemaService)(nil)
+	_ deriveAPI      = (*service.DeriveService)(nil)
+	_ geoAPI         = (*service.GeoService)(nil)
+	_ sourceAPI      = (*service.SourceService)(nil)
+	_ filterAPI      = (*service.FilterService)(nil)
+	_ settingsAPI    = (*service.SettingsService)(nil)
+	_ diagnosticsAPI = (*service.DiagnosticsService)(nil)
 )

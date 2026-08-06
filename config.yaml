@@ -11,6 +11,7 @@ server:
 
 duckdb:
     path: './data/geo.db'
+    maxSizeBytes: 0 # hard cap on the database's on-disk size, in bytes; 0 = unlimited
 
 sources:
     workDir: './data/sources'

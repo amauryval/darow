@@ -40,10 +40,13 @@ type ServerConfig struct {
 // DuckDBConfig holds the DuckDB database file path and connection pool
 // size — the tuning parameter most likely to need adjusting by whoever
 // operates the server, since DuckDB serializes writes but allows
-// concurrent pooled reads.
+// concurrent pooled reads. MaxSizeBytes is a hard cap on the database's
+// on-disk size (0 disables it), an operator decision about the disk the
+// process runs on — unlike the settings table, never editable at runtime.
 type DuckDBConfig struct {
 	Path         string `yaml:"path"`
 	MaxOpenConns int    `yaml:"maxOpenConns"`
+	MaxSizeBytes int64  `yaml:"maxSizeBytes"`
 }
 
 // SourcesConfig holds settings for scanning and loading files from workDir.
@@ -62,7 +65,7 @@ func defaultConfig() Config {
 			IdleTimeoutSec:     60,
 			ShutdownTimeoutSec: 10,
 		},
-		DuckDB: DuckDBConfig{Path: "./data/geo.db", MaxOpenConns: 4},
+		DuckDB: DuckDBConfig{Path: "./data/geo.db", MaxOpenConns: 4, MaxSizeBytes: 0},
 		Sources: SourcesConfig{
 			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
@@ -119,6 +122,7 @@ func applyEnvOverrides(cfg *Config) error {
 
 	envString(&cfg.DuckDB.Path, envPrefix+"DUCKDB_PATH")
 	check(envInt(&cfg.DuckDB.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
+	check(envInt64(&cfg.DuckDB.MaxSizeBytes, envPrefix+"DUCKDB_MAX_SIZE_BYTES"))
 
 	envString(&cfg.Sources.WorkDir, envPrefix+"SOURCES_WORKDIR")
 	check(envInt64(&cfg.Sources.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
@@ -185,6 +189,7 @@ func (cfg Config) validate() error {
 
 	check(cfg.DuckDB.Path != "", "duckdb.path must not be empty")
 	check(cfg.DuckDB.MaxOpenConns > 0, "duckdb.maxOpenConns must be positive")
+	check(cfg.DuckDB.MaxSizeBytes >= 0, "duckdb.maxSizeBytes must not be negative")
 
 	check(cfg.Sources.WorkDir != "", "sources.workDir must not be empty")
 	check(cfg.Sources.MaxSizeBytes > 0, "sources.maxSizeBytes must be positive")

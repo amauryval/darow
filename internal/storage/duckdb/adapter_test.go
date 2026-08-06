@@ -190,6 +190,38 @@ func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
 	assert.Error(t, a.Ping(context.Background()))
 }
 
+func Test_Adapter_Diagnostics(t *testing.T) {
+	a := setupAdapter(t)
+	newTable(t, a)
+
+	d, err := a.Diagnostics(context.Background())
+
+	require.NoError(t, err)
+	// setupAdapter opens an in-memory database, which reports 0 for its
+	// block-count columns — this asserts the plumbing end to end, not a
+	// size an on-disk database would report.
+	assert.GreaterOrEqual(t, d.DatabaseSizeBytes, int64(0))
+	assert.Contains(t, d.Extensions, "spatial")
+}
+
+func Test_Adapter_Diagnostics_ReportsOnDiskSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "diag.duckdb")
+	a, err := New(path, 4)
+	require.NoError(t, err)
+	t.Cleanup(func() { a.Close() })
+	newTable(t, a)
+	// pragma_database_size's block counts only reflect blocks flushed to
+	// disk — force that so the assertion doesn't race the engine's own
+	// checkpoint schedule.
+	_, err = a.Exec(context.Background(), "CHECKPOINT")
+	require.NoError(t, err)
+
+	d, err := a.Diagnostics(context.Background())
+
+	require.NoError(t, err)
+	assert.Positive(t, d.DatabaseSizeBytes)
+}
+
 func Test_isFatalDuckDBError(t *testing.T) {
 	cases := []struct {
 		name string

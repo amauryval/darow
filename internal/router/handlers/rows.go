@@ -112,6 +112,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Table ID"
 // @Success 201 {object} map[string][]string
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows [post]
 func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 	meta, ok := rh.ResolveTable(w, req)

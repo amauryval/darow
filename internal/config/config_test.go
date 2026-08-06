@@ -73,6 +73,25 @@ server: [this is not
 	}
 }
 
+func Test_Load_DuckDBMaxSizeBytesDefaultsToUnlimited(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, cfg.DuckDB.MaxSizeBytes)
+}
+
+func Test_Load_DuckDBMaxSizeBytesEnvOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	t.Setenv("GEOAPI_DUCKDB_MAX_SIZE_BYTES", "1073741824")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 1073741824, cfg.DuckDB.MaxSizeBytes)
+}
+
 func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	path := writeConfigFile(t, "server:\n  port: 9090\n")
 	t.Setenv("GEOAPI_SERVER_PORT", "7070")
@@ -105,6 +124,7 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 		{"negative timeout", "server:\n  readTimeoutSec: -1\n"},
 		{"empty workDir", "sources:\n  workDir: \"\"\n"},
 		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
+		{"negative duckdb maxSizeBytes", "duckdb:\n  maxSizeBytes: -1\n"},
 		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
 	}
 

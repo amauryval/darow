@@ -5,16 +5,20 @@ import (
 	"net/http"
 
 	"darow/internal/router/response"
+	"darow/internal/storage"
 )
 
-// OpsHandler serves the liveness/readiness probes used by an orchestrator.
+// OpsHandler serves the liveness/readiness probes and the diagnostics
+// snapshot used by an orchestrator or an operator.
 type OpsHandler struct {
-	ready func(ctx context.Context) error
+	ready       func(ctx context.Context) error
+	diagnostics diagnosticsAPI
 }
 
-// NewOpsHandler builds an OpsHandler from the readiness probe it needs.
-func NewOpsHandler(ready func(ctx context.Context) error) *OpsHandler {
-	return &OpsHandler{ready: ready}
+// NewOpsHandler builds an OpsHandler from the readiness probe and the
+// diagnostics service it needs.
+func NewOpsHandler(ready func(ctx context.Context) error, diagnostics diagnosticsAPI) *OpsHandler {
+	return &OpsHandler{ready: ready, diagnostics: diagnostics}
 }
 
 // Healthz reports that the process itself is alive, regardless of storage
@@ -44,4 +48,40 @@ func (oh *OpsHandler) Readyz(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// diagnosticsDTO is the JSON representation of a Diagnostics snapshot.
+type diagnosticsDTO struct {
+	DatabaseSizeBytes   int64    `json:"databaseSizeBytes"`
+	MemoryUsageBytes    int64    `json:"memoryUsageBytes"`
+	TemporaryFilesBytes int64    `json:"temporaryFilesBytes"`
+	Extensions          []string `json:"extensions"`
+}
+
+func toDiagnosticsDTO(d storage.Diagnostics) diagnosticsDTO {
+	return diagnosticsDTO{
+		DatabaseSizeBytes:   d.DatabaseSizeBytes,
+		MemoryUsageBytes:    d.MemoryUsageBytes,
+		TemporaryFilesBytes: d.TemporaryFilesBytes,
+		Extensions:          d.Extensions,
+	}
+}
+
+// Diagnostics reports the storage engine's own operating state — on-disk
+// size, buffer-manager memory usage, bytes spilled to disk, loaded
+// extensions — for an operator to tell "up" from "healthy".
+//
+// @Summary Storage engine diagnostics
+// @Tags ops
+// @Produce json
+// @Success 200 {object} diagnosticsDTO
+// @Failure 500 {object} response.ErrorResponse
+// @Router /diagnostics [get]
+func (oh *OpsHandler) Diagnostics(w http.ResponseWriter, req *http.Request) {
+	d, err := oh.diagnostics.Diagnostics(req.Context())
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, toDiagnosticsDTO(d))
 }

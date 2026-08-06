@@ -256,6 +256,7 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/derive [post]
 func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 	if _, ok := th.ResolveTable(w, req); !ok {
@@ -294,6 +295,7 @@ func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/derive-from-table [post]
 func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Request) {
 	meta, ok := th.ResolveTable(w, req)

@@ -62,16 +62,17 @@ type columnTyper interface {
 // never re-fetches metadata the router's tableMiddleware already read
 // once for the request.
 type RowService struct {
-	storage  tableResolver
-	metadata metadataRefresher
-	schema   columnTyper
+	storage   tableResolver
+	metadata  metadataRefresher
+	schema    columnTyper
+	sizeGuard sizeGuard
 }
 
 // NewRowService builds a RowService backed by storage, using metadata to
-// refresh derived fields after a write, and schema to resolve column types
-// from its cache.
-func NewRowService(storage tableResolver, metadata metadataRefresher, schema columnTyper) *RowService {
-	return &RowService{storage: storage, metadata: metadata, schema: schema}
+// refresh derived fields after a write, schema to resolve column types from
+// its cache, and guard to enforce duckdb.maxSizeBytes on row inserts.
+func NewRowService(storage tableResolver, metadata metadataRefresher, schema columnTyper, guard sizeGuard) *RowService {
+	return &RowService{storage: storage, metadata: metadata, schema: schema, sizeGuard: guard}
 }
 
 func convertRow(types map[string]string, row storage.Row) storage.Row {
@@ -412,6 +413,10 @@ func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, upda
 // recomputing bbox only if values sets the geometry column. crs names the
 // CRS a written geometry is expressed in.
 func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any, crs string) (RowWriteResult, error) {
+	if err := s.sizeGuard.Check(ctx); err != nil {
+		return RowWriteResult{}, err
+	}
+
 	prepared, touchesGeometry, err := prepareWrite(meta, values, crs)
 	if err != nil {
 		return RowWriteResult{}, err
@@ -428,6 +433,7 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 	if err != nil {
 		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to insert a row into table %q", meta.TableId), err)
 	}
+	s.sizeGuard.Grew()
 	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
 		return RowWriteResult{}, err
 	}
@@ -446,6 +452,10 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 // one row sets the geometry column. crs names the CRS the written
 // geometries are expressed in.
 func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error) {
+	if err := s.sizeGuard.Check(ctx); err != nil {
+		return nil, err
+	}
+
 	prepared := make([]map[string]any, len(rows))
 	touchesGeometry := false
 	for i, row := range rows {
@@ -468,6 +478,7 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, 
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to insert rows into table %q", meta.TableId), err)
 	}
+	s.sizeGuard.Grew()
 	if err := s.metadata.RefreshDerived(ctx, meta.TableId, touchesGeometry); err != nil {
 		return nil, err
 	}

@@ -28,22 +28,24 @@ type storageAdapter interface {
 	Filters() storage.FilterStore
 	Settings() storage.SettingsStore
 	Table(meta storage.Metadata) (storage.TableRepository, error)
+	storage.DiagnosticsReader
 }
 
 // Services groups every application service built on top of the storage
 // adapter, replacing the long parameter list that would otherwise be
 // threaded through main and NewRouter.
 type Services struct {
-	Metadata *service.MetadataService
-	Row      *service.RowService
-	Schema   *service.SchemaService
-	Derive   *service.DeriveService
-	Import   *service.ImportService
-	Geo      *service.GeoService
-	Source   *service.SourceService
-	Export   *service.ExportService
-	Filter   *service.FilterService
-	Settings *service.SettingsService
+	Metadata    *service.MetadataService
+	Row         *service.RowService
+	Schema      *service.SchemaService
+	Derive      *service.DeriveService
+	Import      *service.ImportService
+	Geo         *service.GeoService
+	Source      *service.SourceService
+	Export      *service.ExportService
+	Filter      *service.FilterService
+	Settings    *service.SettingsService
+	Diagnostics *service.DiagnosticsService
 
 	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
 	// storage connection; Services built via NewServices alone (e.g. in
@@ -90,15 +92,23 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 
 	tableRemoved := &observer.Observer[storage.Metadata]{}
 
+	// sizeGuardTTL bounds how stale the cached database size enforcing
+	// cfg.DuckDB.MaxSizeBytes may be between the writes that invalidate it
+	// (SizeGuardService.Grew) — a backstop, not the primary invalidation
+	// path.
+	const sizeGuardTTL = 5 * time.Second
+	sizeGuardSvc := service.NewSizeGuardService(storageAdapter, cfg.DuckDB.MaxSizeBytes, sizeGuardTTL)
+
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
 	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, tableRemoved)
-	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
-	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc)
-	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer())
+	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc, sizeGuardSvc)
+	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc, sizeGuardSvc)
+	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer(), sizeGuardSvc)
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
 	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, settingsSvc)
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
+	diagnosticsSvc := service.NewDiagnosticsService(storageAdapter)
 
 	// Who reacts to a table's removal, stated in one place: dropping a
 	// table changes its structure as surely as AddColumn does, and leaves a
@@ -123,16 +133,17 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	})
 
 	return &Services{
-		Metadata: metadataSvc,
-		Row:      rowSvc,
-		Schema:   schemaSvc,
-		Derive:   deriveSvc,
-		Import:   importSvc,
-		Geo:      geoSvc,
-		Source:   sourceSvc,
-		Export:   exportSvc,
-		Filter:   filterSvc,
-		Settings: settingsSvc,
+		Metadata:    metadataSvc,
+		Row:         rowSvc,
+		Schema:      schemaSvc,
+		Derive:      deriveSvc,
+		Import:      importSvc,
+		Geo:         geoSvc,
+		Source:      sourceSvc,
+		Export:      exportSvc,
+		Filter:      filterSvc,
+		Settings:    settingsSvc,
+		Diagnostics: diagnosticsSvc,
 	}, nil
 }
 

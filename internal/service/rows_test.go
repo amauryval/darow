@@ -33,7 +33,7 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
 	metadata := NewMetadataService(m, metadataCache, &observer.Observer[storage.Metadata]{})
-	svc = NewRowService(m, metadata, schema)
+	svc = NewRowService(m, metadata, schema, &allowSizeGuard{})
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo
 }
@@ -222,6 +222,34 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_RowService_InsertRow_RefusesOverQuota(t *testing.T) {
+	svc, m, _, _ := setupRowService(t)
+	guard := &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+	svc.sizeGuard = guard
+	meta := storage.Metadata{TableId: "id-1"}
+
+	_, err := svc.InsertRow(context.Background(), meta, map[string]any{"height": 1}, storage.DefaultGeometryCRS)
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "Table", mock.Anything)
+}
+
+func Test_RowService_BulkInsertRows_RefusesOverQuota(t *testing.T) {
+	svc, m, _, _ := setupRowService(t)
+	guard := &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+	svc.sizeGuard = guard
+	meta := storage.Metadata{TableId: "id-1"}
+
+	_, err := svc.BulkInsertRows(context.Background(), meta, []map[string]any{{"height": 1}}, storage.DefaultGeometryCRS)
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "Table", mock.Anything)
 }
 
 func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {

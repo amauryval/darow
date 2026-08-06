@@ -158,3 +158,19 @@ func Test_ExtensionLoaded(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, loaded)
 }
+
+func Test_Diagnostics(t *testing.T) {
+	conn := openRepoTestDB(t)
+	newScalarTestTable(t, conn)
+	ctx := context.Background()
+
+	d, err := Diagnostics(ctx, conn)
+
+	require.NoError(t, err)
+	// block_size/total_blocks read 0 for an in-memory database — this
+	// asserts the plumbing, not a size an on-disk database would report.
+	assert.GreaterOrEqual(t, d.DatabaseSizeBytes, int64(0))
+	assert.GreaterOrEqual(t, d.MemoryUsageBytes, int64(0))
+	assert.GreaterOrEqual(t, d.TemporaryFilesBytes, int64(0))
+	assert.Contains(t, d.Extensions, "spatial")
+}

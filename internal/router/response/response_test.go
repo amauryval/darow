@@ -34,6 +34,7 @@ func Test_MapServiceError(t *testing.T) {
 		{"service.NotFoundError -> 404", &service.NotFoundError{}, http.StatusNotFound},
 		{"storage.NotFoundError -> 404", storage.NewNotFoundError("no such table"), http.StatusNotFound},
 		{"service.ConflictError -> 409", &service.ConflictError{}, http.StatusConflict},
+		{"service.QuotaExceededError -> 507", &service.QuotaExceededError{}, http.StatusInsufficientStorage},
 		{"unclassified error -> 500", errors.New("duckdb: connection reset"), http.StatusInternalServerError},
 		{"wrapped typed error still matches -> 400", fmt.Errorf("insert: %w", storage.NewValidationError("bad geometry")), http.StatusBadRequest},
 		{"context.DeadlineExceeded -> 504", context.DeadlineExceeded, http.StatusGatewayTimeout},
@@ -76,6 +77,13 @@ func Test_WriteError(t *testing.T) {
 			err:         context.DeadlineExceeded,
 			wantMessage: context.DeadlineExceeded.Error(),
 			wantErrCode: "timeout",
+		},
+		{
+			name:        "507 gets its own discriminator",
+			code:        http.StatusInsufficientStorage,
+			err:         errors.New("database size is at the configured limit"),
+			wantMessage: "database size is at the configured limit",
+			wantErrCode: "quota_exceeded",
 		},
 		{
 			name:        "a wrapped service.DisplayError sends its DisplayMessage instead of the cause's raw text",

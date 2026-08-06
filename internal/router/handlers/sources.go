@@ -125,6 +125,7 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
 func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
 	srid, err := parseSrid(req)
@@ -193,6 +194,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
 // @Success 201 {object} map[string]string
 // @Failure 409 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
 func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")

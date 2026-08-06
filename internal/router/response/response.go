@@ -61,6 +61,8 @@ func errorCode(code int) string {
 		return "timeout"
 	case http.StatusServiceUnavailable:
 		return "unavailable"
+	case http.StatusInsufficientStorage:
+		return "quota_exceeded"
 	case statusClientClosedRequest:
 		return "client_closed_request"
 	}
@@ -136,6 +138,10 @@ func MapServiceError(err error) int {
 	var conflictErr *service.ConflictError
 	if errors.As(err, &conflictErr) {
 		return http.StatusConflict
+	}
+	var quotaErr *service.QuotaExceededError
+	if errors.As(err, &quotaErr) {
+		return http.StatusInsufficientStorage
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return http.StatusGatewayTimeout

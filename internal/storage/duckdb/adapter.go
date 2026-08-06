@@ -287,3 +287,9 @@ func (a *Adapter) Settings() storage.SettingsStore {
 func (a *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
 	return tables.Open(a, a, meta)
 }
+
+// Diagnostics reads a snapshot of the engine's own operating state — size,
+// memory, spilling, loaded extensions.
+func (a *Adapter) Diagnostics(ctx context.Context) (storage.Diagnostics, error) {
+	return tables.Diagnostics(ctx, a)
+}

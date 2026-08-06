@@ -58,7 +58,7 @@ func NewRouter(
 		sources:  handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
 		filters:  handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:      handlers.NewOpsHandler(ready),
+		ops:      handlers.NewOpsHandler(ready, svcs.Diagnostics),
 		settings: handlers.NewSettingsHandler(svcs.Settings),
 		current:  svcs.Settings,
 		uiAssets: uiAssets,
@@ -79,6 +79,7 @@ func (rt *Router) Setup() http.Handler {
 
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
+	r.Get("/diagnostics", rt.ops.Diagnostics)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 

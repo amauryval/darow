@@ -49,6 +49,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings) routerDeps {
 	m := &mocks.Adapter{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	m.On("GetSettings", mock.Anything).Return(settings, nil)
+	m.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, nil).Maybe()
 
 	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}
 	svcs, err := core.NewServices(cfg, m)
@@ -118,6 +119,13 @@ func Test_Router_Setup(t *testing.T) {
 			settings:   defaultTestSettings(),
 			method:     http.MethodGet,
 			path:       "/readyz",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "mounts the diagnostics route",
+			settings:   defaultTestSettings(),
+			method:     http.MethodGet,
+			path:       "/diagnostics",
 			wantStatus: http.StatusOK,
 		},
 		{

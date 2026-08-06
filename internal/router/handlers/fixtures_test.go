@@ -75,6 +75,16 @@ func (m *mockSettingsAPI) UpdateSettings(ctx context.Context, patch storage.Sett
 	return s, args.Error(1)
 }
 
+type mockDiagnosticsAPI struct{ mock.Mock }
+
+var _ diagnosticsAPI = (*mockDiagnosticsAPI)(nil)
+
+func (m *mockDiagnosticsAPI) Diagnostics(ctx context.Context) (storage.Diagnostics, error) {
+	args := m.Called(ctx)
+	d, _ := args.Get(0).(storage.Diagnostics)
+	return d, args.Error(1)
+}
+
 type mockMetadataAPI struct{ mock.Mock }
 
 var _ metadataAPI = (*mockMetadataAPI)(nil)

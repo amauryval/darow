@@ -31,14 +31,16 @@ type fileMaterializer interface {
 // (SourceService's job to locate and validate the path). It is
 // SourceService's tableImporter dependency (see source.go).
 type ImportService struct {
-	metadata metadataImporter
-	storage  fileMaterializer
+	metadata  metadataImporter
+	storage   fileMaterializer
+	sizeGuard sizeGuard
 }
 
 // NewImportService builds an ImportService registering new tables via
-// metadata and materializing them via storage.
-func NewImportService(metadata metadataImporter, storage fileMaterializer) *ImportService {
-	return &ImportService{metadata: metadata, storage: storage}
+// metadata, materializing them via storage, and enforcing
+// duckdb.maxSizeBytes on every import through guard.
+func NewImportService(metadata metadataImporter, storage fileMaterializer, guard sizeGuard) *ImportService {
+	return &ImportService{metadata: metadata, storage: storage, sizeGuard: guard}
 }
 
 // LoadedSourceNames maps each already-loaded source file name to its
@@ -64,6 +66,10 @@ func (s *ImportService) ListLayers(ctx context.Context, path string) ([]string, 
 // otherwise. srid pins the source CRS explicitly; pass 0 to detect it from
 // the file.
 func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error) {
+	if err := s.sizeGuard.Check(ctx); err != nil {
+		return "", err
+	}
+
 	// sourceName is independent of tableName, which PATCH /tables/{id} may
 	// rename freely — LoadedSourceNames keys on it instead, so renaming a
 	// table doesn't detach it from its source. name is the bare file name
@@ -74,7 +80,12 @@ func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, lay
 	if layer != "" {
 		sourceName = strings.TrimSuffix(name, layerSeparator+layer)
 	}
-	return s.metadata.CreateFromFile(ctx, name, sourceName, path, layer, srid)
+	tableId, err := s.metadata.CreateFromFile(ctx, name, sourceName, path, layer, srid)
+	if err != nil {
+		return "", err
+	}
+	s.sizeGuard.Grew()
+	return tableId, nil
 }
 
 // DetectCRS reports the authority/code of a source layer's declared CRS

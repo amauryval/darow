@@ -11,6 +11,19 @@ definitions:
             title:
                 type: string
         type: object
+    handlers.diagnosticsDTO:
+        properties:
+            databaseSizeBytes:
+                type: integer
+            extensions:
+                items:
+                    type: string
+                type: array
+            memoryUsageBytes:
+                type: integer
+            temporaryFilesBytes:
+                type: integer
+        type: object
     handlers.extentDTO:
         properties:
             spatial:
@@ -393,6 +406,10 @@ paths:
                     description: Conflict
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
             summary: Load a source file into a new table
             tags:
                 - sources
@@ -473,6 +490,10 @@ paths:
                         type: object
                 '400':
                     description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Upload a file and load it into a new table
@@ -683,6 +704,10 @@ paths:
                     description: Bad Request
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
             summary: Derive a table from a SELECT query
             tags:
                 - tables
@@ -707,6 +732,10 @@ paths:
                         type: object
                 '400':
                     description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Derive a table from this table's columns, expressions and conditions
@@ -1035,6 +1064,10 @@ paths:
                     description: Bad Request
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
             summary: Add one or more rows
             tags:
                 - rows
@@ -1288,6 +1321,22 @@ paths:
             summary: Get features intersecting an MVT-style tile, as GeoJSON
             tags:
                 - geo
+    /diagnostics:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.diagnosticsDTO'
+                '500':
+                    description: Internal Server Error
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Storage engine diagnostics
+            tags:
+                - ops
     /healthz:
         get:
             responses:

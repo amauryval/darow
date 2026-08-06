@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"darow/internal/storage"
 )
 
 // This file is the only place DuckDB's own catalogue functions
-// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions) are
-// read: their result columns are versioned with the engine, so a DuckDB
-// upgrade is a single file to check.
+// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions,
+// pragma_database_size, duckdb_memory, duckdb_temporary_files) are read:
+// their result columns are versioned with the engine, so a DuckDB upgrade
+// is a single file to check.
 
 // catalogColumn describes one column as DuckDB's catalogue reports it. Type is the
 // full declared type, parameters included — a geometry column carrying a
@@ -194,4 +197,86 @@ func ExtensionLoaded(ctx context.Context, conn Querier, name string) (bool, erro
         SELECT COALESCE(MAX(loaded), FALSE) FROM duckdb_extensions() WHERE extension_name = ?
     `, name).Scan(&loaded)
 	return loaded, err
+}
+
+// Diagnostics reads a snapshot of the engine's own operating state — what
+// /diagnostics answers. Every value comes off a byte-typed catalogue
+// column, never off pragma_database_size's formatted ("16.0 MiB") ones,
+// which are meant for display and not for parsing back.
+func Diagnostics(ctx context.Context, conn Querier) (storage.Diagnostics, error) {
+	size, err := databaseSizeBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	memory, err := memoryUsageBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	spilled, err := temporaryFilesBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	extensions, err := loadedExtensions(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	return storage.Diagnostics{
+		DatabaseSizeBytes:   size,
+		MemoryUsageBytes:    memory,
+		TemporaryFilesBytes: spilled,
+		Extensions:          extensions,
+	}, nil
+}
+
+// databaseSizeBytes reports the on-disk size of the database, computed from
+// pragma_database_size's block-count columns rather than its
+// human-readable ones.
+func databaseSizeBytes(ctx context.Context, conn Querier) (int64, error) {
+	var totalBlocks, blockSize int64
+	err := conn.QueryRow(ctx, `
+        SELECT total_blocks, block_size FROM pragma_database_size()
+    `).Scan(&totalBlocks, &blockSize)
+	return totalBlocks * blockSize, err
+}
+
+// memoryUsageBytes sums duckdb_memory's per-tag usage into the buffer
+// manager's total footprint — the pressure a readiness probe cannot see.
+func memoryUsageBytes(ctx context.Context, conn Querier) (int64, error) {
+	var usage int64
+	err := conn.QueryRow(ctx, `
+        SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()
+    `).Scan(&usage)
+	return usage, err
+}
+
+// temporaryFilesBytes sums duckdb_temporary_files's per-file size into the
+// bytes currently spilled to disk — zero when nothing is spilling.
+func temporaryFilesBytes(ctx context.Context, conn Querier) (int64, error) {
+	var size int64
+	err := conn.QueryRow(ctx, `
+        SELECT COALESCE(SUM(size), 0) FROM duckdb_temporary_files()
+    `).Scan(&size)
+	return size, err
+}
+
+// loadedExtensions lists the DuckDB extensions loaded in the current
+// session, alphabetically.
+func loadedExtensions(ctx context.Context, conn Querier) ([]string, error) {
+	rows, err := conn.Query(ctx, `
+        SELECT extension_name FROM duckdb_extensions() WHERE loaded ORDER BY extension_name
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	extensions := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		extensions = append(extensions, name)
+	}
+	return extensions, rows.Err()
 }
