@@ -103,7 +103,7 @@ func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec
 	available := make(map[string]bool, len(schema))
 	var carryable []string
 	for _, col := range schema {
-		if col.Name == "__pkey" || (meta.IsGeo && col.Name == meta.GeometryColumn) {
+		if storage.IsHiddenColumn(col.Name) || (meta.IsGeo && col.Name == meta.GeometryColumn) {
 			continue
 		}
 		available[col.Name] = true

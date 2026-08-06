@@ -18,6 +18,7 @@ type MetadataService struct {
 	storage storage.Catalog
 	cache   *expirable.LRU[string, storage.Metadata]
 	schema  schemaInvalidator
+	source  sourceInvalidator
 }
 
 // schemaInvalidator drops a table's cached column schema. MetadataService
@@ -28,11 +29,28 @@ type schemaInvalidator interface {
 	InvalidateSchema(tableId string)
 }
 
+// sourceInvalidator drops a deleted table's entry from SourceService's
+// loaded-source cache. MetadataService holds it for RemoveTable alone,
+// alongside schemaInvalidator: without it, a source stays displayed as
+// loaded and pointing at a tableId that no longer exists (BLK-3).
+type sourceInvalidator interface {
+	UnmarkLoaded(tableId string)
+}
+
 // NewMetadataService builds a MetadataService backed by storage, using c
 // to cache metadata reads and schema to drop a removed table's cached
 // schema.
 func NewMetadataService(s storage.Catalog, c *expirable.LRU[string, storage.Metadata], schema schemaInvalidator) *MetadataService {
 	return &MetadataService{storage: s, cache: c, schema: schema}
+}
+
+// SetSourceInvalidator wires source as the port RemoveTable uses to drop a
+// deleted table's entry from SourceService's cache. It cannot be a
+// constructor parameter like schema: SourceService depends on ImportService,
+// which depends on MetadataService, so core.NewServices must build
+// MetadataService first and wire this in once SourceService exists.
+func (s *MetadataService) SetSourceInvalidator(source sourceInvalidator) {
+	s.source = source
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
@@ -64,18 +82,27 @@ func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortFie
 }
 
 // invalidateMetadataCache must be called after any write that changes
-// metadata: UpdateMetadata, RefreshDerived, RemoveTable,
-// Rollback.
+// metadata: UpdateMetadata, RefreshDerived, RemoveTable.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
 	s.cache.Remove(tableId)
 }
 
-// Create registers a new logical table's metadata row, used by
-// DeriveService/ImportService before materializing its physical table.
-func (s *MetadataService) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	tableId, err := s.storage.Create(ctx, tableName, isGeo, geometryColumn)
+// CreateFromQuery registers a new logical table and materializes it from
+// sourceQuery, both inside a single transaction — used by DeriveService.
+func (s *MetadataService) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
+	tableId, err := s.storage.CreateFromQuery(ctx, tableName, sourceQuery, args...)
 	if err != nil {
-		return "", NewDisplayError(fmt.Sprintf("unable to create table %q", tableName), err)
+		return "", NewDisplayError(fmt.Sprintf("unable to derive table %q from the given query", tableName), err)
+	}
+	return tableId, nil
+}
+
+// CreateFromFile registers a new logical table and materializes it from a
+// source file, both inside a single transaction — used by ImportService.
+func (s *MetadataService) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
+	tableId, err := s.storage.CreateFromFile(ctx, tableName, sourceName, sourcePath, layer, sridOverride)
+	if err != nil {
+		return "", NewDisplayError(fmt.Sprintf("unable to import %q", tableName), err)
 	}
 	return tableId, nil
 }
@@ -90,13 +117,17 @@ func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, pa
 }
 
 // RemoveTable deletes tableId's metadata and underlying physical table,
-// then invalidates both the metadata and the schema cache.
+// then invalidates the metadata cache, the schema cache, and — if a source
+// was loaded into it — SourceService's loaded-source cache.
 func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error {
 	if err := s.storage.Remove(ctx, tableId); err != nil {
 		return NewDisplayError(fmt.Sprintf("unable to delete table %q", tableId), err)
 	}
 	s.invalidateMetadataCache(tableId)
 	s.schema.InvalidateSchema(tableId)
+	if s.source != nil {
+		s.source.UnmarkLoaded(tableId)
+	}
 	return nil
 }
 
@@ -110,21 +141,6 @@ func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, to
 	}
 	s.invalidateMetadataCache(tableId)
 	return nil
-}
-
-// Rollback removes tableId's metadata row (and any partially materialized
-// physical table, via storage.Remove's DROP TABLE IF EXISTS) after a
-// failure partway through DeriveService/ImportService's table creation,
-// so a failed creation never leaves a metadata row with no matching
-// physical table.
-func (s *MetadataService) Rollback(ctx context.Context, tableId string, cause error) error {
-	if err := s.RemoveTable(ctx, tableId); err != nil {
-		return NewDisplayError(
-			fmt.Sprintf("table creation failed, and cleaning up the partial table %q also failed", tableId),
-			fmt.Errorf("%w (cleanup also failed: %v)", cause, err),
-		)
-	}
-	return cause
 }
 
 // LoadedSourceNames maps each already-loaded source file name (or, for a

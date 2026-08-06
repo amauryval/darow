@@ -169,6 +169,58 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 	return geoJSON, nil
 }
 
+// NeighbourFeatures returns the features whose geometry intersects a
+// buffer of the given geometry, excluding the rows named by exclude — the
+// neighbours of a shape being edited, which is what a topological edit and
+// a snapping session both need. buffer is in meters.
+func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
+	geo, err := g.geoRepo(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	features, err := geo.Features(ctx, storage.FeatureQuery{Near: &near, Exclude: exclude, Limit: limit})
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to list the neighbours of table %q", meta.TableId), err)
+	}
+	return features, nil
+}
+
+// RowGeometry is one row's geometry, in both the encodings a caller reads
+// it for: GeoJSON to draw it, WKT to copy it. Both are at full resolution,
+// in OGC:CRS84.
+type RowGeometry struct {
+	Pkey    string
+	GeoJSON string
+	WKT     string
+}
+
+// RowGeometry returns a single row's geometry, or nil if the row does not
+// exist — the third named exception to never returning the geometry
+// column, alongside export and OGC API - Features: here the geometry is
+// the requested data.
+func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*RowGeometry, error) {
+	geo, err := g.geoRepo(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey})
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
+	}
+	encoded, ok := geoJSON[pkey]
+	if !ok {
+		return nil, nil
+	}
+
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey})
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
+	}
+	return &RowGeometry{Pkey: pkey, GeoJSON: encoded, WKT: wkt[pkey]}, nil
+}
+
 // GeometryTypes returns every distinct geometry type present in meta's
 // geometry column, computed on demand and never cached.
 func (g *GeoService) GeometryTypes(ctx context.Context, meta storage.Metadata) ([]string, error) {

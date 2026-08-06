@@ -213,3 +213,71 @@ func Test_GeoService_GeometryTypes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT", "POLYGON"}, types)
 }
+
+// A row's geometry is served in both encodings a caller reads it for, and a
+// pkey no row carries reports nothing rather than an empty geometry.
+func Test_GeoService_RowGeometry(t *testing.T) {
+	ctx := context.Background()
+	meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+
+	t.Run("returns both encodings", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}).Return(map[string]string{"pk-1": "POINT (1 2)"}, nil).Once()
+
+		geometry, err := svc.RowGeometry(ctx, meta, "pk-1")
+		require.NoError(t, err)
+		require.NotNil(t, geometry)
+		assert.Equal(t, RowGeometry{Pkey: "pk-1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)"}, *geometry)
+		geoRepo.AssertExpectations(t)
+	})
+
+	t.Run("an unknown row reports nothing", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"nope"}).Return(map[string]string{}, nil).Once()
+
+		geometry, err := svc.RowGeometry(ctx, meta, "nope")
+		require.NoError(t, err)
+		assert.Nil(t, geometry)
+		geoRepo.AssertExpectations(t)
+	})
+
+	t.Run("a storage failure is wrapped", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}).Return(nil, errors.New("boom")).Once()
+
+		_, err := svc.RowGeometry(ctx, meta, "pk-1")
+		require.Error(t, err)
+	})
+}
+
+// A neighbour search hands the storage layer the buffer and the exclusion
+// as given, and wraps a failure like every other geo read.
+func Test_GeoService_NeighbourFeatures(t *testing.T) {
+	ctx := context.Background()
+	meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+	near := storage.NearQuery{
+		Geometry: storage.GeometryValue{Literal: `{"type":"Point","coordinates":[1,2]}`, Format: storage.GeometryGeoJSON, CRS: storage.DefaultGeometryCRS},
+		Buffer:   25,
+	}
+
+	t.Run("passes the query through", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		expected := storage.FeatureQuery{Near: &near, Exclude: []string{"pk-1"}, Limit: 50}
+		geoRepo.On("Features", ctx, expected).Return([]storage.GeoFeature{{Pkey: "pk-2"}}, nil).Once()
+
+		features, err := svc.NeighbourFeatures(ctx, meta, near, []string{"pk-1"}, 50)
+		require.NoError(t, err)
+		require.Len(t, features, 1)
+		geoRepo.AssertExpectations(t)
+	})
+
+	t.Run("wraps a storage failure", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		geoRepo.On("Features", ctx, mock.Anything).Return(nil, errors.New("boom")).Once()
+
+		_, err := svc.NeighbourFeatures(ctx, meta, near, nil, 50)
+		var displayErr *DisplayError
+		require.ErrorAs(t, err, &displayErr)
+	})
+}

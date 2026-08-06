@@ -79,11 +79,6 @@ func (m *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Meta
 	return meta, callArgs.Error(1)
 }
 
-func (m *Adapter) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
-	callArgs := m.Called(ctx, tableName, isGeo, geometryColumn)
-	return callArgs.String(0), callArgs.Error(1)
-}
-
 func (m *Adapter) Remove(ctx context.Context, tableId string) error {
 	return m.Called(ctx, tableId).Error(0)
 }
@@ -108,17 +103,17 @@ func (m *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) 
 	return repo, callArgs.Error(1)
 }
 
-func (m *Adapter) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
-	callArgs := m.Called(ctx, physicalName, sourcePath, layer, sridOverride)
-	return callArgs.String(0), callArgs.Bool(1), callArgs.Int(2), callArgs.Error(3)
+func (m *Adapter) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
+	callArgs := m.Called(ctx, tableName, sourceName, sourcePath, layer, sridOverride)
+	return callArgs.String(0), callArgs.Error(1)
 }
 
 // CreateFromQuery flattens its bound parameters into the recorded call, so
 // an expectation states them positionally after the query — a call with no
 // parameter matches a three-argument expectation unchanged.
-func (m *Adapter) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (string, bool, error) {
-	callArgs := m.Called(append([]any{ctx, physicalName, sourceQuery}, args...)...)
-	return callArgs.String(0), callArgs.Bool(1), callArgs.Error(2)
+func (m *Adapter) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
+	callArgs := m.Called(append([]any{ctx, tableName, sourceQuery}, args...)...)
+	return callArgs.String(0), callArgs.Error(1)
 }
 
 func (m *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, error) {
@@ -130,6 +125,11 @@ func (m *Adapter) ListLayers(ctx context.Context, sourcePath string) ([]string, 
 func (m *Adapter) DetectCRS(ctx context.Context, sourcePath, layer string) (string, int, error) {
 	callArgs := m.Called(ctx, sourcePath, layer)
 	return callArgs.String(0), callArgs.Int(1), callArgs.Error(2)
+}
+
+func (m *Adapter) SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error) {
+	callArgs := m.Called(ctx, sourcePath, layer)
+	return callArgs.Bool(0), callArgs.Error(1)
 }
 
 func (m *Adapter) ListFilters(ctx context.Context, tableId string) ([]storage.StoredFilter, error) {

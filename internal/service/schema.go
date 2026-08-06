@@ -78,8 +78,15 @@ func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[s
 }
 
 // AddColumn adds colName of type colType to meta's underlying table and
-// invalidates its cached schema.
+// invalidates its cached schema. colType is checked against
+// storage.ValidateColumnType before anything is opened — GEOMETRY
+// (or any type outside DuckDB's scalar allowlist) is rejected here rather
+// than reaching the repository (BLK-1).
 func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
+	if err := storage.ValidateColumnType(colType); err != nil {
+		return err
+	}
+
 	repo, err := s.storage.Table(meta)
 	if err != nil {
 		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)

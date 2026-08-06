@@ -50,6 +50,37 @@ func Test_TableRepository_AddColumnAndCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 }
+
+// AddColumn is the layer that actually interpolates colType into the
+// ALTER TABLE statement, so it re-checks the allowlist even though
+// SchemaService already does (BLK-1): a caller reaching the repository
+// some other way must never sneak GEOMETRY, or arbitrary SQL, past it.
+func Test_TableRepository_AddColumn_RejectsDisallowedType(t *testing.T) {
+	conn := openRepoTestDB(t)
+	meta := newScalarTestTable(t, conn)
+	repo, err := Open(conn, conn, meta)
+	require.NoError(t, err)
+
+	err = repo.AddColumn(context.Background(), "geom2", "GEOMETRY")
+
+	var validationErr *storage.ValidationError
+	assert.ErrorAs(t, err, &validationErr)
+}
+
+func Test_TableRepository_AddColumn_AcceptsParameterizedType(t *testing.T) {
+	conn := openRepoTestDB(t)
+	meta := newScalarTestTable(t, conn)
+	repo, err := Open(conn, conn, meta)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	require.NoError(t, repo.AddColumn(ctx, "label", "VARCHAR(255)"))
+
+	types, err := repo.Types(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, types, "label")
+}
+
 func Test_TableRepository_Geo_ReportsIsGeo(t *testing.T) {
 	conn := openRepoTestDB(t)
 

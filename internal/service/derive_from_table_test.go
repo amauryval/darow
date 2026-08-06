@@ -34,15 +34,11 @@ func expectSourceSchema(m *mocks.Adapter, repo *mocks.TableRepository) {
 	}, nil).Once()
 }
 
-// expectMaterialization sets up the create sequence a successful derivation
-// runs, asserting the exact query and bound parameters it assembled.
+// expectMaterialization sets up the create call a successful derivation
+// makes, asserting the exact query and bound parameters it assembled.
 func expectMaterialization(m *mocks.Adapter, query string, args ...any) {
-	m.On("Create", mock.Anything, "derived", false, "").Return("id-derived", nil).Once()
-	m.On("GetMetadata", mock.Anything, "id-derived").
-		Return(storage.Metadata{TableId: "id-derived", PhysicalName: "t_derived"}, nil).Once()
-	m.On("CreateFromQuery", append([]any{mock.Anything, "t_derived", query}, args...)...).
-		Return("", false, nil).Once()
-	m.On("RefreshDerivedMetadata", mock.Anything, "id-derived", true).Return(nil).Once()
+	m.On("CreateFromQuery", append([]any{mock.Anything, "derived", query}, args...)...).
+		Return("id-derived", nil).Once()
 }
 
 func Test_DeriveService_DeriveFromTable_AssemblesQuery(t *testing.T) {
@@ -122,8 +118,30 @@ func Test_DeriveService_DeriveFromTable_NonGeoSource(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// OGC_FID (GDAL/OGR's injected feature-id column) is excluded from the
+// default carried-over projection exactly like __pkey.
+func Test_DeriveService_DeriveFromTable_ExcludesOGCFID(t *testing.T) {
+	svc, m := setupDeriveService(t)
+	repo := &mocks.TableRepository{}
+	t.Cleanup(func() { repo.AssertExpectations(t) })
+	meta := storage.Metadata{TableId: "id-source", PhysicalName: "t_source"}
+
+	m.On("Table", meta).Return(repo, nil).Once()
+	repo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{
+		{Name: "__pkey", Type: "VARCHAR"},
+		{Name: "OGC_FID", Type: "BIGINT"},
+		{Name: "name", Type: "VARCHAR"},
+	}, nil).Once()
+	expectMaterialization(m, `SELECT "name" FROM t_source`)
+
+	_, err := svc.DeriveFromTable(context.Background(), meta, DeriveSpec{NewTableName: "derived"})
+
+	require.NoError(t, err)
+}
+
 // Every rejection below happens before a single catalogue row is created:
-// the mock adapter would fail its expectations if Create were reached.
+// the mock adapter would fail its expectations if CreateFromQuery were
+// reached.
 func Test_DeriveService_DeriveFromTable_Rejections(t *testing.T) {
 	cases := []struct {
 		name string

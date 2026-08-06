@@ -6,6 +6,8 @@ package catalog
 import (
 	"context"
 	"database/sql"
+
+	"darow/internal/storage"
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes
@@ -55,12 +57,24 @@ func NewRepository(conn Querier, existing ExistingTables) *Repository {
 // adapter passes the drop itself rather than something wrapping it.
 type Dropper func(ctx context.Context, tx *sql.Tx, physicalName string) error
 
+// FileCreator materializes physicalName from a source file within the
+// *sql.Tx a table's creation runs in, as duckdb/tables.NewTxMaterializer's
+// CreateFromFile does. Declared locally for the same reason Dropper is: this
+// package never imports duckdb/tables.
+type FileCreator func(ctx context.Context, tx *sql.Tx, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
+
+// QueryCreator materializes physicalName from a derived query within the
+// *sql.Tx a table's creation runs in, as duckdb/tables.NewTxMaterializer's
+// CreateFromQuery does.
+type QueryCreator func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (geometryColumn string, isGeo bool, err error)
+
 // Attachment is implemented by any repository catalogue-attached to a
-// logical table's tableId (a settings or stored-filters repository), so
-// Remove's cascade reaches it without knowing its shape. It deletes within
-// the same transaction the cascade runs in.
+// logical table's tableId (a settings or stored-filters repository), so the
+// create and delete transactions reach it without knowing its shape. Both
+// halves run within the transaction they belong to.
 type Attachment interface {
 	DeleteAttached(ctx context.Context, tx *sql.Tx, tableId string) error
+	CreateAttached(ctx context.Context, tx *sql.Tx, tableId string) error
 }
 
 // Catalog is the catalogue aggregate: the metadata repository plus the
@@ -70,21 +84,31 @@ type Attachment interface {
 // storage.Catalog every service reads and writes the catalogue through.
 type Catalog struct {
 	*Repository
-	tx       TxRunner
-	dropper  Dropper
-	children []Attachment
+	tx           TxRunner
+	dropper      Dropper
+	fileCreator  FileCreator
+	queryCreator QueryCreator
+	children     []Attachment
 }
 
-// New builds a Catalog whose metadata repository reads/writes
-// through conn, whose cascading deletes run through tx, and whose physical
-// table drop and physical table listing are obtained from dropper and
-// existing rather than formatted here.
-func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables) *Catalog {
-	return &Catalog{Repository: NewRepository(conn, existing), tx: tx, dropper: dropper}
+// New builds a Catalog whose metadata repository reads/writes through conn,
+// whose cascading deletes and transactional creates run through tx, and
+// whose physical-table drop, materialization and listing are obtained from
+// dropper, fileCreator, queryCreator and existing rather than formatted
+// here.
+func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
+	return &Catalog{
+		Repository:   NewRepository(conn, existing),
+		tx:           tx,
+		dropper:      dropper,
+		fileCreator:  fileCreator,
+		queryCreator: queryCreator,
+	}
 }
 
 // Register rattaches a to the cascade: Remove calls its DeleteAttached
-// before removing the metadata row itself.
+// before removing the metadata row itself, and CreateFromFile/CreateFromQuery
+// call its CreateAttached once the new table is fully materialized.
 func (c *Catalog) Register(a Attachment) {
 	c.children = append(c.children, a)
 }
@@ -110,5 +134,87 @@ func (c *Catalog) Remove(ctx context.Context, tableId string) error {
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM metadata WHERE tableId = ?`, tableId)
 		return err
+	})
+}
+
+// createTable registers tableName, materializes it via materialize, refreshes
+// its derived metadata and cascades to every registered attachment, all
+// inside one transaction — a failure at any step leaves neither a metadata
+// row nor a physical table behind. Shared by CreateFromFile and
+// CreateFromQuery, which differ only in how they materialize the physical
+// table and patch its resolved metadata.
+func (c *Catalog) createTable(
+	ctx context.Context, tableName string,
+	materialize func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error,
+) (string, error) {
+	var tableId string
+	err := c.tx.WithTx(ctx, func(tx *sql.Tx) error {
+		repo := newTxRepository(tx, c.existing)
+
+		var err error
+		tableId, err = repo.Create(ctx, tableName, false, "")
+		if err != nil {
+			return err
+		}
+
+		meta, err := repo.GetMetadata(ctx, tableId)
+		if err != nil {
+			return err
+		}
+
+		if err := materialize(ctx, tx, repo, tableId, meta.PhysicalName); err != nil {
+			return err
+		}
+
+		if err := repo.RefreshDerivedMetadata(ctx, tableId, true); err != nil {
+			return err
+		}
+
+		for _, child := range c.children {
+			if err := child.CreateAttached(ctx, tx, tableId); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return tableId, nil
+}
+
+// CreateFromQuery registers tableName and materializes it from sourceQuery,
+// both inside one transaction: a failure at any step — the metadata insert,
+// the materialization, or the derived-metadata refresh — leaves nothing
+// behind, rolled back together.
+func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
+	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
+		geometryColumn, isGeo, err := c.queryCreator(ctx, tx, physicalName, sourceQuery, args...)
+		if err != nil {
+			return err
+		}
+		if !isGeo {
+			return nil
+		}
+		return repo.UpdateMetadata(ctx, tableId, storage.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn})
+	})
+}
+
+// CreateFromFile registers tableName and materializes it from a source file,
+// both inside one transaction, exactly as CreateFromQuery does. sourceName
+// and layer are recorded as the table's source (§3.2) regardless of whether
+// the source carries geometry.
+func (c *Catalog) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
+	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
+		geometryColumn, isGeo, srid, err := c.fileCreator(ctx, tx, physicalName, sourcePath, layer, sridOverride)
+		if err != nil {
+			return err
+		}
+
+		patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
+		if isGeo {
+			patch.IsGeo, patch.GeometryColumn, patch.Srid = &isGeo, &geometryColumn, &srid
+		}
+		return repo.UpdateMetadata(ctx, tableId, patch)
 	})
 }

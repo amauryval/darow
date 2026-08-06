@@ -25,8 +25,8 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	m = &mocks.Adapter{}
 	tableRepo = &mocks.TableRepository{}
 	rowRepo = &mocks.RowRepository{}
-	m.On("Table", mock.Anything).Return(tableRepo, nil)
-	tableRepo.On("Rows").Return(rowRepo)
+	m.On("Table", mock.Anything).Return(tableRepo, nil).Maybe()
+	tableRepo.On("Rows").Return(rowRepo).Maybe()
 
 	metadataCache := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
@@ -35,6 +35,11 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	svc = NewRowService(m, metadata, schema)
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo
+}
+
+func expectStoredTypes(tableRepo *mocks.TableRepository, geoRepo *mocks.GeoRepository, types []string) {
+	tableRepo.On("Geo").Return(geoRepo, true)
+	geoRepo.On("Types", mock.Anything).Return(types, nil).Once()
 }
 
 func Test_ConvertValue(t *testing.T) {
@@ -193,17 +198,27 @@ func Test_RowService_UpdateRow(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m, rowRepo, _ := setupRowService(t)
+			svc, m, rowRepo, tableRepo := setupRowService(t)
 
 			updates := map[string]any{c.column: "value"}
 			meta := storage.Metadata{TableId: "id-1", GeometryColumn: c.geometryColumn}
-			rowRepo.On("Update", mock.Anything, []string{"pk-1"}, updates).Return(nil).Once()
+			written := map[string]any{c.column: "value"}
+			if c.wantRefresh {
+				written[c.column] = storage.GeometryValue{Literal: "value", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
+			}
+			rowRepo.On("Update", mock.Anything, []string{"pk-1"}, written).Return(nil).Once()
 			if c.wantRefresh {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
+				geoRepo := &mocks.GeoRepository{}
+				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 
-			err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates)
+			result, err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates, storage.DefaultGeometryCRS)
 			require.NoError(t, err)
+			if c.wantRefresh {
+				assert.Equal(t, `{"type":"Point"}`, result.Geometry)
+			}
 		})
 	}
 }
@@ -220,15 +235,25 @@ func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m, rowRepo, _ := setupRowService(t)
+			svc, m, rowRepo, tableRepo := setupRowService(t)
 			meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
 
-			rowRepo.On("Insert", mock.Anything, c.values).Return("pk-1", nil).Once()
+			written := map[string]any{}
+			for col, value := range c.values {
+				written[col] = value
+			}
+			if c.touchesGeometry {
+				written["geom"] = storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
+				geoRepo := &mocks.GeoRepository{}
+				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+			}
+			rowRepo.On("Insert", mock.Anything, written).Return("pk-1", nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
 
-			pkey, err := svc.InsertRow(context.Background(), meta, c.values)
+			result, err := svc.InsertRow(context.Background(), meta, c.values, storage.DefaultGeometryCRS)
 			require.NoError(t, err)
-			assert.Equal(t, "pk-1", pkey)
+			assert.Equal(t, "pk-1", result.Pkey)
 		})
 	}
 }
@@ -245,13 +270,26 @@ func Test_RowService_BulkInsertRows_RefreshesBboxOnlyIfAnyRowSetsGeometry(t *tes
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m, rowRepo, _ := setupRowService(t)
+			svc, m, rowRepo, tableRepo := setupRowService(t)
 			meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+			if c.touchesGeometry {
+				expectStoredTypes(tableRepo, &mocks.GeoRepository{}, []string{"POINT"})
+			}
 
-			rowRepo.On("InsertMany", mock.Anything, c.rows).Return([]string{"pk-1", "pk-2"}, nil).Once()
+			written := make([]map[string]any, len(c.rows))
+			for i, row := range c.rows {
+				written[i] = map[string]any{}
+				for col, value := range row {
+					written[i][col] = value
+				}
+				if _, ok := row["geom"]; ok {
+					written[i]["geom"] = storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
+				}
+			}
+			rowRepo.On("InsertMany", mock.Anything, written).Return([]string{"pk-1", "pk-2"}, nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
 
-			pkeys, err := svc.BulkInsertRows(context.Background(), meta, c.rows)
+			pkeys, err := svc.BulkInsertRows(context.Background(), meta, c.rows, storage.DefaultGeometryCRS)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"pk-1", "pk-2"}, pkeys)
 		})
@@ -279,4 +317,88 @@ func Test_RowService_RemoveRows_RefreshesBboxWhenTableIsGeo(t *testing.T) {
 			require.NoError(t, svc.RemoveRows(context.Background(), meta, []string{"pk-1"}))
 		})
 	}
+}
+
+// A geometry reaches the repository typed: a string is WKT, an object is a
+// GeoJSON geometry, and both carry the CRS the caller stated so the write
+// reprojects instead of storing lon/lat as if it were metres.
+func Test_RowService_GeometryValue(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   any
+		crs     string
+		want    storage.GeometryValue
+		wantErr bool
+	}{
+		{name: "WKT string", value: "POINT(1 2)", crs: "EPSG:2154", want: storage.GeometryValue{Literal: "POINT(1 2)", Format: storage.GeometryWKT, CRS: "EPSG:2154"}},
+		{name: "an unstated CRS defaults to the one reads emit", value: "POINT(1 2)", want: storage.GeometryValue{Literal: "POINT(1 2)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}},
+		{
+			name:  "GeoJSON geometry object",
+			value: map[string]any{"type": "Point", "coordinates": []any{1, 2}},
+			want:  storage.GeometryValue{Literal: `{"coordinates":[1,2],"type":"Point"}`, Format: storage.GeometryGeoJSON, CRS: storage.DefaultGeometryCRS},
+		},
+		{name: "an empty value writes a NULL geometry", value: nil, want: storage.GeometryValue{}},
+		{name: "a number is neither encoding", value: 42, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := geometryValue(c.value, c.crs)
+			if c.wantErr {
+				var validation *ValidationError
+				require.ErrorAs(t, err, &validation)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
+// A write that names no geometry column leaves the caller's values
+// untouched, and one that does never mutates the caller's map.
+func Test_RowService_PrepareWrite_LeavesTheCallerMapUntouched(t *testing.T) {
+	meta := storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}
+	values := map[string]any{"name": "a", "geom": "POINT(1 2)"}
+
+	prepared, touchesGeometry, err := prepareWrite(meta, values, "")
+	require.NoError(t, err)
+	assert.True(t, touchesGeometry)
+	assert.Equal(t, "POINT(1 2)", values["geom"])
+	assert.Equal(t, storage.GeometryValue{Literal: "POINT(1 2)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}, prepared["geom"])
+
+	scalar, touchesGeometry, err := prepareWrite(meta, map[string]any{"name": "a"}, "")
+	require.NoError(t, err)
+	assert.False(t, touchesGeometry)
+	assert.Equal(t, map[string]any{"name": "a"}, scalar)
+}
+
+// A multi-row write is one transaction and one derived refresh, and every
+// row that set a geometry gets the stored one back.
+func Test_RowService_UpdateRows(t *testing.T) {
+	svc, m, rowRepo, tableRepo := setupRowService(t)
+	meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+	geometry := map[string]any{"type": "Point", "coordinates": []any{1, 2}}
+
+	expected := []storage.RowUpdate{
+		{Pkey: "pk-1", Values: map[string]any{"geom": storage.GeometryValue{
+			Literal: `{"coordinates":[1,2],"type":"Point"}`, Format: storage.GeometryGeoJSON, CRS: storage.DefaultGeometryCRS,
+		}}},
+		{Pkey: "pk-2", Values: map[string]any{"name": "b"}},
+	}
+	rowRepo.On("UpdateMany", mock.Anything, expected).Return(nil).Once()
+	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
+	geoRepo := &mocks.GeoRepository{}
+	expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
+	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+
+	written, err := svc.UpdateRows(context.Background(), meta, []RowUpdate{
+		{Pkey: "pk-1", Values: map[string]any{"geom": geometry}},
+		{Pkey: "pk-2", Values: map[string]any{"name": "b"}},
+	}, storage.DefaultGeometryCRS)
+
+	require.NoError(t, err)
+	require.Len(t, written, 2)
+	assert.Equal(t, `{"type":"Point"}`, written[0].Geometry)
+	assert.Empty(t, written[1].Geometry)
 }

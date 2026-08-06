@@ -122,7 +122,8 @@ func (s *ExportService) forEachPage(ctx context.Context, meta storage.Metadata, 
 }
 
 // exportColumns returns meta's table's column names in schema order,
-// excluding the geometry column — rows never carry it either.
+// excluding the geometry column and every hidden column (storage.IsHiddenColumn) —
+// rows never carry either.
 func (s *ExportService) exportColumns(ctx context.Context, meta storage.Metadata) ([]string, error) {
 	schema, err := s.columns.Schema(ctx, meta)
 	if err != nil {
@@ -131,7 +132,7 @@ func (s *ExportService) exportColumns(ctx context.Context, meta storage.Metadata
 
 	cols := make([]string, 0, len(schema))
 	for _, col := range schema {
-		if col.Name == meta.GeometryColumn {
+		if col.Name == meta.GeometryColumn || storage.IsHiddenColumn(col.Name) {
 			continue
 		}
 		cols = append(cols, col.Name)

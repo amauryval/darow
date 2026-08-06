@@ -25,9 +25,10 @@ type rowAPI interface {
 	ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*service.RowsPage, error)
 	GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error)
 	GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error)
-	InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any) (string, error)
-	BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any) ([]string, error)
-	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any) error
+	InsertRow(ctx context.Context, meta storage.Metadata, values map[string]any, crs string) (service.RowWriteResult, error)
+	BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error)
+	UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any, crs string) (service.RowWriteResult, error)
+	UpdateRows(ctx context.Context, meta storage.Metadata, updates []service.RowUpdate, crs string) ([]service.RowWriteResult, error)
 	RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error
 	ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error)
 	GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error)
@@ -54,6 +55,8 @@ type geoAPI interface {
 	GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 	CountFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error)
 	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
+	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*service.RowGeometry, error)
+	NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error)
 }
 
 // filterAPI is everything the router calls on *service.FilterService. Like
@@ -73,6 +76,7 @@ type sourceAPI interface {
 	Load(ctx context.Context, name, layer string, srid int) (string, error)
 	Delete(ctx context.Context, name string) error
 	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
+	SourceHasGeometry(ctx context.Context, name, layer string) (bool, error)
 	MaxUploadBytes() int64
 }
 

@@ -36,6 +36,55 @@ func (l *Materializer) DetectCRS(ctx context.Context, sourcePath, layer string) 
 	return name.String, int(code.Int64), nil
 }
 
+// SourceHasGeometry reports whether layer carries a geometry field at all,
+// which is what decides whether a source CRS has to be resolved for it.
+// layer selects one layer of a multi-layer source; pass "" for the first.
+// A Parquet file is read the same way CreateFromFile reads one — through
+// read_parquet, never ST_Read_Meta, which crashes the process on one.
+func (l *Materializer) SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error) {
+	if strings.HasSuffix(sourcePath, parquetExtension) {
+		return l.parquetHasGeometry(ctx, sourcePath)
+	}
+
+	query := `
+        SELECT len(t.l.geometry_fields) > 0
+        FROM (SELECT unnest(layers) AS l FROM st_read_meta(?)) t
+        WHERE (? = '' OR t.l.name = ?)
+        LIMIT 1
+    `
+	var hasGeometry bool
+	err := l.conn.QueryRow(ctx, query, sourcePath, layer, layer).Scan(&hasGeometry)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading source geometry fields: %w", err)
+	}
+	return hasGeometry, nil
+}
+
+// parquetHasGeometry reports whether a Parquet file declares a geometry
+// column: a GeoParquet one surfaces as DuckDB's own GEOMETRY type when the
+// file is described through read_parquet, a plain Parquet has none.
+func (l *Materializer) parquetHasGeometry(ctx context.Context, sourcePath string) (bool, error) {
+	rows, err := l.conn.Query(ctx, `SELECT column_type FROM (DESCRIBE SELECT * FROM read_parquet(?))`, sourcePath)
+	if err != nil {
+		return false, fmt.Errorf("reading source geometry fields: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var columnType string
+		if err := rows.Scan(&columnType); err != nil {
+			return false, err
+		}
+		if (catalogColumn{Type: columnType}).IsGeometry() {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 // reprojectionSource returns the PROJ source-CRS string ST_Transform should
 // reproject from, for authCode as reported by DetectCRS (or supplied
 // explicitly by the caller, always assumed EPSG in that case). EPSG:4326

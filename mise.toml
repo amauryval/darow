@@ -1,7 +1,9 @@
 [tools]
 go = "1.26.4"
-node = "22"
 "go:github.com/swaggo/swag/cmd/swag" = "1.16.6"
+golangci-lint = "2.12.2"
+node = "26.3.1"
+pre-commit = "4.6.0"
 
 [env]
 _.path = ["./bin"]
@@ -9,6 +11,14 @@ _.path = ["./bin"]
 # at a scratchpad from an unrelated project) that breaks cgo linking for
 # the duckdb driver.
 CGO_LDFLAGS = ""
+
+[tasks.setup]
+alias = "i"
+run = """
+pre-commit install
+"""
+sources = ["${APP_DIR}/package.json"]
+description = "Install dependencies and git hooks"
 
 # "./..." enumerates every package in the module tree, imported or not, so it
 # picks up web/node_modules/flatted/golang/pkg/flatted — an npm-shipped Go

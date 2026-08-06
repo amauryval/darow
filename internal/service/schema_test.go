@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
@@ -65,6 +66,20 @@ func Test_SchemaService_AddColumn(t *testing.T) {
 	err := svc.AddColumn(context.Background(), meta, "height", "DOUBLE")
 
 	require.NoError(t, err)
+}
+
+// A column type outside the allowlist (or GEOMETRY specifically) must be
+// rejected before the table is even opened — BLK-1, the caller is never
+// allowed to sneak a second geometry column past isGeo this way.
+func Test_SchemaService_AddColumn_RejectsDisallowedType(t *testing.T) {
+	svc, m, _ := setupSchemaService(t)
+	meta := storage.Metadata{TableId: "id-1"}
+
+	err := svc.AddColumn(context.Background(), meta, "geom2", "GEOMETRY")
+
+	var validationErr *storage.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	m.AssertNotCalled(t, "Table", mock.Anything)
 }
 
 func Test_SchemaService_InvalidateSchema(t *testing.T) {

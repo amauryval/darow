@@ -50,6 +50,7 @@ type tableImporter interface {
 	ListLayers(ctx context.Context, path string) ([]string, error)
 	ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error)
 	DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error)
+	SourceHasGeometry(ctx context.Context, path, layer string) (bool, error)
 	RemoveTable(ctx context.Context, tableId string) error
 }
 
@@ -336,6 +337,32 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 	return tableId, nil
 }
 
+// UnmarkLoaded drops tableId's loaded state from the cache, so a table
+// deleted elsewhere (MetadataService.RemoveTable) stops being reported as
+// loaded — the fix for BLK-3. Scans by TableId, not name: RemoveTable's
+// caller only ever has the bare tableId at hand. A no-op if no source or
+// layer currently points at tableId.
+func (s *SourceService) UnmarkLoaded(tableId string) {
+	if tableId == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.sources {
+		if s.sources[i].TableId == tableId {
+			s.sources[i].Loaded = false
+			s.sources[i].TableId = ""
+		}
+		for j := range s.sources[i].Layers {
+			if s.sources[i].Layers[j].TableId == tableId {
+				s.sources[i].Layers[j].Loaded = false
+				s.sources[i].Layers[j].TableId = ""
+			}
+		}
+	}
+}
+
 // sourcePath resolves name (and, for a multi-layer source, layer) against
 // the cache exactly like Load does — name is never turned into a path
 // without this check — without mutating any loaded state.
@@ -384,6 +411,23 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 		return "", 0, NewDisplayError(fmt.Sprintf("unable to detect the CRS of source %q", name), err)
 	}
 	return authName, authCode, nil
+}
+
+// SourceHasGeometry reports whether a source carries a geometry field at all —
+// what tells a caller whether the CRS question applies to it. Every format is
+// asked, Parquet included: the storage layer reads each one the way that
+// format has to be read, exactly as CreateFromFile does, so a plain Parquet
+// answers no rather than being assumed to carry a geometry.
+func (s *SourceService) SourceHasGeometry(ctx context.Context, name, layer string) (bool, error) {
+	path, err := s.sourcePath(name, layer)
+	if err != nil {
+		return false, err
+	}
+	hasGeometry, err := s.tableService.SourceHasGeometry(ctx, path, layer)
+	if err != nil {
+		return false, NewDisplayError(fmt.Sprintf("unable to read the geometry fields of source %q", name), err)
+	}
+	return hasGeometry, nil
 }
 
 // Delete removes the table(s) loaded from name and drops its cache entry —

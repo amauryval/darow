@@ -416,3 +416,43 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 		})
 	}
 }
+
+func Test_geoHandler_findNeighbours(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		geoErr     error
+		wantStatus int
+	}{
+		{name: "returns the neighbours", body: map[string]any{"geometry": map[string]any{"type": "Point", "coordinates": []float64{1, 2}}, "buffer": 10.0}, wantStatus: http.StatusOK},
+		{name: "a body without geometry is rejected", body: map[string]any{"buffer": 10.0}, wantStatus: http.StatusBadRequest},
+		{name: "a scalar table returns 404", body: map[string]any{"geometry": map[string]any{"type": "Point", "coordinates": []float64{1, 2}}}, geoErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			geoSvc := &mockGeoAPI{}
+			gh := &GeoHandler{
+				TableResolver: validation.NewTableResolver(metadataSvc),
+				geoService:    geoSvc,
+				apiCfg:        config.APIConfig{DefaultFeaturesLimit: 100, MaxRowLimit: 1000},
+			}
+
+			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			if _, hasGeometry := c.body["geometry"]; hasGeometry {
+				geoSvc.On("NeighbourFeatures", mock.Anything, meta, mock.Anything, []string(nil), 100).
+					Return([]storage.GeoFeature{{Pkey: "pk-2", GeoJSON: `{"type":"Point","coordinates":[1,2]}`}}, c.geoErr).Once()
+			}
+
+			rec := doHandlerRequest(gh.FindNeighbours, http.MethodPost, "/api/v1/tables/t1/neighbours", c.body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				assert.Contains(t, rec.Body.String(), `"pk-2"`)
+			}
+			geoSvc.AssertExpectations(t)
+		})
+	}
+}

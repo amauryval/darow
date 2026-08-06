@@ -173,3 +173,11 @@ func (r *Filters) DeleteAttached(ctx context.Context, tx *sql.Tx, tableId string
 	_, err := tx.ExecContext(ctx, `DELETE FROM filters WHERE tableId = ?`, tableId)
 	return err
 }
+
+// CreateAttached is a no-op: a stored filter is only ever added later by a
+// user, so a newly created table starts with none. It exists to satisfy
+// Attachment's full lifecycle contract — TODO-3's settings repository is
+// expected to be its first real implementer.
+func (r *Filters) CreateAttached(ctx context.Context, tx *sql.Tx, tableId string) error {
+	return nil
+}

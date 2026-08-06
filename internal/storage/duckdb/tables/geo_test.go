@@ -50,6 +50,34 @@ func Test_tileSimplifyTolerance(t *testing.T) {
 	}
 }
 
+// The envelope is computed in Go rather than by ST_TileEnvelope so the
+// tile's filter compares against a constant the spatial optimizer can read
+// (see tileEnvelope) — which makes it worth pinning against the grid it has
+// to agree with.
+func Test_tileEnvelope(t *testing.T) {
+	const origin = webMercatorOrigin
+
+	cases := []struct {
+		name                   string
+		zoom, x, y             int
+		minX, minY, maxX, maxY float64
+	}{
+		{name: "world tile covers both axes whole", zoom: 0, x: 0, y: 0, minX: -origin, minY: -origin, maxX: origin, maxY: origin},
+		{name: "north-east quadrant at zoom 1", zoom: 1, x: 1, y: 0, minX: 0, minY: 0, maxX: origin, maxY: origin},
+		{name: "south-west quadrant at zoom 1", zoom: 1, x: 0, y: 1, minX: -origin, minY: -origin, maxX: 0, maxY: 0},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			minX, minY, maxX, maxY := tileEnvelope(c.zoom, c.x, c.y)
+			assert.InDelta(t, c.minX, minX, 0.001)
+			assert.InDelta(t, c.minY, minY, 0.001)
+			assert.InDelta(t, c.maxX, maxX, 0.001)
+			assert.InDelta(t, c.maxY, maxY, 0.001)
+		})
+	}
+}
+
 // newDensePolygonTestTable stores a ~500 km-radius buffered polygon in
 // EPSG:3857, detailed enough that the tile query's simplification has
 // something to drop at low zoom.
@@ -113,6 +141,32 @@ func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
+
+// WKT is read at full resolution, in the same lon/lat CRS GeoJSON is
+// reported in, and a NULL geometry reads as an empty string rather than the
+// JSON literal GeoJSON needs.
+func Test_GeoRepository_WKTByPkey(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	wkt, err := geo.WKTByPkey(ctx, []string{"1"})
+	require.NoError(t, err)
+	assertPointNear(t, wkt["1"], 0.8983, 0.8983, 1e-4)
+
+	pkey, err := repo.Rows().Insert(ctx, map[string]any{"name": "no geometry"})
+	require.NoError(t, err)
+	missing, err := geo.WKTByPkey(ctx, []string{pkey})
+	require.NoError(t, err)
+	assert.Empty(t, missing[pkey])
+
+	empty, err := geo.WKTByPkey(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
+
 func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {
 	conn := openRepoTestDB(t)
 	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
@@ -173,4 +227,70 @@ func Test_GeoRepository_PkeysInBboxPagination(t *testing.T) {
 
 	assert.Equal(t, []string{"1"}, first)
 	assert.Equal(t, []string{"2"}, second)
+}
+
+// A neighbour search is what a topological edit works from: the rows whose
+// geometry falls within a buffer of the one being edited, the edited row
+// itself left out.
+func Test_GeoRepository_Features_NearBuffer(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	// Point "1" sits at roughly (0.9°, 0.9°); a metre-scale buffer around
+	// that same position must find it and nothing else.
+	near := storage.NearQuery{
+		Geometry: storage.GeometryValue{
+			Literal: `{"type":"Point","coordinates":[0.8983152841195214,0.8983152841195216]}`,
+			Format:  storage.GeometryGeoJSON,
+			CRS:     storage.DefaultGeometryCRS,
+		},
+		Buffer: 1000,
+	}
+
+	found, err := geo.Features(ctx, storage.FeatureQuery{Near: &near, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, "1", found[0].Pkey)
+
+	excluded, err := geo.Features(ctx, storage.FeatureQuery{Near: &near, Exclude: []string{"1"}, Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, excluded)
+}
+
+func Test_GeoRepository_FeaturesByBbox(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	bbox := [4]float64{0, 0, 5, 5}
+	found, err := geo.Features(ctx, storage.FeatureQuery{Bbox: &bbox, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, "1", found[0].Pkey)
+
+	count, err := geo.CountFeatures(ctx, storage.FeatureQuery{Bbox: &bbox})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+}
+
+func Test_GeoRepository_FeaturesGeometryOnlyTable(t *testing.T) {
+	conn := openRepoTestDB(t)
+	_, err := conn.db.Exec(`CREATE TABLE t_bare (__pkey TEXT PRIMARY KEY, geom GEOMETRY)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`INSERT INTO t_bare VALUES ('1', ST_GeomFromText('POINT(100000 100000)'))`)
+	require.NoError(t, err)
+
+	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-bare", PhysicalName: "t_bare", IsGeo: true, GeometryColumn: "geom"})
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+
+	bbox := [4]float64{0, 0, 5, 5}
+	found, err := geo.Features(context.Background(), storage.FeatureQuery{Bbox: &bbox, Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, found, 1)
 }

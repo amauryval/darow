@@ -30,6 +30,32 @@ func tileSimplifyTolerance(zoom int) float64 {
 	return math.Max(tolerance, 0.25)
 }
 
+// webMercatorOrigin is half the Web Mercator circumference: the axis extent
+// on either side of the origin, and so the span one tile covers at zoom 0.
+const webMercatorOrigin = 20037508.342789244
+
+// tileEnvelope is ST_TileEnvelope computed in Go rather than in SQL.
+//
+// It has to be computed here because the spatial extension's optimizer
+// rewrites ST_Intersects_Extent into an RTREE index scan only when the
+// envelope side of the comparison is a constant it can evaluate. Selecting
+// the envelope in a CTE and cross-joining it makes that side a *column
+// reference*, and the rule then evaluates an expression that is not flat —
+// which raises a DuckDB INTERNAL error during planning
+// ("Operation requires a flat vector but a non-flat vector was
+// encountered"). An INTERNAL error invalidates the whole database instance,
+// not just the failing query: every later query on the process fails, the
+// readiness probe included. One unlucky tile took the server down with it.
+//
+// Returned as minX, minY, maxX, maxY in EPSG:3857, the CRS the geometry
+// column is stored in.
+func tileEnvelope(zoom, x, y int) (float64, float64, float64, float64) {
+	span := 2 * webMercatorOrigin / math.Pow(2, float64(zoom))
+	minX := -webMercatorOrigin + float64(x)*span
+	maxY := webMercatorOrigin - float64(y)*span
+	return minX, maxY - span, minX + span, maxY
+}
+
 // Tile builds a Mapbox Vector Tile for the given z/x/y. Identifiers are
 // validated before interpolation; zoom/x/y and the source CRS
 // string are bound parameters. attrs embeds extra non-geometry columns in
@@ -52,8 +78,15 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 		structFields[i] = fmt.Sprintf(", '%s': %s", strings.ReplaceAll(attr, "'", "''"), alias)
 	}
 
-	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
-	args := []any{zoom, x, y, tileSimplifyTolerance(zoom)}
+	// The envelope is inlined as literals, not bound: the optimizer rule that
+	// turns this comparison into an RTREE index scan only fires on a constant
+	// it can read at planning time, and these four numbers come from
+	// validated integers, never from user text (see tileEnvelope).
+	minX, minY, maxX, maxY := tileEnvelope(zoom, x, y)
+	envelope := fmt.Sprintf("ST_MakeEnvelope(%v, %v, %v, %v)", minX, minY, maxX, maxY)
+
+	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", " + envelope + ")"
+	args := []any{tileSimplifyTolerance(zoom)}
 	if q.Filter != "" {
 		where += " AND (" + q.Filter + ")"
 		args = append(args, q.Args...)
@@ -81,20 +114,17 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 	// leave behind is tolerated by MVT renderers and already caught by the
 	// TRY/NULL filter above.
 	query := fmt.Sprintf(`
-        WITH tile AS (
-            SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
-        )
         SELECT ST_AsMVT(
             {'geom': mvt_geom, 'pkey': pkey%s},
             'layer'
         ) AS mvt
         FROM (
-            SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(tile.envelope))) AS mvt_geom, __pkey AS pkey%s
-            FROM %s, tile
+            SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(%s))) AS mvt_geom, __pkey AS pkey%s
+            FROM %s
             %s
         )
         WHERE mvt_geom IS NOT NULL
-    `, strings.Join(structFields, ""), quotedGeom, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
+    `, strings.Join(structFields, ""), quotedGeom, envelope, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
 
 	var mvt []byte
 	err := g.conn.QueryRow(ctx, query, args...).Scan(&mvt)
@@ -163,15 +193,32 @@ func (g *tableGeo) Extent(ctx context.Context, q storage.GeoQuery) (string, erro
 }
 
 // GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
-// keyed by pkey. Used only by table export.
+// keyed by pkey. Used by table export and by the per-row geometry read.
 func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
-	pkeyIn, args := pkeyInClause(pkeys)
-
 	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
 	// column is stored reprojected to EPSG:3857.
+	// A NULL geometry (a legal, geometry-less Feature) must still produce
+	// valid JSON for the caller to embed as-is — the JSON literal null, not
+	// an empty string, which json.RawMessage can't marshal.
+	return g.geometryByPkey(ctx, pkeys, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
+}
+
+// WKTByPkey returns each row's geometry as Well-Known Text, keyed by pkey,
+// at full resolution and in the lon/lat CRS every geometry read emits.
+func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
+	return g.geometryByPkey(ctx, pkeys, "ST_AsText(%s)", "")
+}
+
+// geometryByPkey reads the geometry of each row named by pkeys, encoded by
+// encoding (a format string taking the reprojected geometry expression),
+// with nullValue standing for a row whose geometry is NULL.
+func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, encoding, nullValue string) (map[string]string, error) {
+	pkeyIn, args := pkeyInClause(pkeys)
+
+	geometry := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", g.ref.QuotedGeometryColumn)
 	query := fmt.Sprintf(
-		`SELECT __pkey, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) FROM %s WHERE %s`,
-		g.ref.QuotedGeometryColumn, g.ref.PhysicalName, pkeyIn,
+		`SELECT __pkey, %s FROM %s WHERE %s`,
+		fmt.Sprintf(encoding, geometry), g.ref.PhysicalName, pkeyIn,
 	)
 	rows, err := g.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -182,18 +229,14 @@ func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[strin
 	result := make(map[string]string, len(pkeys))
 	for rows.Next() {
 		var pkey string
-		var geojson sql.NullString
-		if err := rows.Scan(&pkey, &geojson); err != nil {
+		var encoded sql.NullString
+		if err := rows.Scan(&pkey, &encoded); err != nil {
 			return nil, err
 		}
-		// A NULL geometry (a legal, geometry-less Feature) must still
-		// produce valid JSON for the caller to embed as-is —
-		// the JSON literal null, not an empty string, which json.RawMessage
-		// can't marshal.
-		if geojson.Valid {
-			result[pkey] = geojson.String
+		if encoded.Valid {
+			result[pkey] = encoded.String
 		} else {
-			result[pkey] = "null"
+			result[pkey] = nullValue
 		}
 	}
 	return result, rows.Err()
@@ -299,6 +342,23 @@ func featuresWhereClause(ref tableRef, q storage.FeatureQuery, baseArgs []any) (
 			"ST_Intersects(%s, ST_Transform(ST_MakeEnvelope(?, ?, ?, ?), 'OGC:CRS84', 'EPSG:3857'))", quotedGeom,
 		))
 		args = append(args, q.Bbox[0], q.Bbox[1], q.Bbox[2], q.Bbox[3])
+	}
+	if q.Near != nil {
+		// The buffer is in meters because the column is stored in
+		// EPSG:3857: the caller's geometry is transformed into it first,
+		// then widened, so ST_Intersects compares like with like and the
+		// RTREE index still applies.
+		parse, geomArgs := geometryExpr(q.Near.Geometry)
+		whereClauses = append(whereClauses, fmt.Sprintf("ST_Intersects(%s, ST_Buffer(%s, ?))", quotedGeom, parse))
+		args = append(args, geomArgs...)
+		args = append(args, q.Near.Buffer)
+	}
+	if len(q.Exclude) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(q.Exclude)), ", ")
+		whereClauses = append(whereClauses, fmt.Sprintf("__pkey NOT IN (%s)", placeholders))
+		for _, pkey := range q.Exclude {
+			args = append(args, pkey)
+		}
 	}
 	if q.Query.Filter != "" {
 		whereClauses = append(whereClauses, "("+q.Query.Filter+")")

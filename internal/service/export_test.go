@@ -81,6 +81,19 @@ func Test_ExportService_Export_CSV_ExcludesGeometryColumn(t *testing.T) {
 	assert.Equal(t, "pkey,name\npk-1,a\n", buf.String())
 }
 
+func Test_ExportService_Export_CSV_ExcludesOGCFID(t *testing.T) {
+	rows := &fakeRowLister{pages: []*RowsPage{
+		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
+	}}
+	cols := fakeColumnLister{schema: []ColumnSchema{{Name: "name"}, {Name: "OGC_FID"}}}
+	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
+
+	var buf bytes.Buffer
+	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1"}, "csv"))
+
+	assert.Equal(t, "pkey,name\npk-1,a\n", buf.String())
+}
+
 func Test_ExportService_Export_CSV_PaginatesAcrossBatches(t *testing.T) {
 	rows := &fakeRowLister{pages: []*RowsPage{
 		{Offset: 0, Total: 3, Rows: []storage.Row{

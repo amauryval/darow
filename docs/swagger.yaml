@@ -1,1155 +1,1241 @@
 basePath: /
 definitions:
-  handlers.collectionDTO:
-    properties:
-      extent:
-        $ref: '#/definitions/handlers.extentDTO'
-      id:
-        type: string
-      itemType:
-        type: string
-      title:
-        type: string
-    type: object
-  handlers.extentDTO:
-    properties:
-      spatial:
-        $ref: '#/definitions/handlers.spatialExtentDTO'
-    type: object
-  handlers.filterDTO:
-    properties:
-      conditions:
-        items:
-          $ref: '#/definitions/storage.FilterCondition'
-        type: array
-      createdAt:
-        type: string
-      filterId:
-        type: string
-      name:
-        type: string
-      tableId:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  handlers.metadataDTO:
-    properties:
-      bbox:
-        type: string
-      createdAt:
-        type: string
-      geometryColumn:
-        type: string
-      isGeo:
-        type: boolean
-      physicalName:
-        type: string
-      rowCount:
-        type: integer
-      srid:
-        type: integer
-      tableId:
-        type: string
-      tableName:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  handlers.spatialExtentDTO:
-    properties:
-      bbox:
-        items:
-          items:
-            format: float64
-            type: number
-          type: array
-        type: array
-      crs:
-        type: string
-    type: object
-  response.ErrorResponse:
-    properties:
-      code:
-        type: integer
-      error:
-        type: string
-      message:
-        type: string
-      requestId:
-        type: string
-    type: object
-  storage.FilterCondition:
-    properties:
-      bool:
-        type: string
-      column:
-        type: string
-      conditions:
-        items:
-          $ref: '#/definitions/storage.FilterCondition'
-        type: array
-      not:
-        type: boolean
-      operator:
-        type: string
-      value: {}
-    type: object
+    handlers.collectionDTO:
+        properties:
+            extent:
+                $ref: '#/definitions/handlers.extentDTO'
+            id:
+                type: string
+            itemType:
+                type: string
+            title:
+                type: string
+        type: object
+    handlers.extentDTO:
+        properties:
+            spatial:
+                $ref: '#/definitions/handlers.spatialExtentDTO'
+        type: object
+    handlers.filterDTO:
+        properties:
+            conditions:
+                items:
+                    $ref: '#/definitions/storage.FilterCondition'
+                type: array
+            createdAt:
+                type: string
+            filterId:
+                type: string
+            name:
+                type: string
+            tableId:
+                type: string
+            updatedAt:
+                type: string
+        type: object
+    handlers.metadataDTO:
+        properties:
+            bbox:
+                type: string
+            createdAt:
+                type: string
+            geometryColumn:
+                type: string
+            isGeo:
+                type: boolean
+            physicalName:
+                type: string
+            rowCount:
+                type: integer
+            srid:
+                type: integer
+            tableId:
+                type: string
+            tableName:
+                type: string
+            updatedAt:
+                type: string
+        type: object
+    handlers.spatialExtentDTO:
+        properties:
+            bbox:
+                items:
+                    items:
+                        format: float64
+                        type: number
+                    type: array
+                type: array
+            crs:
+                type: string
+        type: object
+    response.ErrorResponse:
+        properties:
+            code:
+                type: integer
+            error:
+                type: string
+            message:
+                type: string
+            requestId:
+                type: string
+        type: object
+    storage.FilterCondition:
+        properties:
+            bool:
+                type: string
+            column:
+                type: string
+            conditions:
+                items:
+                    $ref: '#/definitions/storage.FilterCondition'
+                type: array
+            not:
+                type: boolean
+            operator:
+                type: string
+            value: {}
+        type: object
 info:
-  contact: {}
-  description: 'Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique
-    : sources, tables, rows, tuiles MVT, dérivation.'
-  title: Darow
-  version: "1.0"
+    contact: {}
+    description:
+        'Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources,
+        tables, rows, tuiles MVT, dérivation.'
+    title: Darow
+    version: '1.0'
 paths:
-  /api/v1/ogc/:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      summary: OGC API - Features landing page
-      tags:
-      - features
-  /api/v1/ogc/collections:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      summary: List OGC API - Features collections
-      tags:
-      - features
-  /api/v1/ogc/collections/{tableId}:
-    get:
-      parameters:
-      - description: Collection (table) ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.collectionDTO'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get an OGC API - Features collection
-      tags:
-      - features
-  /api/v1/ogc/collections/{tableId}/items:
-    get:
-      parameters:
-      - description: Collection (table) ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)
-        in: query
-        name: bbox
-        type: string
-      - description: JSON-encoded []FilterCondition
-        in: query
-        name: filter
-        type: string
-      - description: Simplify tolerance override
-        in: query
-        name: simplify
-        type: string
-      - description: Coordinate precision grid size override
-        in: query
-        name: precision
-        type: string
-      - description: Max features returned
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List features of an OGC API - Features collection
-      tags:
-      - features
-  /api/v1/ogc/collections/{tableId}/items/{featureId}:
-    get:
-      parameters:
-      - description: Collection (table) ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Feature (row) primary key
-        in: path
-        name: featureId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get a single feature of an OGC API - Features collection
-      tags:
-      - features
-  /api/v1/ogc/conformance:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              items:
-                type: string
-              type: array
-            type: object
-      summary: Declared OGC API - Features conformance classes
-      tags:
-      - features
-  /api/v1/sources:
-    get:
-      parameters:
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      - description: Pagination limit
-        in: query
-        name: limit
-        type: integer
-      - description: Comma-separated sort columns, e.g. name,-sizeBytes
-        in: query
-        name: sort
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List cached sources
-      tags:
-      - sources
-  /api/v1/sources/{name}:
-    delete:
-      parameters:
-      - description: Source file name
-        in: path
-        name: name
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Delete a source file
-      tags:
-      - sources
-  /api/v1/sources/{name}/load:
-    post:
-      parameters:
-      - description: Source file name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Layer name (required for multi-layer sources)
-        in: query
-        name: layer
-        type: string
-      - description: Explicit source EPSG code, overriding auto-detection
-        in: query
-        name: srid
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Load a source file into a new table
-      tags:
-      - sources
-  /api/v1/sources/{name}/metadata:
-    get:
-      parameters:
-      - description: Source file name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Layer name (for multi-layer sources)
-        in: query
-        name: layer
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Preview a source's detected CRS
-      tags:
-      - sources
-  /api/v1/sources/refresh:
-    post:
-      parameters:
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      - description: Pagination limit
-        in: query
-        name: limit
-        type: integer
-      - description: Comma-separated sort columns, e.g. name,-sizeBytes
-        in: query
-        name: sort
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Rescan workDir
-      tags:
-      - sources
-  /api/v1/sources/upload:
-    post:
-      consumes:
-      - multipart/form-data
-      parameters:
-      - description: Explicit source EPSG code, overriding auto-detection
-        in: query
-        name: srid
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Upload a file and load it into a new table
-      tags:
-      - sources
-  /api/v1/tables:
-    get:
-      description: Liste les tables avec leurs métadonnées, paginées
-      parameters:
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      - description: Pagination limit
-        in: query
-        name: limit
-        type: integer
-      - description: Comma-separated sort columns, e.g. tableName,-updatedAt
-        in: query
-        name: sort
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List tables
-      tags:
-      - tables
-  /api/v1/tables/{tableId}:
-    delete:
-      description: Supprime une table et ses données
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Delete a table
-      tags:
-      - tables
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.metadataDTO'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get table metadata
-      tags:
-      - tables
-    patch:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.metadataDTO'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Rename a table
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/bbox:
-    post:
-      consumes:
-      - application/json
-      description: bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Filter row pkeys by bounding box
-      tags:
-      - geo
-  /api/v1/tables/{tableId}/columns:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Add a column
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/columns/{col}/distinct:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Column name
-        in: path
-        name: col
-        required: true
-        type: string
-      - description: Keep only the values containing this text (case-insensitive)
-        in: query
-        name: search
-        type: string
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      - description: Pagination limit
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List a column's distinct values
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/derive:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Source table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Derive a table from a SELECT query
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/derive-from-table:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Source table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Derive a table from this table's columns, expressions and conditions
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/export:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: csv or geojson
-        in: query
-        name: format
-        type: string
-      produces:
-      - application/json
-      - text/csv
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: file
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Export a table
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/filter:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Filter rows by column conditions
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/filtered-extent:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: JSON-encoded []FilterCondition
-        in: query
-        name: filter
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get the bounding box of rows matching a filter
-      tags:
-      - geo
-  /api/v1/tables/{tableId}/filters:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List a table's stored filters
-      tags:
-      - filters
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/handlers.filterDTO'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Save a named filter on a table
-      tags:
-      - filters
-  /api/v1/tables/{tableId}/filters/{filterId}:
-    delete:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Filter ID
-        in: path
-        name: filterId
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Delete a stored filter
-      tags:
-      - filters
-    patch:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Filter ID
-        in: path
-        name: filterId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/handlers.filterDTO'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Update a stored filter's name and/or conditions
-      tags:
-      - filters
-  /api/v1/tables/{tableId}/geometry-types:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              items:
-                type: string
-              type: array
-            type: object
-      summary: List distinct geometry types present in a table
-      tags:
-      - geo
-  /api/v1/tables/{tableId}/rows:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      - description: Pagination limit
-        in: query
-        name: limit
-        type: integer
-      - description: Comma-separated sort columns, e.g. name,-createdAt
-        in: query
-        name: sort
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: List rows
-      tags:
-      - rows
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            additionalProperties:
-              items:
-                type: string
-              type: array
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Add one or more rows
-      tags:
-      - rows
-  /api/v1/tables/{tableId}/rows/{pkey}:
-    delete:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Row primary key
-        in: path
-        name: pkey
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-      summary: Delete a row
-      tags:
-      - rows
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Row primary key
-        in: path
-        name: pkey
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get a row by pkey
-      tags:
-      - rows
-    patch:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Row primary key
-        in: path
-        name: pkey
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Update a row
-      tags:
-      - rows
-  /api/v1/tables/{tableId}/rows/batch:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get multiple rows by pkey in one request
-      tags:
-      - rows
-  /api/v1/tables/{tableId}/schema:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-      summary: Get table schema
-      tags:
-      - tables
-  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Zoom level
-        in: path
-        name: z
-        required: true
-        type: integer
-      - description: Tile X
-        in: path
-        name: x
-        required: true
-        type: integer
-      - description: Tile Y
-        in: path
-        name: "y"
-        required: true
-        type: integer
-      - description: Comma-separated non-geometry columns to embed in the tile
-        in: query
-        name: attrs
-        type: string
-      - description: JSON-encoded []FilterCondition
-        in: query
-        name: filter
-        type: string
-      produces:
-      - application/vnd.mapbox-vector-tile
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: file
-      summary: Get an MVT tile
-      tags:
-      - geo
-  /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features:
-    get:
-      parameters:
-      - description: Table ID
-        in: path
-        name: tableId
-        required: true
-        type: string
-      - description: Zoom level
-        in: path
-        name: z
-        required: true
-        type: integer
-      - description: Tile X
-        in: path
-        name: x
-        required: true
-        type: integer
-      - description: Tile Y
-        in: path
-        name: "y"
-        required: true
-        type: integer
-      - description: Comma-separated non-geometry columns to embed
-        in: query
-        name: attrs
-        type: string
-      - description: JSON-encoded []FilterCondition
-        in: query
-        name: filter
-        type: string
-      - description: Simplify tolerance override
-        in: query
-        name: simplify
-        type: string
-      - description: Coordinate precision grid size override
-        in: query
-        name: precision
-        type: string
-      - description: Max features returned
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination offset
-        in: query
-        name: offset
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Get features intersecting an MVT-style tile, as GeoJSON
-      tags:
-      - geo
-  /healthz:
-    get:
-      responses:
-        "200":
-          description: OK
-      summary: Liveness probe
-      tags:
-      - ops
-  /readyz:
-    get:
-      responses:
-        "200":
-          description: OK
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/response.ErrorResponse'
-      summary: Readiness probe
-      tags:
-      - ops
-swagger: "2.0"
+    /api/v1/ogc/:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+            summary: OGC API - Features landing page
+            tags:
+                - features
+    /api/v1/ogc/collections:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+            summary: List OGC API - Features collections
+            tags:
+                - features
+    /api/v1/ogc/collections/{tableId}:
+        get:
+            parameters:
+                - description: Collection (table) ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.collectionDTO'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get an OGC API - Features collection
+            tags:
+                - features
+    /api/v1/ogc/collections/{tableId}/items:
+        get:
+            parameters:
+                - description: Collection (table) ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)
+                  in: query
+                  name: bbox
+                  type: string
+                - description: JSON-encoded []FilterCondition
+                  in: query
+                  name: filter
+                  type: string
+                - description: Simplify tolerance override
+                  in: query
+                  name: simplify
+                  type: string
+                - description: Coordinate precision grid size override
+                  in: query
+                  name: precision
+                  type: string
+                - description: Max features returned
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List features of an OGC API - Features collection
+            tags:
+                - features
+    /api/v1/ogc/collections/{tableId}/items/{featureId}:
+        get:
+            parameters:
+                - description: Collection (table) ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Feature (row) primary key
+                  in: path
+                  name: featureId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get a single feature of an OGC API - Features collection
+            tags:
+                - features
+    /api/v1/ogc/conformance:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            items:
+                                type: string
+                            type: array
+                        type: object
+            summary: Declared OGC API - Features conformance classes
+            tags:
+                - features
+    /api/v1/sources:
+        get:
+            parameters:
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+                - description: Pagination limit
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Comma-separated sort columns, e.g. name,-sizeBytes
+                  in: query
+                  name: sort
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List cached sources
+            tags:
+                - sources
+    /api/v1/sources/{name}:
+        delete:
+            parameters:
+                - description: Source file name
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+            responses:
+                '204':
+                    description: No Content
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete a source file
+            tags:
+                - sources
+    /api/v1/sources/{name}/load:
+        post:
+            parameters:
+                - description: Source file name
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                - description: Layer name (required for multi-layer sources)
+                  in: query
+                  name: layer
+                  type: string
+                - description: Explicit source EPSG code, overriding auto-detection
+                  in: query
+                  name: srid
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '409':
+                    description: Conflict
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Load a source file into a new table
+            tags:
+                - sources
+    /api/v1/sources/{name}/metadata:
+        get:
+            parameters:
+                - description: Source file name
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                - description: Layer name (for multi-layer sources)
+                  in: query
+                  name: layer
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Preview a source's detected CRS
+            tags:
+                - sources
+    /api/v1/sources/refresh:
+        post:
+            parameters:
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+                - description: Pagination limit
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Comma-separated sort columns, e.g. name,-sizeBytes
+                  in: query
+                  name: sort
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Rescan workDir
+            tags:
+                - sources
+    /api/v1/sources/upload:
+        post:
+            consumes:
+                - multipart/form-data
+            parameters:
+                - description: Explicit source EPSG code, overriding auto-detection
+                  in: query
+                  name: srid
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Upload a file and load it into a new table
+            tags:
+                - sources
+    /api/v1/tables:
+        get:
+            description: Liste les tables avec leurs métadonnées, paginées
+            parameters:
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+                - description: Pagination limit
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Comma-separated sort columns, e.g. tableName,-updatedAt
+                  in: query
+                  name: sort
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List tables
+            tags:
+                - tables
+    /api/v1/tables/{tableId}:
+        delete:
+            description: Supprime une table et ses données
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            responses:
+                '204':
+                    description: No Content
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete a table
+            tags:
+                - tables
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.metadataDTO'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get table metadata
+            tags:
+                - tables
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.metadataDTO'
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Rename a table
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/bbox:
+        post:
+            consumes:
+                - application/json
+            description: bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+            summary: Filter row pkeys by bounding box
+            tags:
+                - geo
+    /api/v1/tables/{tableId}/columns:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Add a column
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/columns/{col}/distinct:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Column name
+                  in: path
+                  name: col
+                  required: true
+                  type: string
+                - description: Keep only the values containing this text (case-insensitive)
+                  in: query
+                  name: search
+                  type: string
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+                - description: Pagination limit
+                  in: query
+                  name: limit
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List a column's distinct values
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/derive:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Source table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Derive a table from a SELECT query
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/derive-from-table:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Source table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Derive a table from this table's columns, expressions and conditions
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/export:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: csv or geojson
+                  in: query
+                  name: format
+                  type: string
+            produces:
+                - application/json
+                - text/csv
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        type: file
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Export a table
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/filter:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Filter rows by column conditions
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/filtered-extent:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: JSON-encoded []FilterCondition
+                  in: query
+                  name: filter
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get the bounding box of rows matching a filter
+            tags:
+                - geo
+    /api/v1/tables/{tableId}/filters:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List a table's stored filters
+            tags:
+                - filters
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        $ref: '#/definitions/handlers.filterDTO'
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Save a named filter on a table
+            tags:
+                - filters
+    /api/v1/tables/{tableId}/filters/{filterId}:
+        delete:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Filter ID
+                  in: path
+                  name: filterId
+                  required: true
+                  type: string
+            responses:
+                '204':
+                    description: No Content
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete a stored filter
+            tags:
+                - filters
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Filter ID
+                  in: path
+                  name: filterId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.filterDTO'
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Update a stored filter's name and/or conditions
+            tags:
+                - filters
+    /api/v1/tables/{tableId}/geometry-types:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            items:
+                                type: string
+                            type: array
+                        type: object
+            summary: List distinct geometry types present in a table
+            tags:
+                - geo
+    /api/v1/tables/{tableId}/neighbours:
+        post:
+            consumes:
+                - application/json
+            description: geometry is a GeoJSON geometry in OGC:CRS84; buffer is a distance in meters
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List the features around a geometry
+            tags:
+                - geo
+    /api/v1/tables/{tableId}/rows:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+                - description: Pagination limit
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Comma-separated sort columns, e.g. name,-createdAt
+                  in: query
+                  name: sort
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List rows
+            tags:
+                - rows
+        patch:
+            consumes:
+                - application/json
+            description:
+                Every row lands or none does — what a topological edit needs, since it moves a
+                boundary shared by several rows
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: CRS of the written geometries (default OGC:CRS84)
+                  in: query
+                  name: crs
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Update several rows in one transaction
+            tags:
+                - rows
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            items:
+                                type: string
+                            type: array
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Add one or more rows
+            tags:
+                - rows
+    /api/v1/tables/{tableId}/rows/{pkey}:
+        delete:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Row primary key
+                  in: path
+                  name: pkey
+                  required: true
+                  type: string
+            responses:
+                '204':
+                    description: No Content
+            summary: Delete a row
+            tags:
+                - rows
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Row primary key
+                  in: path
+                  name: pkey
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get a row by pkey
+            tags:
+                - rows
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Row primary key
+                  in: path
+                  name: pkey
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Update a row
+            tags:
+                - rows
+    /api/v1/tables/{tableId}/rows/{pkey}/geometry:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Row primary key
+                  in: path
+                  name: pkey
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get a row's geometry, as GeoJSON and as WKT
+            tags:
+                - rows
+    /api/v1/tables/{tableId}/rows/batch:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get multiple rows by pkey in one request
+            tags:
+                - rows
+    /api/v1/tables/{tableId}/schema:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+            summary: Get table schema
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Zoom level
+                  in: path
+                  name: z
+                  required: true
+                  type: integer
+                - description: Tile X
+                  in: path
+                  name: x
+                  required: true
+                  type: integer
+                - description: Tile Y
+                  in: path
+                  name: 'y'
+                  required: true
+                  type: integer
+                - description: Comma-separated non-geometry columns to embed in the tile
+                  in: query
+                  name: attrs
+                  type: string
+                - description: JSON-encoded []FilterCondition
+                  in: query
+                  name: filter
+                  type: string
+            produces:
+                - application/vnd.mapbox-vector-tile
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        type: file
+            summary: Get an MVT tile
+            tags:
+                - geo
+    /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features:
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Zoom level
+                  in: path
+                  name: z
+                  required: true
+                  type: integer
+                - description: Tile X
+                  in: path
+                  name: x
+                  required: true
+                  type: integer
+                - description: Tile Y
+                  in: path
+                  name: 'y'
+                  required: true
+                  type: integer
+                - description: Comma-separated non-geometry columns to embed
+                  in: query
+                  name: attrs
+                  type: string
+                - description: JSON-encoded []FilterCondition
+                  in: query
+                  name: filter
+                  type: string
+                - description: Simplify tolerance override
+                  in: query
+                  name: simplify
+                  type: string
+                - description: Coordinate precision grid size override
+                  in: query
+                  name: precision
+                  type: string
+                - description: Max features returned
+                  in: query
+                  name: limit
+                  type: integer
+                - description: Pagination offset
+                  in: query
+                  name: offset
+                  type: integer
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Get features intersecting an MVT-style tile, as GeoJSON
+            tags:
+                - geo
+    /healthz:
+        get:
+            responses:
+                '200':
+                    description: OK
+            summary: Liveness probe
+            tags:
+                - ops
+    /readyz:
+        get:
+            responses:
+                '200':
+                    description: OK
+                '503':
+                    description: Service Unavailable
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Readiness probe
+            tags:
+                - ops
+swagger: '2.0'
