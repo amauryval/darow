@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"darow/internal/config"
 	"darow/internal/router/response"
 	"darow/internal/service"
 	"darow/internal/storage"
@@ -16,12 +15,12 @@ import (
 // uploading, loading, previewing CRS, and deleting.
 type SourcesHandler struct {
 	sourceService sourceAPI
-	apiCfg        config.APIConfig
+	settings      settingsAPI
 }
 
 // NewSourcesHandler builds a SourcesHandler from the service port it needs.
-func NewSourcesHandler(sourceSvc sourceAPI, apiCfg config.APIConfig) *SourcesHandler {
-	return &SourcesHandler{sourceService: sourceSvc, apiCfg: apiCfg}
+func NewSourcesHandler(sourceSvc sourceAPI, settings settingsAPI) *SourcesHandler {
+	return &SourcesHandler{sourceService: sourceSvc, settings: settings}
 }
 
 // paginationParams reads offset/limit query params, capped by
@@ -33,12 +32,12 @@ func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = sh.apiCfg.DefaultListLimit
+	limit = sh.settings.Current().DefaultListLimit
 	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > sh.apiCfg.MaxListLimit {
-		limit = sh.apiCfg.MaxListLimit
+	if limit > sh.settings.Current().MaxListLimit {
+		limit = sh.settings.Current().MaxListLimit
 	}
 	return offset, limit
 }

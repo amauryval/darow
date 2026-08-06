@@ -1,5 +1,7 @@
-# config.yaml — valeurs par défaut, surchargeables par variables d'environnement
-# ou par argument de ligne de commande pour workDir (voir docs/spec.md 2.3).
+# config.yaml — bootstrap-only parameters, needed to start the process itself
+# (before the settings table can even be read). Everything else (row/list
+# limits, cache TTLs and sizes...) is edited at runtime through the
+# settings table — see spec/back/spec.md.
 server:
     port: 8080
     readTimeoutSec: 15
@@ -12,20 +14,5 @@ duckdb:
 
 sources:
     workDir: './data/sources'
-    maxSizeBytes: 1048576000 # 10000 Mo
+    maxSizeBytes: 1048576000 # 1000 Mo
     allowedExtensions: ['.geojson', '.shp', '.csv', '.gpkg', '.parquet']
-
-api:
-    defaultRowLimit: 100
-    maxRowLimit: 1000
-    maxBodyBytes: 1048576000 # 1000 Mo
-    requestTimeoutSec: 30
-    exportBatchSize: 1000
-
-cache:
-    metadataTTLSec: 300
-    metadataMaxItems: 1000
-    schemaTTLSec: 300
-    schemaMaxItems: 1000
-    tileTTLSec: 300
-    tileMaxItems: 5000

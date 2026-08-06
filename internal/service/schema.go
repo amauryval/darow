@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
@@ -20,16 +22,26 @@ type ColumnSchema struct {
 // derived metadata, so it needs no dependency on MetadataService. It is
 // the single owner of its own column schema cache, a size-bounded LRU
 // with expiration, invalidated by AddColumn and, through
-// InvalidateSchema, by MetadataService.RemoveTable.
+// InvalidateSchema, by MetadataService.RemoveTable. The cache sits behind
+// an atomic pointer so ResetCache can swap it for a freshly sized one.
 type SchemaService struct {
 	storage tableResolver
-	cache   *expirable.LRU[string, []ColumnSchema]
+	cache   atomic.Pointer[expirable.LRU[string, []ColumnSchema]]
 }
 
 // NewSchemaService builds a SchemaService backed by storage, using c to
 // cache each table's column schema.
 func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSchema]) *SchemaService {
-	return &SchemaService{storage: storage, cache: c}
+	svc := &SchemaService{storage: storage}
+	svc.cache.Store(c)
+	return svc
+}
+
+// ResetCache swaps the schema cache for a freshly built one sized maxItems
+// with the given ttl — called by core.NewServices when SettingsService
+// reports a change to cache.schemaMaxItems/TTLSec.
+func (s *SchemaService) ResetCache(maxItems int, ttl time.Duration) {
+	s.cache.Store(expirable.NewLRU[string, []ColumnSchema](maxItems, nil, ttl))
 }
 
 // Schema returns the name and type of every column of meta's underlying
@@ -39,7 +51,8 @@ func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSc
 // miss. meta is the caller's already-resolved metadata; only its TableId
 // is used as the cache key.
 func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
-	if schema, ok := s.cache.Get(meta.TableId); ok {
+	cache := s.cache.Load()
+	if schema, ok := cache.Get(meta.TableId); ok {
 		return schema, nil
 	}
 
@@ -57,7 +70,7 @@ func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]Co
 		schema = append(schema, ColumnSchema{Name: col.Name, Type: col.Type})
 	}
 
-	s.cache.Add(meta.TableId, schema)
+	cache.Add(meta.TableId, schema)
 	return schema, nil
 }
 
@@ -102,5 +115,5 @@ func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, co
 // MetadataService.RemoveTable, the one structural change to a table that
 // happens outside SchemaService.
 func (s *SchemaService) InvalidateSchema(tableId string) {
-	s.cache.Remove(tableId)
+	s.cache.Load().Remove(tableId)
 }

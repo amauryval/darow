@@ -281,3 +281,20 @@ func Test_GeoService_NeighbourFeatures(t *testing.T) {
 		require.ErrorAs(t, err, &displayErr)
 	})
 }
+
+func Test_GeoService_ResetCache(t *testing.T) {
+	geoSvc, geoRepo := setupGeoService(t)
+	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
+	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("mvt-data"), nil).Once()
+	_, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
+	require.NoError(t, err)
+
+	geoSvc.ResetCache(1000, 5*time.Minute)
+
+	// A second Tile call proves the cache was actually dropped: the mock
+	// expectation below only matches once, so a stale hit would leave it
+	// unfulfilled and fail via AssertExpectations.
+	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("mvt-data"), nil).Once()
+	_, err = geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
+	require.NoError(t, err)
+}

@@ -133,7 +133,7 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts` — one function per endpoint **the
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `settings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
   return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
   contract is described on its own side, and an unreachable function here is code that rots without
@@ -283,6 +283,7 @@ module level and documents it; that is the exception, not the rule.
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
+| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value, which is what lets `useSources`, `useTableRows` and `TablesView` cap their own default page size against `maxListLimit`/`maxRowLimit` without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
 
 ---
 
@@ -333,6 +334,7 @@ single, link-less entry naming the page.
 | `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
+| `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, saved as a diff-only patch, per-field refusals attached to their own input |
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
@@ -892,6 +894,7 @@ web/
       TablesView.vue
       SourcesView.vue / SourcesView/    sub-views and panels
       TableDetailView.vue / TableDetailView/
+      SettingsView.vue
     router.ts         one route per view
     App.vue           shell: navigation, server status, toasts
     style.css         Tailwind + daisyUI

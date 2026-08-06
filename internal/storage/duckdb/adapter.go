@@ -41,6 +41,7 @@ type Adapter struct {
 	maxOpenConns int
 	catalog      *catalog.Catalog
 	filters      *catalog.Filters
+	settings     *catalog.Settings
 	materializer *tables.Materializer
 }
 
@@ -107,6 +108,7 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	// filters attached to it.
 	a.filters = catalog.NewFilters(a)
 	a.catalog.Register(a.filters)
+	a.settings = catalog.NewSettings(a)
 	return a, nil
 }
 
@@ -272,6 +274,12 @@ func (a *Adapter) Filters() storage.FilterStore {
 // derived query.
 func (a *Adapter) Materializer() storage.TableMaterializer {
 	return a.materializer
+}
+
+// Settings returns the runtime-editable settings repository, the
+// counterpart of Catalog for config.Config's non-bootstrap fields.
+func (a *Adapter) Settings() storage.SettingsStore {
+	return a.settings
 }
 
 // Table resolves meta into a storage.TableRepository, validating its

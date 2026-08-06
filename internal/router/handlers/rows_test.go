@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"darow/internal/config"
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
@@ -18,15 +17,15 @@ func Test_newRowsHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	rowSvc := &mockRowAPI{}
-	apiCfg := config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}
+	settings := stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}
 
 	geoSvc := &mockGeoAPI{}
 
-	rh := NewRowsHandler(metadataSvc, schemaSvc, rowSvc, geoSvc, apiCfg)
+	rh := NewRowsHandler(metadataSvc, schemaSvc, rowSvc, geoSvc, settings)
 
 	assert.Same(t, rowSvc, rh.rowService)
 	assert.Same(t, geoSvc, rh.geoService)
-	assert.Equal(t, apiCfg, rh.apiCfg)
+	assert.Equal(t, settings, rh.settings)
 
 	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -52,7 +51,7 @@ func Test_rowsHandler_paginationParams(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rh := &RowsHandler{apiCfg: config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000}}
+			rh := &RowsHandler{settings: stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil)
 
 			offset, limit := rh.paginationParams(req)
@@ -82,7 +81,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 			rh := &RowsHandler{
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				rowService:    rowSvc,
-				apiCfg:        config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
+				settings:      stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -123,7 +122,7 @@ func Test_rowsHandler_listRows_Sort(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				apiCfg:          config.APIConfig{DefaultRowLimit: 100, MaxRowLimit: 1000},
+				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -166,7 +165,7 @@ func Test_rowsHandler_addRows(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			rowsBody := c.body.(map[string]any)["rows"].([]map[string]any)
@@ -204,7 +203,7 @@ func Test_rowsHandler_getRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -240,7 +239,7 @@ func Test_rowsHandler_getRowsByPkey(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			pkeys := c.body.(map[string]any)["pkeys"].([]string)
@@ -277,7 +276,7 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			updates := map[string]any{"name": "b"}
@@ -314,7 +313,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -350,7 +349,7 @@ func Test_rowsHandler_getRowGeometry(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			geoSvc := &mockGeoAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
 			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -376,7 +375,7 @@ func Test_rowsHandler_getRowGeometry(t *testing.T) {
 func Test_rowsHandler_addRows_EchoesTheStoredGeometry(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	rowSvc := &mockRowAPI{}
-	rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+	rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 	meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
 	values := map[string]any{"geom": "POINT(2.35 48.85)"}
@@ -421,7 +420,7 @@ func Test_rowsHandler_updateRows(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			rowSvc := &mockRowAPI{}
-			rh := &RowsHandler{TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+			rh := &RowsHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()

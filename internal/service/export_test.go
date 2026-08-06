@@ -48,6 +48,14 @@ func (f fakeColumnLister) Schema(ctx context.Context, meta storage.Metadata) ([]
 	return f.schema, f.err
 }
 
+type fakeSettingsReader struct {
+	exportBatchSize int64
+}
+
+func (f fakeSettingsReader) Current() storage.Settings {
+	return storage.Settings{ExportBatchSize: f.exportBatchSize}
+}
+
 func Test_ExportService_Export_CSV(t *testing.T) {
 	rows := &fakeRowLister{pages: []*RowsPage{
 		{Offset: 0, Total: 2, Rows: []storage.Row{
@@ -56,7 +64,7 @@ func Test_ExportService_Export_CSV(t *testing.T) {
 		}},
 	}}
 	cols := fakeColumnLister{schema: []ColumnSchema{{Name: "name"}}}
-	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
+	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, fakeSettingsReader{exportBatchSize: 10})
 
 	var buf bytes.Buffer
 	contentType, err := svc.ContentType(storage.Metadata{TableId: "id-1"}, "csv")
@@ -72,7 +80,7 @@ func Test_ExportService_Export_CSV_ExcludesGeometryColumn(t *testing.T) {
 		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
 	}}
 	cols := fakeColumnLister{schema: []ColumnSchema{{Name: "name"}, {Name: "geom"}}}
-	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
+	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, fakeSettingsReader{exportBatchSize: 10})
 
 	var buf bytes.Buffer
 	meta := storage.Metadata{TableId: "id-1", GeometryColumn: "geom"}
@@ -86,7 +94,7 @@ func Test_ExportService_Export_CSV_ExcludesOGCFID(t *testing.T) {
 		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
 	}}
 	cols := fakeColumnLister{schema: []ColumnSchema{{Name: "name"}, {Name: "OGC_FID"}}}
-	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 10)
+	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, fakeSettingsReader{exportBatchSize: 10})
 
 	var buf bytes.Buffer
 	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1"}, "csv"))
@@ -105,7 +113,7 @@ func Test_ExportService_Export_CSV_PaginatesAcrossBatches(t *testing.T) {
 		}},
 	}}
 	cols := fakeColumnLister{schema: []ColumnSchema{{Name: "name"}}}
-	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, 2)
+	svc := NewExportService(rows, fakeGeometryFetcher{}, cols, fakeSettingsReader{exportBatchSize: 2})
 
 	var buf bytes.Buffer
 	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1"}, "csv"))
@@ -118,7 +126,7 @@ func Test_ExportService_Export_GeoJSON(t *testing.T) {
 		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
 	}}
 	geometry := fakeGeometryFetcher{geometries: map[string]string{"pk-1": `{"type":"Point","coordinates":[1,2]}`}}
-	svc := NewExportService(rows, geometry, fakeColumnLister{}, 10)
+	svc := NewExportService(rows, geometry, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 10})
 
 	var buf bytes.Buffer
 	contentType, err := svc.ContentType(storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson")
@@ -139,7 +147,7 @@ func Test_ExportService_Export_GeoJSON_NullGeometry(t *testing.T) {
 		{Offset: 0, Total: 1, Rows: []storage.Row{{Pkey: "pk-1", Values: map[string]any{"name": "a"}}}},
 	}}
 	geometry := fakeGeometryFetcher{geometries: map[string]string{"pk-1": "null"}}
-	svc := NewExportService(rows, geometry, fakeColumnLister{}, 10)
+	svc := NewExportService(rows, geometry, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 10})
 
 	var buf bytes.Buffer
 	require.NoError(t, svc.Export(context.Background(), &buf, storage.Metadata{TableId: "id-1", IsGeo: true}, "geojson"))
@@ -149,7 +157,7 @@ func Test_ExportService_Export_GeoJSON_NullGeometry(t *testing.T) {
 }
 
 func Test_ExportService_ContentType_RejectsGeoJSONOnNonGeoTable(t *testing.T) {
-	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
+	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 10})
 
 	_, err := svc.ContentType(storage.Metadata{TableId: "id-1", IsGeo: false}, "geojson")
 
@@ -159,7 +167,7 @@ func Test_ExportService_ContentType_RejectsGeoJSONOnNonGeoTable(t *testing.T) {
 }
 
 func Test_ExportService_ContentType_RejectsUnsupportedFormat(t *testing.T) {
-	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
+	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 10})
 
 	_, err := svc.ContentType(storage.Metadata{TableId: "id-1"}, "xml")
 
@@ -169,7 +177,7 @@ func Test_ExportService_ContentType_RejectsUnsupportedFormat(t *testing.T) {
 }
 
 func Test_ExportService_Export_PropagatesRowListingFailure(t *testing.T) {
-	svc := NewExportService(&fakeRowLister{err: errors.New("boom")}, fakeGeometryFetcher{}, fakeColumnLister{}, 10)
+	svc := NewExportService(&fakeRowLister{err: errors.New("boom")}, fakeGeometryFetcher{}, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 10})
 
 	err := svc.Export(context.Background(), &bytes.Buffer{}, storage.Metadata{TableId: "id-1"}, "geojson")
 
@@ -179,7 +187,7 @@ func Test_ExportService_Export_PropagatesRowListingFailure(t *testing.T) {
 }
 
 func Test_ExportService_NewExportService_DefaultsInvalidBatchSize(t *testing.T) {
-	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, 0)
+	svc := NewExportService(&fakeRowLister{}, fakeGeometryFetcher{}, fakeColumnLister{}, fakeSettingsReader{exportBatchSize: 0})
 
-	assert.Equal(t, int64(1000), svc.batchSize)
+	assert.Equal(t, int64(1000), svc.batchSize())
 }

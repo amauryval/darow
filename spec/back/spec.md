@@ -119,14 +119,16 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
-| `internal/config`            | YAML loading + environment overrides + validation                                                                                                                                                |
-| `internal/core`              | wiring: builds the nine services and the caches from the config                                                                                                                                  |
+| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields (§2.1–2.3)                                                                                                              |
+| `internal/settings`          | exported constants: every runtime-editable setting's default value (§2.4), no logic                                                                                                              |
+| `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
 | `internal/router/handlers`   | one handler per endpoint family + the ports to the services                                                                                                                                      |
 | `internal/router/validation` | `{tableId}` resolution, column-name validation                                                                                                                                                   |
 | `internal/router/response`   | JSON writing, standard error body, error → status mapping                                                                                                                                        |
 | `internal/service`           | application logic, caches, orchestration                                                                                                                                                         |
-| `internal/storage`           | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`/`StoredFilter`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer`, `FilterStore` |
+| `internal/observer`          | `Observer[T]`, a generic in-memory lifecycle notifier — no domain vocabulary, no `context.Context`                                                                                              |
+| `internal/storage`           | the storage layer's types, primitives and interfaces: `Metadata`/`Row`/`GeoFeature`/`StoredFilter`/`Settings`, `BuildFilter`, identifiers, `Catalog`, `TableRepository`, `TableMaterializer`, `FilterStore`, `SettingsStore` |
 | `internal/storage/duckdb`    | the single implementation (sub-packages `catalog/` and `tables/`)                                                                                                                                |
 | `internal/storage/mocks`     | testify doubles of `storage`'s interfaces (`Adapter`, the three repositories), one file per file of `storage` declaring them                                                                     |
 | `internal/webui`             | `go:embed` of the Vue SPA's production build                                                                                                                                                     |
@@ -137,10 +139,11 @@ services never know the full adapter. The files concerned: `router/handlers/port
 `service/derive.go`, `service/import.go`, `service/rows.go`, `service/export.go`,
 `service/source.go`, `core/core.go`.
 
-**Bootstrap** (`core/core.go`): `Setup` opens DuckDB, creates `workDir` if absent, builds the three
-LRU caches from the config, wires the nine services, then makes a first scan of `workDir`. The
-caller must defer `Close`. `NewServices` does the wiring alone, with no connection — that is what
-the tests use with a mock.
+**Bootstrap** (`core/core.go`): `Setup` opens DuckDB, creates `workDir` if absent, loads the settings
+row (§5.8) — a failure here is a startup failure — builds the three LRU caches from it, wires the ten
+services, then makes a first scan of `workDir`. The caller must defer `Close`. `NewServices` does the
+wiring alone, with no connection — that is what the tests use with a mock, and it now returns an
+error alongside `*Services` for that settings load to fail into.
 
 ---
 
@@ -182,38 +185,20 @@ directory.
 | `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
-which takes priority over everything else (§2.6).
+which takes priority over everything else (§2.5).
 
-### 2.4 `api`
+### 2.4 Runtime-editable settings
 
-| Field                  | Default | Role                                                    |
-| ---------------------- | ------- | ------------------------------------------------------- |
-| `defaultRowLimit`      | 100     | row pagination without an explicit `limit`              |
-| `maxRowLimit`          | 1000    | hard cap on rows                                        |
-| `defaultListLimit`     | 50      | pagination of `/tables` and `/sources`                  |
-| `maxListLimit`         | 500     | hard cap on listings                                    |
-| `maxBodyBytes`         | 10 MiB  | max request body size (outside `/sources/upload`)       |
-| `requestTimeoutSec`    | 30      | per-request timeout; `0` disables it                    |
-| `exportBatchSize`      | 1000    | page size of the export streaming                       |
-| `defaultFeaturesLimit` | 100     | pagination of OGC items and GeoJSON tiles               |
-| `maxFeaturesLimit`     | 10000   | hard cap on OGC items and GeoJSON tile features         |
-| `maxSimplifyTolerance` | 10000   | cap on the `simplify` parameter                         |
-| `maxPrecision`         | 1000    | cap on the `precision` parameter                        |
-| `tileCacheMaxAgeSec`   | 60      | the `Cache-Control: max-age` the MVT route emits (§6.5) |
+Every parameter a request path or a cache reads once the process is up — row/list pagination
+limits, request body size, per-request timeout, export batch size, OGC/tile feature limits,
+geometry simplification bounds, the tile HTTP cache lifetime, and the TTL/size of the three LRU
+caches — is **not** in `config.yaml`. It lives in the single-row `settings` table (§4.9), read and
+written through `SettingsService` (§5.8) and edited at runtime through `GET`/`PATCH /api/v1/settings`
+(§6.1) — never through a file or an environment variable, and never requiring a restart. Its default
+values are `internal/settings`'s exported constants, the one place they are written; `config.yaml`
+keeps only what the process needs to start at all, before that table can even be read.
 
-Matching environment variables: `GEOAPI_API_<FIELD_IN_UPPER_SNAKE>`.
-
-### 2.5 `cache`
-
-Three independent caches, all bounded LRUs with a TTL (rule 24).
-
-| Field                                 | Default    | Cache concerned                    |
-| ------------------------------------- | ---------- | ---------------------------------- |
-| `metadataTTLSec` / `metadataMaxItems` | 300 / 1000 | table metadata (`MetadataService`) |
-| `schemaTTLSec` / `schemaMaxItems`     | 300 / 1000 | column schema (`SchemaService`)    |
-| `tileTTLSec` / `tileMaxItems`         | 300 / 5000 | rendered MVT tiles (`GeoService`)  |
-
-### 2.6 Command-line flags
+### 2.5 Command-line flags
 
 | Flag        | Default       | Effect                                          |
 | ----------- | ------------- | ----------------------------------------------- |
@@ -268,7 +253,7 @@ A file whose extension is not in `allowedExtensions`, or whose size exceeds `max
 | `DetectCRS`         | reads the CRS declared by the file, importing nothing — lets the UI show and correct it before loading.                                                                                                                                                                                                                                                            |
 | `SourceHasGeometry` | reports whether the file carries a geometry field at all, importing nothing — what decides whether a CRS has to be asked for.                                                                                                                                                                                                                                      |
 | `Delete`            | removes the table(s) derived from the source and its cache entry. **The file itself is never deleted.**                                                                                                                                                                                                                                                            |
-| `UnmarkLoaded`      | drops the loaded state of whichever source or layer entry carries the given `tableId`, a no-op if none does. Called by `MetadataService.RemoveTable` through the `sourceInvalidator` port (§5.1) — the fix for a table deleted through `DELETE /tables/{tableId}` otherwise leaving its source cached as loaded and pointing at a `tableId` that no longer exists. |
+| `UnmarkLoaded`      | drops the loaded state of whichever source or layer entry matches the given `storage.Metadata`'s `SourceName`/`SourceLayer`, a no-op if none does. Registered onto `MetadataService`'s removed-table observer by `core.NewServices` (§5.1) — the fix for a table deleted through `DELETE /tables/{tableId}` otherwise leaving its source cached as loaded and pointing at a `tableId` that no longer exists. |
 
 **Locking.** `Load` holds the lock for its whole check-then-import, not just around the cache read:
 two concurrent `Load`s on the same source cannot both pass the "not loaded yet" test. `Delete`
@@ -592,11 +577,26 @@ target to `DESCRIBE` — is what removes the interpolation from the common case.
 > server-side only, called with server-built SQL: the validator is never relaxed to admit them, and
 > no path hands a caller-supplied query to one.
 
+### 4.9 The `settings` repository
+
+`duckdb/catalog.Settings` (`settings.go`) owns the single row of the `settings` table — the
+runtime-editable counterpart of `metadata` (§4.1), registered as a `Component` in the same
+per-component migration registry (`migrations.go`) and reached through `Adapter.Settings()`
+alongside `Catalog()`/`Filters()`/`Materializer()` (§4.6). It is **not** an `Attachment`: nothing
+about it is scoped to a `tableId`, so it never joins the delete cascade `Catalog.Register` builds.
+
+The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded from
+`internal/settings`'s defaults inside `CreateSchema` itself (an `INSERT ... WHERE NOT EXISTS`, run
+once per process the first time the table doesn't exist yet — every later startup finds the row and
+leaves it alone). `GetSettings` reads that row whole; `UpdateSettings` takes a `storage.SettingsPatch`
+(nil fields left unchanged, the same shape as `MetadataPatch`) and writes only the columns given,
+stamping `updatedAt`.
+
 ---
 
 ## 5. Service layer
 
-Nine services, each the exclusive owner of its state. Files: `internal/service/`.
+Ten services, each the exclusive owner of its state. Files: `internal/service/`.
 
 **Error wrapping.** Every service method that calls into the storage layer wraps a raw failure it
 did not itself construct (a DuckDB error, an `os` error) in `service.DisplayError` (§6.4) before
@@ -612,18 +612,21 @@ independently (rule 11). The cache is a bounded LRU with a TTL.
 
 It invalidates the entry concerned after **every** write: `UpdateMetadata`, `RefreshDerived`,
 `RemoveTable`. A newly created `tableId` was never cached, so `CreateFromFile`/`CreateFromQuery`
-need no invalidation of their own. `RemoveTable` additionally invalidates two other services'
-caches, each through its own narrow port: `SchemaService`'s, through `schemaInvalidator` —
-deleting a table changes its structure just as surely as `AddColumn` does, and the entry would
-otherwise survive until its TTL — and `SourceService`'s, through `sourceInvalidator`, so a deleted
-table's source stops being reported as loaded. These are `MetadataService`'s only dependencies on
-another service, and they only go that way — neither `SchemaService` nor `SourceService` knows
-`MetadataService`.
-`schemaInvalidator` is wired through the constructor; `sourceInvalidator` cannot be, since
-`SourceService` is built from `ImportService`, itself built from `MetadataService` —
-`core.NewServices` wires it in with `SetSourceInvalidator` once `SourceService` exists, and
-`RemoveTable` is a no-op against that port until it does (relevant only outside `core.NewServices`,
-e.g. in tests).
+need no invalidation of their own.
+
+`RemoveTable` takes the caller's already-resolved `storage.Metadata`, not a bare `tableId` (the
+same access contract §4.2 states for storage-touching calls), and after deleting it notifies it to
+`removed`, an `*observer.Observer[storage.Metadata]` (`internal/observer`) injected through the
+constructor. `core.NewServices` builds the observer, passes it to `NewMetadataService`, and
+registers `SchemaService.InvalidateSchema` and `SourceService.UnmarkLoaded` onto it — deleting a
+table changes its structure just as surely as `AddColumn` does, and would otherwise leave a stale
+entry in `SchemaService`'s cache until its TTL, and a deleted table's source displayed as loaded
+otherwise. Registration happens once, at construction, in `core.NewServices`: `Observer[T]` is not
+safe for concurrent registration, only for the fan-out itself, which runs after the delete has
+already committed and never returns an error — nothing a cache eviction could fail at is left to
+report by then. This is `MetadataService`'s only dependency on another service's behaviour, and it
+only goes that way — neither `SchemaService` nor `SourceService` knows `MetadataService`, only the
+observer both `MetadataService` and they hold a reference to.
 
 -   `ListTables` paginates over `TableIds`'s deterministic order and also returns the total.
 -   `CreateFromFile`/`CreateFromQuery` thinly wrap `storage.Catalog`'s methods of the same name
@@ -665,8 +668,9 @@ no cheap way to check after the fact.
 Owner of its schema cache. Exposes the full schema (**geometry included**: this is structure, rule 7
 does not apply) and the name → type table. `AddColumn` is the only write that changes the structure
 from this service and therefore invalidates the cache; adding a column affects no derived field, so
-this service does not need `MetadataService`. `InvalidateSchema` exposes the same invalidation to
-`MetadataService.RemoveTable` (§5.1), without the cache ceasing to belong to this service.
+this service does not need `MetadataService`. `InvalidateSchema` exposes the same invalidation as a
+callback `core.NewServices` registers onto `MetadataService`'s removed-table observer (§5.1),
+without the cache ceasing to belong to this service.
 
 `AddColumn` checks `colType` against `storage.ValidateColumnType` before opening the table: an
 allowlist of DuckDB scalar types, `GEOMETRY` deliberately excluded — a column added this way must
@@ -726,6 +730,35 @@ response body.
 ### 5.7 `SourceService`
 
 See §3.
+
+### 5.8 `SettingsService` — sole owner of the current settings value
+
+The read/write port onto `storage.SettingsStore` (§4.9): `Load` (called once, by `core.Setup`, before
+any request is served — a failure here is a startup failure, exactly as an invalid `config.yaml` is)
+populates an in-memory `storage.Settings` behind a `sync.RWMutex`; `Current()` reads it with no
+context and no error, the shape every hot-path reader needs (a handler sizing a page, `ExportService`
+sizing a batch — both hold `SettingsService` through a narrow `Current() storage.Settings` port, never
+the concrete type). `GetSettings`/`UpdateSettings` are the pair `SettingsHandler` calls: the same
+repository-pattern shape `MetadataService` exposes for `metadata`.
+
+`UpdateSettings` merges the patch onto the current value **in memory first** (`mergeSettings`) and
+validates the *result* — a `maxRowLimit` patched below the current `defaultRowLimit` is rejected even
+though neither field alone is invalid — before writing anything; a rejection is a `ValidationError`
+(§6.4), the store never reached. On success it persists through `SettingsStore.UpdateSettings`,
+replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
+(`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
+constructor.
+
+`core.NewServices` registers three callbacks onto that observer, one per LRU cache
+(`MetadataService`/`SchemaService`/`GeoService`.`ResetCache`): `expirable.LRU` bakes its size and TTL
+into `expirable.NewLRU` at construction, with no live-resize API, so a changed
+`cache.*MaxItems`/`*TTLSec` takes effect by swapping the cache for a freshly built one — each of the
+three services holds its cache behind `atomic.Pointer` for exactly this — rather than by mutating a
+field; every entry the old cache held is simply dropped, a cache miss costing one extra read, not a
+migration. Every other setting (row/list limits, `maxBodyBytes`, `requestTimeoutSec`,
+`exportBatchSize`, OGC/tile feature limits, simplification bounds, `tileCacheMaxAgeSec`) needs no
+callback at all: `Router` and every handler read it live off `Current()` on each request instead
+(§6.3), and `ExportService` off `Current().ExportBatchSize` on each export.
 
 ---
 
@@ -798,6 +831,13 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | POST   | `/api/v1/tables/{tableId}/neighbours`                 | the features within `buffer` meters of a GeoJSON geometry (`ST_Intersects` against `ST_Buffer`), minus the rows named by `exclude` — what an edit session snaps to and carries along |
 | GET    | `/api/v1/tables/{tableId}/filtered-extent`            | extent of the rows matching a filter, to recentre a map                                                                                                                              |
 
+**Settings**
+
+| Method | Path                 | Description                                                                                             |
+| ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings (§2.4)                                                             |
+| PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
+
 **OGC API - Features**
 
 | Method | Path                                                  | Description                                                                                  |
@@ -834,13 +874,19 @@ File: `internal/router/routes.go`.
 The global chain, in order: `RequestID` → structured `slog` logging → `Recoverer` → request body
 cap.
 
--   **Body cap**: rejects immediately with `413` if `Content-Length` exceeds the limit, **before**
-    reading a single byte. Necessary because an overrun detected mid-stream forces Go to close the
-    connection with unread bytes, which the client sees as an abrupt cut with no HTTP status. The
+Every handler holds `SettingsService` through the same narrow `Current() storage.Settings` port
+(§5.8), never a value captured once at `Setup`: a limit changed through `PATCH /api/v1/settings`
+applies to the very next request, router middleware included.
+
+-   **Body cap** (`maxBodyBytes`, `middleware.go`): reads `settings.maxBodyBytes` **fresh on every
+    request** and rejects immediately with `413` if `Content-Length` exceeds it, **before** reading a
+    single byte. Necessary because an overrun detected mid-stream forces Go to close the connection
+    with unread bytes, which the client sees as an abrupt cut with no HTTP status. The
     `/sources/upload` route gets a dedicated cap (max source size + 64 KiB of headroom for the
     multipart framing).
--   **Per-request timeout**: applied to the `/api/v1` **group** only, and only if
-    `requestTimeoutSec > 0`.
+-   **Per-request timeout** (`requestTimeout`, `middleware.go`): applied to the `/api/v1` **group**
+    only, reading `settings.requestTimeoutSec` fresh on every request and building a
+    `middleware.Timeout` around it — `0` leaves that request unbounded.
 -   **`/tables/{tableId}/export` is registered outside that group**: a large export legitimately
     exceeds a normal request's budget, and the timeout would truncate a response already committed
     to `200`. The handler additionally neutralizes the server's `WriteTimeout` just before
@@ -1067,7 +1113,8 @@ The rest of the sequence (geometry detection, clustering, indexes) is identical 
 ```
 cmd/server/            entrypoint
 internal/
-  config/              configuration loading and validation
+  config/              bootstrap-only configuration loading and validation (§2.1-2.3)
+  settings/            default values of every runtime-editable setting, as constants (§2.4)
   core/                service + cache wiring, bootstrap
   router/
     handlers/          one file per endpoint family + ports.go + dto.go
@@ -1076,14 +1123,15 @@ internal/
     routes.go          chi mounting, middlewares
     webui.go           SPA serving with history-mode fallback
   service/             one file per service + errors.go + formats.go
+  observer/            Observer[T], a generic in-memory lifecycle notifier
   storage/
-    *.go               Metadata/Row/GeoFeature/GeoQuery/SortField, the Catalog,
-                        TableRepository and TableMaterializer interfaces, BuildFilter,
-                        identifiers
+    *.go               Metadata/Row/GeoFeature/GeoQuery/SortField/Settings, the Catalog,
+                        TableRepository, TableMaterializer and SettingsStore interfaces,
+                        BuildFilter, identifiers
     duckdb/            DuckDB adapter: connection, write serialization, wiring, and the
-                        Catalog/Materializer/Table accessors
-      catalog/         DuckDB implementation of the catalogue (the metadata table) +
-                        migrations + delete cascade
+                        Catalog/Materializer/Settings/Table accessors
+      catalog/         DuckDB implementation of the catalogue (the metadata table), the
+                        settings table + migrations + delete cascade
       tables/          DuckDB implementation of the physical tables and of TableMaterializer
                         (materialization, indexing, clustering, drop, /derive validation)
     mocks/             testify mocks of storage's interfaces

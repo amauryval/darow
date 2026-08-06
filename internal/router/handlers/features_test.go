@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"darow/internal/config"
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
@@ -23,7 +22,7 @@ func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI,
 		metadataService: metadataSvc,
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
-		apiCfg:          config.APIConfig{DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000, MaxSimplifyTolerance: 100, MaxPrecision: 100},
+		settings:        stubSettingsAPI{settings: storage.Settings{DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000, MaxSimplifyTolerance: 100, MaxPrecision: 100}},
 	}
 	return fh, metadataSvc, schemaSvc, geoSvc
 }
@@ -33,7 +32,7 @@ func Test_NewFeaturesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, config.APIConfig{})
+	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}})
 
 	assert.Same(t, metadataSvc, fh.metadataService)
 	assert.Same(t, schemaSvc, fh.schemaService)

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/observer"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
@@ -31,7 +32,7 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	metadataCache := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
-	metadata := NewMetadataService(m, metadataCache, schema)
+	metadata := NewMetadataService(m, metadataCache, &observer.Observer[storage.Metadata]{})
 	svc = NewRowService(m, metadata, schema)
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo

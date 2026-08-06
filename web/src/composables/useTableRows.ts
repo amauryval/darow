@@ -4,6 +4,7 @@ import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
 import { cellValue } from '../utils/rows'
 import { usePaginatedList } from './usePaginatedList'
+import { useSettings } from './useSettings'
 import { useToast } from './useToast'
 
 // A table's rows: the current (unfiltered) page, server-side sorting,
@@ -19,7 +20,12 @@ export function useTableRows(
     onMutated: () => void
 ) {
     const toast = useToast()
-    const pageSize = 20
+    const settings = useSettings()
+
+    // Capped at maxRowLimit, for the same reason useSources caps its own
+    // default against maxListLimit: a lowered cap must not make the grid's
+    // first page request fail against the server's own limit.
+    const pageSize = Math.min(20, settings.current.value?.maxRowLimit ?? 20)
 
     const list = usePaginatedList<Row>({
         limit: pageSize,

@@ -12,19 +12,21 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"darow/internal/config"
+	"darow/internal/observer"
 	"darow/internal/service"
 	"darow/internal/storage"
 	"darow/internal/storage/duckdb"
 )
 
 // storageAdapter is everything Services needs from the storage layer: the
-// two aggregates it hands to the services, plus the table resolution every
-// per-table service goes through. Declared here, the consumer, so tests can
-// satisfy it with a mock.
+// three aggregates it hands to the services, plus the table resolution
+// every per-table service goes through. Declared here, the consumer, so
+// tests can satisfy it with a mock.
 type storageAdapter interface {
 	Catalog() storage.Catalog
 	Materializer() storage.TableMaterializer
 	Filters() storage.FilterStore
+	Settings() storage.SettingsStore
 	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
@@ -41,6 +43,7 @@ type Services struct {
 	Source   *service.SourceService
 	Export   *service.ExportService
 	Filter   *service.FilterService
+	Settings *service.SettingsService
 
 	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
 	// storage connection; Services built via NewServices alone (e.g. in
@@ -68,23 +71,56 @@ func (s *Services) Ping(ctx context.Context) error {
 	return s.pingStorage(ctx)
 }
 
-// NewServices constructs every service, wiring caches from cfg.Cache and
-// sizing export batches from cfg.API.ExportBatchSize.
-func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
-	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Cache.MetadataMaxItems, nil, time.Duration(cfg.Cache.MetadataTTLSec)*time.Second)
-	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Cache.SchemaMaxItems, nil, time.Duration(cfg.Cache.SchemaTTLSec)*time.Second)
-	tileCache := expirable.NewLRU[string, []byte](cfg.Cache.TileMaxItems, nil, time.Duration(cfg.Cache.TileTTLSec)*time.Second)
+// NewServices constructs every service. It loads the settings row once
+// (a startup failure exactly as an invalid config.yaml is) and sizes every
+// LRU cache and the export batch size from it rather than from cfg — cfg
+// only supplies cfg.Sources here, everything else it used to carry having
+// moved to the settings table (TODO-3).
+func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, error) {
+	settingsChanged := &observer.Observer[storage.Settings]{}
+	settingsSvc := service.NewSettingsService(storageAdapter.Settings(), settingsChanged)
+	if err := settingsSvc.Load(context.Background()); err != nil {
+		return nil, fmt.Errorf("settings: %w", err)
+	}
+	current := settingsSvc.Current()
+
+	metadataCache := expirable.NewLRU[string, storage.Metadata](current.MetadataMaxItems, nil, time.Duration(current.MetadataTTLSec)*time.Second)
+	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](current.SchemaMaxItems, nil, time.Duration(current.SchemaTTLSec)*time.Second)
+	tileCache := expirable.NewLRU[string, []byte](current.TileMaxItems, nil, time.Duration(current.TileTTLSec)*time.Second)
+
+	tableRemoved := &observer.Observer[storage.Metadata]{}
 
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
-	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, schemaSvc)
+	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, tableRemoved)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc)
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer())
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
-	metadataSvc.SetSourceInvalidator(sourceSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, cfg.API.ExportBatchSize)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, settingsSvc)
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
+
+	// Who reacts to a table's removal, stated in one place: dropping a
+	// table changes its structure as surely as AddColumn does, and leaves a
+	// deleted table's source reported as loaded until told otherwise.
+	tableRemoved.On(func(meta storage.Metadata) { schemaSvc.InvalidateSchema(meta.TableId) })
+	tableRemoved.On(sourceSvc.UnmarkLoaded)
+
+	// Who reacts to a settings update, stated in one place: the three LRU
+	// caches bake their size and TTL into expirable.NewLRU at construction,
+	// so a changed cache.*MaxItems/TTLSec takes effect by rebuilding the
+	// cache rather than by mutating a field. Every other setting (row/list
+	// limits, export batch size...) is read live off settingsSvc.Current()
+	// wherever it's needed, and needs no callback here.
+	settingsChanged.On(func(s storage.Settings) {
+		metadataSvc.ResetCache(s.MetadataMaxItems, time.Duration(s.MetadataTTLSec)*time.Second)
+	})
+	settingsChanged.On(func(s storage.Settings) {
+		schemaSvc.ResetCache(s.SchemaMaxItems, time.Duration(s.SchemaTTLSec)*time.Second)
+	})
+	settingsChanged.On(func(s storage.Settings) {
+		geoSvc.ResetCache(s.TileMaxItems, time.Duration(s.TileTTLSec)*time.Second)
+	})
 
 	return &Services{
 		Metadata: metadataSvc,
@@ -96,7 +132,8 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) *Services {
 		Source:   sourceSvc,
 		Export:   exportSvc,
 		Filter:   filterSvc,
-	}
+		Settings: settingsSvc,
+	}, nil
 }
 
 // Setup opens the DuckDB adapter at cfg.DuckDB.Path, ensures
@@ -117,7 +154,11 @@ func Setup(cfg config.Config) (*Services, error) {
 		return nil, fmt.Errorf("sources workDir: %w", err)
 	}
 
-	svcs := NewServices(cfg, adapter)
+	svcs, err := NewServices(cfg, adapter)
+	if err != nil {
+		adapter.Close()
+		return nil, err
+	}
 	svcs.closeStorage = adapter.Close
 	svcs.pingStorage = adapter.Ping
 

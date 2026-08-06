@@ -18,31 +18,18 @@ func writeConfigFile(t *testing.T, content string) string {
 
 func Test_Load(t *testing.T) {
 	cases := []struct {
-		name             string
-		path             string
-		content          string
-		useNoFile        bool
-		wantErr          bool
-		wantPort         int
-		wantWorkDir      string
-		wantDefaultRows  int
-		wantDefaultList  int
-		wantMaxBodyBytes int64
-		wantDefaultFeat  int
-		wantMaxTolerance float64
-		wantMaxPrecision float64
+		name        string
+		content     string
+		useNoFile   bool
+		wantErr     bool
+		wantPort    int
+		wantWorkDir string
 	}{
 		{
-			name:             "file absent falls back to defaults",
-			useNoFile:        true,
-			wantPort:         8080,
-			wantWorkDir:      "./data/sources",
-			wantDefaultRows:  100,
-			wantDefaultList:  50,
-			wantMaxBodyBytes: 10 * 1024 * 1024,
-			wantDefaultFeat:  100,
-			wantMaxTolerance: 10000,
-			wantMaxPrecision: 1000,
+			name:        "file absent falls back to defaults",
+			useNoFile:   true,
+			wantPort:    8080,
+			wantWorkDir: "./data/sources",
 		},
 		{
 			name: "file present overrides defaults",
@@ -66,7 +53,7 @@ server: [this is not
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			path := c.path
+			var path string
 			if c.useNoFile {
 				path = filepath.Join(t.TempDir(), "does-not-exist.yaml")
 			} else {
@@ -82,24 +69,6 @@ server: [this is not
 			require.NoError(t, err)
 			assert.Equal(t, c.wantPort, cfg.Server.Port)
 			assert.Equal(t, c.wantWorkDir, cfg.Sources.WorkDir)
-			if c.wantDefaultRows != 0 {
-				assert.Equal(t, c.wantDefaultRows, cfg.API.DefaultRowLimit)
-			}
-			if c.wantDefaultList != 0 {
-				assert.Equal(t, c.wantDefaultList, cfg.API.DefaultListLimit)
-			}
-			if c.wantMaxBodyBytes != 0 {
-				assert.Equal(t, c.wantMaxBodyBytes, cfg.API.MaxBodyBytes)
-			}
-			if c.wantDefaultFeat != 0 {
-				assert.Equal(t, c.wantDefaultFeat, cfg.API.DefaultFeaturesLimit)
-			}
-			if c.wantMaxTolerance != 0 {
-				assert.Equal(t, c.wantMaxTolerance, cfg.API.MaxSimplifyTolerance)
-			}
-			if c.wantMaxPrecision != 0 {
-				assert.Equal(t, c.wantMaxPrecision, cfg.API.MaxPrecision)
-			}
 		})
 	}
 }
@@ -109,9 +78,6 @@ func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	t.Setenv("GEOAPI_SERVER_PORT", "7070")
 	t.Setenv("GEOAPI_SOURCES_WORKDIR", "/env/sources")
 	t.Setenv("GEOAPI_SOURCES_ALLOWED_EXTENSIONS", ".csv,.geojson")
-	t.Setenv("GEOAPI_API_DEFAULT_FEATURES_LIMIT", "50")
-	t.Setenv("GEOAPI_API_MAX_SIMPLIFY_TOLERANCE", "42.5")
-	t.Setenv("GEOAPI_API_MAX_PRECISION", "12.5")
 
 	cfg, err := Load(path)
 
@@ -119,9 +85,6 @@ func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	assert.Equal(t, 7070, cfg.Server.Port)
 	assert.Equal(t, "/env/sources", cfg.Sources.WorkDir)
 	assert.Equal(t, []string{".csv", ".geojson"}, cfg.Sources.AllowedExtensions)
-	assert.Equal(t, 50, cfg.API.DefaultFeaturesLimit)
-	assert.Equal(t, 42.5, cfg.API.MaxSimplifyTolerance)
-	assert.Equal(t, 12.5, cfg.API.MaxPrecision)
 }
 
 func Test_Load_RejectsMalformedEnvValue(t *testing.T) {
@@ -143,11 +106,6 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 		{"empty workDir", "sources:\n  workDir: \"\"\n"},
 		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
 		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
-		{"maxRowLimit below defaultRowLimit", "api:\n  defaultRowLimit: 100\n  maxRowLimit: 10\n"},
-		{"maxListLimit below defaultListLimit", "api:\n  defaultListLimit: 100\n  maxListLimit: 10\n"},
-		{"zero exportBatchSize", "api:\n  exportBatchSize: 0\n"},
-		{"zero maxSimplifyTolerance", "api:\n  maxSimplifyTolerance: 0\n"},
-		{"zero maxPrecision", "api:\n  maxPrecision: 0\n"},
 	}
 
 	for _, c := range cases {

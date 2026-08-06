@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"darow/internal/storage"
 )
 
 // metadataImporter is what ImportService needs from MetadataService:
 // register and transactionally materialize a new table from a source file,
-// plus LoadedSourceNames/RemoveTable to support SourceService.
+// plus LoadedSourceNames/GetMetadata/RemoveTable to support SourceService.
 type metadataImporter interface {
 	CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (tableId string, err error)
 	LoadedSourceNames(ctx context.Context) (map[string]string, error)
-	RemoveTable(ctx context.Context, tableId string) error
+	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
+	RemoveTable(ctx context.Context, meta storage.Metadata) error
 }
 
 // fileMaterializer is what ImportService needs from the storage layer to
@@ -92,7 +95,12 @@ func (s *ImportService) SourceHasGeometry(ctx context.Context, path, layer strin
 
 // RemoveTable deletes tableId's metadata and physical table, used by
 // SourceService.Delete to cascade a source file's removal to any table(s)
-// loaded from it.
+// loaded from it. SourceService only ever has the bare tableId at hand, so
+// this resolves the Metadata RemoveTable's removed observer needs.
 func (s *ImportService) RemoveTable(ctx context.Context, tableId string) error {
-	return s.metadata.RemoveTable(ctx, tableId)
+	meta, err := s.metadata.GetMetadata(ctx, tableId)
+	if err != nil {
+		return err
+	}
+	return s.metadata.RemoveTable(ctx, meta)
 }

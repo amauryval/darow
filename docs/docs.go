@@ -233,6 +233,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/settings": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Read the runtime-editable settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.settingsDTO"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Update the runtime-editable settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.settingsDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sources": {
             "get": {
                 "produces": [
@@ -1817,6 +1862,68 @@ const docTemplate = `{
                 },
                 "tableName": {
                     "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.settingsDTO": {
+            "type": "object",
+            "properties": {
+                "defaultFeaturesLimit": {
+                    "type": "integer"
+                },
+                "defaultListLimit": {
+                    "type": "integer"
+                },
+                "defaultRowLimit": {
+                    "type": "integer"
+                },
+                "exportBatchSize": {
+                    "type": "integer"
+                },
+                "maxBodyBytes": {
+                    "type": "integer"
+                },
+                "maxFeaturesLimit": {
+                    "type": "integer"
+                },
+                "maxListLimit": {
+                    "type": "integer"
+                },
+                "maxPrecision": {
+                    "type": "number"
+                },
+                "maxRowLimit": {
+                    "type": "integer"
+                },
+                "maxSimplifyTolerance": {
+                    "type": "number"
+                },
+                "metadataMaxItems": {
+                    "type": "integer"
+                },
+                "metadataTTLSec": {
+                    "type": "integer"
+                },
+                "requestTimeoutSec": {
+                    "type": "integer"
+                },
+                "schemaMaxItems": {
+                    "type": "integer"
+                },
+                "schemaTTLSec": {
+                    "type": "integer"
+                },
+                "tileCacheMaxAgeSec": {
+                    "type": "integer"
+                },
+                "tileMaxItems": {
+                    "type": "integer"
+                },
+                "tileTTLSec": {
+                    "type": "integer"
                 },
                 "updatedAt": {
                     "type": "string"

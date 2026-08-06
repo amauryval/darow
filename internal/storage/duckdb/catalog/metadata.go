@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -106,27 +105,6 @@ func (r *Repository) TableIds(ctx context.Context, sort []storage.SortField) ([]
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
-}
-
-// TableExists reports whether tableId is a registered logical table whose
-// physical table is really there. A metadata row left behind by an
-// interrupted rollback answers false, rather than reading as an existing
-// table until the first query against it fails.
-func (r *Repository) TableExists(ctx context.Context, tableId string) (bool, error) {
-	var physicalName string
-	err := r.conn.QueryRow(ctx, `SELECT physicalName FROM metadata WHERE tableId = ? LIMIT 1`, tableId).Scan(&physicalName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	existing, err := r.existing(ctx)
-	if err != nil {
-		return false, err
-	}
-	return existing[physicalName], nil
 }
 
 // PhysicalNames lists every physicalName currently registered and

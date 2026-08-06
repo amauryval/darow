@@ -322,18 +322,18 @@ func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
 func Test_SourceService_UnmarkLoaded(t *testing.T) {
 	cases := []struct {
 		name           string
-		tableId        string
+		meta           storage.Metadata
 		wantLoaded     bool
 		wantTableId    string
 		wantLayerState *SourceLayer
 	}{
-		{name: "unmarks a top-level source", tableId: "id-1",
+		{name: "unmarks a top-level source", meta: storage.Metadata{SourceName: "buildings.geojson"},
 			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
-		{name: "unmarks a matching layer", tableId: "id-2", wantLoaded: true, wantTableId: "id-1",
+		{name: "unmarks a matching layer", meta: storage.Metadata{SourceName: "regions.gpkg", SourceLayer: "departements"}, wantLoaded: true, wantTableId: "id-1",
 			wantLayerState: &SourceLayer{Name: "departements"}},
-		{name: "no-op for an unrelated tableId", tableId: "id-unknown", wantLoaded: true, wantTableId: "id-1",
+		{name: "no-op for an unrelated source", meta: storage.Metadata{SourceName: "unknown.geojson"}, wantLoaded: true, wantTableId: "id-1",
 			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
-		{name: "no-op for an empty tableId", tableId: "", wantLoaded: true, wantTableId: "id-1",
+		{name: "no-op for an empty SourceName", meta: storage.Metadata{}, wantLoaded: true, wantTableId: "id-1",
 			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
 	}
 
@@ -359,7 +359,7 @@ func Test_SourceService_UnmarkLoaded(t *testing.T) {
 			_, err := svc.Refresh(context.Background())
 			require.NoError(t, err)
 
-			svc.UnmarkLoaded(c.tableId)
+			svc.UnmarkLoaded(c.meta)
 
 			sources, _, err := svc.List(nil, 0, 10)
 			require.NoError(t, err)
@@ -646,6 +646,7 @@ func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", SourceName: "buildings.geojson"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
 	err = svc.Delete(context.Background(), "buildings.geojson")
@@ -702,6 +703,7 @@ func Test_SourceService_Delete_ConcurrentWithList_NoRace(t *testing.T) {
 		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
 	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", SourceName: "regions.gpkg", SourceLayer: "communes"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
 	svc := NewSourceService(config.SourcesConfig{

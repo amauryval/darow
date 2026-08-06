@@ -18,6 +18,63 @@ import (
 	"darow/internal/storage"
 )
 
+// stubSettingsAPI is a fixed settingsAPI double: most handler tests only
+// need Current() to answer a stated value, not to assert call counts — the
+// same role a literal config.APIConfig played before TODO-3 moved these
+// fields into the settings table.
+type stubSettingsAPI struct{ settings storage.Settings }
+
+// defaultTestSettings is the settings double for a handler test built by
+// hand (not through its NewXxxHandler constructor) that exercises a code
+// path reading settings but doesn't care what the limits are — generous
+// enough that no case here trips a cap incidentally.
+var defaultTestSettings = stubSettingsAPI{settings: storage.Settings{
+	DefaultRowLimit: 100, MaxRowLimit: 1000,
+	DefaultListLimit: 50, MaxListLimit: 500,
+	MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30,
+	ExportBatchSize:      1000,
+	DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
+	MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
+	TileCacheMaxAgeSec: 60,
+}}
+
+var _ settingsAPI = stubSettingsAPI{}
+
+func (s stubSettingsAPI) Current() storage.Settings { return s.settings }
+
+func (s stubSettingsAPI) GetSettings(ctx context.Context) (storage.Settings, error) {
+	return s.settings, nil
+}
+
+func (s stubSettingsAPI) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
+	return s.settings, nil
+}
+
+// mockSettingsAPI is a testify mock of settingsAPI, for the handful of
+// tests (SettingsHandler's own) that assert on GetSettings/UpdateSettings
+// call counts rather than just needing Current() to answer a fixed value.
+type mockSettingsAPI struct{ mock.Mock }
+
+var _ settingsAPI = (*mockSettingsAPI)(nil)
+
+func (m *mockSettingsAPI) Current() storage.Settings {
+	args := m.Called()
+	s, _ := args.Get(0).(storage.Settings)
+	return s
+}
+
+func (m *mockSettingsAPI) GetSettings(ctx context.Context) (storage.Settings, error) {
+	args := m.Called(ctx)
+	s, _ := args.Get(0).(storage.Settings)
+	return s, args.Error(1)
+}
+
+func (m *mockSettingsAPI) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
+	args := m.Called(ctx, patch)
+	s, _ := args.Get(0).(storage.Settings)
+	return s, args.Error(1)
+}
+
 type mockMetadataAPI struct{ mock.Mock }
 
 var _ metadataAPI = (*mockMetadataAPI)(nil)
@@ -35,8 +92,8 @@ func (m *mockMetadataAPI) ListTables(ctx context.Context, sort []storage.SortFie
 	return tables, total, args.Error(2)
 }
 
-func (m *mockMetadataAPI) RemoveTable(ctx context.Context, tableId string) error {
-	args := m.Called(ctx, tableId)
+func (m *mockMetadataAPI) RemoveTable(ctx context.Context, meta storage.Metadata) error {
+	args := m.Called(ctx, meta)
 	return args.Error(0)
 }
 

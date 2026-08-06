@@ -4,13 +4,11 @@
 
 Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and make
 sure all your details, tasks, or resources are fully prepared before starting an important project
-or event
+or event dictionary.cambridge.org
 
-dictionary.cambridge.org
-
-Backed by DuckDB. Darow is a Go cartographic server: it turns tabular and spatial files into a REST
-API — sources, tables, rows, MVT tiles, and SQL-derived tables — with a Vue 3 admin UI embedded in
-the same binary.
+Backed by DuckDB. Darow is a tabular data server: it turns tabular and spatial files into a REST API
+— sources, tables, rows, MVT tiles, and SQL-derived tables — with an admin UI embedded in the same
+binary to manage it.
 
 ## Features
 
@@ -23,8 +21,8 @@ the same binary.
 -   **OGC API - WFS Features** — a standard `/ogc` collections endpoint alongside the native REST
     API, for any OGC-compliant client.
 -   **SQL-derived tables** — create a new table from a `SELECT` query, with rollback if it fails.
--   **A Vue 3 admin UI** — browse sources and tables, inspect schemas, edit rows, embedded in the
-    server binary, no separate deployment.
+-   **An admin UI** — browse sources and tables, inspect schemas, edit rows attributes (geometry
+    edition), embedded in the server binary, no separate deployment.
 -   **A single self-contained binary** — DuckDB, the API, the Swagger docs, and the admin UI all
     ship together.
 

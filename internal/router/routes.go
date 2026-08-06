@@ -4,22 +4,29 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	_ "darow/docs"
-	"darow/internal/config"
 	"darow/internal/core"
 	"darow/internal/router/handlers"
+	"darow/internal/storage"
 )
 
+// settingsReader is what Router itself needs from SettingsService, read
+// live on every request rather than captured at Setup time — the same
+// port handlers.settingsAPI narrows to, declared again here since this
+// package never imports the handlers-only one.
+type settingsReader interface {
+	Current() storage.Settings
+}
+
 // Router wires the HTTP layer to the service layer. Each family of
-// endpoints (tables, rows, geo, sources, export, ops) is served by its own
-// handler struct, holding only the service ports it actually needs — never
-// the concrete service types.
+// endpoints (tables, rows, geo, sources, export, ops, settings) is served
+// by its own handler struct, holding only the service ports it actually
+// needs — never the concrete service types.
 type Router struct {
 	tables   *handlers.TablesHandler
 	rows     *handlers.RowsHandler
@@ -29,27 +36,31 @@ type Router struct {
 	filters  *handlers.FiltersHandler
 	export   *handlers.ExportHandler
 	ops      *handlers.OpsHandler
-	apiCfg   config.APIConfig
+	settings *handlers.SettingsHandler
+	current  settingsReader
 	uiAssets fs.FS
 }
 
-// NewRouter builds a Router serving every service in svcs, honoring
-// apiCfg's row pagination limits. uiAssets is the admin UI's
-// built static files, served under /ui. ready backs /readyz — it should
-// ping the underlying storage connection.
+// NewRouter builds a Router serving every service in svcs — every row/list
+// limit, body size and timeout is read live off svcs.Settings.Current()
+// rather than captured at Setup time, so an update through PATCH /settings
+// takes effect on the next request. uiAssets is the admin UI's built
+// static files, served under /ui. ready backs /readyz — it should ping the
+// underlying storage connection.
 func NewRouter(
-	svcs *core.Services, apiCfg config.APIConfig, uiAssets fs.FS, ready func(ctx context.Context) error,
+	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
 ) *Router {
 	return &Router{
-		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, apiCfg),
-		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, apiCfg),
-		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
-		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, apiCfg),
-		sources:  handlers.NewSourcesHandler(svcs.Source, apiCfg),
+		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings),
+		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings),
+		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
+		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
+		sources:  handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
 		filters:  handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
 		ops:      handlers.NewOpsHandler(ready),
-		apiCfg:   apiCfg,
+		settings: handlers.NewSettingsHandler(svcs.Settings),
+		current:  svcs.Settings,
 		uiAssets: uiAssets,
 	}
 }
@@ -64,7 +75,7 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(slogLogger)
 	r.Use(recoverJSON)
-	r.Use(maxBodyBytes(rt.apiCfg.MaxBodyBytes))
+	r.Use(maxBodyBytes(func() int64 { return rt.current.Current().MaxBodyBytes }))
 
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
@@ -78,14 +89,12 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
 	r.Route("/api/v1", func(v1 chi.Router) {
-		// middleware.Timeout is scoped to this Group rather than applied at
+		// requestTimeout is scoped to this Group rather than applied at
 		// the very top of Setup, so it never wraps exportTable below — that
 		// route is registered outside the Group precisely to escape it.
 		// Everything else keeps the same bounded-request budget as before.
 		v1.Group(func(v1 chi.Router) {
-			if rt.apiCfg.RequestTimeoutSec > 0 {
-				v1.Use(middleware.Timeout(time.Duration(rt.apiCfg.RequestTimeoutSec) * time.Second))
-			}
+			v1.Use(requestTimeout(func() int { return rt.current.Current().RequestTimeoutSec }))
 
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
@@ -95,7 +104,7 @@ func (rt *Router) Setup() http.Handler {
 				// covers multipart framing (boundary, headers) around the file part
 				// itself, so a file right at the limit isn't cut off by framing
 				// overhead before SourceService.Upload's own oversize check runs.
-				sub.With(maxBodyBytes(rt.sources.MaxUploadBytes()+64*1024)).Post("/upload", rt.sources.UploadSource)
+				sub.With(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 })).Post("/upload", rt.sources.UploadSource)
 				sub.Post("/{name}/load", rt.sources.LoadSource)
 				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
 				sub.Delete("/{name}", rt.sources.DeleteSource)
@@ -145,6 +154,11 @@ func (rt *Router) Setup() http.Handler {
 				})
 			})
 
+			v1.Route("/settings", func(sub chi.Router) {
+				sub.Get("/", rt.settings.GetSettings)
+				sub.Patch("/", rt.settings.UpdateSettings)
+			})
+
 			v1.Route("/ogc", func(sub chi.Router) {
 				sub.Get("/", rt.features.LandingPage)
 				sub.Get("/conformance", rt.features.Conformance)
@@ -163,7 +177,7 @@ func (rt *Router) Setup() http.Handler {
 
 		// ExportTable streams a table in bounded batches and can
 		// legitimately run past any normal request's time budget on a large
-		// table — middleware.Timeout would otherwise cancel it mid-stream,
+		// table — requestTimeout would otherwise cancel it mid-stream,
 		// truncating an already-200'd response.
 		v1.Get("/tables/{tableId}/export", rt.export.ExportTable)
 	})

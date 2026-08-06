@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/observer"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
@@ -19,7 +20,7 @@ func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
-	metadata := NewMetadataService(m, c, &schemaInvalidatorSpy{})
+	metadata := NewMetadataService(m, c, &observer.Observer[storage.Metadata]{})
 	svc := NewDeriveService(metadata, NewSchemaService(m, schemaCache))
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m

@@ -8,18 +8,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"darow/internal/config"
 	"darow/internal/service"
+	"darow/internal/storage"
 )
 
 func Test_newSourcesHandler(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	apiCfg := config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}
+	settings := stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}
 
-	sh := NewSourcesHandler(sourceSvc, apiCfg)
+	sh := NewSourcesHandler(sourceSvc, settings)
 
 	assert.Same(t, sourceSvc, sh.sourceService)
-	assert.Equal(t, apiCfg, sh.apiCfg)
+	assert.Equal(t, settings, sh.settings)
 }
 
 func Test_parseSrid(t *testing.T) {
@@ -52,7 +52,7 @@ func Test_parseSrid(t *testing.T) {
 
 func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
 
 	sourceSvc.On("List", mock.Anything, 0, 50).Return([]service.Source{{Name: "a.geojson"}}, 1, nil).Once()
 
@@ -67,7 +67,7 @@ func Test_sourcesHandler_listSources(t *testing.T) {
 
 func Test_sourcesHandler_listSources_InvalidSort(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
 
 	sourceSvc.On("List", mock.Anything, 0, 50).Return(nil, 0, &service.ValidationError{}).Once()
 
@@ -91,7 +91,7 @@ func Test_sourcesHandler_refreshSources(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &SourcesHandler{sourceService: sourceSvc, apiCfg: config.APIConfig{DefaultListLimit: 50, MaxListLimit: 500}}
+			sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
 
 			sourceSvc.On("Refresh", mock.Anything).Return([]service.Source{{Name: "a.geojson"}}, c.refreshErr).Once()
 			if c.wantListed {

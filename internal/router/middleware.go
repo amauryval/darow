@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -13,7 +14,9 @@ import (
 
 // maxBodyBytes caps the request body so a handler that decodes it into
 // memory (json.Decode, ParseMultipartForm) can never be driven to exhaust
-// memory or disk by an oversized request. When the client declares
+// memory or disk by an oversized request. max is read fresh on every
+// request rather than captured once, so a settings.maxBodyBytes update
+// takes effect without rebuilding the router. When the client declares
 // Content-Length upfront (browsers always do for a multipart file upload,
 // since a File's size is known before the request is sent) and it already
 // exceeds max, the request is rejected immediately with a clean 413 —
@@ -22,15 +25,34 @@ import (
 // only respond by closing the connection with unread bytes still buffered,
 // which the client sees as a raw connection reset (no HTTP status at all)
 // rather than the JSON error this middleware would otherwise produce.
-func maxBodyBytes(max int64) func(http.Handler) http.Handler {
+func maxBodyBytes(max func() int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.ContentLength > max {
-				response.WriteError(w, req, fmt.Errorf("request body of %d bytes exceeds the %d MB limit", req.ContentLength, max/(1024*1024)), http.StatusRequestEntityTooLarge)
+			limit := max()
+			if req.ContentLength > limit {
+				response.WriteError(w, req, fmt.Errorf("request body of %d bytes exceeds the %d MB limit", req.ContentLength, limit/(1024*1024)), http.StatusRequestEntityTooLarge)
 				return
 			}
-			req.Body = http.MaxBytesReader(w, req.Body, max)
+			req.Body = http.MaxBytesReader(w, req.Body, limit)
 			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+// requestTimeout bounds every request's context to secs() seconds, read
+// fresh on every request so a settings.requestTimeoutSec update takes
+// effect without rebuilding the router — a new middleware.Timeout is built
+// per request rather than once at Setup, but that's a cheap closure, not a
+// resource. secs() <= 0 disables the bound for that request.
+func requestTimeout(secs func() int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			d := secs()
+			if d <= 0 {
+				next.ServeHTTP(w, req)
+				return
+			}
+			middleware.Timeout(time.Duration(d)*time.Second)(next).ServeHTTP(w, req)
 		})
 	}
 }

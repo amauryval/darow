@@ -7,9 +7,11 @@ import {
     LogIn,
     MapPinned,
     PanelLeftClose,
-    PanelLeftOpen
+    PanelLeftOpen,
+    Settings as SettingsIcon
 } from '@lucide/vue'
 import { useServerStatus, type ServerStatus } from './composables/useServerStatus'
+import { useSettings } from './composables/useSettings'
 import Toast from './components/ui/Toast.vue'
 import Badge from './components/ui/Badge.vue'
 import BaseButton from './components/ui/BaseButton.vue'
@@ -17,6 +19,10 @@ import Typography from './components/ui/Typography.vue'
 
 const route = useRoute()
 const { status, label: statusLabel } = useServerStatus()
+// Loaded here, once, so every list composable mounted afterwards
+// (useSources, useTableRows, TablesView) reads a live cap instead of racing
+// its own /settings fetch (§2.4's pagination trap).
+useSettings()
 
 const statusBadgeTone: Record<ServerStatus, 'neutral' | 'success' | 'error'> = {
     checking: 'neutral',
@@ -31,7 +37,8 @@ const collapsed = useStorage('darow-nav-collapsed', false)
 
 const links = [
     { to: '/tables', label: 'Tables disponibles', icon: LayoutGrid },
-    { to: '/sources', label: 'Sources', icon: FolderOpen }
+    { to: '/sources', label: 'Sources', icon: FolderOpen },
+    { to: '/settings', label: 'Paramètres', icon: SettingsIcon }
 ]
 </script>
 

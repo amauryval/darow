@@ -104,8 +104,22 @@ func Test_SchemaService_InvalidateSchema(t *testing.T) {
 
 			svc.InvalidateSchema(c.invalidated)
 
-			_, cached := svc.cache.Get("id-1")
+			_, cached := svc.cache.Load().Get("id-1")
 			assert.Equal(t, c.wantCached, cached)
 		})
 	}
+}
+
+func Test_SchemaService_ResetCache(t *testing.T) {
+	svc, m, tableRepo := setupSchemaService(t)
+	meta := storage.Metadata{TableId: "id-1"}
+	m.On("Table", meta).Return(tableRepo, nil).Once()
+	tableRepo.On("Schema", context.Background()).Return([]storage.ColumnInfo{{Name: "height", Type: "DOUBLE"}}, nil).Once()
+	_, err := svc.Schema(context.Background(), meta)
+	require.NoError(t, err)
+
+	svc.ResetCache(1000, 5*time.Minute)
+
+	_, cached := svc.cache.Load().Get("id-1")
+	assert.False(t, cached, "resetting the cache must drop every entry the old one held")
 }

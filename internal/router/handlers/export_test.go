@@ -14,6 +14,12 @@ import (
 	"darow/internal/storage"
 )
 
+type fakeExportSettingsReader struct{ exportBatchSize int64 }
+
+func (f fakeExportSettingsReader) Current() storage.Settings {
+	return storage.Settings{ExportBatchSize: f.exportBatchSize}
+}
+
 func Test_newExportHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	exportSvc := &service.ExportService{}
@@ -86,7 +92,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, rows: []storage.Row{{Pkey: "1"}}}
-			exportSvc := service.NewExportService(deps, deps, deps, 100)
+			exportSvc := service.NewExportService(deps, deps, deps, fakeExportSettingsReader{exportBatchSize: 100})
 			eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 			meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: c.isGeo}
@@ -117,7 +123,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	deps := fakeExportDeps{schemaErr: assert.AnError}
-	exportSvc := service.NewExportService(deps, deps, deps, 100)
+	exportSvc := service.NewExportService(deps, deps, deps, fakeExportSettingsReader{exportBatchSize: 100})
 	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 	meta := storage.Metadata{TableId: "t1", TableName: "t1"}
@@ -140,7 +146,7 @@ func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 func Test_exportHandler_exportTable_failureAfterFirstByte(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, pageErr: assert.AnError}
-	exportSvc := service.NewExportService(deps, deps, deps, 100)
+	exportSvc := service.NewExportService(deps, deps, deps, fakeExportSettingsReader{exportBatchSize: 100})
 	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 	meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: true}

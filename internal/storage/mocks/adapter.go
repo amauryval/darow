@@ -14,8 +14,8 @@ import (
 )
 
 // Adapter is a testify mock of the storage engine: the same accessors
-// *duckdb.Adapter exposes (Catalog, Materializer, Filters, Table), plus
-// every method behind them. Kept as one mock since a service-layer test
+// *duckdb.Adapter exposes (Catalog, Materializer, Filters, Settings, Table),
+// plus every method behind them. Kept as one mock since a service-layer test
 // exercises catalogue, materializer and resolver methods interchangeably.
 type Adapter struct {
 	mock.Mock
@@ -25,6 +25,7 @@ var (
 	_ storage.Catalog           = (*Adapter)(nil)
 	_ storage.TableMaterializer = (*Adapter)(nil)
 	_ storage.FilterStore       = (*Adapter)(nil)
+	_ storage.SettingsStore     = (*Adapter)(nil)
 )
 
 // Catalog returns m itself: Adapter already implements storage.Catalog, so
@@ -40,6 +41,11 @@ func (m *Adapter) Materializer() storage.TableMaterializer {
 
 // Filters returns m itself, for the same reason as Catalog.
 func (m *Adapter) Filters() storage.FilterStore {
+	return m
+}
+
+// Settings returns m itself, for the same reason as Catalog.
+func (m *Adapter) Settings() storage.SettingsStore {
 	return m
 }
 
@@ -66,11 +72,6 @@ func (m *Adapter) BySource(ctx context.Context) (map[storage.SourceKey]string, e
 	callArgs := m.Called(ctx)
 	bySource, _ := callArgs.Get(0).(map[storage.SourceKey]string)
 	return bySource, callArgs.Error(1)
-}
-
-func (m *Adapter) TableExists(ctx context.Context, tableId string) (bool, error) {
-	callArgs := m.Called(ctx, tableId)
-	return callArgs.Bool(0), callArgs.Error(1)
 }
 
 func (m *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
@@ -158,4 +159,16 @@ func (m *Adapter) UpdateFilter(ctx context.Context, filterId string, patch stora
 
 func (m *Adapter) DeleteFilter(ctx context.Context, filterId string) error {
 	return m.Called(ctx, filterId).Error(0)
+}
+
+func (m *Adapter) GetSettings(ctx context.Context) (storage.Settings, error) {
+	callArgs := m.Called(ctx)
+	s, _ := callArgs.Get(0).(storage.Settings)
+	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
+	callArgs := m.Called(ctx, patch)
+	s, _ := callArgs.Get(0).(storage.Settings)
+	return s, callArgs.Error(1)
 }
