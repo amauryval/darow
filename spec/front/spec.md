@@ -39,8 +39,11 @@ reordered.
 6. **One route = one view; a view orchestrates, it does not detail.** As soon as a view carries a
    second responsibility (a panel, a modal, a self-contained section), that responsibility becomes a
    sub-view or a domain component in the feature's directory.
-7. **Size caps.** 300 lines per `.vue` file, 150 per composable, 100 per pure function. An overrun
-   is resolved by splitting, never by growing.
+7. **Size targets.** 300 lines per `.vue` file, 150 per composable, 100 per pure function. These are
+   the sizes to aim for, not a ceiling: passing one is a signal to look for a second subject in the
+   file, and if there is one it is split out — never grown into. A file that holds a single dense
+   subject stays whole past the figure, and its length is not a finding on its own (rule 11 is what
+   is enforced; `limitations.md` LIM-F12).
 8. **Any repeated class sequence becomes a primitive.** On the second occurrence of a given styling
    (button, field, panel), the matching `components/ui/` component is created. The existing
    primitive is always used once it exists — a bare `<button>`/`<input>`/`<select>`/`<textarea>`
@@ -253,13 +256,13 @@ module level and documents it; that is the exception, not the rule.
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page | present |
-| `useServerStatus` | periodic `readyz` probe of the status banner | absent — inline in `App.vue` |
+| `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
 | `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
-| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, because what is selected is one of the table's counters and is stated with the others in `TableHeader` | present |
+| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, because what is selected is one of the table's counters and is stated with the others in `TableHeader`. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
 | `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
 | `useMapDraw` | the edit session's lifecycle: the layer it works on, the single interaction over it — a `Modify` to reshape, a `Translate` to move a geometry whole, never both — the contextmenu the right-click delete has to suppress, the `modifystart`/`modifyend` snapshot-and-diff that says which vertices a drag actually moved, `commit` (what the session would write), teardown. It is also where a hover that lands on nothing the session holds is turned into a request for the row underneath: it is given `pkeyAt` (which row of the rendering is under a pixel) and `reach` (ask for it) and knows nothing of either render mode | present |
 | `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the `moving` mode that hands the drag to a `Translate` instead of the `Modify`, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Arming any one of drawing, cutting and moving disarms the others — they all want the same drag. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
@@ -275,6 +278,7 @@ module level and documents it; that is the exception, not the rule.
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
+| `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
 
 ---
 
@@ -304,6 +308,8 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
+| `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
+| `Tabs` | daisyUI `tabs`/`tab`/`tab-active` plus the `role="tablist"`/`role="tab"`/`aria-selected` wiring, `v-model` over a caller-supplied `{ value, label }[]`. Generic over the mode's own union so a caller's `v-model` stays typed to its two or three modes rather than widening to a bare string |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
@@ -327,7 +333,9 @@ single, link-less entry naming the page.
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
 - `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update, and
-  how many of its rows are selected, with one icon button to empty the selection) and
+  how many of its rows are selected, with one icon button to frame the map on the selection's own
+  extent — geo tables only, via `useFeatureSelection.zoomToSelection` — and one to empty the
+  selection) and
   what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
   *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
   *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
@@ -429,7 +437,11 @@ straight away rather than held behind a code the user would have to invent. `Sou
 presentational: which row is being edited, loaded or deleted is decided by the view comparing
 `useSources`' keys, the cell only renders the state it is handed and emits intentions.
 
-**Target split of `SourcesView`**: `SourcesTable` (files/layers tree) still to extract.
+`SourcesView` holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the upload modal's
+open state; `SourcesTable` (`components/sources/`) holds the files/layers tree — column definitions,
+the TanStack instance and its four states — taking the whole `useSources` instance rather than a
+narrower prop set, since its action functions (`startLoad`, `remove`…) are already the single owner
+of that state.
 
 The title shown by the banner comes from `route.meta.title`, whose type is declared once
 (augmentation of `vue-router`'s `RouteMeta`) rather than read untyped.

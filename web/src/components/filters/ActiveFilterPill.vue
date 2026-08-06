@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Pencil, X } from "@lucide/vue";
 import type { SavedFilter } from "../../client/types";
-import Badge from "../Badge.vue";
+import Badge from "../ui/Badge.vue";
 
 // Only the applied filter, not the whole catalogue: a single filter applies at
 // a time, and SavedFilterMenu already lists them all — a pill row repeating it

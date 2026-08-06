@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { FileUp, UploadCloud } from "@lucide/vue";
-import Modal from "../Modal.vue";
+import Modal from "../ui/Modal.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import Typography from "../ui/Typography.vue";
 

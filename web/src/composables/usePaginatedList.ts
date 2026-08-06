@@ -32,6 +32,11 @@ export interface UsePaginatedListOptions<T> {
 // sort change never flashes an empty table (règle 8.1).
 export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
   const limit = options.limit ?? 50;
+  // ref() unwraps a generic T through UnwrapRef, which the checker cannot
+  // prove equal to T for an arbitrary caller's T — a plain annotation is
+  // rejected (TS2322) even though the runtime value is exactly T[]. The cast
+  // is the documented workaround (Vue's own generic-ref limitation), not a
+  // narrowing away from a known type.
   const items = ref<T[]>([]) as Ref<T[]>;
   const total = ref(0);
   const offset = ref(0);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import Badge from "../Badge.vue";
+import Badge from "../ui/Badge.vue";
 import BaseButton from "../ui/BaseButton.vue";
 
 // What the session holds and the two buttons that decide its fate. The counts

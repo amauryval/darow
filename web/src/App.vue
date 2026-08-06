@@ -1,44 +1,20 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
 import { useStorage } from "@vueuse/core";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { FolderOpen, LayoutGrid, LogIn, MapPinned, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
-import { readyz } from "./client/ops";
-import Toast from "./components/Toast.vue";
+import { useServerStatus, type ServerStatus } from "./composables/useServerStatus";
+import Toast from "./components/ui/Toast.vue";
+import Badge from "./components/ui/Badge.vue";
 import BaseButton from "./components/ui/BaseButton.vue";
 import Typography from "./components/ui/Typography.vue";
 
-type Status = "checking" | "ok" | "down";
-
 const route = useRoute();
-const status = ref<Status>("checking");
-let interval: ReturnType<typeof setInterval> | undefined;
+const { status, label: statusLabel } = useServerStatus();
 
-async function checkStatus() {
-  try {
-    await readyz();
-    status.value = "ok";
-  } catch {
-    status.value = "down";
-  }
-}
-
-onMounted(() => {
-  checkStatus();
-  interval = setInterval(checkStatus, 20_000);
-});
-onUnmounted(() => clearInterval(interval));
-
-const statusLabel: Record<Status, string> = {
-  checking: "Vérification…",
-  ok: "Opérationnel",
-  down: "Indisponible",
-};
-
-const statusBadgeTone: Record<Status, string> = {
-  checking: "badge-neutral",
-  ok: "badge-success",
-  down: "badge-error",
+const statusBadgeTone: Record<ServerStatus, "neutral" | "success" | "error"> = {
+  checking: "neutral",
+  ok: "success",
+  down: "error",
 };
 
 // Persisted so the operator's choice of a dense, icon-only sidebar survives a
@@ -59,6 +35,9 @@ const links = [
     <div class="drawer-content flex min-w-0 flex-1 flex-col overflow-hidden">
       <header class="navbar min-h-12 shrink-0 gap-1 border-b border-base-300 bg-base-100 px-4">
         <div class="flex flex-1 items-center gap-1">
+          <!-- daisyUI's drawer needs a <label for> bound to its checkbox
+               input, which BaseButton cannot be — the one deliberate daisyUI
+               class outside components/ui/ (§0.10). -->
           <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Ouvrir la navigation">
             <LayoutGrid :size="18" />
           </label>
@@ -77,7 +56,7 @@ const links = [
           <Typography variant="h4" class="ml-1">{{ route.meta.title }}</Typography>
         </div>
         <!-- No auth backend yet — placeholder for when the API gains one -->
-        <BaseButton variant="primary" size="sm" class="btn-outline gap-1.5" disabled title="Authentification bientôt disponible">
+        <BaseButton variant="secondary" size="sm" class="gap-1.5" disabled title="Authentification bientôt disponible">
           <LogIn :size="14" />
           Se connecter
         </BaseButton>
@@ -119,9 +98,9 @@ const links = [
         </ul>
 
         <div class="flex items-center gap-2 border-t border-base-300 px-3 py-3" :class="collapsed && 'justify-center'">
-          <span class="badge badge-soft badge-sm" :class="statusBadgeTone[status]" :title="statusLabel[status]">
+          <Badge :tone="statusBadgeTone[status]" :title="statusLabel[status]">
             <span v-show="!collapsed">{{ statusLabel[status] }}</span>
-          </span>
+          </Badge>
         </div>
       </aside>
     </div>

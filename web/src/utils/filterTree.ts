@@ -76,6 +76,23 @@ export function updateChildren(nodes: DraftNode[], groupId: number, children: Dr
   return nodes.map((n) => (n.id === groupId ? { ...n, children } : n));
 }
 
+// A leaf's own fields, patched only on the node the editor is actually
+// rendering as a leaf (`node.kind === 'leaf'` in FilterNodeEditor) — a patch
+// applied to a group by mistake is a no-op rather than a mismatched shape.
+export function patchLeaf(nodes: DraftNode[], id: number, patch: Partial<Pick<DraftLeaf, "column" | "operator" | "value">>): DraftNode[] {
+  return nodes.map((n) => (n.id === id && n.kind === "leaf" ? { ...n, ...patch } : n));
+}
+
+export function patchGroupBool(nodes: DraftNode[], id: number, bool: "AND" | "OR"): DraftNode[] {
+  return nodes.map((n) => (n.id === id && n.kind === "group" ? { ...n, bool } : n));
+}
+
+// `not` negates a leaf or a whole group alike, so it is the one patch shared
+// by both branches of the union.
+export function toggleNot(nodes: DraftNode[], id: number): DraftNode[] {
+  return nodes.map((n) => (n.id === id ? { ...n, not: !n.not } : n));
+}
+
 // One-line rendering of a node, for a pill label and for the name a filter is
 // saved under. A group is spelled out in parentheses rather than summarized by
 // its size ("2 conditions" names nothing a user would recognize in a list);

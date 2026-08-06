@@ -8,11 +8,12 @@ import type { useRowEdits } from "../../composables/useRowEdits";
 import type { useTableRows } from "../../composables/useTableRows";
 import { columnType } from "../../utils/columnTypes";
 import { cellValue } from "../../utils/rows";
-import DataTable from "../DataTable.vue";
+import DataTable from "../ui/DataTable.vue";
 import TableGeometryCell from "./TableGeometryCell.vue";
 import TableRowLeadCell from "./TableRowLeadCell.vue";
 import TableRowEditCell from "./TableRowEditCell.vue";
 import ErrorState from "../ui/ErrorState.vue";
+import ListFooter from "../ui/ListFooter.vue";
 import Skeleton from "../ui/Skeleton.vue";
 
 // The rows grid of a table: the pinned selection, the infinite scroll, and
@@ -165,8 +166,7 @@ const table = useVueTable({
     @row-click="emit('rowClick', $event)"
   >
     <template #footer>
-      <div :ref="state.sentinel" class="h-px"></div>
-      <p v-if="state.loading.value" class="px-4 py-3 text-center text-xs text-base-content/40">Chargement…</p>
+      <ListFooter :sentinel="state.sentinel" :loading="state.loading.value" />
     </template>
   </DataTable>
 </template>

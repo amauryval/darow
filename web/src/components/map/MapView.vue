@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from "vue";
 import "ol/ol.css";
-import type { FilterCondition } from "../client/types";
-import { useMapDraw, type DrawShape } from "../composables/useMapDraw";
-import type { EditableFeature, LayerChanges } from "../composables/useEditLayer";
-import { useOpenLayers } from "../composables/useOpenLayers";
-import { useGeometryTypes } from "../composables/useGeometryTypes";
-import { useMvtLayer } from "../composables/useMvtLayer";
-import { useWfsLayer } from "../composables/useWfsLayer";
-import MapEditBar from "./map/MapEditBar.vue";
-import MapEditLegend from "./map/MapEditLegend.vue";
-import BaseCheckbox from "./ui/BaseCheckbox.vue";
-import FloatingPanel from "./ui/FloatingPanel.vue";
+import type { FilterCondition } from "../../client/types";
+import { useMapDraw, type DrawShape } from "../../composables/useMapDraw";
+import type { EditableFeature, LayerChanges } from "../../composables/useEditLayer";
+import { useOpenLayers } from "../../composables/useOpenLayers";
+import { useGeometryTypes } from "../../composables/useGeometryTypes";
+import { useMvtLayer } from "../../composables/useMvtLayer";
+import { useWfsLayer } from "../../composables/useWfsLayer";
+import MapEditBar from "./MapEditBar.vue";
+import MapEditLegend from "./MapEditLegend.vue";
+import BaseCheckbox from "../ui/BaseCheckbox.vue";
+import FloatingPanel from "../ui/FloatingPanel.vue";
 
 const props = defineProps<{
   tableId: string;
@@ -41,6 +41,13 @@ const props = defineProps<{
   // rendering only shows an edited geometry once the layers are told to ask
   // again.
   dataVersion?: number;
+  // A one-off reframing on the selection's own extent, distinct from `bbox`
+  // (the table's or the filter's own framing, which the view stays on by
+  // default): zoomToken is bumped on every request, even a repeat of the
+  // same bbox, since a plain string prop would not re-fire a watcher on an
+  // unchanged value.
+  zoomBbox?: string;
+  zoomToken?: number;
 }>();
 
 // Whoever owns selection (useFeatureSelection, in the parent) applies the
@@ -73,10 +80,20 @@ const conditions = computed(() => props.conditions);
 const selectedPkeys = computed(() => props.selectedPkeys);
 const dataVersion = computed(() => props.dataVersion ?? 0);
 
-const { map } = useOpenLayers(container, bbox, () => {
+const { map, fitBbox } = useOpenLayers(container, bbox, () => {
   showTable();
   if (props.editing) startEditing();
 });
+
+// A selection zoom is a one-shot reframing, not a change of the map's own
+// framing source (`bbox`) — the next filter or table change still frames on
+// that, not on wherever the selection last put the view.
+watch(
+  () => props.zoomToken,
+  (token, previous) => {
+    if (token !== undefined && token !== previous) fitBbox(props.zoomBbox);
+  },
+);
 
 // Selection is suspended for the whole of an edit session: the click that
 // places a vertex must not also toggle a row, and the hover cursor must not

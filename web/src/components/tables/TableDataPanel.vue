@@ -1,23 +1,20 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, toRef, watch } from "vue";
-import type { ColumnSchema, Row } from "../client/types";
-import type { LayerChanges } from "../composables/useEditLayer";
-import type { useFeatureSelection } from "../composables/useFeatureSelection";
-import { useLayerEditing } from "../composables/useLayerEditing";
-import { isDraft, useRowEdits } from "../composables/useRowEdits";
-import { useRowFilter } from "../composables/useRowFilter";
-import { useToast } from "../composables/useToast";
-import { useRowGeometry } from "../composables/useRowGeometry";
-import { useTableRows } from "../composables/useTableRows";
-import FilteredRowsPanel from "./filters/FilteredRowsPanel.vue";
-import GeometryModal from "./tables/GeometryModal.vue";
-import TableEditBar from "./tables/TableEditBar.vue";
-import TableRowsPanel from "./tables/TableRowsPanel.vue";
-import TableToolbar from "./tables/TableToolbar.vue";
-
-// OpenLayers is the largest dependency in the bundle — load it only when a
-// geo table's data panel is actually rendered.
-const MapView = defineAsyncComponent(() => import("./MapView.vue"));
+import { computed, ref, toRef, watch } from "vue";
+import type { ColumnSchema, Row } from "../../client/types";
+import type { LayerChanges } from "../../composables/useEditLayer";
+import type { useFeatureSelection } from "../../composables/useFeatureSelection";
+import { useLayerEditing } from "../../composables/useLayerEditing";
+import { isDraft, useRowEdits } from "../../composables/useRowEdits";
+import { useRowFilter } from "../../composables/useRowFilter";
+import { useToast } from "../../composables/useToast";
+import { useRowGeometry } from "../../composables/useRowGeometry";
+import { useTableRows } from "../../composables/useTableRows";
+import FilteredRowsPanel from "../filters/FilteredRowsPanel.vue";
+import GeometryModal from "./GeometryModal.vue";
+import TableEditBar from "./TableEditBar.vue";
+import TableMapPanel from "./TableMapPanel.vue";
+import TableRowsPanel from "./TableRowsPanel.vue";
+import TableToolbar from "./TableToolbar.vue";
 
 const props = defineProps<{
   tableId: string;
@@ -115,12 +112,6 @@ const MAP_TOOLS_ID = "darow-map-edit-tools";
 // were working from (§8.3).
 const focusPanel = ref<"split" | "table" | "map">("split");
 watch(tableId, () => (focusPanel.value = "split"));
-
-// The session's unsaved work lives inside the map, so the map stays mounted
-// for as long as one lasts — maximizing the table hides it rather than
-// unmounting it, which would drop every reshape without a word.
-const mapMounted = computed(() => props.isGeo && (focusPanel.value !== "table" || layerEditing.active.value));
-const mapHidden = computed(() => focusPanel.value === "table");
 
 // Re-centers the map on the filter's own results rather than the whole
 // table's extent, cleared back to the table's bbox once inactive.
@@ -236,34 +227,28 @@ function onRowClick(row: { original: Row }) {
         />
       </div>
 
-      <!-- Kept in the DOM but hidden while a session holds unsaved reshapes
-           (mapMounted): OpenLayers re-measures its container on its own when
-           it comes back, so maximizing the table costs nothing but the view. -->
-      <div
-        v-if="mapMounted"
-        class="card min-h-0 overflow-hidden rounded-lg border border-base-300"
-        :class="mapHidden ? 'hidden' : focusPanel === 'map' ? 'w-full' : 'w-1/2'"
-      >
-        <MapView
-          :table-id="tableId"
-          :bbox="mapBbox"
-          :conditions="filter.appliedConditions.value"
-          :selected-pkeys="selection.selectedPkeys.value"
-          :editing="layerEditing.active.value"
-          :features="layerEditing.features.value"
-          :saving="layerEditing.saving.value"
-          :row-count="rowEdits.dirtyCount.value"
-          :draft-count="rowEdits.draftCount.value"
-          :toolbar-target="`#${MAP_TOOLS_ID}`"
-          :data-version="dataVersion"
-          @toggle-selection="selection.toggle"
-          @request-feature="layerEditing.reach"
-          @release-features="layerEditing.release"
-          @drawn-count="rowEdits.syncDrafts"
-          @save="saveEditing"
-          @cancel="cancelEditing"
-        />
-      </div>
+      <TableMapPanel
+        :table-id="tableId"
+        :bbox="mapBbox"
+        :is-geo="isGeo"
+        :focus-panel="focusPanel"
+        :conditions="filter.appliedConditions.value"
+        :selected-pkeys="selection.selectedPkeys.value"
+        :editing="layerEditing.active.value"
+        :features="layerEditing.features.value"
+        :saving="layerEditing.saving.value"
+        :row-count="rowEdits.dirtyCount.value"
+        :toolbar-target="`#${MAP_TOOLS_ID}`"
+        :data-version="dataVersion"
+        :zoom-bbox="selection.zoomBbox.value"
+        :zoom-token="selection.zoomToken.value"
+        @toggle-selection="selection.toggle"
+        @request-feature="layerEditing.reach"
+        @release-features="layerEditing.release"
+        @drawn-count="rowEdits.syncDrafts"
+        @save="saveEditing"
+        @cancel="cancelEditing"
+      />
     </div>
   </div>
 

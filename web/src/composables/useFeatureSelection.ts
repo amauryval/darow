@@ -1,5 +1,6 @@
 import { ref, watch, type Ref } from "vue";
 import { getRowsByPkey } from "../client/tables";
+import { getFilteredExtent } from "../client/geo";
 import type { Row } from "../client/types";
 import { errorMessage } from "../client/http";
 import { useToast } from "./useToast";
@@ -56,5 +57,32 @@ export function useFeatureSelection(tableId: Ref<string>) {
     clear();
   });
 
-  return { selectedPkeys, selectedRows, toggle, clear };
+  // The selection's own bbox, fetched on demand rather than kept in sync: a
+  // filter already has a server-computed extent (getFilteredExtent), and the
+  // pkeys picked one click at a time are exactly what its filter DSL can
+  // express as an OR of equalities — no dedicated endpoint needed. zoomToken
+  // is bumped on every fetch, even one landing on the same bbox as before, so
+  // the map's watcher (a plain string ref would not re-fire on an unchanged
+  // value) knows a new zoom was actually requested.
+  const zoomBbox = ref<string | undefined>(undefined);
+  const zoomToken = ref(0);
+  const zooming = ref(false);
+
+  async function zoomToSelection() {
+    if (selectedPkeys.value.length === 0) return;
+    zooming.value = true;
+    try {
+      const { bbox } = await getFilteredExtent(tableId.value, [
+        { bool: "OR", conditions: selectedPkeys.value.map((pkey) => ({ column: "__pkey", operator: "=", value: pkey })) },
+      ]);
+      zoomBbox.value = bbox;
+      zoomToken.value += 1;
+    } catch (e) {
+      toast.error(errorMessage(e, "Impossible de cadrer sur la sélection"));
+    } finally {
+      zooming.value = false;
+    }
+  }
+
+  return { selectedPkeys, selectedRows, toggle, clear, zoomBbox, zoomToken, zooming, zoomToSelection };
 }

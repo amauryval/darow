@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { useToast } from "../composables/useToast";
-import BaseButton from "./ui/BaseButton.vue";
+import { useToast } from "../../composables/useToast";
+import BaseButton from "./BaseButton.vue";
 
 const { toasts, dismiss } = useToast();
 </script>

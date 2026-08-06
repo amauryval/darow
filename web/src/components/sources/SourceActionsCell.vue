@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import { ArrowRight, Trash2 } from "@lucide/vue";
 import type { SourceRow } from "../../utils/sourceRows";
-import ConfirmButton from "../ConfirmButton.vue";
+import ConfirmButton from "../ui/ConfirmButton.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import BaseInput from "../ui/BaseInput.vue";
 

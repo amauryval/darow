@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Copy } from "@lucide/vue";
 import { excerpt, formatGeoJSON } from "../../utils/geometry";
-import Modal from "../Modal.vue";
+import Modal from "../ui/Modal.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import ErrorState from "../ui/ErrorState.vue";
 import Skeleton from "../ui/Skeleton.vue";

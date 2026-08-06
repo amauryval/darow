@@ -5,9 +5,13 @@ import { columnType } from "../../utils/columnTypes";
 import {
   createLeaf,
   nextNodeId,
+  patchGroupBool,
+  patchLeaf,
   removeNode as removeNodeUtil,
   takesValue,
+  toggleNot,
   updateChildren as updateChildrenUtil,
+  type DraftLeaf,
   type DraftNode,
 } from "../../utils/filterTree";
 import FilterValueInput from "./FilterValueInput.vue";
@@ -35,11 +39,16 @@ const emit = defineEmits<{
   "update:bool": [bool: "AND" | "OR"];
 }>();
 
-function updateNode(id: number, patch: Partial<DraftNode>) {
-  emit(
-    "update:nodes",
-    props.nodes.map((n) => (n.id === id ? ({ ...n, ...patch } as DraftNode) : n)),
-  );
+function updateLeaf(id: number, patch: Partial<Pick<DraftLeaf, "column" | "operator" | "value">>) {
+  emit("update:nodes", patchLeaf(props.nodes, id, patch));
+}
+
+function updateGroupBool(id: number, bool: "AND" | "OR") {
+  emit("update:nodes", patchGroupBool(props.nodes, id, bool));
+}
+
+function toggleNodeNot(id: number) {
+  emit("update:nodes", toggleNot(props.nodes, id));
 }
 
 function removeNode(id: number) {
@@ -107,7 +116,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
             class="min-w-0 flex-1"
             :options="columnOptions()"
             aria-label="Colonne"
-            @update:model-value="updateNode(node.id, { column: $event })"
+            @update:model-value="updateLeaf(node.id, { column: $event })"
           />
           <BaseSelect
             :model-value="node.operator"
@@ -115,7 +124,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
             class="w-32 shrink-0"
             :options="operatorOptions"
             aria-label="Opérateur"
-            @update:model-value="updateNode(node.id, { operator: $event })"
+            @update:model-value="updateLeaf(node.id, { operator: $event })"
           />
           <FilterValueInput
             v-if="takesValue(node.operator)"
@@ -124,7 +133,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
             :type="columnType(columns, node.column)"
             :model-value="node.value"
             class="min-w-0 flex-1"
-            @update:model-value="updateNode(node.id, { value: $event })"
+            @update:model-value="updateLeaf(node.id, { value: $event })"
           />
           <div v-else class="min-w-0 flex-1"></div>
         </div>
@@ -136,7 +145,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
             :nodes="node.children"
             :bool="node.bool"
             @update:nodes="updateChildren(node.id, $event)"
-            @update:bool="updateNode(node.id, { bool: $event })"
+            @update:bool="updateGroupBool(node.id, $event)"
           />
         </div>
       </div>
@@ -147,7 +156,7 @@ const boolLabel = () => (props.bool === "AND" ? "ET" : "OU");
           :variant="node.not ? 'primary' : 'ghost'"
           :aria-pressed="node.not"
           :title="node.kind === 'group' ? 'Inverser tout le groupe' : 'Inverser cette condition'"
-          @click="updateNode(node.id, { not: !node.not })"
+          @click="toggleNodeNot(node.id)"
         >
           NON
         </BaseButton>

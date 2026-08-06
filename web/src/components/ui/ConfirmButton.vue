@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { Component } from "vue";
-import BaseButton from "./ui/BaseButton.vue";
-import ConfirmDialog from "./ui/ConfirmDialog.vue";
+import BaseButton from "./BaseButton.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 // A destructive action and its confirmation in one control: the trigger here,
 // the wording in the shared `ConfirmDialog` — consistent across a single rare

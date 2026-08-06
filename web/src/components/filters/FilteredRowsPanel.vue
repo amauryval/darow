@@ -3,7 +3,7 @@ import { computed, h } from "vue";
 import { createColumnHelper, getCoreRowModel, useVueTable } from "@tanstack/vue-table";
 import type { Row } from "../../client/types";
 import { cellValue } from "../../utils/rows";
-import DataTable from "../DataTable.vue";
+import DataTable from "../ui/DataTable.vue";
 import TableGeometryCell from "../tables/TableGeometryCell.vue";
 import BaseInput from "../ui/BaseInput.vue";
 import ErrorState from "../ui/ErrorState.vue";

@@ -3,11 +3,11 @@ import { computed, ref, toRef, watch } from "vue";
 import { useRouter } from "vue-router";
 import { exportTable } from "../client/tables";
 import { errorMessage } from "../client/http";
-import ColumnsModal from "../components/ColumnsModal.vue";
-import TableDataPanel from "../components/TableDataPanel.vue";
+import ColumnsModal from "../components/tables/ColumnsModal.vue";
+import TableDataPanel from "../components/tables/TableDataPanel.vue";
 import TableHeader from "../components/tables/TableHeader.vue";
 import DeriveTableModal from "../components/tables/DeriveTableModal.vue";
-import AddColumnModal from "../components/AddColumnModal.vue";
+import AddColumnModal from "../components/tables/AddColumnModal.vue";
 import Breadcrumbs from "../components/ui/Breadcrumbs.vue";
 import { useFeatureSelection } from "../composables/useFeatureSelection";
 import { useTableMetadata } from "../composables/useTableMetadata";
@@ -18,7 +18,7 @@ const props = defineProps<{ tableId: string }>();
 const router = useRouter();
 const toast = useToast();
 
-const { table, columns, rowColumns, loadTable, rename, remove } = useTableMetadata(
+const { table, columns, rowColumns, loadTable, rename, remove, addNewColumn } = useTableMetadata(
   toRef(props, "tableId"),
 );
 
@@ -114,7 +114,8 @@ function openAddColumn() {
   addColumnModalRef.value?.openModal();
 }
 
-async function onAddColumnSuccess() {
+async function onColumnAdded(name: string, type: string) {
+  await addNewColumn(name, type);
   await loadTable();
 }
 </script>
@@ -128,10 +129,12 @@ async function onAddColumnSuccess() {
       :table="table"
       :editing-name="editingName"
       :selected-count="selection.selectedPkeys.value.length"
+      :zooming="selection.zooming.value"
       :renaming="renaming"
       :exporting="exporting"
       @update:editing-name="editingName = $event"
       @clear-selection="selection.clear"
+      @zoom-to-selection="selection.zoomToSelection"
       @rename="onRename"
       @add-column="openAddColumn"
       @derive="showDerive = true"
@@ -175,8 +178,7 @@ async function onAddColumnSuccess() {
     <AddColumnModal
       v-if="showAddColumn && table"
       ref="addColumnModalRef"
-      :table-id="table.tableId"
-      @added="onAddColumnSuccess"
+      :on-add="onColumnAdded"
       @close="showAddColumn = false"
     />
   </div>

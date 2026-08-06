@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Copy, Trash2 } from "@lucide/vue";
 import BaseButton from "../ui/BaseButton.vue";
-import ConfirmButton from "../ConfirmButton.vue";
+import ConfirmButton from "../ui/ConfirmButton.vue";
 
 // What a single click does to one row, on the spot: duplicate it, delete it.
 // Reading its geometry is not here — that is a column of its own, headed by

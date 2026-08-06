@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { File, Layers, Map as MapIcon } from "@lucide/vue";
-import Badge from "../Badge.vue";
+import Badge from "../ui/Badge.vue";
 
 const props = defineProps<{
   name: string;

@@ -4,12 +4,18 @@ import type { ColumnSchema } from "../../client/types";
 import { useDeriveTable } from "../../composables/useDeriveTable";
 import { useSavedFilters } from "../../composables/useSavedFilters";
 import { useToast } from "../../composables/useToast";
-import Modal from "../Modal.vue";
+import Modal from "../ui/Modal.vue";
 import DeriveFromTableForm from "./DeriveFromTableForm.vue";
 import DeriveSqlForm from "./DeriveSqlForm.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import BaseInput from "../ui/BaseInput.vue";
+import Tabs from "../ui/Tabs.vue";
 import Typography from "../ui/Typography.vue";
+
+const MODE_TABS: { value: "table" | "sql"; label: string }[] = [
+  { value: "table", label: "Depuis cette table" },
+  { value: "sql", label: "SQL" },
+];
 
 // Two modes, deliberately separated: "Depuis cette table" derives from the
 // table in hand, offering its columns and reusing the filter editor for its
@@ -81,26 +87,7 @@ async function onSubmit() {
 
 <template>
   <Modal title="Dériver une table" wide :dirty="dirty" @close="emit('close')" @submit="onSubmit">
-    <div role="tablist" class="tabs tabs-box mb-4">
-      <button
-        role="tab"
-        class="tab"
-        :class="{ 'tab-active': mode === 'table' }"
-        :aria-selected="mode === 'table'"
-        @click="mode = 'table'"
-      >
-        Depuis cette table
-      </button>
-      <button
-        role="tab"
-        class="tab"
-        :class="{ 'tab-active': mode === 'sql' }"
-        :aria-selected="mode === 'sql'"
-        @click="mode = 'sql'"
-      >
-        SQL
-      </button>
-    </div>
+    <Tabs v-model="mode" :tabs="MODE_TABS" class="mb-4" />
 
     <DeriveFromTableForm
       v-if="mode === 'table'"

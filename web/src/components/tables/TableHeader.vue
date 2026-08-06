@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { Download, GitBranch, MoreHorizontal, Pencil, Plus, Trash2, X } from "@lucide/vue";
+import { Download, GitBranch, Maximize, MoreHorizontal, Pencil, Plus, Trash2, X } from "@lucide/vue";
 import type { Metadata } from "../../client/types";
-import Badge from "../Badge.vue";
+import Badge from "../ui/Badge.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import BaseInput from "../ui/BaseInput.vue";
 import ConfirmDialog from "../ui/ConfirmDialog.vue";
@@ -28,10 +28,12 @@ const props = defineProps<{
   // How many rows are selected, on the map and in the grid alike — a counter
   // of the table, so it stands with the others rather than above the grid.
   selectedCount: number;
+  zooming: boolean;
 }>();
 const emit = defineEmits<{
   "update:editingName": [editing: boolean];
   clearSelection: [];
+  zoomToSelection: [];
   rename: [name: string];
   addColumn: [];
   derive: [];
@@ -92,6 +94,18 @@ function submitRename() {
           <Typography variant="body-sm">
             {{ selectedCount.toLocaleString("fr-FR") }} sélectionnée{{ selectedCount > 1 ? "s" : "" }}
           </Typography>
+          <BaseButton
+            v-if="table.isGeo"
+            size="xs"
+            variant="ghost"
+            :icon="Maximize"
+            icon-only
+            :busy="zooming"
+            title="Cadrer sur la sélection"
+            @click="emit('zoomToSelection')"
+          >
+            Cadrer sur la sélection
+          </BaseButton>
           <BaseButton
             size="xs"
             variant="ghost"

@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="TData">
-import type { Row, Table } from "@tanstack/vue-table";
+import type { ColumnMeta, Row, Table } from "@tanstack/vue-table";
 import { FlexRender } from "@tanstack/vue-table";
 
 defineProps<{
@@ -20,20 +20,12 @@ function onRowClick(row: Row<TData>, event: MouseEvent) {
   emit("rowClick", row);
 }
 
-function getCellMetaAlign(meta: unknown): string | undefined {
-  if (typeof meta === 'object' && meta !== null) {
-    const obj = meta as Record<string, unknown>;
-    return obj.align === 'right' ? 'text-right' : undefined;
-  }
-  return undefined;
+function getCellMetaAlign(meta: ColumnMeta<TData, unknown> | undefined): string | undefined {
+  return meta?.align === "right" ? "text-right" : undefined;
 }
 
-function getCellMetaClass(meta: unknown): string | undefined {
-  if (typeof meta === 'object' && meta !== null) {
-    const obj = meta as Record<string, unknown>;
-    return typeof obj.class === 'string' ? obj.class : undefined;
-  }
-  return undefined;
+function getCellMetaClass(meta: ColumnMeta<TData, unknown> | undefined): string | undefined {
+  return meta?.class;
 }
 
 // A column that stays put while the grid scrolls sideways. The caller says
@@ -46,12 +38,8 @@ function getCellMetaClass(meta: unknown): string | undefined {
 // through the pinned cells.
 // `level` is the stacking order: a pinned header cell has to stay above the
 // pinned body cells that scroll under it, and both above the ordinary ones.
-function getPinnedClass(meta: unknown, level: 1 | 2): string | undefined {
-  if (typeof meta === 'object' && meta !== null) {
-    const obj = meta as Record<string, unknown>;
-    if (typeof obj.pinned === 'string') return `sticky ${obj.pinned} bg-inherit ${level === 2 ? 'z-[2]' : 'z-[1]'}`;
-  }
-  return undefined;
+function getPinnedClass(meta: ColumnMeta<TData, unknown> | undefined, level: 1 | 2): string | undefined {
+  return meta?.pinned ? `sticky ${meta.pinned} bg-inherit ${level === 2 ? "z-[2]" : "z-[1]"}` : undefined;
 }
 
 // title only for plain scalar values: a rich cell (badge, button, link)

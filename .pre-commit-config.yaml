@@ -1,0 +1,36 @@
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v6.0.0
+      hooks:
+          - id: check-yaml
+          - id: end-of-file-fixer
+          - id: trailing-whitespace
+          - id: mixed-line-ending
+
+    - repo: https://github.com/pre-commit/mirrors-prettier
+      rev: v3.1.0
+      hooks:
+          - id: prettier
+            exclude: ^client_ts/wasm_exec\.js$
+
+    - repo: https://github.com/golangci/golangci-lint
+      rev: v2.12.2
+      hooks:
+          - id: golangci-lint
+            alias: golangci-lint-native
+            name: golangci-lint (server, app)
+            args: [--fast-only, ./server/..., ./app/...]
+          - id: golangci-lint
+            alias: golangci-lint-wasm
+            name: golangci-lint (client, wasm)
+            entry: env GOOS=js GOARCH=wasm golangci-lint run --new-from-rev HEAD --fix
+            args: [--fast-only, ./client/...]
+
+    - repo: local
+      hooks:
+          - id: eslint-vue3
+            name: eslint (app/vue3)
+            entry: bash -c 'cd app/vue3 && npx --no-install eslint . --ext .js,.vue,.ts --fix'
+            language: system
+            files: ^app/vue3/.*\.(js|ts|vue)$
+            pass_filenames: false

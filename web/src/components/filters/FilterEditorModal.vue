@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import type { ColumnSchema } from "../../client/types";
 import { describeDraft, draftOf, isComplete, nodeOf, type DraftNode } from "../../utils/filterTree";
-import Modal from "../Modal.vue";
+import Modal from "../ui/Modal.vue";
 import FilterNodeEditor from "./FilterNodeEditor.vue";
 import BaseButton from "../ui/BaseButton.vue";
 import BaseInput from "../ui/BaseInput.vue";

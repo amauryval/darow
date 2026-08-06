@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { useFocusTrap } from "../composables/useFocusTrap";
-import BaseButton from "./ui/BaseButton.vue";
-import Typography from "./ui/Typography.vue";
+import { useFocusTrap } from "../../composables/useFocusTrap";
+import BaseButton from "./BaseButton.vue";
+import Typography from "./Typography.vue";
 
 // dirty: a modified form must not be lost by a stray click (§8.3). While
 // dirty, a backdrop click is a no-op and Escape asks for confirmation

@@ -3,15 +3,15 @@ import { computed, h, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Row } from "@tanstack/vue-table";
 import { createColumnHelper, getCoreRowModel, getFilteredRowModel, useVueTable } from "@tanstack/vue-table";
-import { listTables } from "../client/tables";
+import { listTables, renameTable } from "../client/tables";
 import type { Metadata } from "../client/types";
 import { errorMessage } from "../client/http";
 import { usePaginatedList } from "../composables/usePaginatedList";
 import { useDocumentTitle } from "../composables/useDocumentTitle";
 import { parseSorting, stringifySorting } from "../utils/sort";
 import { queryString } from "../utils/routeQuery";
-import Badge from "../components/Badge.vue";
-import DataTable from "../components/DataTable.vue";
+import Badge from "../components/ui/Badge.vue";
+import DataTable from "../components/ui/DataTable.vue";
 import ErrorState from "../components/ui/ErrorState.vue";
 import Skeleton from "../components/ui/Skeleton.vue";
 import BaseInput from "../components/ui/BaseInput.vue";
@@ -48,12 +48,24 @@ function onRowClick(row: Row<Metadata>) {
   router.push(`/tables/${row.original.tableId}`);
 }
 
+const renamingId = ref<string | null>(null);
+const renameError = ref<{ tableId: string; message: string } | null>(null);
+
 // Patches the renamed row in place instead of reloading the whole list: a
 // rename from this page must not lose the operator's current scroll
 // position, page or search (§8.6).
-function onRenamed(renamed: Metadata) {
-  const index = tables.value.findIndex((t) => t.tableId === renamed.tableId);
-  if (index !== -1) tables.value[index] = renamed;
+async function onRename(tableId: string, name: string) {
+  renamingId.value = tableId;
+  renameError.value = null;
+  try {
+    const renamed = await renameTable(tableId, name);
+    const index = tables.value.findIndex((t) => t.tableId === renamed.tableId);
+    if (index !== -1) tables.value[index] = renamed;
+  } catch (e) {
+    renameError.value = { tableId, message: errorMessage(e, "Impossible de renommer la table") };
+  } finally {
+    renamingId.value = null;
+  }
 }
 
 const columnHelper = createColumnHelper<Metadata>();
@@ -64,7 +76,9 @@ const columnDefs = [
       h(TableNameCell, {
         tableId: row.original.tableId,
         tableName: row.original.tableName,
-        onRenamed,
+        renaming: renamingId.value === row.original.tableId,
+        error: renameError.value?.tableId === row.original.tableId ? renameError.value.message : undefined,
+        onRename,
       }),
   }),
   columnHelper.display({

@@ -96,7 +96,6 @@ binary.
     and can fail `gofmt` on code we don't own. The tasks above filter the package list explicitly
     (`go list ./... | grep -v /web/`) and scope `gofmt` to `cmd internal docs` — do the same in any
     ad-hoc `go test`/`go vet`/`gofmt` invocation
--   `mise run docs` — regenerate Swagger docs (`docs/docs.go`) from handler annotations
 -   `mise run ui-install` / `ui-build` / `ui-dev` — web UI deps / production build (into
     `internal/webui/dist`) / Vite dev server
 -   `mise run ui-lint` / `ui-test` — eslint / vitest for the web UI
