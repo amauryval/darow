@@ -4,6 +4,7 @@ withDefaults(
         modelValue?: string | number
         type?: string
         inputmode?: 'text' | 'numeric' | 'decimal' | 'email' | 'tel' | 'url' | 'search' | 'none'
+        step?: number
         label?: string
         placeholder?: string
         size?: 'xs' | 'sm' | 'md'
@@ -41,6 +42,7 @@ function onInput(event: Event) {
             :value="modelValue"
             :type="type"
             :inputmode="inputmode"
+            :step="step"
             :placeholder="placeholder"
             :disabled="disabled"
             :aria-label="ariaLabel"

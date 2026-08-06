@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_Catalog_Remove_CascadesToRegisteredRepositories(t *testing.T) {
@@ -22,9 +24,9 @@ func Test_Catalog_Remove_CascadesToRegisteredRepositories(t *testing.T) {
 	require.NoError(t, c.Remove(ctx, tableId))
 
 	assert.Equal(t, []string{tableId}, child.calls)
-	exists, err := c.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
+	_, err = c.GetMetadata(ctx, tableId)
+	var notFound *storage.NotFoundError
+	assert.ErrorAs(t, err, &notFound)
 }
 
 func Test_Catalog_Remove_DropsPhysicalTable(t *testing.T) {
@@ -42,9 +44,9 @@ func Test_Catalog_Remove_DropsPhysicalTable(t *testing.T) {
 
 	require.NoError(t, c.Remove(ctx, tableId))
 
-	exists, err := c.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
+	_, err = c.GetMetadata(ctx, tableId)
+	var notFound *storage.NotFoundError
+	assert.ErrorAs(t, err, &notFound)
 
 	var count int
 	err = dbq.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", meta.PhysicalName).Scan(&count)
@@ -68,9 +70,8 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 	err = c.Remove(ctx, tableId)
 	require.ErrorIs(t, err, failing)
 
-	exists, err := c.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.True(t, exists, "metadata row must survive a rolled-back cascade")
+	_, err = c.GetMetadata(ctx, tableId)
+	require.NoError(t, err, "metadata row must survive a rolled-back cascade")
 }
 
 func Test_Catalog_CreateFromQuery(t *testing.T) {
@@ -79,10 +80,6 @@ func Test_Catalog_CreateFromQuery(t *testing.T) {
 
 	tableId, err := c.CreateFromQuery(ctx, "widgets", "SELECT 1")
 	require.NoError(t, err)
-
-	exists, err := c.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.True(t, exists)
 
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -142,10 +139,6 @@ func Test_Catalog_CreateFromFile(t *testing.T) {
 
 	tableId, err := c.CreateFromFile(ctx, "widgets", "widgets.geojson", "/data/widgets.geojson", "", 0)
 	require.NoError(t, err)
-
-	exists, err := c.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.True(t, exists)
 
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)

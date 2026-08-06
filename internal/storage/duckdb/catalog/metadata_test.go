@@ -115,43 +115,6 @@ func Test_Repository_PhysicalNames_SkipsMissingPhysicalTable(t *testing.T) {
 	assert.Equal(t, map[string]bool{present.PhysicalName: true}, names)
 }
 
-func Test_Repository_TableExists(t *testing.T) {
-	r, conn := newTestRepositoryWithConn(t)
-	ctx := context.Background()
-
-	tableId, err := r.Create(ctx, "widgets", false, "")
-	require.NoError(t, err)
-	meta, err := r.GetMetadata(ctx, tableId)
-	require.NoError(t, err)
-	materialize(t, conn, meta.PhysicalName)
-
-	exists, err := r.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.True(t, exists)
-}
-
-func Test_Repository_TableExists_UnknownTableId(t *testing.T) {
-	r := newTestRepository(t)
-
-	exists, err := r.TableExists(context.Background(), "missing")
-	require.NoError(t, err)
-	assert.False(t, exists)
-}
-
-// A registered table whose physical table is gone reads as absent, rather
-// than as existing until the first query against it fails.
-func Test_Repository_TableExists_MissingPhysicalTable(t *testing.T) {
-	r := newTestRepository(t)
-	ctx := context.Background()
-
-	tableId, err := r.Create(ctx, "widgets", false, "")
-	require.NoError(t, err)
-
-	exists, err := r.TableExists(ctx, tableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
-}
-
 func Test_Repository_UpdateMetadata_RenamesTable(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()

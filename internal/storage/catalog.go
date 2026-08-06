@@ -61,9 +61,6 @@ type Catalog interface {
 	// each field validated against a fixed allowlist of metadata columns) or
 	// by tableId when sort is empty.
 	TableIds(ctx context.Context, sort []SortField) ([]string, error)
-	// TableExists is a cheap existence check for a caller that doesn't need
-	// the full Metadata.
-	TableExists(ctx context.Context, tableId string) (bool, error)
 	GetMetadata(ctx context.Context, tableId string) (Metadata, error)
 	// List returns one page of metadata ordered by sort (or by tableId when
 	// empty), plus the total number of registered tables — a single query

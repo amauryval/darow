@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
@@ -13,16 +15,26 @@ import (
 
 // GeoService provides tile and geospatial query access on top of the
 // storage layer, caching MVT tiles per table version in a size-bounded LRU
-// with expiration.
+// with expiration, held behind an atomic pointer so ResetCache can swap it
+// for a freshly sized one.
 type GeoService struct {
 	storage   tableResolver
-	tileCache *expirable.LRU[string, []byte]
+	tileCache atomic.Pointer[expirable.LRU[string, []byte]]
 }
 
 // NewGeoService builds a GeoService backed by storage, using tileCache to
 // cache rendered tiles.
 func NewGeoService(storage tableResolver, tileCache *expirable.LRU[string, []byte]) *GeoService {
-	return &GeoService{storage: storage, tileCache: tileCache}
+	svc := &GeoService{storage: storage}
+	svc.tileCache.Store(tileCache)
+	return svc
+}
+
+// ResetCache swaps the tile cache for a freshly built one sized maxItems
+// with the given ttl — called by core.NewServices when SettingsService
+// reports a change to cache.tileMaxItems/TTLSec.
+func (g *GeoService) ResetCache(maxItems int, ttl time.Duration) {
+	g.tileCache.Store(expirable.NewLRU[string, []byte](maxItems, nil, ttl))
 }
 
 // geoRepo resolves meta's GeoRepository, rejecting a scalar table with a
@@ -56,7 +68,8 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 	sortedAttrs := slices.Clone(attrs)
 	slices.Sort(sortedAttrs)
 	key := fmt.Sprintf("tile_%s_%d_%d_%d_%d_%s_%s_%v", meta.TableId, zoom, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sortedAttrs, ","), q.Filter, q.Args)
-	if mvt, ok := g.tileCache.Get(key); ok {
+	cache := g.tileCache.Load()
+	if mvt, ok := cache.Get(key); ok {
 		return mvt, nil
 	}
 
@@ -69,7 +82,7 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 		return nil, NewDisplayError(fmt.Sprintf("unable to render tile %d/%d/%d of table %q", zoom, x, y, meta.TableId), err)
 	}
 
-	g.tileCache.Add(key, mvt)
+	cache.Add(key, mvt)
 	return mvt, nil
 }
 

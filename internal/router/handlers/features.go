@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"darow/internal/config"
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/storage"
@@ -30,18 +29,18 @@ type FeaturesHandler struct {
 	metadataService metadataAPI
 	schemaService   schemaAPI
 	geoService      geoAPI
-	apiCfg          config.APIConfig
+	settings        settingsAPI
 }
 
 // NewFeaturesHandler builds a FeaturesHandler from the service ports it needs.
-func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, apiCfg config.APIConfig) *FeaturesHandler {
+func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, settings settingsAPI) *FeaturesHandler {
 	return &FeaturesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		metadataService: metadataSvc,
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
-		apiCfg:          apiCfg,
+		settings:        settings,
 	}
 }
 
@@ -83,7 +82,7 @@ func (fh *FeaturesHandler) Conformance(w http.ResponseWriter, req *http.Request)
 // @Success 200 {object} map[string]any
 // @Router /api/v1/ogc/collections [get]
 func (fh *FeaturesHandler) ListCollections(w http.ResponseWriter, req *http.Request) {
-	tables, _, err := fh.metadataService.ListTables(req.Context(), nil, 0, int64(fh.apiCfg.MaxListLimit))
+	tables, _, err := fh.metadataService.ListTables(req.Context(), nil, 0, int64(fh.settings.Current().MaxListLimit))
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
@@ -150,7 +149,7 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), fh.apiCfg.MaxSimplifyTolerance, fh.apiCfg.MaxPrecision)
+	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), fh.settings.Current().MaxSimplifyTolerance, fh.settings.Current().MaxPrecision)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -225,12 +224,12 @@ func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request) (offset, 
 		offset = v
 	}
 
-	limit = int64(fh.apiCfg.DefaultFeaturesLimit)
+	limit = int64(fh.settings.Current().DefaultFeaturesLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > int64(fh.apiCfg.MaxFeaturesLimit) {
-		limit = int64(fh.apiCfg.MaxFeaturesLimit)
+	if limit > int64(fh.settings.Current().MaxFeaturesLimit) {
+		limit = int64(fh.settings.Current().MaxFeaturesLimit)
 	}
 	return offset, limit
 }

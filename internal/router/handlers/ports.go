@@ -14,7 +14,7 @@ import (
 type metadataAPI interface {
 	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 	ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error)
-	RemoveTable(ctx context.Context, tableId string) error
+	RemoveTable(ctx context.Context, meta storage.Metadata) error
 	UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error
 }
 
@@ -68,6 +68,16 @@ type filterAPI interface {
 	Delete(ctx context.Context, meta storage.Metadata, filterId string) error
 }
 
+// settingsAPI is everything the router calls on *service.SettingsService:
+// Current for every handler sizing a page or bounding a body live off the
+// current settings, GetSettings/UpdateSettings for SettingsHandler's own
+// routes.
+type settingsAPI interface {
+	Current() storage.Settings
+	GetSettings(ctx context.Context) (storage.Settings, error)
+	UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error)
+}
+
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
@@ -88,4 +98,5 @@ var (
 	_ geoAPI      = (*service.GeoService)(nil)
 	_ sourceAPI   = (*service.SourceService)(nil)
 	_ filterAPI   = (*service.FilterService)(nil)
+	_ settingsAPI = (*service.SettingsService)(nil)
 )

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import SourcesView from './views/SourcesView.vue'
 import TablesView from './views/TablesView.vue'
 import TableDetailView from './views/TableDetailView.vue'
+import SettingsView from './views/SettingsView.vue'
 
 declare module 'vue-router' {
     interface RouteMeta {
@@ -26,6 +27,12 @@ export const router = createRouter({
             component: TableDetailView,
             props: true,
             meta: { title: 'Table' }
+        },
+        {
+            path: '/settings',
+            name: 'settings',
+            component: SettingsView,
+            meta: { title: 'Paramètres' }
         }
     ]
 })

@@ -11,29 +11,18 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/observer"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
 
-type schemaInvalidatorSpy struct{ invalidated []string }
-
-func (s *schemaInvalidatorSpy) InvalidateSchema(tableId string) {
-	s.invalidated = append(s.invalidated, tableId)
-}
-
-type sourceInvalidatorSpy struct{ unmarked []string }
-
-func (s *sourceInvalidatorSpy) UnmarkLoaded(tableId string) {
-	s.unmarked = append(s.unmarked, tableId)
-}
-
-func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Adapter, *schemaInvalidatorSpy) {
+func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Adapter, *observer.Observer[storage.Metadata]) {
 	m := &mocks.Adapter{}
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
-	schema := &schemaInvalidatorSpy{}
-	svc := NewMetadataService(m, c, schema)
+	removed := &observer.Observer[storage.Metadata]{}
+	svc := NewMetadataService(m, c, removed)
 	t.Cleanup(func() { m.AssertExpectations(t) })
-	return svc, m, schema
+	return svc, m, removed
 }
 
 func Test_MetadataService_GetMetadata(t *testing.T) {
@@ -120,21 +109,21 @@ func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
 
 func Test_MetadataService_RemoveTable(t *testing.T) {
 	cases := []struct {
-		name            string
-		failStorage     bool
-		wantErr         bool
-		wantInvalidated []string
+		name         string
+		failStorage  bool
+		wantErr      bool
+		wantNotified []storage.Metadata
 	}{
-		{name: "invalidates every cache", wantInvalidated: []string{"id-1"}},
+		{name: "notifies removal", wantNotified: []storage.Metadata{{TableId: "id-1"}}},
 		{name: "leaves caches alone when storage fails", failStorage: true, wantErr: true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			svc, m, schema := setupMetadataService(t)
-			source := &sourceInvalidatorSpy{}
-			svc.SetSourceInvalidator(source)
-			svc.cache.Add("id-1", storage.Metadata{TableId: "id-1"})
+			svc, m, removed := setupMetadataService(t)
+			var notified []storage.Metadata
+			removed.On(func(meta storage.Metadata) { notified = append(notified, meta) })
+			svc.cache.Load().Add("id-1", storage.Metadata{TableId: "id-1"})
 
 			var removeErr error
 			if c.failStorage {
@@ -142,30 +131,28 @@ func Test_MetadataService_RemoveTable(t *testing.T) {
 			}
 			m.On("Remove", mock.Anything, "id-1").Return(removeErr).Once()
 
-			err := svc.RemoveTable(context.Background(), "id-1")
+			err := svc.RemoveTable(context.Background(), storage.Metadata{TableId: "id-1"})
 
 			if c.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
-			assert.Equal(t, c.wantInvalidated, schema.invalidated)
-			assert.Equal(t, c.wantInvalidated, source.unmarked)
-			_, cached := svc.cache.Get("id-1")
+			assert.Equal(t, c.wantNotified, notified)
+			_, cached := svc.cache.Load().Get("id-1")
 			assert.Equal(t, c.wantErr, cached)
 		})
 	}
 }
 
-// SourceService is wired onto MetadataService after construction (see
-// SetSourceInvalidator's doc), so RemoveTable must not panic on the nil
-// port a caller that never wires one (e.g. this package's other tests) is
-// left with.
-func Test_MetadataService_RemoveTable_ToleratesUnsetSourceInvalidator(t *testing.T) {
+// Notifying with no registered listener must not panic — this package's
+// other tests build a MetadataService without registering anything onto its
+// removed observer.
+func Test_MetadataService_RemoveTable_ToleratesNoListeners(t *testing.T) {
 	svc, m, _ := setupMetadataService(t)
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
-	err := svc.RemoveTable(context.Background(), "id-1")
+	err := svc.RemoveTable(context.Background(), storage.Metadata{TableId: "id-1"})
 
 	require.NoError(t, err)
 }
@@ -244,4 +231,19 @@ func Test_MetadataService_CreateFromFile(t *testing.T) {
 			assert.Equal(t, "id-1", tableId)
 		})
 	}
+}
+
+func Test_MetadataService_ResetCache(t *testing.T) {
+	svc, m, _ := setupMetadataService(t)
+	svc.cache.Load().Add("id-1", storage.Metadata{TableId: "id-1"})
+
+	svc.ResetCache(1000, 5*time.Minute)
+
+	_, cached := svc.cache.Load().Get("id-1")
+	assert.False(t, cached, "resetting the cache must drop every entry the old one held")
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
+	meta, err := svc.GetMetadata(context.Background(), "id-1")
+	require.NoError(t, err)
+	assert.Equal(t, "id-1", meta.TableId)
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"darow/internal/config"
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/storage"
@@ -23,11 +22,11 @@ type TablesHandler struct {
 	schemaService   schemaAPI
 	deriveService   deriveAPI
 	rowService      rowAPI
-	apiCfg          config.APIConfig
+	settings        settingsAPI
 }
 
 // NewTablesHandler builds a TablesHandler from the service ports it needs.
-func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, apiCfg config.APIConfig) *TablesHandler {
+func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI) *TablesHandler {
 	return &TablesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
@@ -35,7 +34,7 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 		schemaService:   schemaSvc,
 		deriveService:   deriveSvc,
 		rowService:      rowSvc,
-		apiCfg:          apiCfg,
+		settings:        settings,
 	}
 }
 
@@ -48,12 +47,12 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = int64(th.apiCfg.DefaultListLimit)
+	limit = int64(th.settings.Current().DefaultListLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > int64(th.apiCfg.MaxListLimit) {
-		limit = int64(th.apiCfg.MaxListLimit)
+	if limit > int64(th.settings.Current().MaxListLimit) {
+		limit = int64(th.settings.Current().MaxListLimit)
 	}
 	return offset, limit
 }
@@ -67,12 +66,12 @@ func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request) (offs
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = int64(th.apiCfg.DefaultRowLimit)
+	limit = int64(th.settings.Current().DefaultRowLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > int64(th.apiCfg.MaxRowLimit) {
-		limit = int64(th.apiCfg.MaxRowLimit)
+	if limit > int64(th.settings.Current().MaxRowLimit) {
+		limit = int64(th.settings.Current().MaxRowLimit)
 	}
 	return offset, limit
 }
@@ -178,7 +177,7 @@ func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := th.metadataService.RemoveTable(req.Context(), meta.TableId); err != nil {
+	if err := th.metadataService.RemoveTable(req.Context(), meta); err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
@@ -367,10 +366,10 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 	// way, so a client can't force the whole table into memory.
 	limit := body.Limit
 	if limit <= 0 {
-		limit = th.apiCfg.DefaultRowLimit
+		limit = th.settings.Current().DefaultRowLimit
 	}
-	if limit > th.apiCfg.MaxRowLimit {
-		limit = th.apiCfg.MaxRowLimit
+	if limit > th.settings.Current().MaxRowLimit {
+		limit = th.settings.Current().MaxRowLimit
 	}
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)

@@ -11,6 +11,7 @@ import {
 import type { Source } from '../client/types'
 import { errorMessage } from '../client/http'
 import { usePaginatedList } from './usePaginatedList'
+import { useSettings } from './useSettings'
 import { useToast } from './useToast'
 
 // Display column ids that don't match the API's Source field names 1:1
@@ -26,8 +27,12 @@ export function layerKey(source: Source, layerName: string): string {
 // triplet (TODO-F4).
 export function useSources(initialSorting?: SortingState) {
     const toast = useToast()
+    const settings = useSettings()
 
-    const limit = 50
+    // Capped at maxListLimit: a value the operator has lowered below this
+    // default from /settings would otherwise make the list's own first
+    // fetch fail against the server's own cap.
+    const limit = Math.min(50, settings.current.value?.maxListLimit ?? 50)
     const list = usePaginatedList<Source>({
         limit,
         initialSorting,

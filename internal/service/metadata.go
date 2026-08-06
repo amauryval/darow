@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
+	"darow/internal/observer"
 	"darow/internal/storage"
 )
 
@@ -13,51 +16,39 @@ import (
 // every other service reaches metadata reads/writes through it — via its
 // own narrow port — rather than caching independently, so invalidation
 // stays in one place. The cache is a size-bounded LRU with expiration,
-// never unbounded.
+// never unbounded, and held behind an atomic pointer so ResetCache can
+// swap it for a freshly sized one when the settings that size it change,
+// without a lock around every read.
 type MetadataService struct {
 	storage storage.Catalog
-	cache   *expirable.LRU[string, storage.Metadata]
-	schema  schemaInvalidator
-	source  sourceInvalidator
+	cache   atomic.Pointer[expirable.LRU[string, storage.Metadata]]
+	removed *observer.Observer[storage.Metadata]
 }
 
-// schemaInvalidator drops a table's cached column schema. MetadataService
-// holds it for RemoveTable alone: dropping a table changes its structure
-// as surely as AddColumn does, and the entry would otherwise sit in
-// SchemaService's cache until its TTL.
-type schemaInvalidator interface {
-	InvalidateSchema(tableId string)
+// NewMetadataService builds a MetadataService backed by storage, using c to
+// cache metadata reads and removed to notify a table's removal to whatever
+// core.NewServices registers onto it.
+func NewMetadataService(s storage.Catalog, c *expirable.LRU[string, storage.Metadata], removed *observer.Observer[storage.Metadata]) *MetadataService {
+	svc := &MetadataService{storage: s, removed: removed}
+	svc.cache.Store(c)
+	return svc
 }
 
-// sourceInvalidator drops a deleted table's entry from SourceService's
-// loaded-source cache. MetadataService holds it for RemoveTable alone,
-// alongside schemaInvalidator: without it, a source stays displayed as
-// loaded and pointing at a tableId that no longer exists (BLK-3).
-type sourceInvalidator interface {
-	UnmarkLoaded(tableId string)
-}
-
-// NewMetadataService builds a MetadataService backed by storage, using c
-// to cache metadata reads and schema to drop a removed table's cached
-// schema.
-func NewMetadataService(s storage.Catalog, c *expirable.LRU[string, storage.Metadata], schema schemaInvalidator) *MetadataService {
-	return &MetadataService{storage: s, cache: c, schema: schema}
-}
-
-// SetSourceInvalidator wires source as the port RemoveTable uses to drop a
-// deleted table's entry from SourceService's cache. It cannot be a
-// constructor parameter like schema: SourceService depends on ImportService,
-// which depends on MetadataService, so core.NewServices must build
-// MetadataService first and wire this in once SourceService exists.
-func (s *MetadataService) SetSourceInvalidator(source sourceInvalidator) {
-	s.source = source
+// ResetCache swaps the metadata cache for a freshly built one sized
+// maxItems with the given ttl — called by core.NewServices when
+// SettingsService reports a change to cache.metadataMaxItems/TTLSec.
+// Every entry the old cache held is dropped rather than migrated: a cache
+// miss just costs one extra catalogue read.
+func (s *MetadataService) ResetCache(maxItems int, ttl time.Duration) {
+	s.cache.Store(expirable.NewLRU[string, storage.Metadata](maxItems, nil, ttl))
 }
 
 // GetMetadata returns tableId's metadata, from cache when present. Metadata
 // is a value type, so every caller already gets its own copy with no
 // extra step.
 func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
-	if meta, ok := s.cache.Get(tableId); ok {
+	cache := s.cache.Load()
+	if meta, ok := cache.Get(tableId); ok {
 		return meta, nil
 	}
 
@@ -66,7 +57,7 @@ func (s *MetadataService) GetMetadata(ctx context.Context, tableId string) (stor
 		return storage.Metadata{}, NewDisplayError(fmt.Sprintf("unable to read table %q", tableId), err)
 	}
 
-	s.cache.Add(tableId, meta)
+	cache.Add(tableId, meta)
 	return meta, nil
 }
 
@@ -84,7 +75,7 @@ func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortFie
 // invalidateMetadataCache must be called after any write that changes
 // metadata: UpdateMetadata, RefreshDerived, RemoveTable.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
-	s.cache.Remove(tableId)
+	s.cache.Load().Remove(tableId)
 }
 
 // CreateFromQuery registers a new logical table and materializes it from
@@ -116,18 +107,15 @@ func (s *MetadataService) UpdateMetadata(ctx context.Context, tableId string, pa
 	return nil
 }
 
-// RemoveTable deletes tableId's metadata and underlying physical table,
-// then invalidates the metadata cache, the schema cache, and — if a source
-// was loaded into it — SourceService's loaded-source cache.
-func (s *MetadataService) RemoveTable(ctx context.Context, tableId string) error {
-	if err := s.storage.Remove(ctx, tableId); err != nil {
-		return NewDisplayError(fmt.Sprintf("unable to delete table %q", tableId), err)
+// RemoveTable deletes meta's metadata and underlying physical table, then
+// invalidates the metadata cache and notifies meta's removal to whatever
+// core.NewServices registered onto the removed observer.
+func (s *MetadataService) RemoveTable(ctx context.Context, meta storage.Metadata) error {
+	if err := s.storage.Remove(ctx, meta.TableId); err != nil {
+		return NewDisplayError(fmt.Sprintf("unable to delete table %q", meta.TableId), err)
 	}
-	s.invalidateMetadataCache(tableId)
-	s.schema.InvalidateSchema(tableId)
-	if s.source != nil {
-		s.source.UnmarkLoaded(tableId)
-	}
+	s.invalidateMetadataCache(meta.TableId)
+	s.removed.Notify(meta)
 	return nil
 }
 

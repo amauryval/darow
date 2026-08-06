@@ -131,9 +131,9 @@ func Test_Adapter_CatalogRemove_DropsThePhysicalTable(t *testing.T) {
 
 	require.NoError(t, a.Catalog().Remove(ctx, meta.TableId))
 
-	exists, err := a.Catalog().TableExists(ctx, meta.TableId)
-	require.NoError(t, err)
-	assert.False(t, exists)
+	_, err := a.Catalog().GetMetadata(ctx, meta.TableId)
+	var notFound *storage.NotFoundError
+	assert.ErrorAs(t, err, &notFound)
 
 	var physical int
 	require.NoError(t, a.QueryRow(ctx, `SELECT COUNT(*) FROM duckdb_tables() WHERE table_name = ?`, meta.PhysicalName).Scan(&physical))

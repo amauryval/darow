@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"darow/internal/config"
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/service"
@@ -20,17 +19,17 @@ type RowsHandler struct {
 	validation.ColumnValidator
 	rowService rowAPI
 	geoService geoAPI
-	apiCfg     config.APIConfig
+	settings   settingsAPI
 }
 
 // NewRowsHandler builds a RowsHandler from the service ports it needs.
-func NewRowsHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, rowSvc rowAPI, geoSvc geoAPI, apiCfg config.APIConfig) *RowsHandler {
+func NewRowsHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, rowSvc rowAPI, geoSvc geoAPI, settings settingsAPI) *RowsHandler {
 	return &RowsHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		rowService:      rowSvc,
 		geoService:      geoSvc,
-		apiCfg:          apiCfg,
+		settings:        settings,
 	}
 }
 
@@ -50,12 +49,12 @@ func (rh *RowsHandler) paginationParams(req *http.Request) (offset, limit int64)
 		offset = v
 	}
 
-	limit = int64(rh.apiCfg.DefaultRowLimit)
+	limit = int64(rh.settings.Current().DefaultRowLimit)
 	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
 		limit = v
 	}
-	if limit > int64(rh.apiCfg.MaxRowLimit) {
-		limit = int64(rh.apiCfg.MaxRowLimit)
+	if limit > int64(rh.settings.Current().MaxRowLimit) {
+		limit = int64(rh.settings.Current().MaxRowLimit)
 	}
 	return offset, limit
 }

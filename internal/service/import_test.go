@@ -11,13 +11,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/observer"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
 
 func setupImportService(t *testing.T) (*ImportService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
-	metadata := NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute), &schemaInvalidatorSpy{})
+	metadata := NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute), &observer.Observer[storage.Metadata]{})
 	svc := NewImportService(metadata, m)
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
@@ -128,9 +129,20 @@ func Test_ImportService_ImportFromFile_ForwardsLayer(t *testing.T) {
 func Test_ImportService_RemoveTable(t *testing.T) {
 	svc, m := setupImportService(t)
 
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
 	err := svc.RemoveTable(context.Background(), "id-1")
 
 	require.NoError(t, err)
+}
+
+func Test_ImportService_RemoveTable_MetadataLookupFails(t *testing.T) {
+	svc, m := setupImportService(t)
+
+	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("not found")).Once()
+
+	err := svc.RemoveTable(context.Background(), "id-1")
+
+	require.Error(t, err)
 }

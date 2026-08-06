@@ -12,6 +12,7 @@ import { listTables, renameTable } from '../client/tables'
 import type { Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
 import { usePaginatedList } from '../composables/usePaginatedList'
+import { useSettings } from '../composables/useSettings'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
 import { parseSorting, stringifySorting } from '../utils/sort'
 import { queryString } from '../utils/routeQuery'
@@ -28,7 +29,12 @@ const route = useRoute()
 
 useDocumentTitle(computed(() => 'Tables'))
 
+const settings = useSettings()
+
 const list = usePaginatedList<Metadata>({
+    // Capped at maxListLimit — a value lowered from /settings must not make
+    // this list's own first fetch fail against the server's own cap.
+    limit: Math.min(50, settings.current.value?.maxListLimit ?? 50),
     initialSorting: queryString(route.query.sort)
         ? parseSorting(queryString(route.query.sort))
         : [{ id: 'updatedAt', desc: true }],

@@ -10,11 +10,13 @@
             "Bash(go test:*)",
             "Bash(go vet:*)",
             "Bash(go mod tidy:*)",
-            "Bash(gofmt:*)",
+            "Bash(gofmt -w:*)",
+            "Bash(gofmt -l:*)",
             "Bash(go list:*)",
             "Bash(npm run build)",
             "Bash(echo \"tsc exit: $?\")",
-            "Bash(echo \"eslint exit: $?\")"
+            "Bash(echo \"eslint exit: $?\")",
+            "Bash(xargs -I{} basename {})"
         ],
         "deny": [
             "Bash(git merge:*)",
