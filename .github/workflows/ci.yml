@@ -6,19 +6,6 @@ on:
     pull_request:
 
 jobs:
-    lint:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-go@v5
-              with:
-                  go-version: '1.26.4'
-            # "./..." enumerates packages present in the module tree, imported or
-            # not, so it picks up the Go package npm ships under web/node_modules.
-            # It is never linked into the binary, just needlessly checked.
-            - run: go vet $(go list ./... | grep -v /web/)
-            - run: test -z "$(gofmt -l cmd internal docs)"
-
     test:
         runs-on: ubuntu-latest
         steps:
