@@ -29,6 +29,7 @@ func Test_ColumnValidator_ValidateColumns(t *testing.T) {
 		{name: "no columns requested skips validation", requested: nil},
 		{name: "valid column passes", requested: []string{"status"}},
 		{name: "geometry column is not a valid target", requested: []string{"geom"}, wantErr: true},
+		{name: "OGC_FID is not a valid target", requested: []string{"OGC_FID"}, wantErr: true},
 		{name: "unknown column is rejected", requested: []string{"bogus"}, wantErr: true},
 		{name: "schema failure propagates", requested: []string{"status"}, schemaErr: assert.AnError, wantErr: true},
 	}
@@ -41,7 +42,11 @@ func Test_ColumnValidator_ValidateColumns(t *testing.T) {
 			meta := storage.Metadata{TableId: "t1", GeometryColumn: "geom"}
 			if len(c.requested) > 0 {
 				schemaSvc.On("Schema", mock.Anything, meta).
-					Return([]service.ColumnSchema{{Name: "status", Type: "VARCHAR"}, {Name: "geom", Type: "GEOMETRY"}}, c.schemaErr).Once()
+					Return([]service.ColumnSchema{
+						{Name: "status", Type: "VARCHAR"},
+						{Name: "geom", Type: "GEOMETRY"},
+						{Name: "OGC_FID", Type: "BIGINT"},
+					}, c.schemaErr).Once()
 			}
 
 			err := cv.ValidateColumns(context.Background(), meta, c.requested)

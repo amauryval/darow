@@ -118,6 +118,27 @@ func Test_DeriveService_DeriveFromTable_NonGeoSource(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// OGC_FID (GDAL/OGR's injected feature-id column) is excluded from the
+// default carried-over projection exactly like __pkey.
+func Test_DeriveService_DeriveFromTable_ExcludesOGCFID(t *testing.T) {
+	svc, m := setupDeriveService(t)
+	repo := &mocks.TableRepository{}
+	t.Cleanup(func() { repo.AssertExpectations(t) })
+	meta := storage.Metadata{TableId: "id-source", PhysicalName: "t_source"}
+
+	m.On("Table", meta).Return(repo, nil).Once()
+	repo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{
+		{Name: "__pkey", Type: "VARCHAR"},
+		{Name: "OGC_FID", Type: "BIGINT"},
+		{Name: "name", Type: "VARCHAR"},
+	}, nil).Once()
+	expectMaterialization(m, `SELECT "name" FROM t_source`)
+
+	_, err := svc.DeriveFromTable(context.Background(), meta, DeriveSpec{NewTableName: "derived"})
+
+	require.NoError(t, err)
+}
+
 // Every rejection below happens before a single catalogue row is created:
 // the mock adapter would fail its expectations if CreateFromQuery were
 // reached.
