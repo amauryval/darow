@@ -12,7 +12,9 @@
             "Bash(go mod tidy:*)",
             "Bash(gofmt:*)",
             "Bash(go list:*)",
-            "Bash(npm run build)"
+            "Bash(npm run build)",
+            "Bash(echo \"tsc exit: $?\")",
+            "Bash(echo \"eslint exit: $?\")"
         ],
         "deny": [
             "Bash(git merge:*)",

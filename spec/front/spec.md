@@ -186,7 +186,11 @@ One module per subject, no module state, no side effect:
 - `columnTypes.ts` — resolution of a column's type and coercion of a text input to the JSON type the
   API expects.
 - `rows.ts` — `cellValue`, the one place a row's primary key is read: it is carried by `Row.pkey`,
-  not by a `__pkey` entry, so any column list including it has to go through here.
+  not by a `__pkey` entry, so any column list including it has to go through here. `isHiddenColumn`
+  mirrors the server's `storage.IsHiddenColumn` (`spec.md` §4.4): `__pkey` and `OGC_FID` (GDAL's
+  injected feature-id column, kept in storage but never shown) are excluded wherever a schema
+  column list becomes a visible or editable column list — `useTableMetadata`'s `editableColumns`
+  and `DeriveFromTableForm`'s `carryable`.
 - `sort.ts` — projection of TanStack's sorting state onto the API's `sort` parameter.
 - `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text and the bounded
   excerpt a modal may put in the DOM (the clipboard still carries the whole value).

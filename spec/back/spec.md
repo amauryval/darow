@@ -425,6 +425,16 @@ args + simplification tolerance + precision, all optional), `RowQuery`/`FeatureQ
 call's criteria grouped into one struct, so a new criterion is an added field and never an added
 parameter position), `SortField` (column + direction, parsed from a `sort=a,-b` value).
 
+**Hidden columns.** `IsHiddenColumn(name string) bool` (`internal/storage/hidden_columns.go`)
+answers whether a physical column is one the server manages internally and never surfaces to a
+caller — `__pkey` (carried separately as `Row.Pkey`/`GeoFeature.Pkey`, never in `Values`) and
+`OGC_FID` (§7's GDAL/OGR feature-id column). Both stay physically stored; every consumer that
+builds a user-facing column list — `scanRows`/`scanFeatureRows` (`duckdb/tables/scan.go`),
+`DeriveFromTable`'s `projectionFor`, `ExportService.exportColumns`, `ColumnValidator.ValidateColumns`
+— excludes them the same way it excludes the geometry column. There is no single SQL-level
+exclusion: each consumer calls `IsHiddenColumn` on its own column list, exactly as each already
+excludes the geometry column on its own.
+
 ### 4.5 Filter construction
 
 `storage.BuildFilter` (`internal/storage/filter.go`) is **the only** allowed path to a client-driven
@@ -932,7 +942,10 @@ and `ST_Read_Meta` (which backs `DetectCRS`/`ListLayers` for every `ST_Read` for
 process outright on one, so a Parquet source is never routed through either.
 
 1. **CTAS from `ST_Read`** with `__pkey` generated in the projection. `ST_Read` only reads: the
-   resulting table is materialized (rule 13), never a view.
+   resulting table is materialized (rule 13), never a view. GDAL/OGR injects its own `OGC_FID`
+   feature-id column on almost every format `ST_Read` opens, geometry or not, and the `*` wildcard
+   carries it straight into the physical table alongside `__pkey`. It is never dropped from
+   storage — only hidden from display, exactly like `__pkey` (`storage.IsHiddenColumn`, §4.4).
 2. **Unique index on `__pkey`.**
 3. **Detection of the geometry column** from the table's catalogue entry (§4.8): the column whose
    declared type is `GEOMETRY`, with or without a CRS parameter. The name varies with the format

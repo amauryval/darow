@@ -1,5 +1,7 @@
 # Darow — get your Ducks in A ROW
 
+![DAROW](img/darow_logo.png)
+
 Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and make
 sure all your details, tasks, or resources are fully prepared before starting an important project
 or event
@@ -9,8 +11,6 @@ dictionary.cambridge.org
 Backed by DuckDB. Darow is a Go cartographic server: it turns tabular and spatial files into a REST
 API — sources, tables, rows, MVT tiles, and SQL-derived tables — with a Vue 3 admin UI embedded in
 the same binary.
-
-![DAROW](img/darow.png)
 
 ## Features
 
