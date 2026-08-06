@@ -21,6 +21,12 @@ func (s *schemaInvalidatorSpy) InvalidateSchema(tableId string) {
 	s.invalidated = append(s.invalidated, tableId)
 }
 
+type sourceInvalidatorSpy struct{ unmarked []string }
+
+func (s *sourceInvalidatorSpy) UnmarkLoaded(tableId string) {
+	s.unmarked = append(s.unmarked, tableId)
+}
+
 func setupMetadataService(t *testing.T) (*MetadataService, *mocks.Adapter, *schemaInvalidatorSpy) {
 	m := &mocks.Adapter{}
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
@@ -119,13 +125,15 @@ func Test_MetadataService_RemoveTable(t *testing.T) {
 		wantErr         bool
 		wantInvalidated []string
 	}{
-		{name: "invalidates both caches", wantInvalidated: []string{"id-1"}},
+		{name: "invalidates every cache", wantInvalidated: []string{"id-1"}},
 		{name: "leaves caches alone when storage fails", failStorage: true, wantErr: true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			svc, m, schema := setupMetadataService(t)
+			source := &sourceInvalidatorSpy{}
+			svc.SetSourceInvalidator(source)
 			svc.cache.Add("id-1", storage.Metadata{TableId: "id-1"})
 
 			var removeErr error
@@ -142,10 +150,24 @@ func Test_MetadataService_RemoveTable(t *testing.T) {
 				require.NoError(t, err)
 			}
 			assert.Equal(t, c.wantInvalidated, schema.invalidated)
+			assert.Equal(t, c.wantInvalidated, source.unmarked)
 			_, cached := svc.cache.Get("id-1")
 			assert.Equal(t, c.wantErr, cached)
 		})
 	}
+}
+
+// SourceService is wired onto MetadataService after construction (see
+// SetSourceInvalidator's doc), so RemoveTable must not panic on the nil
+// port a caller that never wires one (e.g. this package's other tests) is
+// left with.
+func Test_MetadataService_RemoveTable_ToleratesUnsetSourceInvalidator(t *testing.T) {
+	svc, m, _ := setupMetadataService(t)
+	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+
+	err := svc.RemoveTable(context.Background(), "id-1")
+
+	require.NoError(t, err)
 }
 
 func Test_MetadataService_Rollback_ReportsOriginalErrorWhenCleanupAlsoFails(t *testing.T) {

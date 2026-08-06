@@ -337,6 +337,32 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 	return tableId, nil
 }
 
+// UnmarkLoaded drops tableId's loaded state from the cache, so a table
+// deleted elsewhere (MetadataService.RemoveTable) stops being reported as
+// loaded — the fix for BLK-3. Scans by TableId, not name: RemoveTable's
+// caller only ever has the bare tableId at hand. A no-op if no source or
+// layer currently points at tableId.
+func (s *SourceService) UnmarkLoaded(tableId string) {
+	if tableId == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.sources {
+		if s.sources[i].TableId == tableId {
+			s.sources[i].Loaded = false
+			s.sources[i].TableId = ""
+		}
+		for j := range s.sources[i].Layers {
+			if s.sources[i].Layers[j].TableId == tableId {
+				s.sources[i].Layers[j].Loaded = false
+				s.sources[i].Layers[j].TableId = ""
+			}
+		}
+	}
+}
+
 // sourcePath resolves name (and, for a multi-layer source, layer) against
 // the cache exactly like Load does — name is never turned into a path
 // without this check — without mutating any loaded state.

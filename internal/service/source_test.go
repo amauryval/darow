@@ -329,6 +329,64 @@ func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
 	assert.Empty(t, unchanged[0].TableId)
 }
 
+func Test_SourceService_UnmarkLoaded(t *testing.T) {
+	cases := []struct {
+		name           string
+		tableId        string
+		wantLoaded     bool
+		wantTableId    string
+		wantLayerState *SourceLayer
+	}{
+		{name: "unmarks a top-level source", tableId: "id-1",
+			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
+		{name: "unmarks a matching layer", tableId: "id-2", wantLoaded: true, wantTableId: "id-1",
+			wantLayerState: &SourceLayer{Name: "departements"}},
+		{name: "no-op for an unrelated tableId", tableId: "id-unknown", wantLoaded: true, wantTableId: "id-1",
+			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
+		{name: "no-op for an empty tableId", tableId: "", wantLoaded: true, wantTableId: "id-1",
+			wantLayerState: &SourceLayer{Name: "departements", Loaded: true, TableId: "id-2"}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFixture(t, dir, "buildings.geojson", 100)
+			writeFixture(t, dir, "regions.gpkg", 100)
+
+			tableSvc, m := setupImportService(t)
+			m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
+				{SourceName: "buildings.geojson"}:                         "id-1",
+				{SourceName: "regions.gpkg", SourceLayer: "departements"}: "id-2",
+			}, nil).Once()
+			m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"departements"}, nil).Once()
+
+			svc := NewSourceService(config.SourcesConfig{
+				WorkDir:           dir,
+				MaxSizeBytes:      1000,
+				AllowedExtensions: []string{".geojson", ".gpkg"},
+			}, tableSvc)
+
+			_, err := svc.Refresh(context.Background())
+			require.NoError(t, err)
+
+			svc.UnmarkLoaded(c.tableId)
+
+			sources, _, err := svc.List(nil, 0, 10)
+			require.NoError(t, err)
+			for _, s := range sources {
+				if s.Name == "buildings.geojson" {
+					assert.Equal(t, c.wantLoaded, s.Loaded)
+					assert.Equal(t, c.wantTableId, s.TableId)
+				}
+				if s.Name == "regions.gpkg" && c.wantLayerState != nil {
+					require.Len(t, s.Layers, 1)
+					assert.Equal(t, *c.wantLayerState, s.Layers[0])
+				}
+			}
+		})
+	}
+}
+
 func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "buildings.geojson", 100)

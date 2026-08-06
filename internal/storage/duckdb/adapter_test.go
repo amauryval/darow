@@ -2,11 +2,14 @@ package duckdb
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	duckdbgo "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -177,4 +180,66 @@ func Test_Adapter_Ping_FailsAfterClose(t *testing.T) {
 	require.NoError(t, a.Close())
 
 	assert.Error(t, a.Ping(context.Background()))
+}
+
+func Test_isFatalDuckDBError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "INTERNAL error is fatal", err: &duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "INTERNAL Error: boom"}, want: true},
+		{name: "FATAL error is fatal", err: &duckdbgo.Error{Type: duckdbgo.ErrorTypeFatal, Msg: "FATAL Error: boom"}, want: true},
+		{name: "a query-scoped DuckDB error is not", err: &duckdbgo.Error{Type: duckdbgo.ErrorTypeSyntax, Msg: "Syntax Error: boom"}, want: false},
+		{name: "wrapped fatal error is still detected", err: fmt.Errorf("query failed: %w", &duckdbgo.Error{Type: duckdbgo.ErrorTypeFatal, Msg: "FATAL Error: boom"}), want: true},
+		{name: "a non-DuckDB error is not", err: errors.New("boom"), want: false},
+		{name: "nil error is not", err: nil, want: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, isFatalDuckDBError(c.err))
+		})
+	}
+}
+
+// recoverIfFatal is what BLK-2 fixes: db must be swapped for a fresh
+// connection once a query observes DuckDB's instance as invalidated,
+// rather than every later caller reusing the dead one.
+func Test_Adapter_recoverIfFatal_ReopensOnFatalError(t *testing.T) {
+	a := setupAdapter(t)
+	original := a.conn()
+
+	fatal := &duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "INTERNAL Error: boom"}
+	a.recoverIfFatal(fatal, original)
+
+	assert.NotSame(t, original, a.conn(), "a fatal error must trigger a reopen")
+	assert.Error(t, original.Ping(), "the invalidated pool must be closed once replaced")
+	assert.NoError(t, a.conn().Ping(), "the new pool must be usable")
+}
+
+func Test_Adapter_recoverIfFatal_IgnoresNonFatalError(t *testing.T) {
+	a := setupAdapter(t)
+	original := a.conn()
+
+	a.recoverIfFatal(errors.New("boom"), original)
+
+	assert.Same(t, original, a.conn())
+}
+
+// A second caller observing the same already-superseded pool must not
+// trigger a second reopen — comparing failed against the live pool is what
+// prevents that.
+func Test_Adapter_recoverIfFatal_SkipsAlreadyReplacedPool(t *testing.T) {
+	a := setupAdapter(t)
+	stale := a.conn()
+
+	fatal := &duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "INTERNAL Error: boom"}
+	a.recoverIfFatal(fatal, stale)
+	replaced := a.conn()
+	require.NotSame(t, stale, replaced)
+
+	a.recoverIfFatal(fatal, stale)
+
+	assert.Same(t, replaced, a.conn(), "a second call reporting the already-superseded pool must not reopen again")
 }
