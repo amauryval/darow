@@ -29,10 +29,14 @@ export function useSources(initialSorting?: SortingState) {
     const toast = useToast()
     const settings = useSettings()
 
-    // Capped at maxListLimit: a value the operator has lowered below this
-    // default from /settings would otherwise make the list's own first
-    // fetch fail against the server's own cap.
-    const limit = Math.min(50, settings.current.value?.maxListLimit ?? 50)
+    // The server's own default, clamped to maxListLimit: a value the operator
+    // has lowered below this default from /settings would otherwise make the
+    // list's own first fetch fail against the server's own cap. Falls back
+    // to the previous hard-coded value while /settings has not loaded yet.
+    const limit = Math.min(
+        settings.current.value?.defaultListLimit ?? 50,
+        settings.current.value?.maxListLimit ?? 50
+    )
     const list = usePaginatedList<Source>({
         limit,
         initialSorting,

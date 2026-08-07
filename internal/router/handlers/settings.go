@@ -25,20 +25,12 @@ type settingsDTO struct {
 	MaxRowLimit          int     `json:"maxRowLimit"`
 	DefaultListLimit     int     `json:"defaultListLimit"`
 	MaxListLimit         int     `json:"maxListLimit"`
-	MaxBodyBytes         int64   `json:"maxBodyBytes"`
-	RequestTimeoutSec    int     `json:"requestTimeoutSec"`
-	ExportBatchSize      int64   `json:"exportBatchSize"`
 	DefaultFeaturesLimit int     `json:"defaultFeaturesLimit"`
 	MaxFeaturesLimit     int     `json:"maxFeaturesLimit"`
 	MaxSimplifyTolerance float64 `json:"maxSimplifyTolerance"`
 	MaxPrecision         float64 `json:"maxPrecision"`
 	TileCacheMaxAgeSec   int     `json:"tileCacheMaxAgeSec"`
-	MetadataTTLSec       int     `json:"metadataTTLSec"`
-	MetadataMaxItems     int     `json:"metadataMaxItems"`
-	SchemaTTLSec         int     `json:"schemaTTLSec"`
-	SchemaMaxItems       int     `json:"schemaMaxItems"`
-	TileTTLSec           int     `json:"tileTTLSec"`
-	TileMaxItems         int     `json:"tileMaxItems"`
+	CacheTTLSec          int     `json:"cacheTTLSec"`
 	UpdatedAt            string  `json:"updatedAt"`
 }
 
@@ -48,20 +40,12 @@ func toSettingsDTO(s storage.Settings) settingsDTO {
 		MaxRowLimit:          s.MaxRowLimit,
 		DefaultListLimit:     s.DefaultListLimit,
 		MaxListLimit:         s.MaxListLimit,
-		MaxBodyBytes:         s.MaxBodyBytes,
-		RequestTimeoutSec:    s.RequestTimeoutSec,
-		ExportBatchSize:      s.ExportBatchSize,
 		DefaultFeaturesLimit: s.DefaultFeaturesLimit,
 		MaxFeaturesLimit:     s.MaxFeaturesLimit,
 		MaxSimplifyTolerance: s.MaxSimplifyTolerance,
 		MaxPrecision:         s.MaxPrecision,
 		TileCacheMaxAgeSec:   s.TileCacheMaxAgeSec,
-		MetadataTTLSec:       s.MetadataTTLSec,
-		MetadataMaxItems:     s.MetadataMaxItems,
-		SchemaTTLSec:         s.SchemaTTLSec,
-		SchemaMaxItems:       s.SchemaMaxItems,
-		TileTTLSec:           s.TileTTLSec,
-		TileMaxItems:         s.TileMaxItems,
+		CacheTTLSec:          s.CacheTTLSec,
 		UpdatedAt:            s.UpdatedAt.Format(time.RFC3339),
 	}
 }
@@ -74,20 +58,12 @@ type settingsPatchDTO struct {
 	MaxRowLimit          *int     `json:"maxRowLimit"`
 	DefaultListLimit     *int     `json:"defaultListLimit"`
 	MaxListLimit         *int     `json:"maxListLimit"`
-	MaxBodyBytes         *int64   `json:"maxBodyBytes"`
-	RequestTimeoutSec    *int     `json:"requestTimeoutSec"`
-	ExportBatchSize      *int64   `json:"exportBatchSize"`
 	DefaultFeaturesLimit *int     `json:"defaultFeaturesLimit"`
 	MaxFeaturesLimit     *int     `json:"maxFeaturesLimit"`
 	MaxSimplifyTolerance *float64 `json:"maxSimplifyTolerance"`
 	MaxPrecision         *float64 `json:"maxPrecision"`
 	TileCacheMaxAgeSec   *int     `json:"tileCacheMaxAgeSec"`
-	MetadataTTLSec       *int     `json:"metadataTTLSec"`
-	MetadataMaxItems     *int     `json:"metadataMaxItems"`
-	SchemaTTLSec         *int     `json:"schemaTTLSec"`
-	SchemaMaxItems       *int     `json:"schemaMaxItems"`
-	TileTTLSec           *int     `json:"tileTTLSec"`
-	TileMaxItems         *int     `json:"tileMaxItems"`
+	CacheTTLSec          *int     `json:"cacheTTLSec"`
 }
 
 func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
@@ -96,20 +72,12 @@ func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 		MaxRowLimit:          dto.MaxRowLimit,
 		DefaultListLimit:     dto.DefaultListLimit,
 		MaxListLimit:         dto.MaxListLimit,
-		MaxBodyBytes:         dto.MaxBodyBytes,
-		RequestTimeoutSec:    dto.RequestTimeoutSec,
-		ExportBatchSize:      dto.ExportBatchSize,
 		DefaultFeaturesLimit: dto.DefaultFeaturesLimit,
 		MaxFeaturesLimit:     dto.MaxFeaturesLimit,
 		MaxSimplifyTolerance: dto.MaxSimplifyTolerance,
 		MaxPrecision:         dto.MaxPrecision,
 		TileCacheMaxAgeSec:   dto.TileCacheMaxAgeSec,
-		MetadataTTLSec:       dto.MetadataTTLSec,
-		MetadataMaxItems:     dto.MetadataMaxItems,
-		SchemaTTLSec:         dto.SchemaTTLSec,
-		SchemaMaxItems:       dto.SchemaMaxItems,
-		TileTTLSec:           dto.TileTTLSec,
-		TileMaxItems:         dto.TileMaxItems,
+		CacheTTLSec:          dto.CacheTTLSec,
 	}
 }
 

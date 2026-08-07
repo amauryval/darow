@@ -74,10 +74,12 @@ func (s *Services) Ping(ctx context.Context) error {
 }
 
 // NewServices constructs every service. It loads the settings row once
-// (a startup failure exactly as an invalid config.yaml is) and sizes every
-// LRU cache and the export batch size from it rather than from cfg — cfg
-// only supplies cfg.Sources here, everything else it used to carry having
-// moved to the settings table (TODO-3).
+// (a startup failure exactly as an invalid config.yaml is) and sizes the
+// metadata/schema/tile LRU caches from cfg.Settings (TODO-17 — a size is a
+// memory guard, restart-only) and their shared TTL, for metadata/schema,
+// from the settings row (an operator retunes that live); the tile cache
+// carries no TTL at all (IMP-10 — its key already carries the table's
+// UpdatedAt, so a time-based expiry would invalidate nothing).
 func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, error) {
 	settingsChanged := &observer.Observer[storage.Settings]{}
 	settingsSvc := service.NewSettingsService(storageAdapter.Settings(), settingsChanged)
@@ -86,9 +88,9 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	}
 	current := settingsSvc.Current()
 
-	metadataCache := expirable.NewLRU[string, storage.Metadata](current.MetadataMaxItems, nil, time.Duration(current.MetadataTTLSec)*time.Second)
-	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](current.SchemaMaxItems, nil, time.Duration(current.SchemaTTLSec)*time.Second)
-	tileCache := expirable.NewLRU[string, []byte](current.TileMaxItems, nil, time.Duration(current.TileTTLSec)*time.Second)
+	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
+	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
+	tileCache := expirable.NewLRU[string, []byte](cfg.Settings.TileMaxItems, nil, 0)
 
 	tableRemoved := &observer.Observer[storage.Metadata]{}
 
@@ -106,7 +108,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer(), sizeGuardSvc)
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc, settingsSvc)
+	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc)
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
 	diagnosticsSvc := service.NewDiagnosticsService(storageAdapter)
 
@@ -116,20 +118,22 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	tableRemoved.On(func(meta storage.Metadata) { schemaSvc.InvalidateSchema(meta.TableId) })
 	tableRemoved.On(sourceSvc.UnmarkLoaded)
 
-	// Who reacts to a settings update, stated in one place: the three LRU
-	// caches bake their size and TTL into expirable.NewLRU at construction,
-	// so a changed cache.*MaxItems/TTLSec takes effect by rebuilding the
-	// cache rather than by mutating a field. Every other setting (row/list
-	// limits, export batch size...) is read live off settingsSvc.Current()
-	// wherever it's needed, and needs no callback here.
+	// Who reacts to a settings update, stated in one place: the metadata and
+	// schema caches bake their size and TTL into expirable.NewLRU at
+	// construction, so a changed cache.cacheTTLSec takes effect by rebuilding
+	// the cache rather than by mutating a field — their size stays
+	// cfg.Settings.CacheMaxItems, fixed for the process's life (TODO-17), so
+	// only the TTL half of the callback ever actually differs from the
+	// cache's current one. The tile cache needs no callback at all: neither
+	// its size (cfg.Settings.TileMaxItems) nor its TTL (always 0) is
+	// settings-editable any more. Every other setting (row/list limits,
+	// geometry bounds...) is read live off settingsSvc.Current() wherever
+	// it's needed, and needs no callback here either.
 	settingsChanged.On(func(s storage.Settings) {
-		metadataSvc.ResetCache(s.MetadataMaxItems, time.Duration(s.MetadataTTLSec)*time.Second)
+		metadataSvc.ResetCache(cfg.Settings.CacheMaxItems, time.Duration(s.CacheTTLSec)*time.Second)
 	})
 	settingsChanged.On(func(s storage.Settings) {
-		schemaSvc.ResetCache(s.SchemaMaxItems, time.Duration(s.SchemaTTLSec)*time.Second)
-	})
-	settingsChanged.On(func(s storage.Settings) {
-		geoSvc.ResetCache(s.TileMaxItems, time.Duration(s.TileTTLSec)*time.Second)
+		schemaSvc.ResetCache(cfg.Settings.CacheMaxItems, time.Duration(s.CacheTTLSec)*time.Second)
 	})
 
 	return &Services{

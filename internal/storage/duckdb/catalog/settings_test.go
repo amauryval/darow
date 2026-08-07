@@ -25,10 +25,8 @@ func Test_Settings_GetSettings_SeededAtDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, settings.DefaultRowLimit, got.DefaultRowLimit)
 	assert.Equal(t, settings.MaxRowLimit, got.MaxRowLimit)
-	assert.EqualValues(t, settings.MaxBodyBytes, got.MaxBodyBytes)
 	assert.Equal(t, float64(settings.MaxSimplifyTolerance), got.MaxSimplifyTolerance)
-	assert.Equal(t, settings.MetadataMaxItems, got.MetadataMaxItems)
-	assert.Equal(t, settings.TileMaxItems, got.TileMaxItems)
+	assert.Equal(t, settings.CacheTTLSec, got.CacheTTLSec)
 	assert.False(t, got.UpdatedAt.IsZero())
 }
 
@@ -66,15 +64,15 @@ func Test_Settings_UpdateSettings_PersistsAcrossReads(t *testing.T) {
 	ctx := context.Background()
 
 	newTolerance := 42.5
-	newItems := 777
+	newTTL := 777
 	_, err := r.UpdateSettings(ctx, storage.SettingsPatch{
 		MaxSimplifyTolerance: &newTolerance,
-		TileMaxItems:         &newItems,
+		CacheTTLSec:          &newTTL,
 	})
 	require.NoError(t, err)
 
 	got, err := r.GetSettings(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 42.5, got.MaxSimplifyTolerance)
-	assert.Equal(t, 777, got.TileMaxItems)
+	assert.Equal(t, 777, got.CacheTTLSec)
 }

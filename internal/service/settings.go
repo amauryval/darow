@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"darow/internal/observer"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -65,8 +65,9 @@ func (s *SettingsService) GetSettings(ctx context.Context) (storage.Settings, er
 // result — so a cache-affecting field takes effect without a restart.
 func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
 	merged := mergeSettings(s.Current(), patch)
-	if err := validateSettings(merged); err != nil {
-		return storage.Settings{}, &ValidationError{msg: err.Error()}
+	result := settings.Validate(merged)
+	if result.Err != nil {
+		return storage.Settings{}, &ValidationError{msg: result.Err.Error()}
 	}
 
 	updated, err := s.store.UpdateSettings(ctx, patch)
@@ -100,15 +101,6 @@ func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storag
 	if patch.MaxListLimit != nil {
 		merged.MaxListLimit = *patch.MaxListLimit
 	}
-	if patch.MaxBodyBytes != nil {
-		merged.MaxBodyBytes = *patch.MaxBodyBytes
-	}
-	if patch.RequestTimeoutSec != nil {
-		merged.RequestTimeoutSec = *patch.RequestTimeoutSec
-	}
-	if patch.ExportBatchSize != nil {
-		merged.ExportBatchSize = *patch.ExportBatchSize
-	}
 	if patch.DefaultFeaturesLimit != nil {
 		merged.DefaultFeaturesLimit = *patch.DefaultFeaturesLimit
 	}
@@ -124,62 +116,8 @@ func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storag
 	if patch.TileCacheMaxAgeSec != nil {
 		merged.TileCacheMaxAgeSec = *patch.TileCacheMaxAgeSec
 	}
-	if patch.MetadataTTLSec != nil {
-		merged.MetadataTTLSec = *patch.MetadataTTLSec
-	}
-	if patch.MetadataMaxItems != nil {
-		merged.MetadataMaxItems = *patch.MetadataMaxItems
-	}
-	if patch.SchemaTTLSec != nil {
-		merged.SchemaTTLSec = *patch.SchemaTTLSec
-	}
-	if patch.SchemaMaxItems != nil {
-		merged.SchemaMaxItems = *patch.SchemaMaxItems
-	}
-	if patch.TileTTLSec != nil {
-		merged.TileTTLSec = *patch.TileTTLSec
-	}
-	if patch.TileMaxItems != nil {
-		merged.TileMaxItems = *patch.TileMaxItems
+	if patch.CacheTTLSec != nil {
+		merged.CacheTTLSec = *patch.CacheTTLSec
 	}
 	return merged
-}
-
-// validateSettings rejects a Settings value that would otherwise fail
-// confusingly at runtime (a zero row limit, a negative timeout), collecting
-// every violation rather than stopping at the first — the same rules
-// config.Config.validate applied to these fields before TODO-3 moved them
-// out of config.yaml.
-func validateSettings(s storage.Settings) error {
-	var msgs []string
-	check := func(cond bool, msg string) {
-		if !cond {
-			msgs = append(msgs, msg)
-		}
-	}
-
-	check(s.DefaultRowLimit > 0, "defaultRowLimit must be positive")
-	check(s.MaxRowLimit >= s.DefaultRowLimit, "maxRowLimit must be >= defaultRowLimit")
-	check(s.DefaultListLimit > 0, "defaultListLimit must be positive")
-	check(s.MaxListLimit >= s.DefaultListLimit, "maxListLimit must be >= defaultListLimit")
-	check(s.MaxBodyBytes > 0, "maxBodyBytes must be positive")
-	check(s.RequestTimeoutSec >= 0, "requestTimeoutSec must not be negative")
-	check(s.ExportBatchSize > 0, "exportBatchSize must be positive")
-	check(s.DefaultFeaturesLimit > 0, "defaultFeaturesLimit must be positive")
-	check(s.MaxFeaturesLimit >= s.DefaultFeaturesLimit, "maxFeaturesLimit must be >= defaultFeaturesLimit")
-	check(s.MaxSimplifyTolerance > 0, "maxSimplifyTolerance must be positive")
-	check(s.MaxPrecision > 0, "maxPrecision must be positive")
-	check(s.TileCacheMaxAgeSec >= 0, "tileCacheMaxAgeSec must not be negative")
-
-	check(s.MetadataTTLSec >= 0, "metadataTTLSec must not be negative")
-	check(s.MetadataMaxItems > 0, "metadataMaxItems must be positive")
-	check(s.SchemaTTLSec >= 0, "schemaTTLSec must not be negative")
-	check(s.SchemaMaxItems > 0, "schemaMaxItems must be positive")
-	check(s.TileTTLSec >= 0, "tileTTLSec must not be negative")
-	check(s.TileMaxItems > 0, "tileMaxItems must be positive")
-
-	if len(msgs) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s", strings.Join(msgs, "; "))
 }

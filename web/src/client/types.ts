@@ -153,30 +153,24 @@ export interface ErrorResponse {
     requestId: string
 }
 
-// Matches storage.Settings — every server parameter that is safe to change
-// without a restart. What Config keeps instead (listen port, the DuckDB file
-// path, sources.workDir) never appears here: it is needed to open the
-// process itself, before this row can even be read, so it has no place on a
-// screen of *editable* settings.
+// Matches storage.Settings — every server parameter an operator legitimately
+// retunes while the process is serving, without a restart. What Config keeps
+// instead (TODO-17): the listen port, the DuckDB file path, sources.workDir,
+// and the memory/availability guards that sit on this table's own
+// unauthenticated PATCH route (the request body cap, the per-request
+// timeout, every LRU cache's size) — none of that appears here, so it has no
+// place on a screen of *editable* settings.
 export interface Settings {
     defaultRowLimit: number
     maxRowLimit: number
     defaultListLimit: number
     maxListLimit: number
-    maxBodyBytes: number
-    requestTimeoutSec: number
-    exportBatchSize: number
     defaultFeaturesLimit: number
     maxFeaturesLimit: number
     maxSimplifyTolerance: number
     maxPrecision: number
     tileCacheMaxAgeSec: number
-    metadataTTLSec: number
-    metadataMaxItems: number
-    schemaTTLSec: number
-    schemaMaxItems: number
-    tileTTLSec: number
-    tileMaxItems: number
+    cacheTTLSec: number
     updatedAt: string
 }
 

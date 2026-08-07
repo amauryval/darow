@@ -22,10 +22,14 @@ export function useTableRows(
     const toast = useToast()
     const settings = useSettings()
 
-    // Capped at maxRowLimit, for the same reason useSources caps its own
-    // default against maxListLimit: a lowered cap must not make the grid's
-    // first page request fail against the server's own limit.
-    const pageSize = Math.min(20, settings.current.value?.maxRowLimit ?? 20)
+    // The server's own default, clamped to maxRowLimit for the same reason
+    // useSources clamps its own: a lowered cap must not make the grid's
+    // first page request fail against the server's own limit. Falls back to
+    // the previous hard-coded value while /settings has not loaded yet.
+    const pageSize = Math.min(
+        settings.current.value?.defaultRowLimit ?? 20,
+        settings.current.value?.maxRowLimit ?? 20
+    )
 
     const list = usePaginatedList<Row>({
         limit: pageSize,

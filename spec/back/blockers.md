@@ -11,7 +11,4 @@
 
 Each entry carries a stable identifier (`BLK-n`); a retired identifier is never reused.
 
-_No open blocker today._
-
-| #   | Blocker | Effect | Reference |
-| --- | ------- | ------ | --------- |
+No blocker is currently open.

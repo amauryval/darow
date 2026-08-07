@@ -80,15 +80,13 @@ definitions:
         type: object
     handlers.settingsDTO:
         properties:
+            cacheTTLSec:
+                type: integer
             defaultFeaturesLimit:
                 type: integer
             defaultListLimit:
                 type: integer
             defaultRowLimit:
-                type: integer
-            exportBatchSize:
-                type: integer
-            maxBodyBytes:
                 type: integer
             maxFeaturesLimit:
                 type: integer
@@ -100,21 +98,7 @@ definitions:
                 type: integer
             maxSimplifyTolerance:
                 type: number
-            metadataMaxItems:
-                type: integer
-            metadataTTLSec:
-                type: integer
-            requestTimeoutSec:
-                type: integer
-            schemaMaxItems:
-                type: integer
-            schemaTTLSec:
-                type: integer
             tileCacheMaxAgeSec:
-                type: integer
-            tileMaxItems:
-                type: integer
-            tileTTLSec:
                 type: integer
             updatedAt:
                 type: string

@@ -75,6 +75,12 @@ function onReset() {
     for (const field of allFields) draft[field.key] = String(savedValues.value[field.key])
     localErrors.value = {}
 }
+
+// Groups that tune a process internal rather than a product decision
+// (IMP-F11/TODO-F40) render under a collapsed <details>, so opening the
+// screen to raise a page size doesn't first walk through a cache TTL.
+const standardGroups = SETTINGS_FIELD_GROUPS.filter((group) => !group.advanced)
+const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
 </script>
 
 <template>
@@ -88,7 +94,7 @@ function onReset() {
             <div class="min-h-0 flex-1 overflow-y-auto">
                 <div class="flex flex-col gap-6 pb-2">
                     <section
-                        v-for="group in SETTINGS_FIELD_GROUPS"
+                        v-for="group in standardGroups"
                         :key="group.title"
                         class="rounded-lg border border-base-300 bg-base-100 p-4"
                     >
@@ -112,9 +118,54 @@ function onReset() {
                                 <Typography variant="caption" class="mt-1 block">{{
                                     field.description
                                 }}</Typography>
+                                <Typography
+                                    v-if="field.zeroMeaning && Number(draft[field.key]) === 0"
+                                    variant="caption"
+                                    class="mt-1 block text-base-content/60"
+                                >
+                                    0 = {{ field.zeroMeaning }}
+                                </Typography>
                             </div>
                         </div>
                     </section>
+
+                    <details
+                        v-for="group in advancedGroups"
+                        :key="group.title"
+                        class="rounded-lg border border-base-300 bg-base-100 p-4"
+                    >
+                        <summary class="cursor-pointer">
+                            <Typography variant="h4" class="inline">{{ group.title }}</Typography>
+                        </summary>
+                        <Typography variant="body-sm" class="mt-1 text-base-content/60">{{
+                            group.description
+                        }}</Typography>
+                        <div class="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-2">
+                            <div v-for="field in group.fields" :key="field.key">
+                                <BaseInput
+                                    v-model="draft[field.key]"
+                                    type="number"
+                                    :inputmode="field.step ? 'decimal' : 'numeric'"
+                                    :step="field.step"
+                                    :label="
+                                        field.unit ? `${field.label} (${field.unit})` : field.label
+                                    "
+                                    :error="errors[field.key]"
+                                    :disabled="saving"
+                                />
+                                <Typography variant="caption" class="mt-1 block">{{
+                                    field.description
+                                }}</Typography>
+                                <Typography
+                                    v-if="field.zeroMeaning && Number(draft[field.key]) === 0"
+                                    variant="caption"
+                                    class="mt-1 block text-base-content/60"
+                                >
+                                    0 = {{ field.zeroMeaning }}
+                                </Typography>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </div>
 

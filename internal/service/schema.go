@@ -39,7 +39,8 @@ func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSc
 
 // ResetCache swaps the schema cache for a freshly built one sized maxItems
 // with the given ttl — called by core.NewServices when SettingsService
-// reports a change to cache.schemaMaxItems/TTLSec.
+// reports a change to settings.cacheTTLSec (maxItems itself is
+// config.SettingsConfig.CacheMaxItems, fixed for the process's life).
 func (s *SchemaService) ResetCache(maxItems int, ttl time.Duration) {
 	s.cache.Store(expirable.NewLRU[string, []ColumnSchema](maxItems, nil, ttl))
 }

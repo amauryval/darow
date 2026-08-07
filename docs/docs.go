@@ -1957,6 +1957,9 @@ const docTemplate = `{
         "handlers.settingsDTO": {
             "type": "object",
             "properties": {
+                "cacheTTLSec": {
+                    "type": "integer"
+                },
                 "defaultFeaturesLimit": {
                     "type": "integer"
                 },
@@ -1964,12 +1967,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "defaultRowLimit": {
-                    "type": "integer"
-                },
-                "exportBatchSize": {
-                    "type": "integer"
-                },
-                "maxBodyBytes": {
                     "type": "integer"
                 },
                 "maxFeaturesLimit": {
@@ -1987,28 +1984,7 @@ const docTemplate = `{
                 "maxSimplifyTolerance": {
                     "type": "number"
                 },
-                "metadataMaxItems": {
-                    "type": "integer"
-                },
-                "metadataTTLSec": {
-                    "type": "integer"
-                },
-                "requestTimeoutSec": {
-                    "type": "integer"
-                },
-                "schemaMaxItems": {
-                    "type": "integer"
-                },
-                "schemaTTLSec": {
-                    "type": "integer"
-                },
                 "tileCacheMaxAgeSec": {
-                    "type": "integer"
-                },
-                "tileMaxItems": {
-                    "type": "integer"
-                },
-                "tileTTLSec": {
                     "type": "integer"
                 },
                 "updatedAt": {

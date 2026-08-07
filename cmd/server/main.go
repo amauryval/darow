@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	rt := router.NewRouter(svcs, uiAssets, svcs.Ping)
+	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings)
 
 	srv := &http.Server{
 		Addr:         ":" + strconv.Itoa(cfg.Server.Port),

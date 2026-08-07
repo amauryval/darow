@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"darow/internal/settings"
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
@@ -15,15 +17,19 @@ import (
 // overrides sources.workDir, and so on — one variable per YAML field.
 const envPrefix = "GEOAPI_"
 
-// Config holds the parameters needed to initialize the server itself —
-// nothing else. Every parameter a request path or a cache reads once the
-// server is up (row/list limits, cache TTLs and sizes...) lives instead in
-// the settings table, edited at runtime through service.SettingsService
+// Config holds the parameters needed to initialize the server itself, plus
+// the settings that are memory/availability guards on an unauthenticated
+// route (TODO-17) rather than a product decision an operator retunes while
+// serving — those two categories are what Settings holds, restart-only.
+// Everything an operator legitimately retunes live (row/list limits, cache
+// TTL, geometry bounds, the tile cache lifetime) lives instead in the
+// settings table, edited at runtime through service.SettingsService
 // (internal/settings holds its defaults) rather than config.yaml.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	DuckDB  DuckDBConfig  `yaml:"duckdb"`
-	Sources SourcesConfig `yaml:"sources"`
+	Server   ServerConfig   `yaml:"server"`
+	DuckDB   DuckDBConfig   `yaml:"duckdb"`
+	Sources  SourcesConfig  `yaml:"sources"`
+	Settings SettingsConfig `yaml:"settings"`
 }
 
 // ServerConfig holds HTTP server settings: the listen port, per-connection
@@ -56,6 +62,19 @@ type SourcesConfig struct {
 	AllowedExtensions []string `yaml:"allowedExtensions"`
 }
 
+// SettingsConfig holds the memory/availability guards taken out of the
+// runtime-editable settings table (TODO-17): the request body cap, the
+// per-request timeout, and the size of every in-memory LRU cache
+// (metadata and schema share cacheMaxItems, having merged in the same
+// chantier). Raising any of them costs a restart, same as
+// duckdb.maxSizeBytes.
+type SettingsConfig struct {
+	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
+	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
+	CacheMaxItems     int   `yaml:"cacheMaxItems"`
+	TileMaxItems      int   `yaml:"tileMaxItems"`
+}
+
 func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
@@ -70,6 +89,12 @@ func defaultConfig() Config {
 			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
 			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg", ".parquet"},
+		},
+		Settings: SettingsConfig{
+			MaxBodyBytes:      settings.MaxBodyBytes,
+			RequestTimeoutSec: settings.RequestTimeoutSec,
+			CacheMaxItems:     settings.CacheMaxItems,
+			TileMaxItems:      settings.TileMaxItems,
 		},
 	}
 }
@@ -127,6 +152,11 @@ func applyEnvOverrides(cfg *Config) error {
 	envString(&cfg.Sources.WorkDir, envPrefix+"SOURCES_WORKDIR")
 	check(envInt64(&cfg.Sources.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
 	envStringSlice(&cfg.Sources.AllowedExtensions, envPrefix+"SOURCES_ALLOWED_EXTENSIONS")
+
+	check(envInt64(&cfg.Settings.MaxBodyBytes, envPrefix+"SETTINGS_MAX_BODY_BYTES"))
+	check(envInt(&cfg.Settings.RequestTimeoutSec, envPrefix+"SETTINGS_REQUEST_TIMEOUT_SEC"))
+	check(envInt(&cfg.Settings.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
+	check(envInt(&cfg.Settings.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
 
 	return errors.Join(errs...)
 }
@@ -199,6 +229,15 @@ func (cfg Config) validate() error {
 			errs = append(errs, fmt.Errorf("sources.allowedExtensions: %q must start with '.'", ext))
 		}
 	}
+
+	check(cfg.Settings.MaxBodyBytes >= settings.BodyBytesFloor && cfg.Settings.MaxBodyBytes <= settings.BodyBytesCeiling,
+		fmt.Sprintf("settings.maxBodyBytes must be between %d and %d", settings.BodyBytesFloor, settings.BodyBytesCeiling))
+	check(cfg.Settings.RequestTimeoutSec >= 0 && cfg.Settings.RequestTimeoutSec <= settings.RequestTimeoutCeiling,
+		fmt.Sprintf("settings.requestTimeoutSec must be between 0 and %d", settings.RequestTimeoutCeiling))
+	check(cfg.Settings.CacheMaxItems > 0 && cfg.Settings.CacheMaxItems <= settings.CacheMaxItemsCeiling,
+		fmt.Sprintf("settings.cacheMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
+	check(cfg.Settings.TileMaxItems > 0 && cfg.Settings.TileMaxItems <= settings.CacheMaxItemsCeiling,
+		fmt.Sprintf("settings.tileMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
 
 	return errors.Join(errs...)
 }

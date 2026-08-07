@@ -119,8 +119,8 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
-| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields (§2.1–2.3)                                                                                                              |
-| `internal/settings`          | exported constants: every runtime-editable setting's default value (§2.4), no logic                                                                                                              |
+| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
+| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Validate`, no other logic                                             |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
 | `internal/router/handlers`   | one handler per endpoint family + the ports to the services                                                                                                                                      |
@@ -179,8 +179,9 @@ directory.
 
 `maxSizeBytes` is a hard cap on the database's on-disk size, enforced by `service.SizeGuardService`
 (§5.10) — an operator decision about the disk the process runs on, and deliberately config-only:
-unlike the settings table (§2.4), it is never exposed through `PATCH /api/v1/settings`, so raising it
-always requires a restart.
+unlike the settings table (§2.5), it is never exposed through `PATCH /api/v1/settings`, so raising it
+always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMaxItems`/`tileMaxItems`
+(§2.4) are config-only for the same reason.
 
 ### 2.3 `sources`
 
@@ -191,20 +192,45 @@ always requires a restart.
 | `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
-which takes priority over everything else (§2.5).
+which takes priority over everything else (§2.6).
 
-### 2.4 Runtime-editable settings
+### 2.4 `settings`
 
-Every parameter a request path or a cache reads once the process is up — row/list pagination
-limits, request body size, per-request timeout, export batch size, OGC/tile feature limits,
-geometry simplification bounds, the tile HTTP cache lifetime, and the TTL/size of the three LRU
-caches — is **not** in `config.yaml`. It lives in the single-row `settings` table (§4.9), read and
-written through `SettingsService` (§5.8) and edited at runtime through `GET`/`PATCH /api/v1/settings`
-(§6.1) — never through a file or an environment variable, and never requiring a restart. Its default
-values are `internal/settings`'s exported constants, the one place they are written; `config.yaml`
-keeps only what the process needs to start at all, before that table can even be read.
+| Field               | Default               | Env variable                        | Constraint             |
+| ------------------- | ---------------------- | ------------------------------------ | ----------------------- |
+| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `GEOAPI_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
+| `requestTimeoutSec` | 30                      | `GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
+| `cacheMaxItems`     | 1000                    | `GEOAPI_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
+| `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
-### 2.5 Command-line flags
+The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
+config-only for the same reason `duckdb.maxSizeBytes` is (§2.2): they sit on `PATCH
+/api/v1/settings`, an unauthenticated route (`limitations.md` LIM-1), and a guard whose own limit is
+edited through the surface it guards is not a guard. `maxBodyBytes` bounds the global request body
+cap (`routes.go`'s `maxBodyBytes` middleware) and `requestTimeoutSec` the `/api/v1` group's request
+timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
+every request" the way the settings table's own fields are (§6.3). `cacheMaxItems` sizes both the
+metadata and the schema `expirable.LRU` (merged from two separate fields, IMP-11); `tileMaxItems`
+sizes the tile cache, which additionally carries no TTL at all (IMP-10 — its key already carries the
+table's `UpdatedAt`, so a time-based expiry would invalidate nothing). Defaults and bounds are
+`internal/settings`'s exported constants, the same ones §2.5's bound table draws from — so a guard
+and its ceiling can never drift apart.
+
+### 2.5 Runtime-editable settings
+
+Every parameter an operator legitimately retunes while the process is serving — row/list pagination
+limits, OGC/tile feature limits, geometry simplification bounds, the tile HTTP cache lifetime, and
+the shared TTL of the metadata/schema caches — is **not** in `config.yaml`. It lives in the
+single-row `settings` table (§4.9), read and written through `SettingsService` (§5.8) and edited at
+runtime through `GET`/`PATCH /api/v1/settings` (§6.1) — never through a file or an environment
+variable, and never requiring a restart. Its default values and bounds are `internal/settings`'s
+exported constants and `internal/settings.Validate` (a `Validator` with one method per field), the
+one place they are written and enforced; `config.yaml` keeps only what the process needs to start at
+all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
+now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
+only on how it is produced, so it costs an operator a decision they had no way to make honestly.
+
+### 2.6 Command-line flags
 
 | Flag        | Default       | Effect                                          |
 | ----------- | ------------- | ----------------------------------------------- |
@@ -742,7 +768,8 @@ reason: filter, bbox, tolerance and attributes form an unbounded key space, unli
 The router only validates the format, sets the headers, and lets the service write directly into the
 response body.
 
--   Rows are read **page by page** (`exportBatchSize`), never all in memory.
+-   Rows are read **page by page** (`internal/settings.ExportBatchSize`, a constant — not
+    settings-editable, IMP-8), never all in memory.
 -   The format is validated **before** the first byte is written: once the streaming has started,
     the status code can no longer change. `ExportHandler.ExportTable` tracks whether any byte has
     actually reached the response (`firstByteWriter`): a failure before that point is answered as a
@@ -768,23 +795,32 @@ the concrete type). `GetSettings`/`UpdateSettings` are the pair `SettingsHandler
 repository-pattern shape `MetadataService` exposes for `metadata`.
 
 `UpdateSettings` merges the patch onto the current value **in memory first** (`mergeSettings`) and
-validates the *result* — a `maxRowLimit` patched below the current `defaultRowLimit` is rejected even
-though neither field alone is invalid — before writing anything; a rejection is a `ValidationError`
-(§6.4), the store never reached. On success it persists through `SettingsStore.UpdateSettings`,
+validates the *result* through `internal/settings.Validate` — a `maxRowLimit` patched below the
+current `defaultRowLimit` is rejected even though neither field alone is invalid, and every field is
+also checked against its own bound (an upper ceiling, and for `maxBodyBytes` a floor keeping
+`PATCH /api/v1/settings` itself always able to pass) — before writing anything; a rejection is a
+`ValidationError` (§6.4), the store never reached. `internal/settings.Validator` (built by
+`NewValidator`) carries one method per field, each returning that field's own validated value or the
+error naming it; `Validate` runs every one of them and joins the violations, and the ceilings/floor
+each method checks against live as constants in `internal/settings/defaults.go`, next to the field's
+default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
 replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
 (`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
 constructor.
 
-`core.NewServices` registers three callbacks onto that observer, one per LRU cache
-(`MetadataService`/`SchemaService`/`GeoService`.`ResetCache`): `expirable.LRU` bakes its size and TTL
-into `expirable.NewLRU` at construction, with no live-resize API, so a changed
-`cache.*MaxItems`/`*TTLSec` takes effect by swapping the cache for a freshly built one — each of the
-three services holds its cache behind `atomic.Pointer` for exactly this — rather than by mutating a
-field; every entry the old cache held is simply dropped, a cache miss costing one extra read, not a
-migration. Every other setting (row/list limits, `maxBodyBytes`, `requestTimeoutSec`,
-`exportBatchSize`, OGC/tile feature limits, simplification bounds, `tileCacheMaxAgeSec`) needs no
-callback at all: `Router` and every handler read it live off `Current()` on each request instead
-(§6.3), and `ExportService` off `Current().ExportBatchSize` on each export.
+`core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
+and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
+`ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
+construction, with no live-resize API, so a changed `cacheTTLSec` takes effect by swapping the cache
+for a freshly built one, sized `cfg.Settings.CacheMaxItems` (fixed, never itself the reason for a
+swap) — each of the two services holds its cache behind `atomic.Pointer` for exactly this — rather
+than by mutating a field; every entry the old cache held is simply dropped, a cache miss costing one
+extra read, not a migration. The tile cache is built once at `NewServices` and never swapped: neither
+its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry, IMP-10) is
+settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer`, no `ResetCache`.
+Every other setting (row/list limits, OGC/tile feature limits, simplification bounds,
+`tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
+`Current()` on each request instead (§6.3).
 
 ### 5.9 `DiagnosticsService`
 
@@ -895,7 +931,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                 | Description                                                                                             |
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/settings`   | the current runtime-editable settings (§2.4)                                                             |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings (§2.5)                                                             |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
 
 **OGC API - Features**
@@ -934,19 +970,22 @@ File: `internal/router/routes.go`.
 The global chain, in order: `RequestID` → structured `slog` logging → `Recoverer` → request body
 cap.
 
-Every handler holds `SettingsService` through the same narrow `Current() storage.Settings` port
-(§5.8), never a value captured once at `Setup`: a limit changed through `PATCH /api/v1/settings`
-applies to the very next request, router middleware included.
+Every table/row/geo/source handler holds `SettingsService` through the same narrow
+`Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
+through `PATCH /api/v1/settings` applies to the very next request. The body cap and the per-request
+timeout are the exception (TODO-17): both are guards, config-only (§2.4), so `NewRouter` receives
+`config.SettingsConfig` and captures the two values once, at `Setup` — a change to either now costs a
+restart, not a `PATCH`.
 
--   **Body cap** (`maxBodyBytes`, `middleware.go`): reads `settings.maxBodyBytes` **fresh on every
-    request** and rejects immediately with `413` if `Content-Length` exceeds it, **before** reading a
-    single byte. Necessary because an overrun detected mid-stream forces Go to close the connection
-    with unread bytes, which the client sees as an abrupt cut with no HTTP status. The
-    `/sources/upload` route gets a dedicated cap (max source size + 64 KiB of headroom for the
-    multipart framing).
+-   **Body cap** (`maxBodyBytes`, `middleware.go`): rejects immediately with `413` if `Content-Length`
+    exceeds `settingsCfg.MaxBodyBytes`, **before** reading a single byte. Necessary because an overrun
+    detected mid-stream forces Go to close the connection with unread bytes, which the client sees as
+    an abrupt cut with no HTTP status. The `/sources/upload` route gets a dedicated cap (max source
+    size + 64 KiB of headroom for the multipart framing) — still computed fresh per request, since it
+    depends on `SourceService`, not on a fixed config value.
 -   **Per-request timeout** (`requestTimeout`, `middleware.go`): applied to the `/api/v1` **group**
-    only, reading `settings.requestTimeoutSec` fresh on every request and building a
-    `middleware.Timeout` around it — `0` leaves that request unbounded.
+    only, building a `middleware.Timeout` around `settingsCfg.RequestTimeoutSec` — `0` leaves every
+    request unbounded.
 -   **`/tables/{tableId}/export` is registered outside that group**: a large export legitimately
     exceeds a normal request's budget, and the timeout would truncate a response already committed
     to `200`. The handler additionally neutralizes the server's `WriteTimeout` just before
@@ -1173,8 +1212,8 @@ The rest of the sequence (geometry detection, clustering, indexes) is identical 
 ```
 cmd/server/            entrypoint
 internal/
-  config/              bootstrap-only configuration loading and validation (§2.1-2.3)
-  settings/            default values of every runtime-editable setting, as constants (§2.4)
+  config/              bootstrap-only configuration loading and validation (§2.1-2.4)
+  settings/            default values/bounds of every setting and config guard, as constants, plus Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
     handlers/          one file per endpoint family + ports.go + dto.go

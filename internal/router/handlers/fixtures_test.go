@@ -31,11 +31,10 @@ type stubSettingsAPI struct{ settings storage.Settings }
 var defaultTestSettings = stubSettingsAPI{settings: storage.Settings{
 	DefaultRowLimit: 100, MaxRowLimit: 1000,
 	DefaultListLimit: 50, MaxListLimit: 500,
-	MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30,
-	ExportBatchSize:      1000,
 	DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
 	MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 	TileCacheMaxAgeSec: 60,
+	CacheTTLSec:        300,
 }}
 
 var _ settingsAPI = stubSettingsAPI{}

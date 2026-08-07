@@ -32,9 +32,14 @@ useDocumentTitle(computed(() => 'Tables'))
 const settings = useSettings()
 
 const list = usePaginatedList<Metadata>({
-    // Capped at maxListLimit — a value lowered from /settings must not make
-    // this list's own first fetch fail against the server's own cap.
-    limit: Math.min(50, settings.current.value?.maxListLimit ?? 50),
+    // The server's own default, clamped to maxListLimit — a value lowered
+    // from /settings must not make this list's own first fetch fail against
+    // the server's own cap. Falls back to the previous hard-coded value
+    // while /settings has not loaded yet.
+    limit: Math.min(
+        settings.current.value?.defaultListLimit ?? 50,
+        settings.current.value?.maxListLimit ?? 50
+    ),
     initialSorting: queryString(route.query.sort)
         ? parseSorting(queryString(route.query.sort))
         : [{ id: 'updatedAt', desc: true }],

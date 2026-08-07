@@ -14,9 +14,11 @@ import (
 
 // maxBodyBytes caps the request body so a handler that decodes it into
 // memory (json.Decode, ParseMultipartForm) can never be driven to exhaust
-// memory or disk by an oversized request. max is read fresh on every
-// request rather than captured once, so a settings.maxBodyBytes update
-// takes effect without rebuilding the router. When the client declares
+// memory or disk by an oversized request. max is a closure rather than a
+// plain value for a single reason: the upload route (routes.go) overrides
+// it per-source-size rather than with the fixed global cap — the global cap
+// itself is config.SettingsConfig.MaxBodyBytes (TODO-17), fixed at Setup,
+// no longer read from the settings row. When the client declares
 // Content-Length upfront (browsers always do for a multipart file upload,
 // since a File's size is known before the request is sent) and it already
 // exceeds max, the request is rejected immediately with a clean 413 —
@@ -39,11 +41,11 @@ func maxBodyBytes(max func() int64) func(http.Handler) http.Handler {
 	}
 }
 
-// requestTimeout bounds every request's context to secs() seconds, read
-// fresh on every request so a settings.requestTimeoutSec update takes
-// effect without rebuilding the router — a new middleware.Timeout is built
-// per request rather than once at Setup, but that's a cheap closure, not a
-// resource. secs() <= 0 disables the bound for that request.
+// requestTimeout bounds every request's context to secs() seconds — secs is
+// a closure for symmetry with maxBodyBytes, though the value it returns is
+// now fixed at Setup (config.SettingsConfig.RequestTimeoutSec, TODO-17): a
+// new middleware.Timeout is built per request rather than once, but that's
+// a cheap closure, not a resource. secs() <= 0 disables the bound.
 func requestTimeout(secs func() int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

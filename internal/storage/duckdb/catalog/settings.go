@@ -12,10 +12,9 @@ import (
 
 // settingsColumns lists the columns every read scans, in scan order —
 // every Settings field but UpdatedAt, which trails them.
-const settingsColumns = `defaultRowLimit, maxRowLimit, defaultListLimit, maxListLimit, maxBodyBytes,
-    requestTimeoutSec, exportBatchSize, defaultFeaturesLimit, maxFeaturesLimit, maxSimplifyTolerance,
-    maxPrecision, tileCacheMaxAgeSec, metadataTTLSec, metadataMaxItems, schemaTTLSec, schemaMaxItems,
-    tileTTLSec, tileMaxItems, updatedAt`
+const settingsColumns = `defaultRowLimit, maxRowLimit, defaultListLimit, maxListLimit,
+    defaultFeaturesLimit, maxFeaturesLimit, maxSimplifyTolerance, maxPrecision, tileCacheMaxAgeSec,
+    cacheTTLSec, updatedAt`
 
 // settingsSchema is the DDL applied on every startup — already at the
 // latest column set (no accumulated pre-1.0 migration history: see LIM-7).
@@ -28,34 +27,23 @@ CREATE TABLE IF NOT EXISTS settings (
     maxRowLimit INTEGER NOT NULL,
     defaultListLimit INTEGER NOT NULL,
     maxListLimit INTEGER NOT NULL,
-    maxBodyBytes BIGINT NOT NULL,
-    requestTimeoutSec INTEGER NOT NULL,
-    exportBatchSize BIGINT NOT NULL,
     defaultFeaturesLimit INTEGER NOT NULL,
     maxFeaturesLimit INTEGER NOT NULL,
     maxSimplifyTolerance DOUBLE NOT NULL,
     maxPrecision DOUBLE NOT NULL,
     tileCacheMaxAgeSec INTEGER NOT NULL,
-    metadataTTLSec INTEGER NOT NULL,
-    metadataMaxItems INTEGER NOT NULL,
-    schemaTTLSec INTEGER NOT NULL,
-    schemaMaxItems INTEGER NOT NULL,
-    tileTTLSec INTEGER NOT NULL,
-    tileMaxItems INTEGER NOT NULL,
+    cacheTTLSec INTEGER NOT NULL,
     updatedAt TIMESTAMP DEFAULT NOW()
 );
 
 INSERT INTO settings (id, %s)
-SELECT 1, %d, %d, %d, %d, %d, %d, %d, %d, %d, %f, %f, %d, %d, %d, %d, %d, %d, %d, NOW()
+SELECT 1, %d, %d, %d, %d, %d, %d, %f, %f, %d, %d, NOW()
 WHERE NOT EXISTS (SELECT 1 FROM settings);
 `,
 	settingsColumns,
 	settings.DefaultRowLimit, settings.MaxRowLimit, settings.DefaultListLimit, settings.MaxListLimit,
-	settings.MaxBodyBytes, settings.RequestTimeoutSec, settings.ExportBatchSize,
 	settings.DefaultFeaturesLimit, settings.MaxFeaturesLimit, float64(settings.MaxSimplifyTolerance),
-	float64(settings.MaxPrecision), settings.TileCacheMaxAgeSec,
-	settings.MetadataTTLSec, settings.MetadataMaxItems, settings.SchemaTTLSec, settings.SchemaMaxItems,
-	settings.TileTTLSec, settings.TileMaxItems,
+	float64(settings.MaxPrecision), settings.TileCacheMaxAgeSec, settings.CacheTTLSec,
 )
 
 // settingsMigrations are ALTER statements applied in order, once each, to
@@ -88,11 +76,9 @@ var _ storage.SettingsStore = (*Settings)(nil)
 func scanSettings(row interface{ Scan(...any) error }) (storage.Settings, error) {
 	var s storage.Settings
 	err := row.Scan(
-		&s.DefaultRowLimit, &s.MaxRowLimit, &s.DefaultListLimit, &s.MaxListLimit, &s.MaxBodyBytes,
-		&s.RequestTimeoutSec, &s.ExportBatchSize, &s.DefaultFeaturesLimit, &s.MaxFeaturesLimit,
-		&s.MaxSimplifyTolerance, &s.MaxPrecision, &s.TileCacheMaxAgeSec,
-		&s.MetadataTTLSec, &s.MetadataMaxItems, &s.SchemaTTLSec, &s.SchemaMaxItems,
-		&s.TileTTLSec, &s.TileMaxItems, &s.UpdatedAt,
+		&s.DefaultRowLimit, &s.MaxRowLimit, &s.DefaultListLimit, &s.MaxListLimit,
+		&s.DefaultFeaturesLimit, &s.MaxFeaturesLimit, &s.MaxSimplifyTolerance, &s.MaxPrecision,
+		&s.TileCacheMaxAgeSec, &s.CacheTTLSec, &s.UpdatedAt,
 	)
 	return s, err
 }
@@ -106,8 +92,8 @@ func (r *Settings) GetSettings(ctx context.Context) (storage.Settings, error) {
 // UpdateSettings patches the settings row field by field and returns it as
 // stored. A zero-value patch is a no-op read.
 func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
-	sets := make([]string, 0, 18)
-	args := make([]any, 0, 19)
+	sets := make([]string, 0, 10)
+	args := make([]any, 0, 11)
 
 	add := func(column string, value any) {
 		sets = append(sets, column+" = ?")
@@ -126,15 +112,6 @@ func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPat
 	if patch.MaxListLimit != nil {
 		add("maxListLimit", *patch.MaxListLimit)
 	}
-	if patch.MaxBodyBytes != nil {
-		add("maxBodyBytes", *patch.MaxBodyBytes)
-	}
-	if patch.RequestTimeoutSec != nil {
-		add("requestTimeoutSec", *patch.RequestTimeoutSec)
-	}
-	if patch.ExportBatchSize != nil {
-		add("exportBatchSize", *patch.ExportBatchSize)
-	}
 	if patch.DefaultFeaturesLimit != nil {
 		add("defaultFeaturesLimit", *patch.DefaultFeaturesLimit)
 	}
@@ -150,23 +127,8 @@ func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPat
 	if patch.TileCacheMaxAgeSec != nil {
 		add("tileCacheMaxAgeSec", *patch.TileCacheMaxAgeSec)
 	}
-	if patch.MetadataTTLSec != nil {
-		add("metadataTTLSec", *patch.MetadataTTLSec)
-	}
-	if patch.MetadataMaxItems != nil {
-		add("metadataMaxItems", *patch.MetadataMaxItems)
-	}
-	if patch.SchemaTTLSec != nil {
-		add("schemaTTLSec", *patch.SchemaTTLSec)
-	}
-	if patch.SchemaMaxItems != nil {
-		add("schemaMaxItems", *patch.SchemaMaxItems)
-	}
-	if patch.TileTTLSec != nil {
-		add("tileTTLSec", *patch.TileTTLSec)
-	}
-	if patch.TileMaxItems != nil {
-		add("tileMaxItems", *patch.TileMaxItems)
+	if patch.CacheTTLSec != nil {
+		add("cacheTTLSec", *patch.CacheTTLSec)
 	}
 
 	if len(sets) == 0 {

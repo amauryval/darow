@@ -18,14 +18,10 @@ func validTestSettings() storage.Settings {
 	return storage.Settings{
 		DefaultRowLimit: 100, MaxRowLimit: 1000,
 		DefaultListLimit: 50, MaxListLimit: 500,
-		MaxBodyBytes: 1024, RequestTimeoutSec: 30,
-		ExportBatchSize:      1000,
 		DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
-		MetadataMaxItems:   1000, MetadataTTLSec: 300,
-		SchemaMaxItems: 1000, SchemaTTLSec: 300,
-		TileMaxItems: 1000, TileTTLSec: 300,
+		CacheTTLSec:        300,
 	}
 }
 
@@ -91,7 +87,7 @@ func Test_SettingsService_UpdateSettings(t *testing.T) {
 			wantNotify: true,
 		},
 		{
-			name:       "maxRowLimit below defaultRowLimit is rejected before any write",
+			name:       "an invalid merged result is rejected before any write, through settings.Validate",
 			patch:      storage.SettingsPatch{MaxRowLimit: ptrInt(1)},
 			wantErr:    true,
 			wantValErr: true,

@@ -12,20 +12,29 @@ export interface SettingsFieldSpec {
     // caps or LRU caches to act on it safely.
     description: string
     unit?: string
-    // Whole numbers only (every field but the two geometry bounds, which are
-    // fractional tolerances/precisions).
+    // Whole numbers only, except the two geometry bounds (fractional
+    // tolerances/precisions).
     step?: number
+    // What the value 0 means for this field, when 0 is itself a valid,
+    // meaningful input rather than just the bottom of the range — stated
+    // here so SettingsView never has to special-case a field by key.
+    zeroMeaning?: string
 }
 
 export interface SettingsFieldGroup {
     title: string
     description: string
     fields: SettingsFieldSpec[]
+    // Set on a group that tunes a process internal rather than a product
+    // decision (IMP-F11/TODO-F40) — SettingsView folds it into a collapsed
+    // *Avancé* section instead of showing it at the same weight as
+    // Pagination or Cartographie et tuiles.
+    advanced?: boolean
 }
 
 // The families the server itself groups these constants into
 // (internal/settings), used to lay the form out as sections instead of one
-// flat list of eighteen inputs.
+// flat list of inputs.
 export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
     {
         title: 'Pagination',
@@ -35,13 +44,13 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                 key: 'defaultRowLimit',
                 label: 'Lignes chargées par page dans une table',
                 description:
-                    'Quand on ouvre une table, ce nombre de lignes est affiché sans que personne n’ait à le demander.'
+                    'Ce que le serveur renvoie quand une requête ne précise pas elle-même de nombre de lignes — c’est ce que l’écran d’une table affiche à l’ouverture.'
             },
             {
                 key: 'maxRowLimit',
                 label: 'Nombre de lignes maximum par page',
                 description:
-                    'Plafond absolu : une page de résultats ne peut jamais dépasser ce nombre de lignes, même si on le demande explicitement.'
+                    'Plafond que le serveur applique lui-même : une page de résultats ne peut jamais dépasser ce nombre de lignes, même si une requête en demande davantage.'
             },
             {
                 key: 'defaultListLimit',
@@ -52,39 +61,7 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
             {
                 key: 'maxListLimit',
                 label: 'Nombre d’éléments maximum par page de liste',
-                description: 'Plafond absolu pour ces mêmes catalogues.'
-            }
-        ]
-    },
-    {
-        title: 'Requêtes réseau',
-        description: 'Limites appliquées à chaque requête envoyée au serveur.',
-        fields: [
-            {
-                key: 'maxBodyBytes',
-                label: 'Taille maximale d’un envoi de données',
-                unit: 'octets',
-                description:
-                    'Au-delà de cette taille, un envoi (import de fichier, ajout de lignes) est refusé. 1 000 000 octets ≈ 1 Mo.'
-            },
-            {
-                key: 'requestTimeoutSec',
-                label: 'Délai maximum avant abandon d’une requête',
-                unit: 's',
-                description:
-                    'Si le serveur met plus longtemps que ça à répondre, la requête est annulée plutôt que de rester bloquée.'
-            }
-        ]
-    },
-    {
-        title: 'Export',
-        description: 'Comportement d’un export CSV ou GeoJSON.',
-        fields: [
-            {
-                key: 'exportBatchSize',
-                label: 'Lignes écrites à la fois pendant un export',
-                description:
-                    'Un export volumineux est découpé en lots de cette taille pour ne pas surcharger la mémoire du serveur pendant l’opération. Sans effet sur le résultat final, seulement sur la façon dont il est produit.'
+                description: 'Plafond que le serveur applique lui-même, pour ces mêmes catalogues.'
             }
         ]
     },
@@ -96,76 +73,55 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                 key: 'defaultFeaturesLimit',
                 label: 'Objets géographiques renvoyés par défaut',
                 description:
-                    'Nombre d’objets (points, lignes, polygones) renvoyés par une requête cartographique qui ne précise pas elle-même de limite.'
+                    'Ce que le serveur applique lui-même quand une requête cartographique ne précise pas elle-même de limite (nombre de points, lignes, polygones).'
             },
             {
                 key: 'maxFeaturesLimit',
                 label: 'Nombre maximum d’objets géographiques par requête',
-                description: 'Plafond absolu, même si la requête en demande davantage.'
+                description:
+                    'Plafond que le serveur applique lui-même, même si une requête en demande davantage.'
             },
             {
                 key: 'maxSimplifyTolerance',
                 label: 'Simplification maximale autorisée des formes',
+                unit: 'm',
                 step: 0.01,
                 description:
-                    'Plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande.'
+                    'Tolérance en mètres : plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande. Plafond appliqué à ce qu’un client peut demander, pas la valeur que le serveur applique lui-même.'
             },
             {
                 key: 'maxPrecision',
-                label: 'Nombre de décimales maximum des coordonnées',
+                label: 'Grille de coordonnées la plus fine autorisée',
+                unit: 'm',
                 step: 0.01,
                 description:
-                    'Plafond de précision qu’un client peut demander pour les coordonnées renvoyées.'
+                    'Le serveur arrondit les coordonnées renvoyées à une grille de cette taille, en mètres (EPSG:3857). Plus la valeur est basse, plus les coordonnées sont fines ; un client ne peut pas demander plus fin que ce plafond.'
             },
             {
                 key: 'tileCacheMaxAgeSec',
                 label: 'Durée de mise en cache d’une tuile par le navigateur',
                 unit: 's',
                 description:
-                    'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.'
+                    'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.',
+                zeroMeaning:
+                    'le navigateur revalide la tuile à chaque affichage, sans jamais la garder en cache.'
             }
         ]
     },
     {
-        title: 'Mémoire du serveur (caches)',
+        title: 'Avancé',
         description:
-            'Le serveur garde certaines informations en mémoire pour répondre plus vite. Une valeur plus haute consomme plus de mémoire ; une valeur plus basse fait relire la base plus souvent.',
+            'Réglage interne du serveur : la taille de ces caches est fixée au démarrage (config.yaml), seule leur durée de vie se règle ici.',
+        advanced: true,
         fields: [
             {
-                key: 'metadataTTLSec',
-                label: 'Informations sur les tables — durée avant relecture',
+                key: 'cacheTTLSec',
+                label: 'Informations et structure des tables — durée avant relecture',
                 unit: 's',
                 description:
-                    'Nombre de lignes, colonnes, date de mise à jour… gardés en mémoire pendant cette durée avant d’être relus en base.'
-            },
-            {
-                key: 'metadataMaxItems',
-                label: 'Informations sur les tables — nombre maximum gardé en mémoire',
-                description:
-                    'Au-delà, les informations des tables les moins consultées récemment sont oubliées et relues en base au prochain accès.'
-            },
-            {
-                key: 'schemaTTLSec',
-                label: 'Structure des tables (colonnes) — durée avant relecture',
-                unit: 's',
-                description: 'Même principe, pour la liste des colonnes et leurs types.'
-            },
-            {
-                key: 'schemaMaxItems',
-                label: 'Structure des tables — nombre maximum gardé en mémoire',
-                description: 'Même principe que ci-dessus, pour la structure des tables.'
-            },
-            {
-                key: 'tileTTLSec',
-                label: 'Tuiles de carte — durée avant régénération',
-                unit: 's',
-                description:
-                    'Une tuile déjà générée est réutilisée pendant cette durée côté serveur.'
-            },
-            {
-                key: 'tileMaxItems',
-                label: 'Tuiles de carte — nombre maximum gardé en mémoire',
-                description: 'Même principe que ci-dessus, pour les tuiles déjà générées.'
+                    'Nombre de lignes, colonnes, types… gardés en mémoire pendant cette durée avant d’être relus en base.',
+                zeroMeaning:
+                    'aucune expiration automatique — une information reste en mémoire jusqu’à être remplacée faute de place.'
             }
         ]
     }

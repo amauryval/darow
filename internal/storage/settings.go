@@ -5,33 +5,25 @@ import (
 	"time"
 )
 
-// Settings holds every server parameter that is safe to change without a
-// restart: row/list pagination limits, request-body size, per-request
-// timeout, export batch size, feature limits, geometry simplification
-// bounds, the tile HTTP cache lifetime, and the TTL/size of every in-memory
-// LRU cache. What Config keeps instead (server listen port, the DuckDB file
-// path, sources.workDir) is needed to open the process itself, before a
-// settings table can even be read.
+// Settings holds every server parameter that an operator legitimately
+// retunes while the process is serving, without a restart: row/list
+// pagination limits, feature limits, geometry simplification bounds, the
+// tile HTTP cache lifetime, and the shared TTL of the metadata/schema
+// caches. What Config keeps instead (TODO-17): the server listen port, the
+// DuckDB file path, sources.workDir, and the memory/availability guards
+// that sit on this table's own unauthenticated PATCH route — the request
+// body cap, the per-request timeout, and every LRU cache's size.
 type Settings struct {
 	DefaultRowLimit      int
 	MaxRowLimit          int
 	DefaultListLimit     int
 	MaxListLimit         int
-	MaxBodyBytes         int64
-	RequestTimeoutSec    int
-	ExportBatchSize      int64
 	DefaultFeaturesLimit int
 	MaxFeaturesLimit     int
 	MaxSimplifyTolerance float64
 	MaxPrecision         float64
 	TileCacheMaxAgeSec   int
-
-	MetadataTTLSec   int
-	MetadataMaxItems int
-	SchemaTTLSec     int
-	SchemaMaxItems   int
-	TileTTLSec       int
-	TileMaxItems     int
+	CacheTTLSec          int
 
 	UpdatedAt time.Time
 }
@@ -43,21 +35,12 @@ type SettingsPatch struct {
 	MaxRowLimit          *int
 	DefaultListLimit     *int
 	MaxListLimit         *int
-	MaxBodyBytes         *int64
-	RequestTimeoutSec    *int
-	ExportBatchSize      *int64
 	DefaultFeaturesLimit *int
 	MaxFeaturesLimit     *int
 	MaxSimplifyTolerance *float64
 	MaxPrecision         *float64
 	TileCacheMaxAgeSec   *int
-
-	MetadataTTLSec   *int
-	MetadataMaxItems *int
-	SchemaTTLSec     *int
-	SchemaMaxItems   *int
-	TileTTLSec       *int
-	TileMaxItems     *int
+	CacheTTLSec          *int
 }
 
 // SettingsStore owns the single row of runtime-editable settings, seeded
