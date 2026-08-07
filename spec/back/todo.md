@@ -21,6 +21,9 @@ the file, and a wrong line sends the reader to the wrong place with confidence. 
 search and stays true. What stays out is **code itself**: no snippet, no full signature, no diff.
 Write the instruction, not the patch — the code is written later, against the code as it is then.
 
+** ALERT OGC feature **
+must be reworked regarding https://docs.ogc.org/is/17-069r3/17-069r3.html
+
 **Order of work.** TODO-8, TODO-13, TODO-10 and TODO-11 are done, from the plan established by the
 audit of 2026-08-06 (which took up every lead `improvements.md` held: IMP-1 through IMP-7 became
 TODO-9 through TODO-15, leaving that file empty). TODO-14 remains, the last of the plan: it is the
