@@ -165,7 +165,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 		removeErr  error
 		wantStatus int
 	}{
-		{name: "deletes the table", wantStatus: http.StatusNoContent},
+		{name: "deletes the table", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "removal failure returns 500", removeErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
@@ -267,13 +267,11 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 func Test_tablesHandler_deriveTable(t *testing.T) {
 	cases := []struct {
 		name            string
-		lookupErr       error
 		deriveErr       error
 		wantStatus      int
 		wantBodyExcerpt string
 	}{
 		{name: "derives a new table", wantStatus: http.StatusCreated},
-		{name: "unknown source table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
 			// The server is never exposed on the Internet (LIM-1), so a raw
@@ -289,23 +287,18 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			metadataSvc := &mockMetadataAPI{}
 			deriveSvc := &mockDeriveAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			th := &TablesHandler{settings: defaultTestSettings, deriveService: deriveSvc}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
-			if c.lookupErr == nil {
-				deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
-			}
+			deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 
 			body := map[string]string{"query": "SELECT 1", "newTableName": "derived"}
-			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/tables/t1/derive", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {
 				assert.Contains(t, rec.Body.String(), c.wantBodyExcerpt)
 			}
-			metadataSvc.AssertExpectations(t)
 			deriveSvc.AssertExpectations(t)
 		})
 	}

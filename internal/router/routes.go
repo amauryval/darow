@@ -111,6 +111,8 @@ func (rt *Router) Setup() http.Handler {
 				sub.Delete("/{name}", rt.sources.DeleteSource)
 			})
 
+			v1.Post("/derive", rt.tables.DeriveTable)
+
 			v1.Route("/tables", func(sub chi.Router) {
 				sub.Get("/", rt.tables.ListTables)
 
@@ -121,7 +123,6 @@ func (rt *Router) Setup() http.Handler {
 
 					sub.Get("/schema", rt.tables.GetSchema)
 					sub.Post("/columns", rt.tables.AddColumn)
-					sub.Post("/derive", rt.tables.DeriveTable)
 					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
 

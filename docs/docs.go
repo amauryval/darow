@@ -15,6 +15,43 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/derive": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Derive a table from a SELECT query",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ogc/": {
             "get": {
                 "produces": [
@@ -394,10 +431,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.uploadResultDTO"
                         }
                     },
                     "400": {
@@ -431,8 +465,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -635,8 +672,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -808,52 +848,6 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/derive": {
-            "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
-                "summary": "Derive a table from a SELECT query",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
@@ -1505,8 +1499,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     }
                 }
             },
@@ -1854,6 +1851,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.deletedDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rowsRemoved": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.diagnosticsDTO": {
             "type": "object",
             "properties": {
@@ -2023,6 +2034,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.uploadResultDTO": {
+            "type": "object",
+            "properties": {
+                "loaded": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "$ref": "#/definitions/service.Source"
+                },
+                "tableId": {
+                    "type": "string"
+                }
+            }
+        },
         "response.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -2036,6 +2061,49 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "requestId": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.Source": {
+            "type": "object",
+            "properties": {
+                "ext": {
+                    "type": "string"
+                },
+                "layers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/service.SourceLayer"
+                    }
+                },
+                "loaded": {
+                    "type": "boolean"
+                },
+                "modTime": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "tableId": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.SourceLayer": {
+            "type": "object",
+            "properties": {
+                "loaded": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tableId": {
                     "type": "string"
                 }
             }

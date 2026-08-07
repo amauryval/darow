@@ -172,3 +172,9 @@ func (m *GeoRepository) Types(ctx context.Context) ([]string, error) {
 	types, _ := callArgs.Get(0).([]string)
 	return types, callArgs.Error(1)
 }
+
+func (m *GeoRepository) ValidateGeometries(ctx context.Context, values []storage.GeometryValue) ([]bool, error) {
+	callArgs := m.Called(ctx, values)
+	results, _ := callArgs.Get(0).([]bool)
+	return results, callArgs.Error(1)
+}

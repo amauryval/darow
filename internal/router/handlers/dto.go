@@ -9,7 +9,11 @@ import (
 	"darow/internal/storage"
 )
 
-// metadataDTO is the JSON representation of a table's metadata.
+// metadataDTO is the JSON representation of a table's metadata. Srid is a
+// pointer: storage.Metadata.Srid is 0 for a table with no source CRS to
+// report (scalar, or derived via /derive), and omitting it there rather
+// than reporting a meaningless 0 keeps the field present only where it
+// applies.
 type metadataDTO struct {
 	TableId        string `json:"tableId"`
 	PhysicalName   string `json:"physicalName"`
@@ -20,11 +24,11 @@ type metadataDTO struct {
 	GeometryColumn string `json:"geometryColumn,omitempty"`
 	RowCount       int64  `json:"rowCount"`
 	Bbox           string `json:"bbox,omitempty"`
-	Srid           int    `json:"srid"`
+	Srid           *int   `json:"srid,omitempty"`
 }
 
 func toMetadataDTO(m storage.Metadata) metadataDTO {
-	return metadataDTO{
+	dto := metadataDTO{
 		TableId:        m.TableId,
 		PhysicalName:   m.PhysicalName,
 		TableName:      m.TableName,
@@ -34,8 +38,12 @@ func toMetadataDTO(m storage.Metadata) metadataDTO {
 		GeometryColumn: m.GeometryColumn,
 		RowCount:       m.RowCount,
 		Bbox:           m.Bbox,
-		Srid:           m.Srid,
 	}
+	if m.Srid != 0 {
+		srid := m.Srid
+		dto.Srid = &srid
+	}
+	return dto
 }
 
 // collectionDTO is an OGC API - Features collection — one per geo table.
@@ -107,6 +115,26 @@ func (d deriveSpecDTO) toSpec() service.DeriveSpec {
 		Computed:     computed,
 		Conditions:   d.Conditions,
 	}
+}
+
+// deletedDTO confirms a delete write happened and names what it removed —
+// the id of the deleted object, its name when it has one distinct from the
+// id, and a row count for a row-level delete.
+type deletedDTO struct {
+	Id          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	RowsRemoved int64  `json:"rowsRemoved,omitempty"`
+}
+
+// uploadResultDTO is POST /sources/upload's response. Loaded discriminates
+// its two outcomes explicitly instead of a client probing which fields are
+// set: a multi-layer source is left unloaded (Source carries its layers for
+// the caller to pick one), anything else is loaded immediately (TableId is
+// the new table).
+type uploadResultDTO struct {
+	Loaded  bool            `json:"loaded"`
+	TableId string          `json:"tableId,omitempty"`
+	Source  *service.Source `json:"source,omitempty"`
 }
 
 // rowToJSON flattens row under the reserved "pkey" key alongside its other

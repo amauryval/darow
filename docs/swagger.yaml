@@ -11,6 +11,15 @@ definitions:
             title:
                 type: string
         type: object
+    handlers.deletedDTO:
+        properties:
+            id:
+                type: string
+            name:
+                type: string
+            rowsRemoved:
+                type: integer
+        type: object
     handlers.diagnosticsDTO:
         properties:
             databaseSizeBytes:
@@ -122,6 +131,15 @@ definitions:
             crs:
                 type: string
         type: object
+    handlers.uploadResultDTO:
+        properties:
+            loaded:
+                type: boolean
+            source:
+                $ref: '#/definitions/service.Source'
+            tableId:
+                type: string
+        type: object
     response.ErrorResponse:
         properties:
             code:
@@ -131,6 +149,34 @@ definitions:
             message:
                 type: string
             requestId:
+                type: string
+        type: object
+    service.Source:
+        properties:
+            ext:
+                type: string
+            layers:
+                items:
+                    $ref: '#/definitions/service.SourceLayer'
+                type: array
+            loaded:
+                type: boolean
+            modTime:
+                type: string
+            name:
+                type: string
+            sizeBytes:
+                type: integer
+            tableId:
+                type: string
+        type: object
+    service.SourceLayer:
+        properties:
+            loaded:
+                type: boolean
+            name:
+                type: string
+            tableId:
                 type: string
         type: object
     storage.FilterCondition:
@@ -157,6 +203,30 @@ info:
     title: Darow
     version: '1.0'
 paths:
+    /api/v1/derive:
+        post:
+            consumes:
+                - application/json
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Derive a table from a SELECT query
+            tags:
+                - tables
     /api/v1/ogc/:
         get:
             produces:
@@ -368,8 +438,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
                 '404':
                     description: Not Found
                     schema:
@@ -485,9 +557,7 @@ paths:
                 '201':
                     description: Created
                     schema:
-                        additionalProperties:
-                            type: string
-                        type: object
+                        $ref: '#/definitions/handlers.uploadResultDTO'
                 '400':
                     description: Bad Request
                     schema:
@@ -540,8 +610,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
                 '404':
                     description: Not Found
                     schema:
@@ -679,36 +751,6 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: List a column's distinct values
-            tags:
-                - tables
-    /api/v1/tables/{tableId}/derive:
-        post:
-            consumes:
-                - application/json
-            parameters:
-                - description: Source table ID
-                  in: path
-                  name: tableId
-                  required: true
-                  type: string
-            produces:
-                - application/json
-            responses:
-                '201':
-                    description: Created
-                    schema:
-                        additionalProperties:
-                            type: string
-                        type: object
-                '400':
-                    description: Bad Request
-                    schema:
-                        $ref: '#/definitions/response.ErrorResponse'
-                '507':
-                    description: Insufficient Storage
-                    schema:
-                        $ref: '#/definitions/response.ErrorResponse'
-            summary: Derive a table from a SELECT query
             tags:
                 - tables
     /api/v1/tables/{tableId}/derive-from-table:
@@ -1085,8 +1127,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
             summary: Delete a row
             tags:
                 - rows

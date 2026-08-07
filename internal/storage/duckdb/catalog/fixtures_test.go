@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -79,7 +80,7 @@ func newTestRepository(t *testing.T) *Repository {
 func newTestRepositoryWithConn(t *testing.T) (*Repository, dbQuerier) {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
-	return NewRepository(dbQuerier{db}, dbExistingTables(db)), dbQuerier{db}
+	return NewRepository(dbQuerier{db}, dbExistingTables(db), dbGeometryInfo(db)), dbQuerier{db}
 }
 
 // dbTxRunner adapts a plain *sql.DB to TxRunner for tests — no writeMu to
@@ -161,7 +162,35 @@ func newTestCatalog(t *testing.T) *Catalog {
 func newTestCatalogWithCreators(t *testing.T, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
-	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), fileCreator, queryCreator)
+	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), fileCreator, queryCreator)
+}
+
+// dbGeometryInfo stands in for duckdb/tables.GeometryInfo with raw SQL, so
+// this package's tests never depend on duckdb/tables. A table with no
+// geometry-typed column, or none at all yet, reports no geometry.
+func dbGeometryInfo(db *sql.DB) GeometryInfo {
+	return func(ctx context.Context, physicalName string) (bool, string, error) {
+		rows, err := db.QueryContext(ctx, `
+            SELECT column_name, data_type FROM duckdb_columns()
+            WHERE database_name = current_database() AND schema_name = current_schema()
+              AND table_name = ?
+        `, physicalName)
+		if err != nil {
+			return false, "", err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var name, dataType string
+			if err := rows.Scan(&name, &dataType); err != nil {
+				return false, "", err
+			}
+			if dataType == "GEOMETRY" || strings.HasPrefix(dataType, "GEOMETRY(") {
+				return true, name, nil
+			}
+		}
+		return false, "", rows.Err()
+	}
 }
 
 // newSpatialTestRepository is newTestRepository with the spatial extension
@@ -173,7 +202,7 @@ func newSpatialTestRepository(t *testing.T) (*Repository, dbQuerier) {
 	_, err := db.Exec("INSTALL spatial; LOAD spatial;")
 	require.NoError(t, err)
 	require.NoError(t, Migrate(db))
-	return NewRepository(dbQuerier{db}, dbExistingTables(db)), dbQuerier{db}
+	return NewRepository(dbQuerier{db}, dbExistingTables(db), dbGeometryInfo(db)), dbQuerier{db}
 }
 
 // newGeoTable registers a geo table and gives it a physical table holding
@@ -183,7 +212,7 @@ func newSpatialTestRepository(t *testing.T) (*Repository, dbQuerier) {
 func newGeoTable(t *testing.T, r *Repository, conn dbQuerier) (tableId string, meta storage.Metadata) {
 	ctx := context.Background()
 
-	tableId, err := r.Create(ctx, "points", true, "geom")
+	tableId, err := r.Create(ctx, "points")
 	require.NoError(t, err)
 	meta, err = r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -194,6 +223,9 @@ func newGeoTable(t *testing.T, r *Repository, conn dbQuerier) (tableId string, m
                ST_Transform(ST_Point(lon, lat), 'OGC:CRS84', 'EPSG:3857') AS geom
         FROM (VALUES ('a', 2.35, 48.85), ('b', 4.83, 45.76)) AS v(name, lon, lat)
     `, meta.PhysicalName))
+	require.NoError(t, err)
+
+	meta, err = r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 	return tableId, meta
 }

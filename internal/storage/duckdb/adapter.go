@@ -101,7 +101,10 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	queryCreator := func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (string, bool, error) {
 		return tables.NewTxMaterializer(tx, a.catalog).CreateFromQuery(ctx, physicalName, sourceQuery, args...)
 	}
-	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), fileCreator, queryCreator)
+	geometryInfo := func(ctx context.Context, physicalName string) (bool, string, error) {
+		return tables.GeometryInfo(ctx, a, physicalName)
+	}
+	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), geometryInfo, fileCreator, queryCreator)
 	a.materializer = tables.NewMaterializer(a, a, a.catalog)
 
 	// Registered at construction, so deleting a table can never forget the

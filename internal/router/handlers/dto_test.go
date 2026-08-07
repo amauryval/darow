@@ -4,9 +4,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"darow/internal/storage"
 )
+
+func Test_ToMetadataDTO_Srid(t *testing.T) {
+	t.Run("a table with no known source CRS omits srid", func(t *testing.T) {
+		dto := toMetadataDTO(storage.Metadata{TableId: "t1", IsGeo: false, Srid: 0})
+		assert.Nil(t, dto.Srid)
+	})
+
+	t.Run("a derived geo table has no source CRS either", func(t *testing.T) {
+		dto := toMetadataDTO(storage.Metadata{TableId: "t1", IsGeo: true, Srid: 0})
+		assert.Nil(t, dto.Srid)
+	})
+
+	t.Run("a table imported from a georeferenced source reports its srid", func(t *testing.T) {
+		dto := toMetadataDTO(storage.Metadata{TableId: "t1", IsGeo: true, Srid: 2154})
+		require.NotNil(t, dto.Srid)
+		assert.Equal(t, 2154, *dto.Srid)
+	})
+}
 
 func Test_RowToJSON(t *testing.T) {
 	t.Run("flattens pkey alongside data columns", func(t *testing.T) {

@@ -79,6 +79,7 @@ MVT tiles, and SQL-derived tables over a REST API, plus a Vue3 admin UI embedded
     asked for.
 -   Any SQL identifier (table/column) interpolated into a query must go through
     `storage.ValidateIdentifier` first; values are always bound parameters, never interpolated.
+-   You must be concise with your anwser
 
 ## Commands
 
@@ -89,14 +90,10 @@ MVT tiles, and SQL-derived tables over a REST API, plus a Vue3 admin UI embedded
     or not, so it picks up `web/node_modules/flatted/golang/pkg/flatted` — a third-party Go package
     shipped by npm. It gets tested and vetted, never linked (the binary is only `cmd/server`'s
     import graph, and `internal/webui` embeds `dist/` alone), but it wastes CI time and can fail
-    `gofmt` on code we don't own. The tasks above filter the package list explicitly
-    (`go list ./... | grep -v /web/`) and scope `gofmt` to `cmd internal docs` — do the same in any
-    ad-hoc `go test`/`go vet`/`gofmt` invocation
+    `gofmt` on code we don't own.
 -   `mise run ui-install` / `ui-build` / `ui-dev` — web UI deps / production build (into
     `internal/webui/dist`) / Vite dev server
 -   `mise run ui-lint` / `ui-test` — eslint / vitest for the web UI
 -   `mise run build` — build the server binary (regenerates docs and UI first)
 -   `mise run run-dev` — run the server against `config.yaml` (regenerates docs and UI first)
--   CI (`.github/workflows/ci.yml`) runs `go vet`/`gofmt`, `go test -race`, `ui-lint`/`ui-test`/
-    `ui-build` (via `vue-tsc`/`vitest`/`vite`), and a Docker image build on every push/PR
 -   `Dockerfile` — multi-stage build (UI → Go binary → slim runtime image); see also `.dockerignore`

@@ -3,11 +3,17 @@ package tables
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
 	"darow/internal/storage"
 )
+
+// errTableNotFound is tableColumns' sentinel for a physical table that does
+// not exist, wrapped rather than returned bare so GeometryInfo can tell it
+// apart from a genuine catalogue read failure.
+var errTableNotFound = errors.New("table does not exist")
 
 // This file is the only place DuckDB's own catalogue functions
 // (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions,
@@ -69,7 +75,7 @@ func tableColumns(ctx context.Context, conn Querier, tableName string) ([]catalo
 		return nil, err
 	}
 	if len(cols) == 0 {
-		return nil, fmt.Errorf("table %q does not exist", tableName)
+		return nil, fmt.Errorf("table %q does not exist: %w", tableName, errTableNotFound)
 	}
 	return cols, nil
 }
@@ -125,6 +131,29 @@ func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
 		}
 		return catalogColumn{}, fmt.Errorf("table has multiple geometry columns %v — multi-geometry sources are not supported", names)
 	}
+}
+
+// GeometryInfo reports whether physicalName currently has a geometry column
+// and, if so, its name — the same tableColumns/soleGeometryColumn read
+// findGeometryColumn uses to detect it during materialization, exposed here
+// so a table's isGeo/geometryColumn can be derived from the catalogue at
+// read time instead of trusted from stored metadata, which can drift from
+// what the physical table actually has (TODO-10). A physical table that
+// does not exist yet — a metadata row registered but not yet materialized —
+// reports no geometry rather than erroring.
+func GeometryInfo(ctx context.Context, conn Querier, physicalName string) (isGeo bool, geometryColumn string, err error) {
+	columns, err := tableColumns(ctx, conn, physicalName)
+	if errors.Is(err, errTableNotFound) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	geometry, err := soleGeometryColumn(columns)
+	if err != nil {
+		return false, "", err
+	}
+	return geometry.Name != "", geometry.Name, nil
 }
 
 // tableIndexes lists the indexes DuckDB holds for tableName, so index

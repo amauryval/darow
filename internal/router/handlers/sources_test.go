@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"darow/internal/service"
 	"darow/internal/storage"
@@ -114,16 +115,19 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 		sources    []service.Source
 		loadErr    error
 		wantStatus int
+		wantLoaded bool
 	}{
 		{
 			name:       "single-layer upload loads immediately",
 			sources:    []service.Source{{Name: "a.geojson"}},
 			wantStatus: http.StatusCreated,
+			wantLoaded: true,
 		},
 		{
 			name:       "multi-layer upload is returned unresolved",
 			sources:    []service.Source{{Name: "a.geojson", Layers: []service.SourceLayer{{Name: "l1"}, {Name: "l2"}}}},
 			wantStatus: http.StatusCreated,
+			wantLoaded: false,
 		},
 		{
 			name:       "save failure returns 400",
@@ -162,6 +166,16 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 			sh.UploadSource(rec, req)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusCreated {
+				result := decodeJSON[uploadResultDTO](rec)
+				assert.Equal(t, c.wantLoaded, result.Loaded)
+				if c.wantLoaded {
+					assert.Equal(t, "t1", result.TableId)
+				} else {
+					require.NotNil(t, result.Source)
+					assert.Equal(t, "a.geojson", result.Source.Name)
+				}
+			}
 			sourceSvc.AssertExpectations(t)
 		})
 	}
@@ -260,7 +274,7 @@ func Test_sourcesHandler_deleteSource(t *testing.T) {
 		deleteErr  error
 		wantStatus int
 	}{
-		{name: "deletes the source", wantStatus: http.StatusNoContent},
+		{name: "deletes the source", wantStatus: http.StatusOK},
 		{name: "unknown source returns its mapped error", deleteErr: &service.NotFoundError{}, wantStatus: http.StatusNotFound},
 	}
 

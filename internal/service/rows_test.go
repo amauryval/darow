@@ -38,9 +38,14 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	return svc, m, rowRepo, tableRepo
 }
 
+// expectStoredTypes wires the family check's stored-types read, plus the
+// validity check that immediately follows it in checkWrittenGeometry — every
+// written geometry reports valid, since these tests exercise other
+// behaviour, not ST_IsValid's refusal (see geometry_validity_test.go).
 func expectStoredTypes(tableRepo *mocks.TableRepository, geoRepo *mocks.GeoRepository, types []string) {
 	tableRepo.On("Geo").Return(geoRepo, true)
 	geoRepo.On("Types", mock.Anything).Return(types, nil).Once()
+	geoRepo.On("ValidateGeometries", mock.Anything, mock.Anything).Return([]bool{true}, nil).Maybe()
 }
 
 func Test_ConvertValue(t *testing.T) {

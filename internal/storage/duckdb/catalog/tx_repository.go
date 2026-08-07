@@ -24,6 +24,6 @@ func (q txQuerier) Exec(ctx context.Context, query string, args ...any) (sql.Res
 // newTxRepository builds a Repository whose reads and writes run against tx
 // rather than the adapter's pooled connection, so Create/UpdateMetadata/
 // RefreshDerivedMetadata join the transaction a table's creation runs in.
-func newTxRepository(tx *sql.Tx, existing ExistingTables) *Repository {
-	return NewRepository(txQuerier{tx}, existing)
+func newTxRepository(tx *sql.Tx, existing ExistingTables, geometryInfo GeometryInfo) *Repository {
+	return NewRepository(txQuerier{tx}, existing, geometryInfo)
 }

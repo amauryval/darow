@@ -266,6 +266,46 @@ func (g *tableGeo) Types(ctx context.Context) ([]string, error) {
 	return types, rows.Err()
 }
 
+// ValidateGeometries evaluates ST_IsValid over every value in one batched
+// query, each built through the same geometryExpr buildInsert/buildUpdate
+// use to write a geometry — the same parse (ST_GeomFromText/
+// ST_GeomFromGeoJSON) and the same ST_Transform to EPSG:3857, so validity is
+// checked on the geometry exactly as it would be stored, never on the raw
+// literal. DuckDB's spatial extension has no ST_IsValidReason (unlike
+// PostGIS): a refusal names the written literal, not the engine's own
+// explanation of what is wrong with it — see checkGeometryValidity.
+func (g *tableGeo) ValidateGeometries(ctx context.Context, values []storage.GeometryValue) ([]bool, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	selects := make([]string, len(values))
+	args := []any{}
+	for i, v := range values {
+		expr, exprArgs := geometryExpr(v)
+		selects[i] = fmt.Sprintf(`SELECT %d AS idx, ST_IsValid(%s) AS valid`, i, expr)
+		args = append(args, exprArgs...)
+	}
+	query := strings.Join(selects, " UNION ALL ")
+
+	rows, err := g.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]bool, len(values))
+	for rows.Next() {
+		var idx int
+		var valid sql.NullBool
+		if err := rows.Scan(&idx, &valid); err != nil {
+			return nil, err
+		}
+		results[idx] = !valid.Valid || valid.Bool
+	}
+	return results, rows.Err()
+}
+
 // Features returns up to q.Limit GeoFeatures after skipping q.Offset
 // matches (OGC API - Features paging), each row's geometry emitted as a
 // GeoJSON fragment — a deliberate exception to never returning the

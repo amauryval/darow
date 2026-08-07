@@ -103,6 +103,35 @@ func Test_GeometryColumn(t *testing.T) {
 	}
 }
 
+func Test_GeometryInfo(t *testing.T) {
+	conn := openRepoTestDB(t)
+	ctx := context.Background()
+	newScalarTestTable(t, conn)
+	newGeoTestTable(t, conn)
+
+	isGeo, geometryColumn, err := GeometryInfo(ctx, conn, "t_scalar")
+	require.NoError(t, err)
+	assert.False(t, isGeo)
+	assert.Empty(t, geometryColumn)
+
+	isGeo, geometryColumn, err = GeometryInfo(ctx, conn, "t_geo")
+	require.NoError(t, err)
+	assert.True(t, isGeo)
+	assert.Equal(t, "geom", geometryColumn)
+}
+
+// A metadata row registered but not yet materialized has no physical table
+// — GeometryInfo reports it as not-geo rather than erroring.
+func Test_GeometryInfo_TableNotYetMaterialized(t *testing.T) {
+	conn := openRepoTestDB(t)
+
+	isGeo, geometryColumn, err := GeometryInfo(context.Background(), conn, "t_not_yet")
+
+	require.NoError(t, err)
+	assert.False(t, isGeo)
+	assert.Empty(t, geometryColumn)
+}
+
 func Test_TableIndexes(t *testing.T) {
 	conn := openRepoTestDB(t)
 	ctx := context.Background()

@@ -32,6 +32,37 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT"}, types)
 }
+
+func Test_GeoRepository_ValidateGeometries(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+	ctx := context.Background()
+
+	results, err := geo.ValidateGeometries(ctx, []storage.GeometryValue{
+		{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS},
+		{Literal: "POLYGON((0 0, 2 2, 2 0, 0 2, 0 0))", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []bool{true, false}, results)
+}
+
+func Test_GeoRepository_ValidateGeometries_Empty(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+
+	results, err := geo.ValidateGeometries(context.Background(), nil)
+
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
 func Test_tileSimplifyTolerance(t *testing.T) {
 	cases := []struct {
 		name string

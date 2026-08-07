@@ -106,11 +106,11 @@ func Test_Catalog_Remove_CascadesToStoredFilters(t *testing.T) {
 	conn := dbQuerier{db}
 	ctx := context.Background()
 
-	c := New(conn, dbTxRunner{db}, dropTable, dbExistingTables(db), fakeFileCreator(nil), fakeQueryCreator(nil))
+	c := New(conn, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), fakeFileCreator(nil), fakeQueryCreator(nil))
 	filters := NewFilters(conn)
 	c.Register(filters)
 
-	tableId, err := c.Create(ctx, "t", false, "")
+	tableId, err := c.Create(ctx, "t")
 	require.NoError(t, err)
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)

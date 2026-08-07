@@ -136,6 +136,11 @@ type GeoRepository interface {
 	WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
+	// ValidateGeometries reports, for each of values in order, whether it is
+	// valid (ST_IsValid) once parsed and reprojected exactly as a write
+	// would store it (rule 23) — evaluated in one batched query rather than
+	// one round trip per geometry.
+	ValidateGeometries(ctx context.Context, values []GeometryValue) ([]bool, error)
 }
 
 // TableMaterializer answers questions about a source file before any table

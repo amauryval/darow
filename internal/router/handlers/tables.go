@@ -168,7 +168,7 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 // @Description Supprime une table et ses données
 // @Tags tables
 // @Param tableId path string true "Table ID"
-// @Success 204
+// @Success 200 {object} deletedDTO
 // @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId} [delete]
 func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
@@ -181,7 +181,7 @@ func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: meta.TableId, Name: meta.TableName})
 }
 
 // GetSchema handles GET /tables/{tableId}/schema.
@@ -244,25 +244,20 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
 }
 
-// DeriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
-// anything that isn't a SELECT. Its query reads every registered table,
-// not only the one in the path — /derive-from-table below is the
-// single-source mode.
+// DeriveTable handles POST /derive. DeriveTable rejects anything that
+// isn't a SELECT. Its query reads every registered table — it has no
+// notion of a source table — unlike /tables/{tableId}/derive-from-table
+// below, the single-source mode.
 //
 // @Summary Derive a table from a SELECT query
 // @Tags tables
 // @Accept json
 // @Produce json
-// @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 507 {object} response.ErrorResponse
-// @Router /api/v1/tables/{tableId}/derive [post]
+// @Router /api/v1/derive [post]
 func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
-	if _, ok := th.ResolveTable(w, req); !ok {
-		return
-	}
-
 	var body struct {
 		Query        string `json:"query"`
 		NewTableName string `json:"newTableName"`

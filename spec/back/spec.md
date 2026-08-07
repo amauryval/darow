@@ -324,16 +324,21 @@ A system table, one record per logical table. Columns:
 | `tableId`                 | `TEXT PRIMARY KEY`     | config                | UUID v4, the logical/API identifier                                                           |
 | `physicalName`            | `TEXT NOT NULL UNIQUE` | config                | real name of the SQL table (`t_<uuid>`)                                                       |
 | `tableName`               | `TEXT NOT NULL`        | config                | display name, renameable                                                                      |
-| `isGeo`                   | `BOOLEAN`              | config                | the table has a geometry column                                                               |
 | `createdAt` / `updatedAt` | `TIMESTAMP`            | derived (`updatedAt`) | `updatedAt` is bumped by every derived refresh — it is the tile invalidation signal (rule 20) |
-| `geometryColumn`          | `TEXT`                 | config                | name of the geometry column, which varies with the source format                              |
 | `rowCount`                | `INTEGER`              | derived               | recomputed by `RefreshDerivedMetadata` (rule 9)                                               |
 | `bbox`                    | `TEXT`                 | derived               | `"minX,minY,maxX,maxY"` in **OGC:CRS84** (lon/lat)                                            |
-| `srid`                    | `INTEGER`              | config                | the original **source** CRS, before reprojection                                              |
+| `srid`                    | `INTEGER`              | config                | the original **source** CRS, before reprojection; `NULL` for a scalar table or one created via `/derive`, which has no source file |
 | `sourceName`              | `TEXT`                 | config                | originating `workDir` file; empty for a `/derive` table                                       |
 | `sourceLayer`             | `TEXT`                 | config                | originating layer for a multi-layer source                                                    |
 
-Two indexes: on `isGeo` and on `tableName`.
+One index, on `tableName`.
+
+`storage.Metadata.IsGeo`/`GeometryColumn` are **not** columns of this table: they are derived on
+every read (`Repository.GetMetadata`/`List`, `duckdb/catalog/catalog.go`'s `GeometryInfo`) from the
+physical table's own catalogue entry (§4.8, `duckdb/tables.GeometryInfo`) — the same
+`tableColumns`/`soleGeometryColumn` read `CreateFromFile` uses to detect the geometry column when a
+table is created. This is why they cannot drift from what the physical table actually has: there is
+nothing stored to drift.
 
 `Metadata` is a **value type** on the Go side: every caller receives its own copy, no
 synchronization is needed.
@@ -565,7 +570,7 @@ keep it portable for.
 
 | Function              | Read through                                                                           | Answers                                                                                                                                    |
 | --------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `duckdb_columns()`    | `tableColumns`                                                                         | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
+| `duckdb_columns()`    | `tableColumns`, and `GeometryInfo` built on top of it plus `soleGeometryColumn`         | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default; `GeometryInfo` reduces that to isGeo/the geometry column's name, exposed to `duckdb/catalog` as a `GeometryInfo` function value (mirroring `ExistingTables`) so `Repository.GetMetadata`/`List` derive `storage.Metadata.IsGeo`/`GeometryColumn` rather than store them (§4.1) |
 | `duckdb_indexes()`    | `tableIndexes`                                                                         | the indexes really created on a table (rule 19's assertion, §4.2)                                                                          |
 | `duckdb_tables()`     | `existingTableNames`, reached from outside through the `ExistingTables` function value | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone                    |
 | `duckdb_extensions()` | `ExtensionLoaded`, `loadedExtensions`                                                  | whether `spatial` is loaded, for `/readyz`; the full loaded list, for `/diagnostics`                                                       |
@@ -659,13 +664,21 @@ WKT, an object is a GeoJSON geometry, anything else is a `ValidationError` — a
 geometry back as GeoJSON (`RowWriteResult`), so the client redraws what the server kept rather than
 its own draft. A bulk insert carries the same CRS and echoes nothing.
 
-Before any of that reaches the repository, a write that sets the geometry column is checked against
-what the table already holds (rule 23, `geometry_family.go`): the families of the written geometries
-— read off the WKT type name or the GeoJSON `type`, so nothing is parsed twice — against the
-families of `GeoRepository.Types`. One family stored and another written is a `ValidationError`, and
-the whole request is refused, batch included: a save that half-landed would leave the caller's grid
-and map disagreeing. The types are read **once per request**, which is one distinct scan of the
-geometry column per write.
+Before any of that reaches the repository, a write that sets the geometry column passes two guards,
+in sequence, both raising a `ValidationError` **before** anything is written, batch included — a save
+that half-landed would leave the caller's grid and map disagreeing. `RowService.checkWrittenGeometry`
+(`geometry_validity.go`) runs them in order, from `UpdateRow`/`UpdateRows`/`InsertRow`/`BulkInsertRows`:
+
+1. **Family homogeneity** (rule 22, `geometry_family.go`): the families of the written geometries —
+   read off the WKT type name or the GeoJSON `type`, so nothing is parsed twice — checked against the
+   families of `GeoRepository.Types`. One family stored and another written is refused. The stored
+   types are read **once per request**, one distinct scan of the geometry column per write.
+2. **Validity** (`geometry_validity.go`): `GeoRepository.ValidateGeometries` runs `ST_IsValid` on the
+   geometry exactly as it will be stored — after `ST_GeomFromText`/`ST_GeomFromGeoJSON` and the
+   `ST_Transform` of rule 23, never on the raw literal — in one batched query covering every written
+   geometry of the request. A self-intersecting polygon or an unclosed ring is refused naming the
+   written literal, not an engine explanation: DuckDB's spatial extension has no `ST_IsValidReason`,
+   unlike PostGIS.
 
 `UpdateRows` is the multi-row form: each row carries its own values, the whole set is written in one
 transaction, and derived metadata is refreshed once. `UpdateRow` writes every column in **one**
@@ -818,16 +831,22 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
 | GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy" |
 
+**Derive**
+
+| Method | Path              | Description                                                                                                                |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/v1/derive`  | creates a new table from a free `SELECT` query, over **every** registered table — a top-level route, scoped to no table    |
+
 **Sources**
 
 | Method | Path                              | Description                                                                                                                                                                                          |
 | ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/sources`                 | paginated, sortable listing of the cache (`offset`, `limit`, `sort`)                                                                                                                                 |
 | POST   | `/api/v1/sources/refresh`         | rescans `workDir` then returns the same paginated envelope                                                                                                                                           |
-| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table. `?srid=` optional. A multi-layer source is returned as is without loading (the layer choice is the caller's) |
+| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table, `{loaded: true, tableId}`. `?srid=` optional. A multi-layer source is left unloaded, `{loaded: false, source}` — the layer choice is the caller's |
 | POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly                                                                           |
 | GET    | `/api/v1/sources/{name}/metadata` | the file's detected CRS, without importing. `srid` is `null` if undetectable                                                                                                                         |
-| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**                                                                                                                           |
+| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**; `200` with the source's name                                                                                             |
 
 **Tables**
 
@@ -836,11 +855,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/tables`                                  | paginated, sortable listing of the metadata                                                                                                  |
 | GET    | `/api/v1/tables/{tableId}`                        | a table's metadata                                                                                                                           |
 | PATCH  | `/api/v1/tables/{tableId}`                        | rename (`tableName` only)                                                                                                                    |
-| DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data                                                                                                               |
+| DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data, `200` with the deleted table's id and name                                                                   |
 | GET    | `/api/v1/tables/{tableId}/schema`                 | columns and types, geometry included                                                                                                         |
 | POST   | `/api/v1/tables/{tableId}/columns`                | adds a column                                                                                                                                |
 | GET    | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search`          |
-| POST   | `/api/v1/tables/{tableId}/derive`                 | creates a new table from a free `SELECT` query, over **every** registered table — `{tableId}` is the route it is posted to, not a scope      |
 | POST   | `/api/v1/tables/{tableId}/derive-from-table`      | creates a new table from `{tableId}` alone, described structurally (columns, computed expressions, row conditions) rather than as SQL (§8.1) |
 | POST   | `/api/v1/tables/{tableId}/filter`                 | filters by conditions (`BuildFilter`)                                                                                                        |
 | GET    | `/api/v1/tables/{tableId}/filters`                | lists the table's stored filters (§4.5.1), oldest first                                                                                      |
@@ -860,7 +878,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, at full resolution in `OGC:CRS84`; `404` on a scalar table or an unknown row                                                                               |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
-| DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row                                                                                                                                                                                                   |
+| DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 
 **Geo**
 
@@ -1081,9 +1099,8 @@ anywhere.
 Two modes, one materialization path. Both produce a **frozen snapshot**: no synchronization with the
 source, in either direction.
 
--   **Free SQL** (`POST /tables/{tableId}/derive`) — the caller supplies the `SELECT`, which may
-    read any registered table. It ignores the `{tableId}` it is nested under (`improvements.md`
-    IMP-6).
+-   **Free SQL** (`POST /derive`, a top-level route) — the caller supplies the `SELECT`, which may
+    read any registered table. It has no source table, hence no `{tableId}` in its path.
 -   **Guided** (`POST /tables/{tableId}/derive-from-table`, §8.1) — the caller supplies a structure
     and the server assembles the SQL; the source is `{tableId}` and nothing else.
 

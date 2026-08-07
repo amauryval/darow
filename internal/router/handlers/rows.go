@@ -340,7 +340,7 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 // @Tags rows
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
-// @Success 204
+// @Success 200 {object} deletedDTO
 // @Router /api/v1/tables/{tableId}/rows/{pkey} [delete]
 func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 	meta, ok := rh.ResolveTable(w, req)
@@ -353,7 +353,7 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: pkey, RowsRemoved: 1})
 }
 
 // GetRowGeometry handles GET /tables/{tableId}/rows/{pkey}/geometry.

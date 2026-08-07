@@ -304,7 +304,7 @@ func Test_rowsHandler_deleteRow(t *testing.T) {
 		removeErr  error
 		wantStatus int
 	}{
-		{name: "deletes the row", wantStatus: http.StatusNoContent},
+		{name: "deletes the row", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "removal failure returns 500", removeErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
