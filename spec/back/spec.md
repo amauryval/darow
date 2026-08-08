@@ -9,6 +9,10 @@ document that must be fixed. It deliberately contains no code: exact signatures 
 files it cites, named in each section. It only describes the **stable** state: blockers, accepted
 limitations, identified debt and improvement leads live in separate files, listed in §11.
 
+Its sections are indexed by title, grouped by layer, in [`spec/index.md`](../index.md) — the entry
+point to read only what a task needs. **Any section added, renamed, removed or renumbered here is
+mirrored there in the same change.**
+
 Its scope is the **Go server** alone. The Vue 3 admin application (`web/`) has its own
 specification, `spec/front/spec.md`; the two documents are disjoint and their only contact point is
 the REST API, described here (§6) and consumed there. `docs/swagger.json` / `docs/swagger.yaml` /

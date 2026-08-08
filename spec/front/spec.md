@@ -15,6 +15,10 @@ files it cites, named in each section. It only describes the **stable** state: g
 rules below and the current state of the code, accepted limitations, blockers and improvement leads
 live in separate files, listed in §12.
 
+Its sections are indexed by title, grouped by layer, in [`spec/index.md`](../index.md) — the entry
+point to read only what a task needs. **Any section added, renamed, removed or renumbered here is
+mirrored there in the same change.**
+
 ---
 
 ## 0. Non-negotiable rules
