@@ -109,7 +109,6 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :key="field.key"
                                 v-model="draft[field.key]"
                                 :field="field"
-                                :settings="savedValues"
                                 :error="errors[field.key]"
                                 :disabled="saving"
                             />
@@ -133,7 +132,6 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :key="field.key"
                                 v-model="draft[field.key]"
                                 :field="field"
-                                :settings="savedValues"
                                 :error="errors[field.key]"
                                 :disabled="saving"
                             />

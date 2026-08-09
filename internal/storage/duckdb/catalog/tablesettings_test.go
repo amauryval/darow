@@ -37,25 +37,25 @@ func Test_TableSettings_UpdateTableSettings(t *testing.T) {
 	}{
 		{
 			name:       "setting a field creates a row",
-			initial:    storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(50))},
-			wantResult: storage.TableSettings{TableId: "table-1", MaxRowLimit: intPtr(50)},
+			initial:    storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(50))},
+			wantResult: storage.TableSettings{TableId: "table-1", DefaultRowLimit: intPtr(50)},
 		},
 		{
 			name: "a second patch only changes the fields it names",
 			initial: storage.TableSettingsPatch{
-				MaxRowLimit:        ptrToIntPtr(intPtr(50)),
+				DefaultRowLimit:    ptrToIntPtr(intPtr(50)),
 				MaxPrecision:       ptrToFloat64Ptr(float64Ptr(10)),
 				CoordinateDecimals: ptrToIntPtr(intPtr(4)),
 			},
-			patch:      storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(75))},
-			wantResult: storage.TableSettings{TableId: "table-1", MaxRowLimit: intPtr(75), MaxPrecision: float64Ptr(10), CoordinateDecimals: intPtr(4)},
+			patch:      storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(75))},
+			wantResult: storage.TableSettings{TableId: "table-1", DefaultRowLimit: intPtr(75), MaxPrecision: float64Ptr(10), CoordinateDecimals: intPtr(4)},
 		},
 		{
 			name: "clearing the only override deletes the row",
 			initial: storage.TableSettingsPatch{
-				MaxRowLimit: ptrToIntPtr(intPtr(50)),
+				DefaultRowLimit: ptrToIntPtr(intPtr(50)),
 			},
-			patch:      storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(nil)},
+			patch:      storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(nil)},
 			wantResult: storage.TableSettings{TableId: "table-1"},
 		},
 	}
@@ -74,7 +74,7 @@ func Test_TableSettings_UpdateTableSettings(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, c.wantResult.TableId, got.TableId)
-			assert.Equal(t, c.wantResult.MaxRowLimit, got.MaxRowLimit)
+			assert.Equal(t, c.wantResult.DefaultRowLimit, got.DefaultRowLimit)
 			assert.Equal(t, c.wantResult.MaxPrecision, got.MaxPrecision)
 			assert.Equal(t, c.wantResult.CoordinateDecimals, got.CoordinateDecimals)
 		})
@@ -101,7 +101,7 @@ func Test_TableSettings_DeleteTableSettings(t *testing.T) {
 	ts, _ := newTestTableSettings(t)
 	ctx := context.Background()
 
-	_, err := ts.UpdateTableSettings(ctx, "table-1", storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(50))})
+	_, err := ts.UpdateTableSettings(ctx, "table-1", storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(50))})
 	require.NoError(t, err)
 
 	require.NoError(t, ts.DeleteTableSettings(ctx, "table-1"))
@@ -122,9 +122,9 @@ func Test_TableSettings_ListOverriddenTables(t *testing.T) {
 	ts, _ := newTestTableSettings(t)
 	ctx := context.Background()
 
-	_, err := ts.UpdateTableSettings(ctx, "table-b", storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(10))})
+	_, err := ts.UpdateTableSettings(ctx, "table-b", storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(10))})
 	require.NoError(t, err)
-	_, err = ts.UpdateTableSettings(ctx, "table-a", storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(20))})
+	_, err = ts.UpdateTableSettings(ctx, "table-a", storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(20))})
 	require.NoError(t, err)
 
 	listed, err := ts.ListOverriddenTables(ctx)
@@ -154,7 +154,7 @@ func Test_Catalog_Remove_CascadesToTableSettings(t *testing.T) {
 	require.NoError(t, err)
 	materialize(t, conn, meta.PhysicalName)
 
-	_, err = ts.UpdateTableSettings(ctx, tableId, storage.TableSettingsPatch{MaxRowLimit: ptrToIntPtr(intPtr(50))})
+	_, err = ts.UpdateTableSettings(ctx, tableId, storage.TableSettingsPatch{DefaultRowLimit: ptrToIntPtr(intPtr(50))})
 	require.NoError(t, err)
 
 	require.NoError(t, c.Remove(ctx, tableId))

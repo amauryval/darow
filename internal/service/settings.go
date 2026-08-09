@@ -89,14 +89,14 @@ func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.Sett
 // produce rather than in isolation.
 func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storage.Settings {
 	merged := current
-	if patch.MaxRowLimit != nil {
-		merged.MaxRowLimit = *patch.MaxRowLimit
+	if patch.DefaultRowLimit != nil {
+		merged.DefaultRowLimit = *patch.DefaultRowLimit
 	}
-	if patch.MaxListLimit != nil {
-		merged.MaxListLimit = *patch.MaxListLimit
+	if patch.DefaultListLimit != nil {
+		merged.DefaultListLimit = *patch.DefaultListLimit
 	}
-	if patch.MaxFeaturesLimit != nil {
-		merged.MaxFeaturesLimit = *patch.MaxFeaturesLimit
+	if patch.DefaultFeaturesLimit != nil {
+		merged.DefaultFeaturesLimit = *patch.DefaultFeaturesLimit
 	}
 	if patch.MaxSimplifyTolerance != nil {
 		merged.MaxSimplifyTolerance = *patch.MaxSimplifyTolerance

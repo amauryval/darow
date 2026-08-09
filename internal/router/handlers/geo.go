@@ -187,9 +187,9 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 	}
 	q.CoordinateDecimals = &resolved.CoordinateDecimals
 
-	// The features limits: see internal/settings.FeaturesLimits.
+	// The features page size: see internal/settings.Limit.
 	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
-	limit := resolved.MaxFeaturesLimit.Resolve(requested)
+	limit := resolved.DefaultFeaturesLimit.Resolve(requested)
 	offset := 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
@@ -313,7 +313,7 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := gh.tableSettings.Resolve(meta.TableId).MaxFeaturesLimit.Resolve(body.Limit)
+	limit := gh.tableSettings.Resolve(meta.TableId).DefaultFeaturesLimit.Resolve(body.Limit)
 
 	near := storage.NearQuery{
 		Geometry: storage.GeometryValue{
@@ -360,7 +360,7 @@ func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := gh.tableSettings.Resolve(meta.TableId).MaxRowLimit.Resolve(body.Limit)
+	limit := gh.tableSettings.Resolve(meta.TableId).DefaultRowLimit.Resolve(body.Limit)
 	offset := body.Offset
 	if offset < 0 {
 		offset = 0

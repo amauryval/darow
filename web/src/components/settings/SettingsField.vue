@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { RotateCcw } from '@lucide/vue'
 import type { SettingsFieldSpec } from '../../utils/settingsFields'
-import type { Settings } from '../../client/types'
 import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import Typography from '../ui/Typography.vue'
@@ -12,11 +10,10 @@ import Typography from '../ui/Typography.vue'
 // number 0, and showInheritToggle is what draws the toggle at all (the
 // global screen never passes it, so its own perTable fields show no
 // toggle).
-const props = withDefaults(
+withDefaults(
     defineProps<{
         field: SettingsFieldSpec
         modelValue: string
-        settings: Settings | null
         error?: string
         disabled?: boolean
         inherited?: boolean
@@ -26,19 +23,6 @@ const props = withDefaults(
 )
 
 defineEmits<{ 'update:modelValue': [value: string]; toggleInherit: [] }>()
-
-// What the server applies today for this family, whatever the input holds:
-// its own built-in values while the limit is left at 0, the operator's value
-// once set. Read off the response, never recomputed here.
-const effective = computed(() => {
-    const keys = props.field.effectiveKeys
-    if (!keys || !props.settings) return null
-    return {
-        default: props.settings[keys.default],
-        max: props.settings[keys.max],
-        noun: keys.noun
-    }
-})
 </script>
 
 <template>
@@ -78,10 +62,6 @@ const effective = computed(() => {
             class="mt-1 block text-base-content/60"
         >
             0 = {{ field.zeroMeaning }}
-        </Typography>
-        <Typography v-if="effective" variant="caption" class="mt-1 block text-base-content/60">
-            Actuellement : {{ effective.default }} {{ effective.noun }} par requête,
-            {{ effective.max }} au maximum.
         </Typography>
     </div>
 </template>

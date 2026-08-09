@@ -15,12 +15,17 @@ import (
 	"darow/internal/storage"
 )
 
+// geoTestSettings is the global row the hand-built GeoHandler tests resolve
+// their page sizes against — one number per family, the value a handler
+// serves when the request asks for no limit.
+var geoTestSettings = storage.Settings{DefaultRowLimit: 100, DefaultFeaturesLimit: 100}
+
 func Test_newGeoHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, defaultTestSettings, defaultTestTableSettings)
 
 	assert.Same(t, geoSvc, gh.geoService)
 
@@ -232,7 +237,8 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
+			global := storage.Settings{DefaultFeaturesLimit: 100}
+			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: global}, stubTableSettingsAPI{global: global})
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -266,7 +272,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
-	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{MaxFeaturesLimit: 1}}, stubTableSettingsAPI{global: storage.Settings{MaxFeaturesLimit: 1}})
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{DefaultFeaturesLimit: 1}}, stubTableSettingsAPI{global: storage.Settings{DefaultFeaturesLimit: 1}})
 
 	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -343,8 +349,8 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 			gh := &GeoHandler{
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				geoService:    geoSvc,
-				settings:      stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings: stubTableSettingsAPI{},
+				settings:      stubSettingsAPI{settings: geoTestSettings},
+				tableSettings: stubTableSettingsAPI{global: geoTestSettings},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -436,8 +442,8 @@ func Test_geoHandler_findNeighbours(t *testing.T) {
 			gh := &GeoHandler{
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				geoService:    geoSvc,
-				settings:      stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings: stubTableSettingsAPI{},
+				settings:      stubSettingsAPI{settings: geoTestSettings},
+				tableSettings: stubTableSettingsAPI{global: geoTestSettings},
 			}
 
 			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}

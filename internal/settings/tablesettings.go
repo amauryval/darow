@@ -2,23 +2,21 @@ package settings
 
 import "darow/internal/storage"
 
-// ResolveRowLimits resolves the row pagination limits for one table: an
-// explicit, non-zero per-table override wins, re-entering RowLimits so a
-// per-table 0 still falls back to the global row rather than the built-in
-// constants — the same rule RowLimits itself applies to the global value.
-func ResolveRowLimits(global storage.Settings, override storage.TableSettings) Limits {
-	if override.MaxRowLimit != nil && *override.MaxRowLimit != 0 {
-		return RowLimits(*override.MaxRowLimit)
+// ResolveRowLimit resolves the row page size for one table: its own override
+// when it carries one, the global value otherwise.
+func ResolveRowLimit(global storage.Settings, override storage.TableSettings) Limit {
+	if override.DefaultRowLimit != nil {
+		return Limit(*override.DefaultRowLimit)
 	}
-	return RowLimits(global.MaxRowLimit)
+	return Limit(global.DefaultRowLimit)
 }
 
-// ResolveFeaturesLimits is ResolveRowLimits for the features limits.
-func ResolveFeaturesLimits(global storage.Settings, override storage.TableSettings) Limits {
-	if override.MaxFeaturesLimit != nil && *override.MaxFeaturesLimit != 0 {
-		return FeaturesLimits(*override.MaxFeaturesLimit)
+// ResolveFeaturesLimit is ResolveRowLimit for the features page size.
+func ResolveFeaturesLimit(global storage.Settings, override storage.TableSettings) Limit {
+	if override.DefaultFeaturesLimit != nil {
+		return Limit(*override.DefaultFeaturesLimit)
 	}
-	return FeaturesLimits(global.MaxFeaturesLimit)
+	return Limit(global.DefaultFeaturesLimit)
 }
 
 // ResolveMaxSimplifyTolerance returns override's value if set, global's

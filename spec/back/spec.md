@@ -124,7 +124,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
 | `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
-| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limits` (the pagination rule) and `Validate`, no other logic          |
+| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
 | `internal/router/handlers`   | one handler per endpoint family + the ports to the services                                                                                                                                      |
@@ -231,29 +231,33 @@ variable, and never requiring a restart. Its default values and bounds are `inte
 exported constants (`constants.go`) and `internal/settings.Validate` (a `Validator` with one method
 per field), the one place they are written and enforced;
 
-**A page size is not a setting.** `maxRowLimit`, `maxListLimit` and `maxFeaturesLimit` are the only
-pagination fields the table holds, and each carries the whole family: the value is the page a handler
-serves when the request asks for no limit **and** the ceiling it applies to what the request does ask
-for, above the server's own built-in default as well as below it. `0` — the seeded value — is not
-"no limit": it hands the family back to `internal/settings`' built-in `Default*Limit`/`Max*Limit`
-constants, which are never stored and never editable. The rule lives in exactly one place,
-`internal/settings.Limits` (`limits.go`, built by `RowLimits`/`ListLimits`/`FeaturesLimits` and
-applied by `Resolve`/`Resolve64`); no handler reads a limit field directly. `GET /api/v1/settings`
-publishes the resolved pair per family as six read-only `effective*` fields, so a client sizes its
-first request off what the server will actually serve instead of a copy of these constants;
-`PATCH` has no counterpart for them. `config.yaml` keeps only what the process needs to start at
+**One page size per family, and nothing else.** `defaultRowLimit`, `defaultListLimit` and
+`defaultFeaturesLimit` are the only pagination fields the table holds, one per family (rows,
+catalogue listings, features), and each is a plain page size: the number of items a handler serves
+when the request asks for no limit, and the most it serves when the request asks for more. There is
+no second, hidden ceiling and no sentinel — the row is **seeded** with `internal/settings`'
+`Default*Limit` constants (`constants.go`) rather than with `0`, so the value read is always the
+value applied, and an operator's own value replaces it rather than shadowing it. `0` is not a legal
+value: `internal/settings.Validate` refuses anything below `LimitFloor` (50), the point under which
+a page stops being a page, and anything above the family's ceiling
+(`RowLimitCeiling`/`ListLimitCeiling`/`FeaturesLimitCeiling`). A handler never reads a limit field
+raw: it goes through `internal/settings.Limit` (`limits.go`, `Resolve`/`Resolve64`), the one place
+that rule is written. `GET /api/v1/settings` therefore publishes exactly what it stores — every
+field editable, none derived. `config.yaml` keeps only what the process needs to start at
 all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
 now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
 only on how it is produced, so it costs an operator a decision they had no way to make honestly.
 
 ### 2.5.1 Per-table overrides
 
-A table may override any of §2.5's fields but two. `maxRowLimit` (every table) and
-`maxFeaturesLimit`, `maxSimplifyTolerance`, `maxPrecision`, `tileCacheMaxAgeSec`,
+A table may override any of §2.5's fields but two. `defaultRowLimit` (every table) and
+`defaultFeaturesLimit`, `maxSimplifyTolerance`, `maxPrecision`, `tileCacheMaxAgeSec`,
 `coordinateDecimals` (geo tables only) each accept a per-table value on top of the global row,
 stored sparsely in `table_settings` (§4.10) and resolved through `internal/settings`'s `Resolve*`
 functions (§5.8.1) — a table with no override has no row at all, and the global value is what every
-table without one sees. `maxListLimit` and `cacheTTLSec` stay global only: a page of *tables*
+table without one sees. An override is a page size like the global one, bound by the same floor and
+ceiling; it is free to be larger than the global value, which is the point of overriding it.
+`defaultListLimit` and `cacheTTLSec` stay global only: a page of *tables*
 belongs to no table, and the metadata/schema caches are process-wide (`limitations.md` LIM-12).
 `coordinateDecimals` is new here: the number of decimal digits a GeoJSON coordinate is rounded to
 once emitted, applied after the CRS84 transform in every GeoJSON-producing route but the MVT tile
@@ -662,8 +666,8 @@ alongside `Catalog()`/`Filters()`/`Materializer()` (§4.6). It is **not** an `At
 about it is scoped to a `tableId`, so it never joins the delete cascade `Catalog.Register` builds.
 
 The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded inside
-`CreateSchema` itself — the three pagination limits at `0` (§2.5), the rest from `internal/settings`'s
-constants (an `INSERT ... WHERE NOT EXISTS`, run
+`CreateSchema` itself — every column from `internal/settings`'s constants, the three page sizes
+included (§2.5), so no reader of this table ever needs a fallback (an `INSERT ... WHERE NOT EXISTS`, run
 once per process the first time the table doesn't exist yet — every later startup finds the row and
 leaves it alone). `GetSettings` reads that row whole; `UpdateSettings` takes a `storage.SettingsPatch`
 (nil fields left unchanged, the same shape as `MetadataPatch`) and writes only the columns given,
@@ -854,8 +858,8 @@ repository-pattern shape `MetadataService` exposes for `metadata`.
 `UpdateSettings` merges the patch onto the current value **in memory first** (`mergeSettings`) and
 validates the *result* through `internal/settings.Validate` — every field checked against its own
 bound (an upper ceiling, and for `maxBodyBytes` a floor keeping `PATCH /api/v1/settings` itself
-always able to pass), a pagination limit accepting `0` as the value that hands its family back to the
-built-in constants (§2.5) — before writing anything; a rejection is a
+always able to pass), a page size checked against `LimitFloor` as well as its family's ceiling
+(§2.5) — before writing anything; a rejection is a
 `ValidationError` (§6.4), the store never reached. `internal/settings.Validator` (built by
 `NewValidator`) carries one method per field, each returning that field's own validated value or the
 error naming it; `Validate` runs every one of them and joins the violations, and the ceilings/floor
@@ -875,7 +879,7 @@ than by mutating a field; every entry the old cache held is simply dropped, a ca
 extra read, not a migration. The tile cache is built once at `NewServices` and never swapped: neither
 its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry, IMP-10) is
 settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer`, no `ResetCache`.
-Every other setting (row/list limits, OGC/tile feature limits, simplification bounds,
+Every other setting (the three page sizes, simplification bounds,
 `tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
 `Current()` on each request instead (§6.3).
 
@@ -886,21 +890,18 @@ rather than beside it — every resolution needs the current global row as its f
 (called once, by `core.Setup`, right after `SettingsService.Load`) populates an in-memory
 `map[tableId]storage.TableSettings` holding only the tables that carry an override; `GetOverride`
 reads it directly, `Resolve(tableId)` collapses it against `SettingsService.Current()` into a
-`TableSettingsResolved` — `settings.Limits` for `maxRowLimit`/`maxFeaturesLimit`, a plain value for
-the rest — through `internal/settings`'s `Resolve*` functions, the one place the three-level chain
-(built-in constant → global row → table override) is written. The trap that chain holds: a per-table
-`ResolveRowLimits`/`ResolveFeaturesLimits` re-enters `RowLimits`/`FeaturesLimits` with the *global*
-value when the override is absent or explicitly `0` — the same "0 means inherit" rule §2.5's
-`Limits` already applies to the global row, so an override of `0` never means "escape to the
-built-in constant" the way a naïve fallback would let a table dodge a limit its operator lowered
-globally. Every handler that reads a table-scoped limit calls `Resolve(meta.TableId)` at the same
+`TableSettingsResolved` — `settings.Limit` for `defaultRowLimit`/`defaultFeaturesLimit`, a plain
+value for the rest — through `internal/settings`'s `Resolve*` functions, the one place the two-level
+chain (global row → table override) is written. There is no third level and no sentinel: an override
+is either present, and it is the page size, or absent, and the global row is. Every handler that
+reads a table-scoped limit calls `Resolve(meta.TableId)` at the same
 point it already resolves `meta` (`validation.TableResolver`), never `SettingsService.Current()`
 directly for a field this service overrides.
 
 `UpdateOverride` merges the patch onto the current override **in memory first**, resolves the merge
 into the `storage.Settings` shape `internal/settings.Validate` already checks (§5.8), and validates
 it there — a per-table value can never sit outside the bounds the global one respects, and the
-mapping is exactly `ResolveRowLimits`/`ResolveFeaturesLimits`'s own fallback rule, reused rather than
+mapping is exactly `ResolveRowLimit`/`ResolveFeaturesLimit`'s own fallback rule, reused rather than
 reforked. On success it persists through `TableSettingsStore.UpdateTableSettings` and replaces the
 map entry (or removes it, once the merge leaves no override). `core.NewServices` also registers this
 service on the `tableRemoved` observer (§5.1): a table's removal already cascades its
@@ -1019,7 +1020,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                 | Description                                                                                             |
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/settings`   | the current runtime-editable settings, plus the six read-only `effective*` pagination values (§2.5)      |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings — every field stored, every field editable (§2.5)      |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
 | GET    | `/api/v1/settings/tables` | every table that carries at least one override (§2.5.1, §4.10), same shape as `GET /tables/{tableId}/settings` |
 
@@ -1059,7 +1060,7 @@ consistent with the all-JSON style of the rest of the API.
     refused rather than ignored, so a client never receives a page it did not ask for. A `limit`
     above `MaxFeaturesLimit` is the one value clamped rather than refused, as the standard allows.
 -   `datetime` is not supported: the model has no notion of a temporal column (`limitations.md`
-    LIM-11).
+    LIM-13).
 -   `next` is emitted when `offset + limit < numberMatched`, `prev` when `offset > 0`; both keep
     every other parameter of the request, so a paged traversal stays on the same result set.
 -   `numberMatched` is the total count of features matching the query (`bbox`/`filter`, ignoring
@@ -1317,7 +1318,7 @@ The rest of the sequence (geometry detection, clustering, indexes) is identical 
 cmd/server/            entrypoint
 internal/
   config/              bootstrap-only configuration loading and validation (§2.1-2.4)
-  settings/            default values/bounds of every setting and config guard, as constants, plus Limits and Validate (§2.4, §2.5)
+  settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
     handlers/          one file per endpoint family + ports.go + dto.go

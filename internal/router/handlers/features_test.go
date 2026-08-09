@@ -10,8 +10,17 @@ import (
 
 	"darow/internal/router/validation"
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
+
+var featuresTestSettings = storage.Settings{
+	DefaultRowLimit:      settings.DefaultRowLimit,
+	DefaultListLimit:     settings.DefaultListLimit,
+	DefaultFeaturesLimit: settings.DefaultFeaturesLimit,
+	MaxSimplifyTolerance: 100,
+	MaxPrecision:         100,
+}
 
 func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI, *mockGeoAPI) {
 	metadataSvc := &mockMetadataAPI{}
@@ -23,8 +32,8 @@ func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI,
 		metadataService: metadataSvc,
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
-		settings:        stubSettingsAPI{settings: storage.Settings{MaxSimplifyTolerance: 100, MaxPrecision: 100}},
-		tableSettings:   stubTableSettingsAPI{global: storage.Settings{MaxSimplifyTolerance: 100, MaxPrecision: 100}},
+		settings:        stubSettingsAPI{settings: featuresTestSettings},
+		tableSettings:   stubTableSettingsAPI{global: featuresTestSettings},
 	}
 	return fh, metadataSvc, schemaSvc, geoSvc
 }
@@ -34,7 +43,7 @@ func Test_NewFeaturesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
+	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, defaultTestSettings, defaultTestTableSettings)
 
 	assert.Same(t, metadataSvc, fh.metadataService)
 	assert.Same(t, schemaSvc, fh.schemaService)
@@ -193,7 +202,7 @@ func Test_FeaturesHandler_GetItems_FeatureCollectionShape(t *testing.T) {
 	meta := storage.Metadata{TableId: "t1", TableName: "Buildings", IsGeo: true}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{}, nil).Once()
-	geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), mock.Anything, 100, 0).
+	geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), mock.Anything, settings.DefaultFeaturesLimit, 0).
 		Return([]storage.GeoFeature{{Pkey: "pk 1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, nil).Once()
 	geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), mock.Anything).
 		Return(int64(1), nil).Once()

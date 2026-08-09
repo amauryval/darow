@@ -27,10 +27,13 @@ type stubSettingsAPI struct{ settings storage.Settings }
 
 // defaultTestSettings is the settings double for a handler test built by
 // hand (not through its NewXxxHandler constructor) that exercises a code
-// path reading settings but doesn't care what the limits are: the three
-// pagination limits are left unset, so internal/settings' built-in values
-// apply and no case here trips a cap incidentally.
+// path reading settings but doesn't care what the page sizes are: the three
+// are the server's own seed values, so no case here trips a cap
+// incidentally.
 var defaultTestSettings = stubSettingsAPI{settings: storage.Settings{
+	DefaultRowLimit:      settings.DefaultRowLimit,
+	DefaultListLimit:     settings.DefaultListLimit,
+	DefaultFeaturesLimit: settings.DefaultFeaturesLimit,
 	MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 	TileCacheMaxAgeSec: 60,
 	CacheTTLSec:        300,
@@ -85,8 +88,8 @@ var _ tableSettingsAPI = stubTableSettingsAPI{}
 func (s stubTableSettingsAPI) Resolve(tableId string) service.TableSettingsResolved {
 	override := storage.TableSettings{TableId: tableId}
 	return service.TableSettingsResolved{
-		MaxRowLimit:          settings.ResolveRowLimits(s.global, override),
-		MaxFeaturesLimit:     settings.ResolveFeaturesLimits(s.global, override),
+		DefaultRowLimit:      settings.ResolveRowLimit(s.global, override),
+		DefaultFeaturesLimit: settings.ResolveFeaturesLimit(s.global, override),
 		MaxSimplifyTolerance: settings.ResolveMaxSimplifyTolerance(s.global, override),
 		MaxPrecision:         settings.ResolveMaxPrecision(s.global, override),
 		TileCacheMaxAgeSec:   settings.ResolveTileCacheMaxAgeSec(s.global, override),

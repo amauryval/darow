@@ -11,32 +11,37 @@ import (
 
 func validTestSettings() storage.Settings {
 	return storage.Settings{
-		MaxRowLimit: 1000, MaxListLimit: 500, MaxFeaturesLimit: 10000,
+		DefaultRowLimit: 1000, DefaultListLimit: 500, DefaultFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
 		CacheTTLSec:        300,
 	}
 }
 
-func Test_Validator_MaxRowLimit(t *testing.T) {
+func Test_Validator_DefaultRowLimit(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [0, ceiling] is accepted"},
+		{name: "value within [floor, ceiling] is accepted"},
 		{
-			name:   "zero is accepted, handing the family back to the built-in limits",
-			mutate: func(s storage.Settings) storage.Settings { s.MaxRowLimit = 0; return s },
+			name:   "the floor itself is accepted",
+			mutate: func(s storage.Settings) storage.Settings { s.DefaultRowLimit = LimitFloor; return s },
 		},
 		{
-			name:    "a negative value is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = -1; return s },
+			name:    "below the floor is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = LimitFloor - 1; return s },
+			wantErr: true,
+		},
+		{
+			name:    "zero is rejected: a page size is never a sentinel",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = 0; return s },
 			wantErr: true,
 		},
 		{
 			name:    "past the ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = RowLimitCeiling + 1; return s },
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = RowLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 	}
@@ -46,36 +51,41 @@ func Test_Validator_MaxRowLimit(t *testing.T) {
 			if c.mutate != nil {
 				s = c.mutate(s)
 			}
-			got, err := NewValidator(s).MaxRowLimit()
+			got, err := NewValidator(s).DefaultRowLimit()
 			if c.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, s.MaxRowLimit, got)
+			assert.Equal(t, s.DefaultRowLimit, got)
 		})
 	}
 }
 
-func Test_Validator_MaxListLimit(t *testing.T) {
+func Test_Validator_DefaultListLimit(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [0, ceiling] is accepted"},
+		{name: "value within [floor, ceiling] is accepted"},
 		{
-			name:   "zero is accepted, handing the family back to the built-in limits",
-			mutate: func(s storage.Settings) storage.Settings { s.MaxListLimit = 0; return s },
+			name:   "the floor itself is accepted",
+			mutate: func(s storage.Settings) storage.Settings { s.DefaultListLimit = LimitFloor; return s },
 		},
 		{
-			name:    "a negative value is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxListLimit = -1; return s },
+			name:    "below the floor is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultListLimit = LimitFloor - 1; return s },
+			wantErr: true,
+		},
+		{
+			name:    "zero is rejected: a page size is never a sentinel",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultListLimit = 0; return s },
 			wantErr: true,
 		},
 		{
 			name:    "past the ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxListLimit = ListLimitCeiling + 1; return s },
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultListLimit = ListLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 	}
@@ -85,36 +95,41 @@ func Test_Validator_MaxListLimit(t *testing.T) {
 			if c.mutate != nil {
 				s = c.mutate(s)
 			}
-			got, err := NewValidator(s).MaxListLimit()
+			got, err := NewValidator(s).DefaultListLimit()
 			if c.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, s.MaxListLimit, got)
+			assert.Equal(t, s.DefaultListLimit, got)
 		})
 	}
 }
 
-func Test_Validator_MaxFeaturesLimit(t *testing.T) {
+func Test_Validator_DefaultFeaturesLimit(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [0, ceiling] is accepted"},
+		{name: "value within [floor, ceiling] is accepted"},
 		{
-			name:   "zero is accepted, handing the family back to the built-in limits",
-			mutate: func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = 0; return s },
+			name:   "the floor itself is accepted",
+			mutate: func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = LimitFloor; return s },
 		},
 		{
-			name:    "a negative value is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = -1; return s },
+			name:    "below the floor is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = LimitFloor - 1; return s },
+			wantErr: true,
+		},
+		{
+			name:    "zero is rejected: a page size is never a sentinel",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = 0; return s },
 			wantErr: true,
 		},
 		{
 			name:    "past the ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = FeaturesLimitCeiling + 1; return s },
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = FeaturesLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 	}
@@ -124,13 +139,13 @@ func Test_Validator_MaxFeaturesLimit(t *testing.T) {
 			if c.mutate != nil {
 				s = c.mutate(s)
 			}
-			got, err := NewValidator(s).MaxFeaturesLimit()
+			got, err := NewValidator(s).DefaultFeaturesLimit()
 			if c.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, s.MaxFeaturesLimit, got)
+			assert.Equal(t, s.DefaultFeaturesLimit, got)
 		})
 	}
 }
@@ -263,23 +278,23 @@ func Test_Validate(t *testing.T) {
 	}{
 		{name: "every field within bounds is accepted"},
 		{
-			name:    "a negative maxRowLimit is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = -1; return s },
+			name:    "a negative defaultRowLimit is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = 0; return s },
 			wantErr: true,
 		},
 		{
-			name:    "maxRowLimit past its ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = RowLimitCeiling + 1; return s },
+			name:    "defaultRowLimit past its ceiling is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = RowLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 		{
-			name:    "maxListLimit past its ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxListLimit = ListLimitCeiling + 1; return s },
+			name:    "defaultListLimit past its ceiling is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultListLimit = ListLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 		{
-			name:    "maxFeaturesLimit past its ceiling is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = FeaturesLimitCeiling + 1; return s },
+			name:    "defaultFeaturesLimit past its ceiling is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = FeaturesLimitCeiling + 1; return s },
 			wantErr: true,
 		},
 		{

@@ -16,8 +16,8 @@ import (
 const tableSettingsSchema = `
 CREATE TABLE IF NOT EXISTS table_settings (
     tableId TEXT PRIMARY KEY,
-    maxRowLimit INTEGER,
-    maxFeaturesLimit INTEGER,
+    defaultRowLimit INTEGER,
+    defaultFeaturesLimit INTEGER,
     maxSimplifyTolerance DOUBLE,
     maxPrecision DOUBLE,
     tileCacheMaxAgeSec INTEGER,
@@ -41,7 +41,7 @@ func init() {
 }
 
 // tableSettingsColumns lists the columns every read scans, in scan order.
-const tableSettingsColumns = `tableId, maxRowLimit, maxFeaturesLimit, maxSimplifyTolerance,
+const tableSettingsColumns = `tableId, defaultRowLimit, defaultFeaturesLimit, maxSimplifyTolerance,
     maxPrecision, tileCacheMaxAgeSec, coordinateDecimals, updatedAt`
 
 // TableSettings owns every read and write against the table_settings table.
@@ -62,7 +62,7 @@ var _ Attachment = (*TableSettings)(nil)
 func scanTableSettings(row interface{ Scan(...any) error }) (storage.TableSettings, error) {
 	var s storage.TableSettings
 	err := row.Scan(
-		&s.TableId, &s.MaxRowLimit, &s.MaxFeaturesLimit, &s.MaxSimplifyTolerance,
+		&s.TableId, &s.DefaultRowLimit, &s.DefaultFeaturesLimit, &s.MaxSimplifyTolerance,
 		&s.MaxPrecision, &s.TileCacheMaxAgeSec, &s.CoordinateDecimals, &s.UpdatedAt,
 	)
 	return s, err
@@ -86,11 +86,11 @@ func (r *TableSettings) GetTableSettings(ctx context.Context, tableId string) (s
 // pointing to a value sets it.
 func applyTableSettingsPatch(current storage.TableSettings, patch storage.TableSettingsPatch) storage.TableSettings {
 	merged := current
-	if patch.MaxRowLimit != nil {
-		merged.MaxRowLimit = *patch.MaxRowLimit
+	if patch.DefaultRowLimit != nil {
+		merged.DefaultRowLimit = *patch.DefaultRowLimit
 	}
-	if patch.MaxFeaturesLimit != nil {
-		merged.MaxFeaturesLimit = *patch.MaxFeaturesLimit
+	if patch.DefaultFeaturesLimit != nil {
+		merged.DefaultFeaturesLimit = *patch.DefaultFeaturesLimit
 	}
 	if patch.MaxSimplifyTolerance != nil {
 		merged.MaxSimplifyTolerance = *patch.MaxSimplifyTolerance
@@ -129,15 +129,15 @@ func (r *TableSettings) UpdateTableSettings(ctx context.Context, tableId string,
         INSERT INTO table_settings (%s)
         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         ON CONFLICT (tableId) DO UPDATE SET
-            maxRowLimit = EXCLUDED.maxRowLimit,
-            maxFeaturesLimit = EXCLUDED.maxFeaturesLimit,
+            defaultRowLimit = EXCLUDED.defaultRowLimit,
+            defaultFeaturesLimit = EXCLUDED.defaultFeaturesLimit,
             maxSimplifyTolerance = EXCLUDED.maxSimplifyTolerance,
             maxPrecision = EXCLUDED.maxPrecision,
             tileCacheMaxAgeSec = EXCLUDED.tileCacheMaxAgeSec,
             coordinateDecimals = EXCLUDED.coordinateDecimals,
             updatedAt = EXCLUDED.updatedAt
     `, tableSettingsColumns),
-		tableId, merged.MaxRowLimit, merged.MaxFeaturesLimit, merged.MaxSimplifyTolerance,
+		tableId, merged.DefaultRowLimit, merged.DefaultFeaturesLimit, merged.MaxSimplifyTolerance,
 		merged.MaxPrecision, merged.TileCacheMaxAgeSec, merged.CoordinateDecimals,
 	); err != nil {
 		return storage.TableSettings{}, err

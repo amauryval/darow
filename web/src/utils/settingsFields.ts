@@ -24,12 +24,8 @@ export interface SettingsFieldSpec {
     // meaningful input rather than just the bottom of the range — stated
     // here so SettingsView never has to special-case a field by key.
     zeroMeaning?: string
-    // The read-only pair the server resolves this limit to, shown under the
-    // input so an operator sees what the server applies today — the built-in
-    // values while the field is at 0, its own value once set.
-    effectiveKeys?: { default: keyof Settings; max: keyof Settings; noun: string }
     // Whether a table can carry its own override of this field
-    // (TableSettingsModal, back/todo.md TODO-18) — maxListLimit and
+    // (TableSettingsModal, back/todo.md TODO-18) — defaultListLimit and
     // cacheTTLSec stay global on purpose (LIM-12) and are the two fields
     // without this flag.
     perTable?: boolean
@@ -58,29 +54,17 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         description: 'Combien de lignes ou d’éléments le serveur renvoie à la fois.',
         fields: [
             {
-                key: 'maxRowLimit',
+                key: 'defaultRowLimit',
                 label: 'Nombre de lignes par page dans une table',
                 description:
-                    'La valeur que vous fixez ici sert deux fois : c’est le nombre de lignes que le serveur renvoie quand une requête ne précise rien — ce que l’écran d’une table affiche à l’ouverture — et le plafond qu’il applique à une requête qui en demande davantage.',
-                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
-                effectiveKeys: {
-                    default: 'effectiveDefaultRowLimit',
-                    max: 'effectiveMaxRowLimit',
-                    noun: 'lignes'
-                },
+                    'Le nombre de lignes que le serveur renvoie quand une requête ne précise rien — ce que l’écran d’une table affiche à l’ouverture. Une requête qui en demande davantage n’en obtient pas plus.',
                 perTable: true
             },
             {
-                key: 'maxListLimit',
+                key: 'defaultListLimit',
                 label: 'Nombre d’éléments par page de liste (tables, sources)',
                 description:
-                    'Même principe que ci-dessus, mais pour les catalogues (liste des tables, liste des sources) plutôt que pour les lignes d’une table.',
-                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
-                effectiveKeys: {
-                    default: 'effectiveDefaultListLimit',
-                    max: 'effectiveMaxListLimit',
-                    noun: 'éléments'
-                }
+                    'Même principe que ci-dessus, mais pour les catalogues (liste des tables, liste des sources) plutôt que pour les lignes d’une table.'
             }
         ]
     },
@@ -89,16 +73,10 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         description: 'Ce que renvoient les API cartographiques (OGC, tuiles vectorielles).',
         fields: [
             {
-                key: 'maxFeaturesLimit',
+                key: 'defaultFeaturesLimit',
                 label: 'Nombre d’objets géographiques par requête',
                 description:
-                    'Nombre de points, lignes et polygones que le serveur renvoie à une requête cartographique qui ne précise pas de limite, et plafond qu’il applique à une requête qui en demande davantage.',
-                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
-                effectiveKeys: {
-                    default: 'effectiveDefaultFeaturesLimit',
-                    max: 'effectiveMaxFeaturesLimit',
-                    noun: 'objets'
-                },
+                    'Nombre de points, lignes et polygones que le serveur renvoie à une requête cartographique. Une requête qui en demande davantage n’en obtient pas plus.',
                 perTable: true,
                 geoOnly: true
             },
@@ -170,17 +148,12 @@ export const TABLE_SETTINGS_FIELDS: SettingsFieldSpec[] = SETTINGS_FIELD_GROUPS.
 ).filter((field) => field.perTable)
 
 // tableFieldValue reads one field's override/effective pair off a
-// TableSettings response, collapsing LimitField's default/max pair down to
-// its default half — the number a per-table modal shows, the same one
-// SettingsField's own effective caption shows for the global row.
+// TableSettings response — null for a field the table does not carry (a
+// geometry field on a non-geo table).
 export function tableFieldValue(
     settings: TableSettings,
     key: TableSettingsFieldKey
 ): { override: number | null; effective: number } | null {
-    if (key === 'maxRowLimit' || key === 'maxFeaturesLimit') {
-        const field = settings[key]
-        return field ? { override: field.override, effective: field.effectiveDefault } : null
-    }
     const value = settings[key]
     return value ? { override: value.override, effective: value.effective } : null
 }
@@ -190,7 +163,7 @@ const FIELD_KEYS = new Set<string>(
 )
 
 // SettingsService.UpdateSettings joins every violation into one message
-// ("maxRowLimit must not be negative; maxListLimit must be <= 5000"),
+// ("defaultRowLimit must be >= 50; defaultListLimit must be <= 5000"),
 // each segment starting with the JSON field name it names. Parsed here into
 // a per-field map so the form can attach each refusal to its own input
 // instead of showing one undifferentiated error.

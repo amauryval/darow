@@ -5,19 +5,15 @@
 // and the ceilings internal/settings.Validate enforces.
 package settings
 
-// Built-in pagination limits, never stored and never editable: an operator
-// sets one limit per family (storage.Settings' Max*Limit), and leaving it at
-// 0 is what puts these two back in charge — Default* is the page a handler
-// serves when the caller asks for no limit, Max* the ceiling it applies to
-// what the caller does ask for. Both are read through Limits (limits.go),
-// never directly by a handler.
+// Seed values of the settings table's pagination limits, one per family of
+// pages (rows, catalogue listings, features): the number of items a handler
+// serves when the caller asks for no limit, and the most it serves when the
+// caller asks for more. They seed the settings row and are never read again
+// — an operator's own value replaces them in the table, never shadows them.
 const (
 	DefaultRowLimit      = 100
-	MaxRowLimit          = 1000
 	DefaultListLimit     = 50
-	MaxListLimit         = 500
-	DefaultFeaturesLimit = 100
-	MaxFeaturesLimit     = 10000
+	DefaultFeaturesLimit = 1000
 )
 
 // Seed values of the settings table's non-pagination fields (storage.Settings):
@@ -52,8 +48,12 @@ const (
 // to; BodyBytesFloor keeps `PATCH /api/v1/settings` itself always able to
 // pass, the one way out of a value that misconfigured every other guard —
 // moot once maxBodyBytes lives in config.yaml, kept as the floor a deployed
-// config is still expected to respect.
+// config is still expected to respect. LimitFloor is the smallest page any
+// of the three families can be driven to: a page is what a client gets
+// without asking for anything, and below it every screen and every map turns
+// into a paging exercise.
 const (
+	LimitFloor                = 50
 	BodyBytesFloor            = 64 * 1024
 	BodyBytesCeiling          = 512 * 1024 * 1024
 	RowLimitCeiling           = 10_000

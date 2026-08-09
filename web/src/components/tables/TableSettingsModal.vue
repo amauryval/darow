@@ -131,7 +131,6 @@ async function onResetAll() {
                 :key="field.key"
                 v-model="draft[field.key]"
                 :field="field"
-                :settings="null"
                 :error="localErrors[field.key]"
                 :disabled="saving"
                 :inherited="inherited[field.key]"

@@ -25,7 +25,7 @@ export function useDashboardStats() {
         loading.value = true
         error.value = ''
         try {
-            const limit = settings.current.value?.effectiveMaxListLimit ?? FALLBACK_PAGE_SIZE
+            const limit = settings.current.value?.defaultListLimit ?? FALLBACK_PAGE_SIZE
             const tables: Metadata[] = []
             let offset = 0
             let total = Infinity

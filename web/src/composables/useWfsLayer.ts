@@ -59,7 +59,7 @@ export function useWfsLayer(
         const z = grid.getZForResolution(resolution)
         const [, x, y] = grid.getTileCoordForCoordAndZ(getCenter(extent), z)
         // No pageSize override: client/geo.ts's own chunk size is a UI choice,
-        // deliberately independent of the operator's maxFeaturesLimit setting —
+        // deliberately independent of the operator's defaultFeaturesLimit setting —
         // a REST API ceiling, not a page-fetch tuning knob.
         const { features, complete } = await getAllTileFeatures(tableId.value, z, x, y, {
             simplify: tileSimplifyTolerance(z),

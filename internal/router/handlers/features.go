@@ -13,7 +13,6 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/service"
-	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -135,7 +134,7 @@ func (fh *FeaturesHandler) Conformance(w http.ResponseWriter, req *http.Request)
 // @Success 200 {object} map[string]any
 // @Router /api/v1/ogc/collections [get]
 func (fh *FeaturesHandler) ListCollections(w http.ResponseWriter, req *http.Request) {
-	listLimit := settings.ListLimits(fh.settings.Current().MaxListLimit).Max
+	listLimit := fh.settings.Current().DefaultListLimit
 	tables, _, err := fh.metadataService.ListTables(req.Context(), nil, 0, int64(listLimit))
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
@@ -328,7 +327,7 @@ func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request, resolved 
 			return 0, 0, fmt.Errorf("invalid limit: %q", raw)
 		}
 	}
-	return offset, resolved.MaxFeaturesLimit.Resolve64(limit), nil
+	return offset, resolved.DefaultFeaturesLimit.Resolve64(limit), nil
 }
 
 // featureDTO is a GeoJSON Feature — geometry embedded as a raw (already

@@ -10,14 +10,13 @@ import (
 )
 
 // TableSettingsResolved is the effective value of every per-table-overridable
-// field, for the table Resolve was called with: the three-level chain
-// (built-in constant, global row, table override) already collapsed into
-// what a handler applies. MaxRowLimit and MaxFeaturesLimit stay
-// settings.Limits, the same shape a handler already calls Resolve/Resolve64
-// on today.
+// field, for the table Resolve was called with: the
+// two-level chain (global row, table override) already collapsed into what a
+// handler applies. DefaultRowLimit and DefaultFeaturesLimit are a
+// settings.Limit, the shape a handler calls Resolve/Resolve64 on.
 type TableSettingsResolved struct {
-	MaxRowLimit          settings.Limits
-	MaxFeaturesLimit     settings.Limits
+	DefaultRowLimit      settings.Limit
+	DefaultFeaturesLimit settings.Limit
 	MaxSimplifyTolerance float64
 	MaxPrecision         float64
 	TileCacheMaxAgeSec   int
@@ -83,8 +82,8 @@ func (s *TableSettingsService) Resolve(tableId string) TableSettingsResolved {
 	override := s.GetOverride(tableId)
 
 	return TableSettingsResolved{
-		MaxRowLimit:          settings.ResolveRowLimits(global, override),
-		MaxFeaturesLimit:     settings.ResolveFeaturesLimits(global, override),
+		DefaultRowLimit:      settings.ResolveRowLimit(global, override),
+		DefaultFeaturesLimit: settings.ResolveFeaturesLimit(global, override),
 		MaxSimplifyTolerance: settings.ResolveMaxSimplifyTolerance(global, override),
 		MaxPrecision:         settings.ResolveMaxPrecision(global, override),
 		TileCacheMaxAgeSec:   settings.ResolveTileCacheMaxAgeSec(global, override),
@@ -94,16 +93,16 @@ func (s *TableSettingsService) Resolve(tableId string) TableSettingsResolved {
 
 // resolvedSettings turns override into the storage.Settings shape
 // internal/settings.Validate checks bounds against, so a per-table override
-// is validated against the very same ceilings the global value respects —
-// the pagination fields fall back to the global row (never the built-in
-// constant) so validating an override never rejects "0, inherit."
+// is validated against the very same bounds the global value respects — an
+// unset override leaving the global value in place, so what is checked is
+// always the number the table would actually serve.
 func (s *TableSettingsService) resolvedSettings(global storage.Settings, override storage.TableSettings) storage.Settings {
 	resolved := global
-	if override.MaxRowLimit != nil {
-		resolved.MaxRowLimit = *override.MaxRowLimit
+	if override.DefaultRowLimit != nil {
+		resolved.DefaultRowLimit = *override.DefaultRowLimit
 	}
-	if override.MaxFeaturesLimit != nil {
-		resolved.MaxFeaturesLimit = *override.MaxFeaturesLimit
+	if override.DefaultFeaturesLimit != nil {
+		resolved.DefaultFeaturesLimit = *override.DefaultFeaturesLimit
 	}
 	if override.MaxSimplifyTolerance != nil {
 		resolved.MaxSimplifyTolerance = *override.MaxSimplifyTolerance
@@ -189,11 +188,11 @@ func (s *TableSettingsService) setOverride(tableId string, o storage.TableSettin
 // mergeSettings for the global row.
 func applyTableSettingsPatch(current storage.TableSettings, patch storage.TableSettingsPatch) storage.TableSettings {
 	merged := current
-	if patch.MaxRowLimit != nil {
-		merged.MaxRowLimit = *patch.MaxRowLimit
+	if patch.DefaultRowLimit != nil {
+		merged.DefaultRowLimit = *patch.DefaultRowLimit
 	}
-	if patch.MaxFeaturesLimit != nil {
-		merged.MaxFeaturesLimit = *patch.MaxFeaturesLimit
+	if patch.DefaultFeaturesLimit != nil {
+		merged.DefaultFeaturesLimit = *patch.DefaultFeaturesLimit
 	}
 	if patch.MaxSimplifyTolerance != nil {
 		merged.MaxSimplifyTolerance = *patch.MaxSimplifyTolerance

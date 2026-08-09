@@ -21,38 +21,30 @@ func NewValidator(s storage.Settings) Validator {
 	return Validator{s: s}
 }
 
-// MaxRowLimit accepts 0 — the value that hands the row limits back to the
-// built-in constants (limits.go) instead of setting one.
-func (f Validator) MaxRowLimit() (int, error) {
-	if f.s.MaxRowLimit < 0 {
-		return 0, fmt.Errorf("maxRowLimit must not be negative")
-	}
-	if f.s.MaxRowLimit > RowLimitCeiling {
-		return 0, fmt.Errorf("maxRowLimit must be <= %d", RowLimitCeiling)
-	}
-	return f.s.MaxRowLimit, nil
+// DefaultRowLimit is a page size, never a sentinel: it holds the number of
+// rows actually served, between LimitFloor and RowLimitCeiling.
+func (f Validator) DefaultRowLimit() (int, error) {
+	return limitField("defaultRowLimit", f.s.DefaultRowLimit, RowLimitCeiling)
 }
 
-// MaxListLimit accepts 0, on the same rule as MaxRowLimit.
-func (f Validator) MaxListLimit() (int, error) {
-	if f.s.MaxListLimit < 0 {
-		return 0, fmt.Errorf("maxListLimit must not be negative")
-	}
-	if f.s.MaxListLimit > ListLimitCeiling {
-		return 0, fmt.Errorf("maxListLimit must be <= %d", ListLimitCeiling)
-	}
-	return f.s.MaxListLimit, nil
+// DefaultListLimit is DefaultRowLimit for the catalogue listings.
+func (f Validator) DefaultListLimit() (int, error) {
+	return limitField("defaultListLimit", f.s.DefaultListLimit, ListLimitCeiling)
 }
 
-// MaxFeaturesLimit accepts 0, on the same rule as MaxRowLimit.
-func (f Validator) MaxFeaturesLimit() (int, error) {
-	if f.s.MaxFeaturesLimit < 0 {
-		return 0, fmt.Errorf("maxFeaturesLimit must not be negative")
+// DefaultFeaturesLimit is DefaultRowLimit for the OGC/tile features.
+func (f Validator) DefaultFeaturesLimit() (int, error) {
+	return limitField("defaultFeaturesLimit", f.s.DefaultFeaturesLimit, FeaturesLimitCeiling)
+}
+
+func limitField(name string, value, ceiling int) (int, error) {
+	if value < LimitFloor {
+		return 0, fmt.Errorf("%s must be >= %d", name, LimitFloor)
 	}
-	if f.s.MaxFeaturesLimit > FeaturesLimitCeiling {
-		return 0, fmt.Errorf("maxFeaturesLimit must be <= %d", FeaturesLimitCeiling)
+	if value > ceiling {
+		return 0, fmt.Errorf("%s must be <= %d", name, ceiling)
 	}
-	return f.s.MaxFeaturesLimit, nil
+	return value, nil
 }
 
 func (f Validator) MaxSimplifyTolerance() (float64, error) {
@@ -120,11 +112,11 @@ func Validate(s storage.Settings) Result {
 		}
 	}
 
-	_, err := f.MaxRowLimit()
+	_, err := f.DefaultRowLimit()
 	collect(err)
-	_, err = f.MaxListLimit()
+	_, err = f.DefaultListLimit()
 	collect(err)
-	_, err = f.MaxFeaturesLimit()
+	_, err = f.DefaultFeaturesLimit()
 	collect(err)
 	_, err = f.MaxSimplifyTolerance()
 	collect(err)

@@ -16,7 +16,7 @@ import (
 
 func validTestSettings() storage.Settings {
 	return storage.Settings{
-		MaxRowLimit: 1000, MaxListLimit: 500, MaxFeaturesLimit: 10000,
+		DefaultRowLimit: 1000, DefaultListLimit: 500, DefaultFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
 		CacheTTLSec:        300,
@@ -81,18 +81,18 @@ func Test_SettingsService_UpdateSettings(t *testing.T) {
 	}{
 		{
 			name:       "valid patch persists and updates the cache",
-			patch:      storage.SettingsPatch{MaxRowLimit: ptrInt(200)},
+			patch:      storage.SettingsPatch{DefaultRowLimit: ptrInt(200)},
 			wantNotify: true,
 		},
 		{
 			name:       "an invalid merged result is rejected before any write, through settings.Validate",
-			patch:      storage.SettingsPatch{MaxRowLimit: ptrInt(-1)},
+			patch:      storage.SettingsPatch{DefaultRowLimit: ptrInt(-1)},
 			wantErr:    true,
 			wantValErr: true,
 		},
 		{
 			name:     "storage failure is wrapped in a DisplayError",
-			patch:    storage.SettingsPatch{MaxRowLimit: ptrInt(200)},
+			patch:    storage.SettingsPatch{DefaultRowLimit: ptrInt(200)},
 			storeErr: errors.New("db locked"),
 			wantErr:  true,
 		},
@@ -109,8 +109,8 @@ func Test_SettingsService_UpdateSettings(t *testing.T) {
 
 			if !c.wantValErr {
 				updatedSettings := validTestSettings()
-				if c.patch.MaxRowLimit != nil {
-					updatedSettings.MaxRowLimit = *c.patch.MaxRowLimit
+				if c.patch.DefaultRowLimit != nil {
+					updatedSettings.DefaultRowLimit = *c.patch.DefaultRowLimit
 				}
 				m.On("UpdateSettings", mock.Anything, c.patch).Return(updatedSettings, c.storeErr).Once()
 			}

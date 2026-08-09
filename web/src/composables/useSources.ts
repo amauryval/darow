@@ -14,7 +14,7 @@ import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
 
 // The list's own page size — deliberately independent of the operator's
-// maxListLimit setting, a REST API ceiling rather than a UI choice; see
+// defaultListLimit setting, a REST API page size rather than a UI choice; see
 // useTableRows' PAGE_SIZE for why.
 const PAGE_SIZE = 50
 

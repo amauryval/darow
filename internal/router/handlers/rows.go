@@ -52,7 +52,7 @@ func (rh *RowsHandler) paginationParams(req *http.Request, tableId string) (offs
 	}
 
 	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = rh.tableSettings.Resolve(tableId).MaxRowLimit.Resolve64(requested)
+	limit = rh.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
 	return offset, limit
 }
 

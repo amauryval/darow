@@ -34,7 +34,7 @@ func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int
 		offset = v
 	}
 	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
-	limit = settings.ListLimits(sh.settings.Current().MaxListLimit).Resolve(requested)
+	limit = settings.Limit(sh.settings.Current().DefaultListLimit).Resolve(requested)
 	return offset, limit
 }
 

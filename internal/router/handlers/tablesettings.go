@@ -31,7 +31,7 @@ func NewTableSettingsHandler(metadataSvc metadataAPI, tableSettingsSvc tableSett
 
 // geoOnlyFields are the JSON keys UpdateTableSettings refuses on a
 // non-geo table — they mean nothing without a geometry column.
-var geoOnlyFields = []string{"maxFeaturesLimit", "maxSimplifyTolerance", "maxPrecision", "tileCacheMaxAgeSec", "coordinateDecimals"}
+var geoOnlyFields = []string{"defaultFeaturesLimit", "maxSimplifyTolerance", "maxPrecision", "tileCacheMaxAgeSec", "coordinateDecimals"}
 
 // overrideField is one field's override and the effective value it resolves
 // to — the shape every plain overridable field of tableSettingsDTO shares.
@@ -40,28 +40,18 @@ type overrideField[T any] struct {
 	Effective T  `json:"effective"`
 }
 
-// limitField is overrideField for maxRowLimit/maxFeaturesLimit, whose
-// effective value is a default/max pair (internal/settings.Limits) rather
-// than a single number — the same default/max split the global settings
-// response already publishes.
-type limitField struct {
-	Override         *int `json:"override"`
-	EffectiveDefault int  `json:"effectiveDefault"`
-	EffectiveMax     int  `json:"effectiveMax"`
-}
-
 // tableSettingsDTO is the JSON representation of a table's settings: its
 // override (nil when inherited) and its effective value, per field.
-// maxRowLimit applies to every table; the rest are present only on a geo
+// defaultRowLimit applies to every table; the rest are present only on a geo
 // table (Metadata.IsGeo) — a control that can never apply is absent, not
 // disabled.
 type tableSettingsDTO struct {
 	TableId string `json:"tableId"`
 	IsGeo   bool   `json:"isGeo"`
 
-	MaxRowLimit limitField `json:"maxRowLimit"`
+	DefaultRowLimit overrideField[int] `json:"defaultRowLimit"`
 
-	MaxFeaturesLimit     *limitField             `json:"maxFeaturesLimit,omitempty"`
+	DefaultFeaturesLimit *overrideField[int]     `json:"defaultFeaturesLimit,omitempty"`
 	MaxSimplifyTolerance *overrideField[float64] `json:"maxSimplifyTolerance,omitempty"`
 	MaxPrecision         *overrideField[float64] `json:"maxPrecision,omitempty"`
 	TileCacheMaxAgeSec   *overrideField[int]     `json:"tileCacheMaxAgeSec,omitempty"`
@@ -74,16 +64,16 @@ func toTableSettingsDTO(meta storage.Metadata, override storage.TableSettings, r
 	dto := tableSettingsDTO{
 		TableId: meta.TableId,
 		IsGeo:   meta.IsGeo,
-		MaxRowLimit: limitField{
-			Override: override.MaxRowLimit, EffectiveDefault: resolved.MaxRowLimit.Default, EffectiveMax: resolved.MaxRowLimit.Max,
+		DefaultRowLimit: overrideField[int]{
+			Override: override.DefaultRowLimit, Effective: int(resolved.DefaultRowLimit),
 		},
 		UpdatedAt: override.UpdatedAt.Format(time.RFC3339),
 	}
 	if !meta.IsGeo {
 		return dto
 	}
-	dto.MaxFeaturesLimit = &limitField{
-		Override: override.MaxFeaturesLimit, EffectiveDefault: resolved.MaxFeaturesLimit.Default, EffectiveMax: resolved.MaxFeaturesLimit.Max,
+	dto.DefaultFeaturesLimit = &overrideField[int]{
+		Override: override.DefaultFeaturesLimit, Effective: int(resolved.DefaultFeaturesLimit),
 	}
 	dto.MaxSimplifyTolerance = &overrideField[float64]{Override: override.MaxSimplifyTolerance, Effective: resolved.MaxSimplifyTolerance}
 	dto.MaxPrecision = &overrideField[float64]{Override: override.MaxPrecision, Effective: resolved.MaxPrecision}
@@ -128,14 +118,14 @@ func parseTableSettingsPatch(body map[string]json.RawMessage) (storage.TableSett
 	var patch storage.TableSettingsPatch
 	var err error
 
-	if raw, ok := body["maxRowLimit"]; ok {
-		if patch.MaxRowLimit, err = intOverride(raw); err != nil {
-			return patch, fmt.Errorf("invalid maxRowLimit: %w", err)
+	if raw, ok := body["defaultRowLimit"]; ok {
+		if patch.DefaultRowLimit, err = intOverride(raw); err != nil {
+			return patch, fmt.Errorf("invalid defaultRowLimit: %w", err)
 		}
 	}
-	if raw, ok := body["maxFeaturesLimit"]; ok {
-		if patch.MaxFeaturesLimit, err = intOverride(raw); err != nil {
-			return patch, fmt.Errorf("invalid maxFeaturesLimit: %w", err)
+	if raw, ok := body["defaultFeaturesLimit"]; ok {
+		if patch.DefaultFeaturesLimit, err = intOverride(raw); err != nil {
+			return patch, fmt.Errorf("invalid defaultFeaturesLimit: %w", err)
 		}
 	}
 	if raw, ok := body["maxSimplifyTolerance"]; ok {

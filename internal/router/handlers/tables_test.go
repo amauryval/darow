@@ -19,8 +19,8 @@ func Test_newTablesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	deriveSvc := &mockDeriveAPI{}
 	rowSvc := &mockRowAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{}}
-	tableSettings := stubTableSettingsAPI{}
+	settings := defaultTestSettings
+	tableSettings := defaultTestTableSettings
 
 	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings, tableSettings)
 
@@ -49,7 +49,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 			th := &TablesHandler{
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				metadataService: metadataSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{}},
+				settings:        defaultTestSettings,
 			}
 
 			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
@@ -82,10 +82,10 @@ func Test_tablesHandler_listPaginationParams(t *testing.T) {
 		{name: "parses explicit offset/limit", query: "offset=10&limit=20", wantOffset: 10, wantLimit: 20},
 		{name: "negative offset falls back to zero", query: "offset=-1", wantOffset: 0, wantLimit: 50},
 		{name: "non-positive limit falls back to default", query: "limit=0", wantOffset: 0, wantLimit: 50},
-		{name: "limit is capped at MaxListLimit", query: "limit=9999", wantOffset: 0, wantLimit: 500},
+		{name: "limit is capped at the list page size", query: "limit=9999", wantOffset: 0, wantLimit: 50},
 	}
 
-	th := &TablesHandler{settings: stubSettingsAPI{settings: storage.Settings{}}}
+	th := &TablesHandler{settings: defaultTestSettings}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -392,7 +392,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "filter failure maps to 500", filterErr: assert.AnError, wantLimit: 100, wantStatus: http.StatusInternalServerError},
-		{name: "limit above MaxRowLimit is capped", bodyLimit: 100000000, wantLimit: 1000, wantStatus: http.StatusOK},
+		{name: "limit above the table's page size is capped", bodyLimit: 100000000, wantLimit: 100, wantStatus: http.StatusOK},
 	}
 
 	for _, c := range cases {
@@ -405,8 +405,8 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings:   stubTableSettingsAPI{},
+				settings:        defaultTestSettings,
+				tableSettings:   defaultTestTableSettings,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -458,8 +458,8 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings:   stubTableSettingsAPI{},
+				settings:        defaultTestSettings,
+				tableSettings:   defaultTestTableSettings,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

@@ -56,7 +56,7 @@ const selection = props.selection
 // rowlimit LIMITATION if high value could decrease front performance...
 const tableSettings = useTableSettings(tableId)
 const rowLimit = computed(
-    () => tableSettings.settings.value?.maxRowLimit.effectiveDefault ?? PAGE_SIZE
+    () => tableSettings.settings.value?.defaultRowLimit.effective ?? PAGE_SIZE
 )
 
 const rowsState = useTableRows(

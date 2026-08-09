@@ -2069,20 +2069,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.limitField": {
-            "type": "object",
-            "properties": {
-                "effectiveDefault": {
-                    "type": "integer"
-                },
-                "effectiveMax": {
-                    "type": "integer"
-                },
-                "override": {
-                    "type": "integer"
-                }
-            }
-        },
         "handlers.linkDTO": {
             "type": "object",
             "properties": {
@@ -2166,35 +2152,17 @@ const docTemplate = `{
                 "coordinateDecimals": {
                     "type": "integer"
                 },
-                "effectiveDefaultFeaturesLimit": {
+                "defaultFeaturesLimit": {
                     "type": "integer"
                 },
-                "effectiveDefaultListLimit": {
+                "defaultListLimit": {
                     "type": "integer"
                 },
-                "effectiveDefaultRowLimit": {
-                    "type": "integer"
-                },
-                "effectiveMaxFeaturesLimit": {
-                    "type": "integer"
-                },
-                "effectiveMaxListLimit": {
-                    "type": "integer"
-                },
-                "effectiveMaxRowLimit": {
-                    "type": "integer"
-                },
-                "maxFeaturesLimit": {
-                    "type": "integer"
-                },
-                "maxListLimit": {
+                "defaultRowLimit": {
                     "type": "integer"
                 },
                 "maxPrecision": {
                     "type": "number"
-                },
-                "maxRowLimit": {
-                    "type": "integer"
                 },
                 "maxSimplifyTolerance": {
                     "type": "number"
@@ -2231,17 +2199,17 @@ const docTemplate = `{
                 "coordinateDecimals": {
                     "$ref": "#/definitions/handlers.overrideField-int"
                 },
+                "defaultFeaturesLimit": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "defaultRowLimit": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
                 "isGeo": {
                     "type": "boolean"
                 },
-                "maxFeaturesLimit": {
-                    "$ref": "#/definitions/handlers.limitField"
-                },
                 "maxPrecision": {
                     "$ref": "#/definitions/handlers.overrideField-float64"
-                },
-                "maxRowLimit": {
-                    "$ref": "#/definitions/handlers.limitField"
                 },
                 "maxSimplifyTolerance": {
                     "$ref": "#/definitions/handlers.overrideField-float64"

@@ -51,7 +51,7 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 		offset = v
 	}
 	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = settings.ListLimits(th.settings.Current().MaxListLimit).Resolve64(requested)
+	limit = settings.Limit(th.settings.Current().DefaultListLimit).Resolve64(requested)
 	return offset, limit
 }
 
@@ -65,7 +65,7 @@ func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, table
 		offset = v
 	}
 	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = th.tableSettings.Resolve(tableId).MaxRowLimit.Resolve64(requested)
+	limit = th.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
 	return offset, limit
 }
 
@@ -354,7 +354,7 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 	// — same as GET /rows's paginationParams — instead of the JSON zero value
 	// silently producing LIMIT 0, and is capped by their maximum either way,
 	// so a client can't force the whole table into memory.
-	limit := th.tableSettings.Resolve(meta.TableId).MaxRowLimit.Resolve(body.Limit)
+	limit := th.tableSettings.Resolve(meta.TableId).DefaultRowLimit.Resolve(body.Limit)
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {

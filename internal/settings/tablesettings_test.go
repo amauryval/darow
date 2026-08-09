@@ -11,45 +11,38 @@ import (
 func intPtr(v int) *int             { return &v }
 func float64Ptr(v float64) *float64 { return &v }
 
-func Test_ResolveRowLimits(t *testing.T) {
+func Test_ResolveRowLimit(t *testing.T) {
 	cases := []struct {
-		name        string
-		global      int
-		override    *int
-		wantDefault int
-		wantMax     int
+		name     string
+		global   int
+		override *int
+		want     Limit
 	}{
-		{name: "no override falls back to the global row", global: 100, wantDefault: 100, wantMax: 100},
-		{name: "an override drives both halves", global: 100, override: intPtr(20), wantDefault: 20, wantMax: 20},
-		{name: "an override of 0 falls back to the global row, not the built-in constant", global: 100, override: intPtr(0), wantDefault: 100, wantMax: 100},
-		{name: "an override of 0 with an unset global falls back to the built-in constant", global: 0, override: intPtr(0), wantDefault: DefaultRowLimit, wantMax: MaxRowLimit},
+		{name: "no override serves the global page", global: 100, want: 100},
+		{name: "an override serves the table's own page", global: 100, override: intPtr(200), want: 200},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ResolveRowLimits(storage.Settings{MaxRowLimit: c.global}, storage.TableSettings{MaxRowLimit: c.override})
-			assert.Equal(t, c.wantDefault, got.Default)
-			assert.Equal(t, c.wantMax, got.Max)
+			got := ResolveRowLimit(storage.Settings{DefaultRowLimit: c.global}, storage.TableSettings{DefaultRowLimit: c.override})
+			assert.Equal(t, c.want, got)
 		})
 	}
 }
 
-func Test_ResolveFeaturesLimits(t *testing.T) {
+func Test_ResolveFeaturesLimit(t *testing.T) {
 	cases := []struct {
-		name        string
-		global      int
-		override    *int
-		wantDefault int
-		wantMax     int
+		name     string
+		global   int
+		override *int
+		want     Limit
 	}{
-		{name: "no override falls back to the global row", global: 200, wantDefault: 200, wantMax: 200},
-		{name: "an override drives both halves", global: 200, override: intPtr(30), wantDefault: 30, wantMax: 30},
-		{name: "an override of 0 falls back to the global row", global: 200, override: intPtr(0), wantDefault: 200, wantMax: 200},
+		{name: "no override serves the global page", global: 200, want: 200},
+		{name: "an override serves the table's own page", global: 200, override: intPtr(5000), want: 5000},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ResolveFeaturesLimits(storage.Settings{MaxFeaturesLimit: c.global}, storage.TableSettings{MaxFeaturesLimit: c.override})
-			assert.Equal(t, c.wantDefault, got.Default)
-			assert.Equal(t, c.wantMax, got.Max)
+			got := ResolveFeaturesLimit(storage.Settings{DefaultFeaturesLimit: c.global}, storage.TableSettings{DefaultFeaturesLimit: c.override})
+			assert.Equal(t, c.want, got)
 		})
 	}
 }

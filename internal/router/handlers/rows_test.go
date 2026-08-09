@@ -17,8 +17,8 @@ func Test_newRowsHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	rowSvc := &mockRowAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{}}
-	tableSettings := stubTableSettingsAPI{}
+	settings := defaultTestSettings
+	tableSettings := defaultTestTableSettings
 
 	geoSvc := &mockGeoAPI{}
 
@@ -48,12 +48,12 @@ func Test_rowsHandler_paginationParams(t *testing.T) {
 		{name: "defaults when unset", query: "", wantOffset: 0, wantLimit: 100},
 		{name: "honors explicit offset and limit", query: "offset=20&limit=50", wantOffset: 20, wantLimit: 50},
 		{name: "negative offset falls back to zero", query: "offset=-5", wantOffset: 0, wantLimit: 100},
-		{name: "limit is capped at MaxRowLimit", query: "limit=5000", wantOffset: 0, wantLimit: 1000},
+		{name: "limit is capped at the table's page size", query: "limit=5000", wantOffset: 0, wantLimit: 100},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rh := &RowsHandler{tableSettings: stubTableSettingsAPI{}}
+			rh := &RowsHandler{tableSettings: stubTableSettingsAPI{global: storage.Settings{DefaultRowLimit: 100}}}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil)
 
 			offset, limit := rh.paginationParams(req, "t1")
@@ -83,8 +83,8 @@ func Test_rowsHandler_listRows(t *testing.T) {
 			rh := &RowsHandler{
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				rowService:    rowSvc,
-				settings:      stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings: stubTableSettingsAPI{},
+				settings:      stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100}},
+				tableSettings: stubTableSettingsAPI{global: storage.Settings{DefaultRowLimit: 100}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -125,8 +125,8 @@ func Test_rowsHandler_listRows_Sort(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{}},
-				tableSettings:   stubTableSettingsAPI{},
+				settings:        defaultTestSettings,
+				tableSettings:   defaultTestTableSettings,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

@@ -7,15 +7,15 @@ import (
 
 // TableSettings is one table's departure from the global Settings row: every
 // field is nullable, nil meaning "inherit the global value," non-nil an
-// explicit per-table override. MaxRowLimit applies to every table;
-// MaxFeaturesLimit, MaxSimplifyTolerance, MaxPrecision, TileCacheMaxAgeSec
+// explicit per-table override. DefaultRowLimit applies to every table;
+// DefaultFeaturesLimit, MaxSimplifyTolerance, MaxPrecision, TileCacheMaxAgeSec
 // and CoordinateDecimals only mean anything for a geo table (Metadata.IsGeo)
 // and are never set on any other.
 type TableSettings struct {
 	TableId string
 
-	MaxRowLimit          *int
-	MaxFeaturesLimit     *int
+	DefaultRowLimit      *int
+	DefaultFeaturesLimit *int
 	MaxSimplifyTolerance *float64
 	MaxPrecision         *float64
 	TileCacheMaxAgeSec   *int
@@ -28,7 +28,7 @@ type TableSettings struct {
 // between "a row worth storing" and "nothing to store," since TableSettings
 // is sparse: a table with no override has no row at all.
 func (s TableSettings) HasOverride() bool {
-	return s.MaxRowLimit != nil || s.MaxFeaturesLimit != nil || s.MaxSimplifyTolerance != nil ||
+	return s.DefaultRowLimit != nil || s.DefaultFeaturesLimit != nil || s.MaxSimplifyTolerance != nil ||
 		s.MaxPrecision != nil || s.TileCacheMaxAgeSec != nil || s.CoordinateDecimals != nil
 }
 
@@ -37,8 +37,8 @@ func (s TableSettings) HasOverride() bool {
 // pointing to nil clears it back to "inherit," and a non-nil field pointing
 // to a value sets that override.
 type TableSettingsPatch struct {
-	MaxRowLimit          **int
-	MaxFeaturesLimit     **int
+	DefaultRowLimit      **int
+	DefaultFeaturesLimit **int
 	MaxSimplifyTolerance **float64
 	MaxPrecision         **float64
 	TileCacheMaxAgeSec   **int
