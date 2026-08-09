@@ -72,6 +72,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 2.3 sources` | source directories                                   |
 | `### 2.4 settings` | config-side guards on runtime settings               |
 | `### 2.5 Runtime-editable settings` | settings editable through the API/UI               |
+| `### 2.5.1 Per-table overrides` | a table's own departure from a global setting        |
 | `### 2.6 Command-line flags` | `--workdir` and friends                              |
 
 ### Storage layer (`internal/storage`, `internal/storage/duckdb`)
@@ -89,6 +90,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 4.7 Rendering an MVT tile` | tile SQL                                                   |
 | `### 4.8 Reading DuckDB's own catalogue` | introspection (`duckdb_columns`, `duckdb_indexes`, …)     |
 | `### 4.9 The settings repository` | persisting settings                                        |
+| `### 4.10 The table_settings repository` | persisting a table's own settings overrides         |
 | `## 7. Loading a file` | import/materialization from a file, CRS, indexing          |
 | `### 7.1 Multi-layer sources` | multi-layer files                                          |
 | `### 7.2 Parquet and GeoParquet` | parquet specifics                                          |
@@ -108,6 +110,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 5.6 ExportService` | export formats                      |
 | `### 5.7 SourceService` | `workDir` scanning, sources         |
 | `### 5.8 SettingsService` | runtime settings ownership          |
+| `### 5.8.1 TableSettingsService — per-table overrides` | resolving/validating a table's own overrides |
 | `### 5.9 DiagnosticsService` | diagnostics endpoint                |
 | `### 5.10 SizeGuardService` | enforcing `duckdb.maxSizeBytes`     |
 

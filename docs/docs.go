@@ -333,6 +333,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/settings/tables": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "List the tables that carry a settings override",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/handlers.tableSettingsDTO"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sources": {
             "get": {
                 "produces": [
@@ -1640,6 +1665,101 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/tables/{tableId}/settings": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Read a table's settings overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Clear every settings override of a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Set or clear a table's settings overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}": {
             "get": {
                 "produces": [
@@ -1949,6 +2069,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.limitField": {
+            "type": "object",
+            "properties": {
+                "effectiveDefault": {
+                    "type": "integer"
+                },
+                "effectiveMax": {
+                    "type": "integer"
+                },
+                "override": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.linkDTO": {
             "type": "object",
             "properties": {
@@ -2001,10 +2135,35 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.overrideField-float64": {
+            "type": "object",
+            "properties": {
+                "effective": {
+                    "type": "number"
+                },
+                "override": {
+                    "type": "number"
+                }
+            }
+        },
+        "handlers.overrideField-int": {
+            "type": "object",
+            "properties": {
+                "effective": {
+                    "type": "integer"
+                },
+                "override": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.settingsDTO": {
             "type": "object",
             "properties": {
                 "cacheTTLSec": {
+                    "type": "integer"
+                },
+                "coordinateDecimals": {
                     "type": "integer"
                 },
                 "effectiveDefaultFeaturesLimit": {
@@ -2062,6 +2221,38 @@ const docTemplate = `{
                     }
                 },
                 "crs": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.tableSettingsDTO": {
+            "type": "object",
+            "properties": {
+                "coordinateDecimals": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "isGeo": {
+                    "type": "boolean"
+                },
+                "maxFeaturesLimit": {
+                    "$ref": "#/definitions/handlers.limitField"
+                },
+                "maxPrecision": {
+                    "$ref": "#/definitions/handlers.overrideField-float64"
+                },
+                "maxRowLimit": {
+                    "$ref": "#/definitions/handlers.limitField"
+                },
+                "maxSimplifyTolerance": {
+                    "$ref": "#/definitions/handlers.overrideField-float64"
+                },
+                "tableId": {
+                    "type": "string"
+                },
+                "tileCacheMaxAgeSec": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "updatedAt": {
                     "type": "string"
                 }
             }

@@ -33,6 +33,7 @@ type settingsDTO struct {
 	MaxPrecision                  float64 `json:"maxPrecision"`
 	TileCacheMaxAgeSec            int     `json:"tileCacheMaxAgeSec"`
 	CacheTTLSec                   int     `json:"cacheTTLSec"`
+	CoordinateDecimals            int     `json:"coordinateDecimals"`
 	EffectiveDefaultRowLimit      int     `json:"effectiveDefaultRowLimit"`
 	EffectiveMaxRowLimit          int     `json:"effectiveMaxRowLimit"`
 	EffectiveDefaultListLimit     int     `json:"effectiveDefaultListLimit"`
@@ -55,6 +56,7 @@ func toSettingsDTO(s storage.Settings) settingsDTO {
 		MaxPrecision:                  s.MaxPrecision,
 		TileCacheMaxAgeSec:            s.TileCacheMaxAgeSec,
 		CacheTTLSec:                   s.CacheTTLSec,
+		CoordinateDecimals:            s.CoordinateDecimals,
 		EffectiveDefaultRowLimit:      rows.Default,
 		EffectiveMaxRowLimit:          rows.Max,
 		EffectiveDefaultListLimit:     lists.Default,
@@ -77,6 +79,7 @@ type settingsPatchDTO struct {
 	MaxPrecision         *float64 `json:"maxPrecision"`
 	TileCacheMaxAgeSec   *int     `json:"tileCacheMaxAgeSec"`
 	CacheTTLSec          *int     `json:"cacheTTLSec"`
+	CoordinateDecimals   *int     `json:"coordinateDecimals"`
 }
 
 func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
@@ -88,6 +91,7 @@ func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 		MaxPrecision:         dto.MaxPrecision,
 		TileCacheMaxAgeSec:   dto.TileCacheMaxAgeSec,
 		CacheTTLSec:          dto.CacheTTLSec,
+		CoordinateDecimals:   dto.CoordinateDecimals,
 	}
 }
 

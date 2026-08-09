@@ -293,7 +293,7 @@ func (s *RowService) storedGeometry(ctx context.Context, meta storage.Metadata, 
 		return "", nil
 	}
 
-	geometries, err := geo.GeoJSONByPkey(ctx, []string{pkey})
+	geometries, err := geo.GeoJSONByPkey(ctx, []string{pkey}, nil)
 	if err != nil {
 		return "", NewDisplayError(fmt.Sprintf("unable to read back the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}
@@ -399,7 +399,7 @@ func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, upda
 	if !ok {
 		return results, nil
 	}
-	geometries, err := geo.GeoJSONByPkey(ctx, geometryPkeys)
+	geometries, err := geo.GeoJSONByPkey(ctx, geometryPkeys, nil)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to read back the geometries of table %q", meta.TableId), err)
 	}

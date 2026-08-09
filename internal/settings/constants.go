@@ -28,6 +28,7 @@ const (
 	MaxPrecision         = 1000
 	TileCacheMaxAgeSec   = 60
 	CacheTTLSec          = 300
+	CoordinateDecimals   = 6
 )
 
 // ExportBatchSize sizes the batches ExportService streams an export in. Not
@@ -53,11 +54,12 @@ const (
 // moot once maxBodyBytes lives in config.yaml, kept as the floor a deployed
 // config is still expected to respect.
 const (
-	BodyBytesFloor        = 64 * 1024
-	BodyBytesCeiling      = 512 * 1024 * 1024
-	RowLimitCeiling       = 10_000
-	ListLimitCeiling      = 5_000
-	FeaturesLimitCeiling  = 100_000
-	RequestTimeoutCeiling = 600
-	CacheMaxItemsCeiling  = 100_000
+	BodyBytesFloor            = 64 * 1024
+	BodyBytesCeiling          = 512 * 1024 * 1024
+	RowLimitCeiling           = 10_000
+	ListLimitCeiling          = 5_000
+	FeaturesLimitCeiling      = 100_000
+	RequestTimeoutCeiling     = 600
+	CacheMaxItemsCeiling      = 100_000
+	CoordinateDecimalsCeiling = 15
 )

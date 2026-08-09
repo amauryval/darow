@@ -246,6 +246,19 @@ all, before that table can even be read, plus the guards of §2.4. `exportBatchS
 now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
 only on how it is produced, so it costs an operator a decision they had no way to make honestly.
 
+### 2.5.1 Per-table overrides
+
+A table may override any of §2.5's fields but two. `maxRowLimit` (every table) and
+`maxFeaturesLimit`, `maxSimplifyTolerance`, `maxPrecision`, `tileCacheMaxAgeSec`,
+`coordinateDecimals` (geo tables only) each accept a per-table value on top of the global row,
+stored sparsely in `table_settings` (§4.10) and resolved through `internal/settings`'s `Resolve*`
+functions (§5.8.1) — a table with no override has no row at all, and the global value is what every
+table without one sees. `maxListLimit` and `cacheTTLSec` stay global only: a page of *tables*
+belongs to no table, and the metadata/schema caches are process-wide (`limitations.md` LIM-12).
+`coordinateDecimals` is new here: the number of decimal digits a GeoJSON coordinate is rounded to
+once emitted, applied after the CRS84 transform in every GeoJSON-producing route but the MVT tile
+(§4.7) — a plain default, not a client-overridable ceiling like `simplify`/`precision`.
+
 ### 2.6 Command-line flags
 
 | Flag        | Default       | Effect                                          |
@@ -524,9 +537,9 @@ filter posts; `storage.FilterStore` is the read/write contract, implemented by
 
 ### 4.6 The DuckDB adapter
 
-Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the three
-accessors (`Catalog`, `Materializer`, `Filters`, `Table`) the rest of the server reaches the engine
-through — plus the sub-packages `duckdb/catalog/` (metadata, stored filters, migrations, delete
+Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the
+accessors (`Catalog`, `Materializer`, `Filters`, `Settings`, `TableSettings`, `Table`) the rest of the
+server reaches the engine through — plus the sub-packages `duckdb/catalog/` (metadata, stored filters, migrations, delete
 cascade) and `duckdb/tables/` (one file per family: table resolution, rows, geo, `introspection.go`
 — the engine catalogue reads (§4.8) — and the `Materializer` type split across
 `create_from_file.go`, `create_from_query.go` (`/derive` and its query validation), `crs.go`
@@ -559,8 +572,9 @@ constructions run in that order rather than through a deferred closure.
     reopen it only once. `db` itself is guarded by `dbMu`, read through `conn()`, so the swap never
     races a concurrent reader.
 -   **Migrations** (`duckdb/catalog/migrations.go`): a registry of `Component`s, one per
-    catalogue-owned table — `metadata` (registered from `duckdb/catalog/metadata.go`'s `init`) and
-    `filters` (from `duckdb/catalog/filters.go`'s), a future settings table tomorrow. Each
+    catalogue-owned table — `metadata` (registered from `duckdb/catalog/metadata.go`'s `init`),
+    `filters` (`filters.go`), `settings` (`settings.go`) and `table_settings` (`tablesettings.go`).
+    Each
     `Component` carries its own creation DDL and its own ordered list of `ALTER` statements, and
     `schema_version` tracks one `(component, version)` row per component rather than a single
     whole-database integer, so adding a component never touches another's history. Per component: a
@@ -597,7 +611,9 @@ that govern its cost:
 -   **The tolerance comes from the zoom**, `tileSimplifyTolerance`: one MVT extent unit converted to
     Web Mercator metres, floored at 0.25 m. The HTTP request's `simplify`/`precision` parameters are
     therefore ignored on the MVT route (they only apply to the GeoJSON routes), and do not enter the
-    cache key.
+    cache key. `coordinateDecimals` (§2.5.1, §5.8.1) is ignored here for the same reason: a tile
+    re-quantizes every coordinate onto its own 4096-unit integer grid, so a digit count on the
+    pre-quantization value means nothing (`limitations.md` LIM-5).
 -   **`TRY(...)` + `WHERE mvt_geom IS NOT NULL`** around `ST_AsMVTGeom`: a safety net against an
     upstream duckdb-spatial defect (`duckdb/duckdb-spatial#792`) that produces corrupt clipped
     geometry on certain source/tile combinations. It can only discard an already broken feature,
@@ -652,6 +668,28 @@ once per process the first time the table doesn't exist yet — every later star
 leaves it alone). `GetSettings` reads that row whole; `UpdateSettings` takes a `storage.SettingsPatch`
 (nil fields left unchanged, the same shape as `MetadataPatch`) and writes only the columns given,
 stamping `updatedAt`.
+
+### 4.10 The `table_settings` repository
+
+`duckdb/catalog.TableSettings` (`tablesettings.go`) owns every per-table override (§2.5.1), on the
+model `Filters` (§4.5.1) already follows rather than `Settings`' singleton row: registered as a
+`Component` in the migration registry, reached through `Adapter.TableSettings()`, and registered as
+an `Attachment` on `Catalog` — `Catalog.Remove` deletes a table's overrides inside the same
+transaction as its metadata row and its physical table, the one failure mode this pattern rules out
+(an orphan override row keyed on a `tableId` that no longer exists).
+
+The table is **sparse**: one row per table that carries at least one override, never one per table.
+Every column but `tableId` is nullable, `NULL` meaning "inherit" — the Go type mirrors this exactly,
+`storage.TableSettings` a pointer per overridable field. `GetTableSettings` returns the zero value
+(every field `nil`), never a `NotFoundError`, when a table has no row: absence is a normal, sparse
+state, not a missing entity. `UpdateTableSettings` takes a `storage.TableSettingsPatch` whose fields
+are `**T` — a `nil` field leaves that override unchanged, a non-nil field pointing to `nil` clears it
+back to "inherit," a non-nil field pointing to a value sets it — merges it onto the current row, and
+either upserts (`INSERT ... ON CONFLICT (tableId) DO UPDATE`) or, when the merge leaves every field
+`nil`, deletes the row instead: a table with no more override goes back to having no row.
+`ListOverriddenTables` returns every row, ordered by `tableId` — the settings screen's per-table list
+(§6.1) reads this and nothing wider, so a deployment with a thousand tables never has to load them
+all to find the few that override something.
 
 ---
 
@@ -776,9 +814,11 @@ since all of them change the tile's contents for a given table version.
 
 Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
 `GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single row's geometry in both
-encodings, rule 7's third exception), `NeighbourFeatures` (the rows within a buffer of a geometry —
-the query an edit session runs, unbounded in its key space like every other filtered read). The
-reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a tile's z/x/y.
+encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
+§5.8.1), `NeighbourFeatures` (the rows within a buffer of a
+geometry — the query an edit session runs, unbounded in its key space like every other filtered
+read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
+tile's z/x/y.
 
 ### 5.6 `ExportService` — export is domain, not transport
 
@@ -838,6 +878,34 @@ settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer
 Every other setting (row/list limits, OGC/tile feature limits, simplification bounds,
 `tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
 `Current()` on each request instead (§6.3).
+
+### 5.8.1 `TableSettingsService` — per-table overrides
+
+The read/write port onto `storage.TableSettingsStore` (§4.10), built on top of `SettingsService`
+rather than beside it — every resolution needs the current global row as its fallback. `Load`
+(called once, by `core.Setup`, right after `SettingsService.Load`) populates an in-memory
+`map[tableId]storage.TableSettings` holding only the tables that carry an override; `GetOverride`
+reads it directly, `Resolve(tableId)` collapses it against `SettingsService.Current()` into a
+`TableSettingsResolved` — `settings.Limits` for `maxRowLimit`/`maxFeaturesLimit`, a plain value for
+the rest — through `internal/settings`'s `Resolve*` functions, the one place the three-level chain
+(built-in constant → global row → table override) is written. The trap that chain holds: a per-table
+`ResolveRowLimits`/`ResolveFeaturesLimits` re-enters `RowLimits`/`FeaturesLimits` with the *global*
+value when the override is absent or explicitly `0` — the same "0 means inherit" rule §2.5's
+`Limits` already applies to the global row, so an override of `0` never means "escape to the
+built-in constant" the way a naïve fallback would let a table dodge a limit its operator lowered
+globally. Every handler that reads a table-scoped limit calls `Resolve(meta.TableId)` at the same
+point it already resolves `meta` (`validation.TableResolver`), never `SettingsService.Current()`
+directly for a field this service overrides.
+
+`UpdateOverride` merges the patch onto the current override **in memory first**, resolves the merge
+into the `storage.Settings` shape `internal/settings.Validate` already checks (§5.8), and validates
+it there — a per-table value can never sit outside the bounds the global one respects, and the
+mapping is exactly `ResolveRowLimits`/`ResolveFeaturesLimits`'s own fallback rule, reused rather than
+reforked. On success it persists through `TableSettingsStore.UpdateTableSettings` and replaces the
+map entry (or removes it, once the merge leaves no override). `core.NewServices` also registers this
+service on the `tableRemoved` observer (§5.1): a table's removal already cascades its
+`table_settings` row away in storage (§4.10), and `InvalidateOverride` drops the now-stale map entry
+without a second store read.
 
 ### 5.9 `DiagnosticsService`
 
@@ -919,6 +987,9 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/filters/{filterId}`     | patches a stored filter's name and/or conditions — an omitted field is left unchanged                                                        |
 | DELETE | `/api/v1/tables/{tableId}/filters/{filterId}`     | deletes a stored filter, `204`                                                                                                               |
 | GET    | `/api/v1/tables/{tableId}/export`                 | streamed export, `?format=csv\|geojson`                                                                                                      |
+| GET    | `/api/v1/tables/{tableId}/settings`               | the table's settings overrides (§2.5.1, §4.10): per field, the override (`null` if inherited) and the effective value                        |
+| PATCH  | `/api/v1/tables/{tableId}/settings`               | sets or clears overrides field by field — a key absent leaves it unchanged, `null` clears it, a number sets it; a geometry-only field named on a non-geo table is `400` with nothing persisted |
+| DELETE | `/api/v1/tables/{tableId}/settings`               | clears every override at once, returning the table to every global value                                                                     |
 
 **Rows**
 
@@ -929,7 +1000,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/rows`                 | updates several rows, each with its own values, in **one transaction**; `?crs=` as on the insert, and every row that set a geometry gets the stored one back                                                    |
 | POST   | `/api/v1/tables/{tableId}/rows/batch`           | fetches several rows by pkeys                                                                                                                                                                                   |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
-| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, at full resolution in `OGC:CRS84`; `404` on a scalar table or an unknown row                                                                               |
+| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1) and in `OGC:CRS84`; `404` on a scalar table or an unknown row              |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
 | DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 
@@ -950,6 +1021,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/settings`   | the current runtime-editable settings, plus the six read-only `effective*` pagination values (§2.5)      |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
+| GET    | `/api/v1/settings/tables` | every table that carries at least one override (§2.5.1, §4.10), same shape as `GET /tables/{tableId}/settings` |
 
 **OGC API - Features**
 
@@ -959,7 +1031,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/ogc/conformance`                             | declared classes: Core + GeoJSON                                                             |
 | GET    | `/api/v1/ogc/collections`                             | one collection per geo table                                                                 |
 | GET    | `/api/v1/ogc/collections/{tableId}`                   | description of a collection                                                                  |
-| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset`, `f` |
+| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset`, `f`; coordinates rounded to the resolved `coordinateDecimals` (§2.5.1) |
 | GET    | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | one `Feature`, at full resolution, parameter `f`                                             |
 
 ### 6.2 OGC API - Features

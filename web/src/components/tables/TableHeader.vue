@@ -8,6 +8,7 @@ import {
     MoreHorizontal,
     Pencil,
     Plus,
+    Settings2,
     Trash2,
     X
 } from '@lucide/vue'
@@ -49,6 +50,7 @@ const emit = defineEmits<{
     derive: []
     export: []
     apiRoutes: []
+    tableSettings: []
     delete: []
 }>()
 
@@ -195,6 +197,18 @@ function submitRename() {
                         }
                     "
                     >Voir les routes API</MenuItem
+                >
+
+                <MenuTitle>Réglages</MenuTitle>
+                <MenuItem
+                    :icon="Settings2"
+                    @click="
+                        () => {
+                            close()
+                            emit('tableSettings')
+                        }
+                    "
+                    >Paramètres de la table</MenuItem
                 >
 
                 <li><Divider orientation="horizontal" /></li>

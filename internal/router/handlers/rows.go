@@ -10,7 +10,6 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/service"
-	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -18,19 +17,21 @@ import (
 type RowsHandler struct {
 	validation.TableResolver
 	validation.ColumnValidator
-	rowService rowAPI
-	geoService geoAPI
-	settings   settingsAPI
+	rowService    rowAPI
+	geoService    geoAPI
+	settings      settingsAPI
+	tableSettings tableSettingsAPI
 }
 
 // NewRowsHandler builds a RowsHandler from the service ports it needs.
-func NewRowsHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, rowSvc rowAPI, geoSvc geoAPI, settings settingsAPI) *RowsHandler {
+func NewRowsHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, rowSvc rowAPI, geoSvc geoAPI, settings settingsAPI, tableSettings tableSettingsAPI) *RowsHandler {
 	return &RowsHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		rowService:      rowSvc,
 		geoService:      geoSvc,
 		settings:        settings,
+		tableSettings:   tableSettings,
 	}
 }
 
@@ -44,14 +45,14 @@ func geometryCRS(req *http.Request) string {
 	return storage.DefaultGeometryCRS
 }
 
-func (rh *RowsHandler) paginationParams(req *http.Request) (offset, limit int64) {
+func (rh *RowsHandler) paginationParams(req *http.Request, tableId string) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
 
 	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = settings.RowLimits(rh.settings.Current().MaxRowLimit).Resolve64(requested)
+	limit = rh.tableSettings.Resolve(tableId).MaxRowLimit.Resolve64(requested)
 	return offset, limit
 }
 
@@ -72,7 +73,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	offset, limit := rh.paginationParams(req)
+	offset, limit := rh.paginationParams(req, meta.TableId)
 
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	sortColumns := make([]string, len(sort))
@@ -369,7 +370,8 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 	}
 	pkey := chi.URLParam(req, "pkey")
 
-	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey)
+	decimals := rh.tableSettings.Resolve(meta.TableId).CoordinateDecimals
+	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals)
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return

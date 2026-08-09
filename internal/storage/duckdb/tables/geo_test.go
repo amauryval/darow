@@ -162,20 +162,40 @@ func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, extent)
 
-	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"})
+	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil)
 	require.NoError(t, err)
 	assert.Contains(t, geojson["1"], `"Point"`)
 
 	// An empty pkeys must no-op rather than build "IN ()", a SQL syntax
 	// error in DuckDB.
-	empty, err := geo.GeoJSONByPkey(ctx, nil)
+	empty, err := geo.GeoJSONByPkey(ctx, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
 
-// WKT is read at full resolution, in the same lon/lat CRS GeoJSON is
-// reported in, and a NULL geometry reads as an empty string rather than the
-// JSON literal GeoJSON needs.
+// decimals, when set, rounds the emitted CRS84 coordinates instead of
+// leaving them at full DOUBLE resolution.
+func Test_GeoRepository_GeoJSONByPkey_CoordinateDecimals(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	full, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil)
+	require.NoError(t, err)
+
+	decimals := 2
+	rounded, err := geo.GeoJSONByPkey(ctx, []string{"1"}, &decimals)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, full["1"], rounded["1"])
+	assert.Contains(t, rounded["1"], `"Point"`)
+}
+
+// WKT is read in the same lon/lat CRS GeoJSON is reported in, and a NULL
+// geometry reads as an empty string rather than the JSON literal GeoJSON
+// needs.
 func Test_GeoRepository_WKTByPkey(t *testing.T) {
 	conn := openRepoTestDB(t)
 	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
@@ -183,19 +203,39 @@ func Test_GeoRepository_WKTByPkey(t *testing.T) {
 	geo, _ := repo.Geo()
 	ctx := context.Background()
 
-	wkt, err := geo.WKTByPkey(ctx, []string{"1"})
+	wkt, err := geo.WKTByPkey(ctx, []string{"1"}, nil)
 	require.NoError(t, err)
 	assertPointNear(t, wkt["1"], 0.8983, 0.8983, 1e-4)
 
 	pkey, err := repo.Rows().Insert(ctx, map[string]any{"name": "no geometry"})
 	require.NoError(t, err)
-	missing, err := geo.WKTByPkey(ctx, []string{pkey})
+	missing, err := geo.WKTByPkey(ctx, []string{pkey}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, missing[pkey])
 
-	empty, err := geo.WKTByPkey(ctx, nil)
+	empty, err := geo.WKTByPkey(ctx, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+}
+
+// decimals, when set, rounds the emitted CRS84 coordinates instead of
+// leaving them at full DOUBLE resolution.
+func Test_GeoRepository_WKTByPkey_CoordinateDecimals(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	full, err := geo.WKTByPkey(ctx, []string{"1"}, nil)
+	require.NoError(t, err)
+
+	decimals := 2
+	rounded, err := geo.WKTByPkey(ctx, []string{"1"}, &decimals)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, full["1"], rounded["1"])
+	assert.Contains(t, rounded["1"], "POINT")
 }
 
 func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {

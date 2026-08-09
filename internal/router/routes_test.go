@@ -54,6 +54,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 	m := &mocks.Adapter{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	m.On("GetSettings", mock.Anything).Return(settings, nil)
+	m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 	m.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, nil).Maybe()
 
 	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: settingsCfg}

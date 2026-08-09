@@ -28,6 +28,7 @@ type Settings struct {
 	MaxPrecision         float64
 	TileCacheMaxAgeSec   int
 	CacheTTLSec          int
+	CoordinateDecimals   int
 
 	UpdatedAt time.Time
 }
@@ -42,6 +43,7 @@ type SettingsPatch struct {
 	MaxPrecision         *float64
 	TileCacheMaxAgeSec   *int
 	CacheTTLSec          *int
+	CoordinateDecimals   *int
 }
 
 // SettingsStore owns the single row of runtime-editable settings, seeded

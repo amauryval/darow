@@ -39,7 +39,6 @@
 ### **2.2 Système de Tuilage**
 
 - **WebMercatorQuad** (EPSG:3857) : **Standard pour les MVT** dans OGC API - Tiles.
-- **Autres systèmes** : `WorldCRS84Quad` (EPSG:4326) possible, mais moins courant.
 - **Schéma de tuilage** : `{z}/{x}/{y}` (ex: `12/1234/5678`).
 
 ### **2.3 Hiérarchie des Endpoints (OGC API - Tiles)**
@@ -274,7 +273,6 @@ func main() {
 ### **4.2 Points Clés pour l'Implémentation en Go**
 
 1. **Gestion des Tuiles MVT** :
-   - Utiliser une bibliothèque comme [`go-protobuf`](https://github.com/golang/protobuf) pour encoder/décoder les MVT.
    - Stocker les tuiles dans un système de fichiers ou une base de données (ex: **DuckDB** pour les données vectorielles).
 
 2. **Conformité OGC** :
@@ -490,14 +488,12 @@ components:
 
 ### **7.1 Spécifications Officielles**
 
-- [OGC API - Tiles (Part 1: Core)](https://docs.ogc.org/is/21-057/21-057.html)
+- [OGC API - Tiles (Part 1: Core)](https://docs.ogc.org/is/20-057/20-057.html)
 - [Spécification MVT (Mapbox)](https://github.com/mapbox/vector-tile-spec)
 - [TileJSON Spec](https://github.com/mapbox/tilejson-spec)
 
 ### **7.2 Outils et Bibliothèques (Go)**
 
-- **Protobuf** : [go-protobuf](https://github.com/golang/protobuf) (pour encoder/décoder les MVT).
-- **Serveur HTTP** : [gorilla/mux](https://github.com/gorilla/mux) (pour le routage).
 - **Validation OpenAPI** : [go-swagger](https://github.com/go-swagger/go-swagger).
 - **Base de données** : [DuckDB](https://duckdb.org/) (pour stocker/requêter des données vectorielles).
 

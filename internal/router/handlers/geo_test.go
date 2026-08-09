@@ -20,7 +20,7 @@ func Test_newGeoHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}})
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
 
 	assert.Same(t, geoSvc, gh.geoService)
 
@@ -141,7 +141,7 @@ func Test_geoHandler_getTile(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &GeoHandler{settings: defaultTestSettings,
+			gh := &GeoHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
@@ -182,7 +182,7 @@ func Test_geoHandler_getTile_NotModifiedWhenETagMatches(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
-	gh := &GeoHandler{settings: defaultTestSettings,
+	gh := &GeoHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		schemaService:   schemaSvc,
@@ -232,7 +232,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}})
+			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -266,7 +266,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
-	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{MaxFeaturesLimit: 1}})
+	gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{MaxFeaturesLimit: 1}}, stubTableSettingsAPI{global: storage.Settings{MaxFeaturesLimit: 1}})
 
 	meta := storage.Metadata{TableId: "t1"}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -304,7 +304,7 @@ func Test_geoHandler_getGeometryTypes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &GeoHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
+			gh := &GeoHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
 
 			meta := storage.Metadata{TableId: "t1"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -344,6 +344,7 @@ func Test_geoHandler_filterByBbox(t *testing.T) {
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				geoService:    geoSvc,
 				settings:      stubSettingsAPI{settings: storage.Settings{}},
+				tableSettings: stubTableSettingsAPI{},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -387,7 +388,7 @@ func Test_geoHandler_getFilteredExtent(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
 			geoSvc := &mockGeoAPI{}
-			gh := &GeoHandler{settings: defaultTestSettings,
+			gh := &GeoHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				schemaService: schemaSvc,
 				geoService:    geoSvc,
@@ -436,6 +437,7 @@ func Test_geoHandler_findNeighbours(t *testing.T) {
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				geoService:    geoSvc,
 				settings:      stubSettingsAPI{settings: storage.Settings{}},
+				tableSettings: stubTableSettingsAPI{},
 			}
 
 			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}

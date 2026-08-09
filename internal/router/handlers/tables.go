@@ -24,10 +24,11 @@ type TablesHandler struct {
 	deriveService   deriveAPI
 	rowService      rowAPI
 	settings        settingsAPI
+	tableSettings   tableSettingsAPI
 }
 
 // NewTablesHandler builds a TablesHandler from the service ports it needs.
-func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI) *TablesHandler {
+func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI, tableSettings tableSettingsAPI) *TablesHandler {
 	return &TablesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
@@ -36,6 +37,7 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 		deriveService:   deriveSvc,
 		rowService:      rowSvc,
 		settings:        settings,
+		tableSettings:   tableSettings,
 	}
 }
 
@@ -57,13 +59,13 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 // through the row limits — a column's distinct values are per-row content,
 // not a metadata record, so they share RowsHandler's limits rather than
 // listPaginationParams's smaller ones.
-func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request) (offset, limit int64) {
+func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, tableId string) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
 	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = settings.RowLimits(th.settings.Current().MaxRowLimit).Resolve64(requested)
+	limit = th.tableSettings.Resolve(tableId).MaxRowLimit.Resolve64(requested)
 	return offset, limit
 }
 
@@ -352,7 +354,7 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 	// — same as GET /rows's paginationParams — instead of the JSON zero value
 	// silently producing LIMIT 0, and is capped by their maximum either way,
 	// so a client can't force the whole table into memory.
-	limit := settings.RowLimits(th.settings.Current().MaxRowLimit).Resolve(body.Limit)
+	limit := th.tableSettings.Resolve(meta.TableId).MaxRowLimit.Resolve(body.Limit)
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {
@@ -399,7 +401,7 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	offset, limit := th.distinctValuesPaginationParams(req)
+	offset, limit := th.distinctValuesPaginationParams(req, meta.TableId)
 	search := req.URL.Query().Get("search")
 	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, search, int(offset), int(limit))
 	if err != nil {

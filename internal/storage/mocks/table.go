@@ -155,14 +155,14 @@ func (m *GeoRepository) Extent(ctx context.Context, q storage.GeoQuery) (string,
 	return callArgs.String(0), callArgs.Error(1)
 }
 
-func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
-	callArgs := m.Called(ctx, pkeys)
+func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys, decimals)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)
 }
 
-func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
-	callArgs := m.Called(ctx, pkeys)
+func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys, decimals)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)
 }

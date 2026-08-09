@@ -13,7 +13,6 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
-	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -25,16 +24,18 @@ type GeoHandler struct {
 	schemaService schemaAPI
 	geoService    geoAPI
 	settings      settingsAPI
+	tableSettings tableSettingsAPI
 }
 
 // NewGeoHandler builds a GeoHandler from the service ports it needs.
-func NewGeoHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, settings settingsAPI) *GeoHandler {
+func NewGeoHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, settings settingsAPI, tableSettings tableSettingsAPI) *GeoHandler {
 	return &GeoHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
 		settings:        settings,
+		tableSettings:   tableSettings,
 	}
 }
 
@@ -95,10 +96,12 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
+	resolved := gh.tableSettings.Resolve(meta.TableId)
+
 	// Only the "filter" param applies to an MVT tile — simplify/precision
 	// are ignored, since a tile always simplifies to its own zoom-derived
 	// resolution regardless of what a client passes.
-	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), gh.settings.Current().MaxSimplifyTolerance, gh.settings.Current().MaxPrecision)
+	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), resolved.MaxSimplifyTolerance, resolved.MaxPrecision)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -112,7 +115,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 	// change a tile's content for the same table version.
 	etag := tileETag(meta, z, x, y, attrs, q)
 	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", gh.settings.Current().TileCacheMaxAgeSec))
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", resolved.TileCacheMaxAgeSec))
 	if req.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -176,15 +179,17 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), gh.settings.Current().MaxSimplifyTolerance, gh.settings.Current().MaxPrecision)
+	resolved := gh.tableSettings.Resolve(meta.TableId)
+	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), resolved.MaxSimplifyTolerance, resolved.MaxPrecision)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
+	q.CoordinateDecimals = &resolved.CoordinateDecimals
 
 	// The features limits: see internal/settings.FeaturesLimits.
 	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
-	limit := settings.FeaturesLimits(gh.settings.Current().MaxFeaturesLimit).Resolve(requested)
+	limit := resolved.MaxFeaturesLimit.Resolve(requested)
 	offset := 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
@@ -261,7 +266,8 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), gh.settings.Current().MaxSimplifyTolerance, gh.settings.Current().MaxPrecision)
+	resolved := gh.tableSettings.Resolve(meta.TableId)
+	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), resolved.MaxSimplifyTolerance, resolved.MaxPrecision)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -307,7 +313,7 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := settings.FeaturesLimits(gh.settings.Current().MaxFeaturesLimit).Resolve(body.Limit)
+	limit := gh.tableSettings.Resolve(meta.TableId).MaxFeaturesLimit.Resolve(body.Limit)
 
 	near := storage.NearQuery{
 		Geometry: storage.GeometryValue{
@@ -354,7 +360,7 @@ func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := settings.RowLimits(gh.settings.Current().MaxRowLimit).Resolve(body.Limit)
+	limit := gh.tableSettings.Resolve(meta.TableId).MaxRowLimit.Resolve(body.Limit)
 	offset := body.Offset
 	if offset < 0 {
 		offset = 0

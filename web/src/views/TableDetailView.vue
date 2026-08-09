@@ -9,6 +9,7 @@ import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
 import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
+import TableSettingsModal from '../components/tables/TableSettingsModal.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import { useFeatureSelection } from '../composables/useFeatureSelection'
 import { useTableMetadata } from '../composables/useTableMetadata'
@@ -68,6 +69,7 @@ const showColumns = ref(false)
 const showDerive = ref(false)
 const showAddColumn = ref(false)
 const showApiRoutes = ref(false)
+const showTableSettings = ref(false)
 
 const addColumnModalRef = ref<InstanceType<typeof AddColumnModal>>()
 
@@ -151,6 +153,7 @@ async function onColumnAdded(name: string, type: string) {
             @derive="showDerive = true"
             @export="onExportTable"
             @api-routes="showApiRoutes = true"
+            @table-settings="showTableSettings = true"
             @delete="onDeleteTable"
         />
 
@@ -199,6 +202,13 @@ async function onColumnAdded(name: string, type: string) {
             :table-id="table.tableId"
             :is-geo="table.isGeo"
             @close="showApiRoutes = false"
+        />
+
+        <TableSettingsModal
+            v-if="showTableSettings && table"
+            :table-id="table.tableId"
+            :is-geo="table.isGeo"
+            @close="showTableSettings = false"
         />
     </div>
 </template>

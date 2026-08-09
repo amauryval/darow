@@ -1,4 +1,9 @@
-import type { Settings, SettingsReadOnlyKey } from '../client/types'
+import type {
+    Settings,
+    SettingsReadOnlyKey,
+    TableSettings,
+    TableSettingsFieldKey
+} from '../client/types'
 
 export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
 
@@ -23,6 +28,14 @@ export interface SettingsFieldSpec {
     // input so an operator sees what the server applies today — the built-in
     // values while the field is at 0, its own value once set.
     effectiveKeys?: { default: keyof Settings; max: keyof Settings; noun: string }
+    // Whether a table can carry its own override of this field
+    // (TableSettingsModal, back/todo.md TODO-18) — maxListLimit and
+    // cacheTTLSec stay global on purpose (LIM-12) and are the two fields
+    // without this flag.
+    perTable?: boolean
+    // Whether this field only applies to a geo table — absent from a
+    // non-geo table's modal rather than shown disabled.
+    geoOnly?: boolean
 }
 
 export interface SettingsFieldGroup {
@@ -54,7 +67,8 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                     default: 'effectiveDefaultRowLimit',
                     max: 'effectiveMaxRowLimit',
                     noun: 'lignes'
-                }
+                },
+                perTable: true
             },
             {
                 key: 'maxListLimit',
@@ -84,7 +98,9 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                     default: 'effectiveDefaultFeaturesLimit',
                     max: 'effectiveMaxFeaturesLimit',
                     noun: 'objets'
-                }
+                },
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'maxSimplifyTolerance',
@@ -92,7 +108,9 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                 unit: 'm',
                 step: 0.01,
                 description:
-                    'Tolérance en mètres : plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande. Plafond appliqué à ce qu’un client peut demander, pas la valeur que le serveur applique lui-même.'
+                    'Tolérance en mètres : plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande. Plafond appliqué à ce qu’un client peut demander, pas la valeur que le serveur applique lui-même.',
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'maxPrecision',
@@ -100,7 +118,9 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                 unit: 'm',
                 step: 0.01,
                 description:
-                    'Le serveur arrondit les coordonnées renvoyées à une grille de cette taille, en mètres (EPSG:3857). Plus la valeur est basse, plus les coordonnées sont fines ; un client ne peut pas demander plus fin que ce plafond.'
+                    'Le serveur arrondit les coordonnées renvoyées à une grille de cette taille, en mètres (EPSG:3857). Plus la valeur est basse, plus les coordonnées sont fines ; un client ne peut pas demander plus fin que ce plafond.',
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'tileCacheMaxAgeSec',
@@ -109,7 +129,17 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
                 description:
                     'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.',
                 zeroMeaning:
-                    'le navigateur revalide la tuile à chaque affichage, sans jamais la garder en cache.'
+                    'le navigateur revalide la tuile à chaque affichage, sans jamais la garder en cache.',
+                perTable: true,
+                geoOnly: true
+            },
+            {
+                key: 'coordinateDecimals',
+                label: 'Décimales des coordonnées géographiques renvoyées',
+                description:
+                    'Nombre de chiffres après la virgule des coordonnées GeoJSON renvoyées (hors tuiles vectorielles, qui ont leur propre grille). Réduire cette valeur allège la réponse sans changer la précision stockée.',
+                perTable: true,
+                geoOnly: true
             }
         ]
     },
@@ -131,6 +161,29 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         ]
     }
 ]
+
+// The per-table fields a TableSettingsModal renders, in the same order/
+// grouping the global screen uses — labels, descriptions and units never
+// retyped for the per-table surface.
+export const TABLE_SETTINGS_FIELDS: SettingsFieldSpec[] = SETTINGS_FIELD_GROUPS.flatMap(
+    (group) => group.fields
+).filter((field) => field.perTable)
+
+// tableFieldValue reads one field's override/effective pair off a
+// TableSettings response, collapsing LimitField's default/max pair down to
+// its default half — the number a per-table modal shows, the same one
+// SettingsField's own effective caption shows for the global row.
+export function tableFieldValue(
+    settings: TableSettings,
+    key: TableSettingsFieldKey
+): { override: number | null; effective: number } | null {
+    if (key === 'maxRowLimit' || key === 'maxFeaturesLimit') {
+        const field = settings[key]
+        return field ? { override: field.override, effective: field.effectiveDefault } : null
+    }
+    const value = settings[key]
+    return value ? { override: value.override, effective: value.effective } : null
+}
 
 const FIELD_KEYS = new Set<string>(
     SETTINGS_FIELD_GROUPS.flatMap((group) => group.fields.map((field) => field.key))

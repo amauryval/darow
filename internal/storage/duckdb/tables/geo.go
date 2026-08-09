@@ -194,28 +194,40 @@ func (g *tableGeo) Extent(ctx context.Context, q storage.GeoQuery) (string, erro
 
 // GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
 // keyed by pkey. Used by table export and by the per-row geometry read.
-func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
+// decimals, if non-nil, rounds the emitted CRS84 coordinates to that many
+// digits (TODO-21) — nil for export, which stays at full resolution.
+func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
 	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
 	// column is stored reprojected to EPSG:3857.
 	// A NULL geometry (a legal, geometry-less Feature) must still produce
 	// valid JSON for the caller to embed as-is — the JSON literal null, not
 	// an empty string, which json.RawMessage can't marshal.
-	return g.geometryByPkey(ctx, pkeys, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
+	return g.geometryByPkey(ctx, pkeys, decimals, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
 }
 
 // WKTByPkey returns each row's geometry as Well-Known Text, keyed by pkey,
-// at full resolution and in the lon/lat CRS every geometry read emits.
-func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error) {
-	return g.geometryByPkey(ctx, pkeys, "ST_AsText(%s)", "")
+// in the lon/lat CRS every geometry read emits. decimals behaves as in
+// GeoJSONByPkey.
+func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
+	return g.geometryByPkey(ctx, pkeys, decimals, "ST_AsText(%s)", "")
 }
 
 // geometryByPkey reads the geometry of each row named by pkeys, encoded by
 // encoding (a format string taking the reprojected geometry expression),
-// with nullValue standing for a row whose geometry is NULL.
-func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, encoding, nullValue string) (map[string]string, error) {
-	pkeyIn, args := pkeyInClause(pkeys)
+// with nullValue standing for a row whose geometry is NULL. decimals, if
+// non-nil, snaps the transformed coordinates to a 10^-decimals grid —
+// exactly "decimals decimal digits" once expressed in CRS84 degrees.
+func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, decimals *int, encoding, nullValue string) (map[string]string, error) {
+	pkeyIn, pkeyArgs := pkeyInClause(pkeys)
 
 	geometry := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", g.ref.QuotedGeometryColumn)
+	args := []any{}
+	if decimals != nil {
+		geometry = fmt.Sprintf("ST_ReducePrecision(%s, ?)", geometry)
+		args = append(args, math.Pow(10, -float64(*decimals)))
+	}
+	args = append(args, pkeyArgs...)
+
 	query := fmt.Sprintf(
 		`SELECT __pkey, %s FROM %s WHERE %s`,
 		fmt.Sprintf(encoding, geometry), g.ref.PhysicalName, pkeyIn,
@@ -336,16 +348,25 @@ func (g *tableGeo) Features(ctx context.Context, q storage.FeatureQuery) ([]stor
 		args = append(args, *q.Query.Precision)
 	}
 
-	where, args := featuresWhereClause(g.ref, q, args)
-	args = append(args, q.Limit, q.Offset)
-
 	// GeoJSON output must be WGS84 lon/lat (RFC 7946), but the geometry
 	// column is stored reprojected to EPSG:3857 — same axis-order-safe
 	// transform as the bbox filter above and RefreshDerivedMetadata's
-	// bbox, just in the opposite direction.
+	// bbox, just in the opposite direction. CoordinateDecimals, unlike
+	// Precision, snaps the grid after this transform, in CRS84 degrees
+	// (TODO-21) — a digit count on the emitted coordinates, not a
+	// metre-scale simplification on the stored ones.
+	transformExpr := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", geomExpr)
+	if q.Query.CoordinateDecimals != nil {
+		transformExpr = fmt.Sprintf("ST_ReducePrecision(%s, ?)", transformExpr)
+		args = append(args, math.Pow(10, -float64(*q.Query.CoordinateDecimals)))
+	}
+
+	where, args := featuresWhereClause(g.ref, q, args)
+	args = append(args, q.Limit, q.Offset)
+
 	query := fmt.Sprintf(
-		`SELECT __pkey, %s, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) AS __geojson FROM %s%s ORDER BY __pkey LIMIT ? OFFSET ?`,
-		attrSelect, geomExpr, g.ref.PhysicalName, where,
+		`SELECT __pkey, %s, CAST(ST_AsGeoJSON(%s) AS VARCHAR) AS __geojson FROM %s%s ORDER BY __pkey LIMIT ? OFFSET ?`,
+		attrSelect, transformExpr, g.ref.PhysicalName, where,
 	)
 
 	rows, err := g.conn.Query(ctx, query, args...)
@@ -449,6 +470,12 @@ func (g *tableGeo) FeaturesInTile(ctx context.Context, zoom, x, y int, q storage
 		args = append(args, *q.Query.Precision)
 	}
 
+	transformExpr := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", geomExpr)
+	if q.Query.CoordinateDecimals != nil {
+		transformExpr = fmt.Sprintf("ST_ReducePrecision(%s, ?)", transformExpr)
+		args = append(args, math.Pow(10, -float64(*q.Query.CoordinateDecimals)))
+	}
+
 	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
 	if q.Query.Filter != "" {
 		where += " AND (" + q.Query.Filter + ")"
@@ -460,11 +487,11 @@ func (g *tableGeo) FeaturesInTile(ctx context.Context, zoom, x, y int, q storage
         WITH tile AS (
             SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
         )
-        SELECT __pkey, %s, CAST(ST_AsGeoJSON(ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')) AS VARCHAR) AS __geojson
+        SELECT __pkey, %s, CAST(ST_AsGeoJSON(%s) AS VARCHAR) AS __geojson
         FROM %s, tile
         %s
         ORDER BY __pkey LIMIT ? OFFSET ?
-    `, attrSelect, geomExpr, g.ref.PhysicalName, where)
+    `, attrSelect, transformExpr, g.ref.PhysicalName, where)
 
 	rows, err := g.conn.Query(ctx, query, args...)
 	if err != nil {

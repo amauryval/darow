@@ -24,6 +24,7 @@ func setupFeaturesHandler() (*FeaturesHandler, *mockMetadataAPI, *mockSchemaAPI,
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
 		settings:        stubSettingsAPI{settings: storage.Settings{MaxSimplifyTolerance: 100, MaxPrecision: 100}},
+		tableSettings:   stubTableSettingsAPI{global: storage.Settings{MaxSimplifyTolerance: 100, MaxPrecision: 100}},
 	}
 	return fh, metadataSvc, schemaSvc, geoSvc
 }
@@ -33,7 +34,7 @@ func Test_NewFeaturesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	geoSvc := &mockGeoAPI{}
 
-	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}})
+	fh := NewFeaturesHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: storage.Settings{}}, stubTableSettingsAPI{})
 
 	assert.Same(t, metadataSvc, fh.metadataService)
 	assert.Same(t, schemaSvc, fh.schemaService)
@@ -192,9 +193,9 @@ func Test_FeaturesHandler_GetItems_FeatureCollectionShape(t *testing.T) {
 	meta := storage.Metadata{TableId: "t1", TableName: "Buildings", IsGeo: true}
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{}, nil).Once()
-	geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), storage.GeoQuery{}, 100, 0).
+	geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), mock.Anything, 100, 0).
 		Return([]storage.GeoFeature{{Pkey: "pk 1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, nil).Once()
-	geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), storage.GeoQuery{}).
+	geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), mock.Anything).
 		Return(int64(1), nil).Once()
 
 	rec := doHandlerRequest(fh.GetItems, http.MethodGet, "/api/v1/ogc/collections/t1/items", nil, map[string]string{"tableId": "t1"})
@@ -243,9 +244,9 @@ func Test_FeaturesHandler_GetItems_PagingLinks(t *testing.T) {
 			schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{}, nil).Once()
 
 			features := []storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}
-			geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), storage.GeoQuery{}, 1, c.offset).
+			geoSvc.On("GetFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), []string(nil), mock.Anything, 1, c.offset).
 				Return(features, nil).Once()
-			geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), storage.GeoQuery{}).
+			geoSvc.On("CountFeatures", mock.Anything, meta, []string(nil), (*[4]float64)(nil), mock.Anything).
 				Return(c.numberMatched, nil).Once()
 
 			url := fmt.Sprintf("/api/v1/ogc/collections/t1/items?limit=1&offset=%d", c.offset)

@@ -173,6 +173,7 @@ export interface Settings {
     maxPrecision: number
     tileCacheMaxAgeSec: number
     cacheTTLSec: number
+    coordinateDecimals: number
     effectiveDefaultRowLimit: number
     effectiveMaxRowLimit: number
     effectiveDefaultListLimit: number
@@ -195,3 +196,59 @@ export type SettingsReadOnlyKey =
 // Matches storage.SettingsPatch — every field optional, an omitted one left
 // unchanged server-side.
 export type SettingsPatch = Partial<Omit<Settings, SettingsReadOnlyKey>>
+
+// LimitField is a per-table-overridable field whose effective value is a
+// default/max pair (maxRowLimit, maxFeaturesLimit) — override is the
+// operator's own value for this table, null when inherited from the global
+// row.
+export interface LimitField {
+    override: number | null
+    effectiveDefault: number
+    effectiveMax: number
+}
+
+// OverrideField is a per-table-overridable field with a single effective
+// value (maxSimplifyTolerance, maxPrecision, tileCacheMaxAgeSec,
+// coordinateDecimals) — override is null when inherited.
+export interface OverrideField {
+    override: number | null
+    effective: number
+}
+
+// Matches the tableSettingsDTO the server returns from GET/PATCH/DELETE
+// /tables/{tableId}/settings and GET /settings/tables: a table's departure
+// from the global row, field by field. maxRowLimit applies to every table;
+// the rest are present only on a geo table (isGeo) — absent, not disabled,
+// on a table the fields could never apply to.
+export interface TableSettings {
+    tableId: string
+    isGeo: boolean
+    maxRowLimit: LimitField
+    // maxFeaturesLimit, like maxRowLimit, pairs a default and a max
+    // (internal/settings.Limits) — the only two per-table fields that do.
+    maxFeaturesLimit?: LimitField
+    maxSimplifyTolerance?: OverrideField
+    maxPrecision?: OverrideField
+    tileCacheMaxAgeSec?: OverrideField
+    coordinateDecimals?: OverrideField
+    updatedAt: string
+}
+
+// The fields a table's settings can carry an override for, one per
+// TableSettings field but the read-only tableId/isGeo/updatedAt.
+export type TableSettingsFieldKey =
+    | 'maxRowLimit'
+    | 'maxFeaturesLimit'
+    | 'maxSimplifyTolerance'
+    | 'maxPrecision'
+    | 'tileCacheMaxAgeSec'
+    | 'coordinateDecimals'
+
+// A PATCH body for a table's settings: a key absent leaves that override
+// unchanged, present with null clears it back to "inherit," present with a
+// number sets it.
+export type TableSettingsPatch = Partial<Record<TableSettingsFieldKey, number | null>>
+
+export interface TableSettingsOverridesPage {
+    tables: TableSettings[]
+}

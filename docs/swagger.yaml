@@ -63,6 +63,15 @@ definitions:
             updatedAt:
                 type: string
         type: object
+    handlers.limitField:
+        properties:
+            effectiveDefault:
+                type: integer
+            effectiveMax:
+                type: integer
+            override:
+                type: integer
+        type: object
     handlers.linkDTO:
         properties:
             href:
@@ -97,9 +106,25 @@ definitions:
             updatedAt:
                 type: string
         type: object
+    handlers.overrideField-float64:
+        properties:
+            effective:
+                type: number
+            override:
+                type: number
+        type: object
+    handlers.overrideField-int:
+        properties:
+            effective:
+                type: integer
+            override:
+                type: integer
+        type: object
     handlers.settingsDTO:
         properties:
             cacheTTLSec:
+                type: integer
+            coordinateDecimals:
                 type: integer
             effectiveDefaultFeaturesLimit:
                 type: integer
@@ -138,6 +163,27 @@ definitions:
                     type: array
                 type: array
             crs:
+                type: string
+        type: object
+    handlers.tableSettingsDTO:
+        properties:
+            coordinateDecimals:
+                $ref: '#/definitions/handlers.overrideField-int'
+            isGeo:
+                type: boolean
+            maxFeaturesLimit:
+                $ref: '#/definitions/handlers.limitField'
+            maxPrecision:
+                $ref: '#/definitions/handlers.overrideField-float64'
+            maxRowLimit:
+                $ref: '#/definitions/handlers.limitField'
+            maxSimplifyTolerance:
+                $ref: '#/definitions/handlers.overrideField-float64'
+            tableId:
+                type: string
+            tileCacheMaxAgeSec:
+                $ref: '#/definitions/handlers.overrideField-int'
+            updatedAt:
                 type: string
         type: object
     handlers.uploadResultDTO:
@@ -418,6 +464,22 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Update the runtime-editable settings
+            tags:
+                - settings
+    /api/v1/settings/tables:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            items:
+                                $ref: '#/definitions/handlers.tableSettingsDTO'
+                            type: array
+                        type: object
+            summary: List the tables that carry a settings override
             tags:
                 - settings
     /api/v1/sources:
@@ -1283,6 +1345,68 @@ paths:
             summary: Get table schema
             tags:
                 - tables
+    /api/v1/tables/{tableId}/settings:
+        delete:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+            summary: Clear every settings override of a table
+            tags:
+                - settings
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Read a table's settings overrides
+            tags:
+                - settings
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Set or clear a table's settings overrides
+            tags:
+                - settings
     /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
         get:
             parameters:

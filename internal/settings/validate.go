@@ -86,6 +86,18 @@ func (f Validator) CacheTTLSec() (int, error) {
 	return f.s.CacheTTLSec, nil
 }
 
+// CoordinateDecimals is a plain digit count, not a family with a built-in
+// fallback: 0 is a legal value (integer coordinates), never "inherit."
+func (f Validator) CoordinateDecimals() (int, error) {
+	if f.s.CoordinateDecimals < 0 {
+		return 0, fmt.Errorf("coordinateDecimals must not be negative")
+	}
+	if f.s.CoordinateDecimals > CoordinateDecimalsCeiling {
+		return 0, fmt.Errorf("coordinateDecimals must be <= %d", CoordinateDecimalsCeiling)
+	}
+	return f.s.CoordinateDecimals, nil
+}
+
 // Result is the outcome of Validate: Settings is s, unchanged, and Err is
 // nil once every field's method passed, or the joined violations otherwise —
 // the one value a caller needs, so it never has to hold a Settings and an
@@ -121,6 +133,8 @@ func Validate(s storage.Settings) Result {
 	_, err = f.TileCacheMaxAgeSec()
 	collect(err)
 	_, err = f.CacheTTLSec()
+	collect(err)
+	_, err = f.CoordinateDecimals()
 	collect(err)
 
 	if len(msgs) == 0 {

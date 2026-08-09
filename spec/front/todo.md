@@ -32,6 +32,13 @@ exist first — `../back/todo.md` TODO-8, TODO-14 and TODO-13 respectively; none
 started against the API as it is today. TODO-F39 is half of that kind: its unit and wording work is
 done, only its bounds wait on `../back/todo.md` TODO-16.
 
+**Per-table settings is done** (formerly TODO-F41 → TODO-F43): `TableSettingsModal.vue`, opened from
+`TableHeader.vue`'s Actions menu, edits a table's overrides through `useTableSettings`;
+`TableOverridesSection.vue` on `/settings`, fed by `useTableSettingsOverrides`, lists the tables that
+depart from the global row; `useTableRows` pages on the table's effective row limit instead of a
+hardcoded constant. Bounds display is the one piece left out, same as TODO-F39: it waits on
+`../back/todo.md` TODO-16 either way, not retyped here.
+
 ## 1. Architecture and code
 
 | # | Chantier |

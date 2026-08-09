@@ -8,7 +8,8 @@ import { isDraft, useRowEdits } from '../../composables/useRowEdits'
 import { useRowFilter } from '../../composables/useRowFilter'
 import { useToast } from '../../composables/useToast'
 import { useRowGeometry } from '../../composables/useRowGeometry'
-import { useTableRows } from '../../composables/useTableRows'
+import { useTableSettings } from '../../composables/useTableSettings'
+import { PAGE_SIZE, useTableRows } from '../../composables/useTableRows'
 import FilteredRowsPanel from '../filters/FilteredRowsPanel.vue'
 import GeometryModal from './GeometryModal.vue'
 import TableEditBar from './TableEditBar.vue'
@@ -48,10 +49,26 @@ const dataVersion = ref(0)
 const toast = useToast()
 const filter = useRowFilter(tableId, columns, isGeo)
 const selection = props.selection
-const rowsState = useTableRows(tableId, toRef(props, 'rowColumns'), geometryColumn, () => {
-    dataVersion.value += 1
-    emit('mutated')
-})
+
+// The table's own effective row limit (TODO-F43) — PAGE_SIZE only until it
+// has loaded, so a raised per-table or global limit is what the grid pages
+// on rather than the client's own constant.
+// rowlimit LIMITATION if high value could decrease front performance...
+const tableSettings = useTableSettings(tableId)
+const rowLimit = computed(
+    () => tableSettings.settings.value?.maxRowLimit.effectiveDefault ?? PAGE_SIZE
+)
+
+const rowsState = useTableRows(
+    tableId,
+    toRef(props, 'rowColumns'),
+    geometryColumn,
+    () => {
+        dataVersion.value += 1
+        emit('mutated')
+    },
+    rowLimit
+)
 const rowEdits = useRowEdits(columns, toRef(props, 'rowColumns'))
 const rowGeometry = useRowGeometry(tableId)
 const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {

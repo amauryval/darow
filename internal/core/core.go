@@ -27,6 +27,7 @@ type storageAdapter interface {
 	Materializer() storage.TableMaterializer
 	Filters() storage.FilterStore
 	Settings() storage.SettingsStore
+	TableSettings() storage.TableSettingsStore
 	Table(meta storage.Metadata) (storage.TableRepository, error)
 	storage.DiagnosticsReader
 }
@@ -35,17 +36,18 @@ type storageAdapter interface {
 // adapter, replacing the long parameter list that would otherwise be
 // threaded through main and NewRouter.
 type Services struct {
-	Metadata    *service.MetadataService
-	Row         *service.RowService
-	Schema      *service.SchemaService
-	Derive      *service.DeriveService
-	Import      *service.ImportService
-	Geo         *service.GeoService
-	Source      *service.SourceService
-	Export      *service.ExportService
-	Filter      *service.FilterService
-	Settings    *service.SettingsService
-	Diagnostics *service.DiagnosticsService
+	Metadata      *service.MetadataService
+	Row           *service.RowService
+	Schema        *service.SchemaService
+	Derive        *service.DeriveService
+	Import        *service.ImportService
+	Geo           *service.GeoService
+	Source        *service.SourceService
+	Export        *service.ExportService
+	Filter        *service.FilterService
+	Settings      *service.SettingsService
+	TableSettings *service.TableSettingsService
+	Diagnostics   *service.DiagnosticsService
 
 	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
 	// storage connection; Services built via NewServices alone (e.g. in
@@ -88,6 +90,11 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	}
 	current := settingsSvc.Current()
 
+	tableSettingsSvc := service.NewTableSettingsService(storageAdapter.TableSettings(), settingsSvc)
+	if err := tableSettingsSvc.Load(context.Background()); err != nil {
+		return nil, fmt.Errorf("table settings: %w", err)
+	}
+
 	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
 	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Settings.TileMaxItems, nil, 0)
@@ -116,6 +123,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	// table changes its structure as surely as AddColumn does, and leaves a
 	// deleted table's source reported as loaded until told otherwise.
 	tableRemoved.On(func(meta storage.Metadata) { schemaSvc.InvalidateSchema(meta.TableId) })
+	tableRemoved.On(func(meta storage.Metadata) { tableSettingsSvc.InvalidateOverride(meta.TableId) })
 	tableRemoved.On(sourceSvc.UnmarkLoaded)
 
 	// Who reacts to a settings update, stated in one place: the metadata and
@@ -137,17 +145,18 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	})
 
 	return &Services{
-		Metadata:    metadataSvc,
-		Row:         rowSvc,
-		Schema:      schemaSvc,
-		Derive:      deriveSvc,
-		Import:      importSvc,
-		Geo:         geoSvc,
-		Source:      sourceSvc,
-		Export:      exportSvc,
-		Filter:      filterSvc,
-		Settings:    settingsSvc,
-		Diagnostics: diagnosticsSvc,
+		Metadata:      metadataSvc,
+		Row:           rowSvc,
+		Schema:        schemaSvc,
+		Derive:        deriveSvc,
+		Import:        importSvc,
+		Geo:           geoSvc,
+		Source:        sourceSvc,
+		Export:        exportSvc,
+		Filter:        filterSvc,
+		Settings:      settingsSvc,
+		TableSettings: tableSettingsSvc,
+		Diagnostics:   diagnosticsSvc,
 	}, nil
 }
 

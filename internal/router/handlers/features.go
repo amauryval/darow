@@ -12,6 +12,7 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
+	"darow/internal/service"
 	"darow/internal/settings"
 	"darow/internal/storage"
 )
@@ -77,10 +78,11 @@ type FeaturesHandler struct {
 	schemaService   schemaAPI
 	geoService      geoAPI
 	settings        settingsAPI
+	tableSettings   tableSettingsAPI
 }
 
 // NewFeaturesHandler builds a FeaturesHandler from the service ports it needs.
-func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, settings settingsAPI) *FeaturesHandler {
+func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geoAPI, settings settingsAPI, tableSettings tableSettingsAPI) *FeaturesHandler {
 	return &FeaturesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
@@ -88,6 +90,7 @@ func NewFeaturesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, geoSvc geo
 		schemaService:   schemaSvc,
 		geoService:      geoSvc,
 		settings:        settings,
+		tableSettings:   tableSettings,
 	}
 }
 
@@ -206,13 +209,15 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), fh.settings.Current().MaxSimplifyTolerance, fh.settings.Current().MaxPrecision)
+	resolved := fh.tableSettings.Resolve(meta.TableId)
+	q, err := parseGeoQuery(req, validColumnsExcludingGeometry(schema, meta.GeometryColumn), resolved.MaxSimplifyTolerance, resolved.MaxPrecision)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
+	q.CoordinateDecimals = &resolved.CoordinateDecimals
 
-	offset, limit, err := fh.featuresPaginationParams(req)
+	offset, limit, err := fh.featuresPaginationParams(req, resolved)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -308,7 +313,7 @@ func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Requ
 // out-of-range value is an error, never a silent fallback to the default:
 // Core requires a 400 there, and a client that mistyped a limit must not
 // receive a page it did not ask for.
-func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request) (offset, limit int64, err error) {
+func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request, resolved service.TableSettingsResolved) (offset, limit int64, err error) {
 	offset = 0
 	if raw := req.URL.Query().Get("offset"); raw != "" {
 		offset, err = strconv.ParseInt(raw, 10, 64)
@@ -323,7 +328,7 @@ func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request) (offset, 
 			return 0, 0, fmt.Errorf("invalid limit: %q", raw)
 		}
 	}
-	return offset, settings.FeaturesLimits(fh.settings.Current().MaxFeaturesLimit).Resolve64(limit), nil
+	return offset, resolved.MaxFeaturesLimit.Resolve64(limit), nil
 }
 
 // featureDTO is a GeoJSON Feature — geometry embedded as a raw (already

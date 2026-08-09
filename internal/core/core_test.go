@@ -103,6 +103,7 @@ func Test_Services_Close(t *testing.T) {
 			} else {
 				m := &mocks.Adapter{}
 				m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
+				m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 				var err error
 				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}, m)
 				require.NoError(t, err)
@@ -138,6 +139,7 @@ func Test_Services_Ping(t *testing.T) {
 			} else {
 				m := &mocks.Adapter{}
 				m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
+				m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 				var err error
 				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}, m)
 				require.NoError(t, err)
@@ -151,6 +153,7 @@ func Test_Services_Ping(t *testing.T) {
 func Test_NewServices(t *testing.T) {
 	m := &mocks.Adapter{}
 	m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
+	m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}
 
 	svcs, err := NewServices(cfg, m)

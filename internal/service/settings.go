@@ -110,5 +110,8 @@ func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storag
 	if patch.CacheTTLSec != nil {
 		merged.CacheTTLSec = *patch.CacheTTLSec
 	}
+	if patch.CoordinateDecimals != nil {
+		merged.CoordinateDecimals = *patch.CoordinateDecimals
+	}
 	return merged
 }

@@ -165,7 +165,7 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 	if err != nil {
 		return nil, err
 	}
-	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys)
+	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys, nil)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch geometries of table %q", meta.TableId), err)
 	}
@@ -190,8 +190,9 @@ func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 }
 
 // RowGeometry is one row's geometry, in both the encodings a caller reads
-// it for: GeoJSON to draw it, WKT to copy it. Both are at full resolution,
-// in OGC:CRS84.
+// it for: GeoJSON to draw it, WKT to copy it. WKT is always at full
+// resolution; GeoJSON follows coordinateDecimals (TODO-21). Both are in
+// OGC:CRS84.
 type RowGeometry struct {
 	Pkey    string
 	GeoJSON string
@@ -201,14 +202,15 @@ type RowGeometry struct {
 // RowGeometry returns a single row's geometry, or nil if the row does not
 // exist — the third named exception to never returning the geometry
 // column, alongside export and OGC API - Features: here the geometry is
-// the requested data.
-func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*RowGeometry, error) {
+// the requested data. coordinateDecimals is the caller's already-resolved
+// per-table/global setting (TODO-21), rounding both encodings.
+func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*RowGeometry, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
 
-	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey})
+	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey}, &coordinateDecimals)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}
@@ -217,7 +219,7 @@ func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pke
 		return nil, nil
 	}
 
-	wkt, err := geo.WKTByPkey(ctx, []string{pkey})
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, &coordinateDecimals)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}

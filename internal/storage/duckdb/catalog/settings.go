@@ -13,7 +13,7 @@ import (
 // settingsColumns lists the columns every read scans, in scan order —
 // every Settings field but UpdatedAt, which trails them.
 const settingsColumns = `maxRowLimit, maxListLimit, maxFeaturesLimit, maxSimplifyTolerance,
-    maxPrecision, tileCacheMaxAgeSec, cacheTTLSec, updatedAt`
+    maxPrecision, tileCacheMaxAgeSec, cacheTTLSec, coordinateDecimals, updatedAt`
 
 // settingsSchema is the DDL applied on every startup — already at the
 // latest column set (no accumulated pre-1.0 migration history: see LIM-7).
@@ -31,16 +31,17 @@ CREATE TABLE IF NOT EXISTS settings (
     maxPrecision DOUBLE NOT NULL,
     tileCacheMaxAgeSec INTEGER NOT NULL,
     cacheTTLSec INTEGER NOT NULL,
+    coordinateDecimals INTEGER NOT NULL,
     updatedAt TIMESTAMP DEFAULT NOW()
 );
 
 INSERT INTO settings (id, %s)
-SELECT 1, 0, 0, 0, %f, %f, %d, %d, NOW()
+SELECT 1, 0, 0, 0, %f, %f, %d, %d, %d, NOW()
 WHERE NOT EXISTS (SELECT 1 FROM settings);
 `,
 	settingsColumns,
 	float64(settings.MaxSimplifyTolerance), float64(settings.MaxPrecision),
-	settings.TileCacheMaxAgeSec, settings.CacheTTLSec,
+	settings.TileCacheMaxAgeSec, settings.CacheTTLSec, settings.CoordinateDecimals,
 )
 
 // settingsMigrations are ALTER statements applied in order, once each, to
@@ -74,7 +75,7 @@ func scanSettings(row interface{ Scan(...any) error }) (storage.Settings, error)
 	var s storage.Settings
 	err := row.Scan(
 		&s.MaxRowLimit, &s.MaxListLimit, &s.MaxFeaturesLimit, &s.MaxSimplifyTolerance,
-		&s.MaxPrecision, &s.TileCacheMaxAgeSec, &s.CacheTTLSec, &s.UpdatedAt,
+		&s.MaxPrecision, &s.TileCacheMaxAgeSec, &s.CacheTTLSec, &s.CoordinateDecimals, &s.UpdatedAt,
 	)
 	return s, err
 }
@@ -116,6 +117,9 @@ func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPat
 	}
 	if patch.CacheTTLSec != nil {
 		add("cacheTTLSec", *patch.CacheTTLSec)
+	}
+	if patch.CoordinateDecimals != nil {
+		add("coordinateDecimals", *patch.CoordinateDecimals)
 	}
 
 	if len(sets) == 0 {

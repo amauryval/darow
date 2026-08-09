@@ -20,17 +20,18 @@ import (
 // by its own handler struct, holding only the service ports it actually
 // needs — never the concrete service types.
 type Router struct {
-	tables      *handlers.TablesHandler
-	rows        *handlers.RowsHandler
-	geo         *handlers.GeoHandler
-	features    *handlers.FeaturesHandler
-	sources     *handlers.SourcesHandler
-	filters     *handlers.FiltersHandler
-	export      *handlers.ExportHandler
-	ops         *handlers.OpsHandler
-	settings    *handlers.SettingsHandler
-	settingsCfg config.SettingsConfig
-	uiAssets    fs.FS
+	tables        *handlers.TablesHandler
+	rows          *handlers.RowsHandler
+	geo           *handlers.GeoHandler
+	features      *handlers.FeaturesHandler
+	sources       *handlers.SourcesHandler
+	filters       *handlers.FiltersHandler
+	export        *handlers.ExportHandler
+	ops           *handlers.OpsHandler
+	settings      *handlers.SettingsHandler
+	tableSettings *handlers.TableSettingsHandler
+	settingsCfg   config.SettingsConfig
+	uiAssets      fs.FS
 }
 
 // NewRouter builds a Router serving every service in svcs — every row/list
@@ -44,17 +45,18 @@ func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error, settingsCfg config.SettingsConfig,
 ) *Router {
 	return &Router{
-		tables:      handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings),
-		rows:        handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings),
-		geo:         handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
-		features:    handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
-		sources:     handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
-		filters:     handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
-		export:      handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:         handlers.NewOpsHandler(ready, svcs.Diagnostics),
-		settings:    handlers.NewSettingsHandler(svcs.Settings),
-		settingsCfg: settingsCfg,
-		uiAssets:    uiAssets,
+		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings, svcs.TableSettings),
+		rows:          handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		geo:           handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		features:      handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		sources:       handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
+		filters:       handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
+		export:        handlers.NewExportHandler(svcs.Metadata, svcs.Export),
+		ops:           handlers.NewOpsHandler(ready, svcs.Diagnostics),
+		settings:      handlers.NewSettingsHandler(svcs.Settings),
+		tableSettings: handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
+		settingsCfg:   settingsCfg,
+		uiAssets:      uiAssets,
 	}
 }
 
@@ -119,6 +121,12 @@ func (rt *Router) Setup() http.Handler {
 					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
 
+					sub.Route("/settings", func(sub chi.Router) {
+						sub.Get("/", rt.tableSettings.GetTableSettings)
+						sub.Patch("/", rt.tableSettings.UpdateTableSettings)
+						sub.Delete("/", rt.tableSettings.DeleteTableSettings)
+					})
+
 					sub.Route("/filters", func(sub chi.Router) {
 						sub.Get("/", rt.filters.ListFilters)
 						sub.Post("/", rt.filters.CreateFilter)
@@ -152,6 +160,7 @@ func (rt *Router) Setup() http.Handler {
 			v1.Route("/settings", func(sub chi.Router) {
 				sub.Get("/", rt.settings.GetSettings)
 				sub.Patch("/", rt.settings.UpdateSettings)
+				sub.Get("/tables", rt.tableSettings.ListOverriddenTables)
 			})
 
 			v1.Route("/ogc", func(sub chi.Router) {

@@ -20,14 +20,16 @@ func Test_newTablesHandler(t *testing.T) {
 	deriveSvc := &mockDeriveAPI{}
 	rowSvc := &mockRowAPI{}
 	settings := stubSettingsAPI{settings: storage.Settings{}}
+	tableSettings := stubTableSettingsAPI{}
 
-	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings)
+	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings, tableSettings)
 
 	assert.Same(t, metadataSvc, th.metadataService)
 	assert.Same(t, schemaSvc, th.schemaService)
 	assert.Same(t, deriveSvc, th.deriveService)
 	assert.Same(t, rowSvc, th.rowService)
 	assert.Equal(t, settings, th.settings)
+	assert.Equal(t, tableSettings, th.tableSettings)
 }
 
 func Test_tablesHandler_listTables(t *testing.T) {
@@ -110,7 +112,7 @@ func Test_tablesHandler_getTableMetadata(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc)}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc)}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 
@@ -139,7 +141,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil && c.body.(map[string]string)["tableName"] != "" {
@@ -173,7 +175,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -204,7 +206,7 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &TablesHandler{settings: defaultTestSettings,
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
@@ -242,7 +244,7 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &TablesHandler{settings: defaultTestSettings,
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
@@ -288,7 +290,7 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			deriveSvc := &mockDeriveAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, deriveService: deriveSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, deriveService: deriveSvc}
 
 			deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 
@@ -322,7 +324,7 @@ func Test_tablesHandler_deriveFromTable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			deriveSvc := &mockDeriveAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 			meta := storage.Metadata{TableId: "t1"}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -360,7 +362,7 @@ func Test_tablesHandler_deriveFromTable(t *testing.T) {
 func Test_tablesHandler_deriveFromTable_EmptySpec(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	deriveSvc := &mockDeriveAPI{}
-	th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+	th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 	meta := storage.Metadata{TableId: "t1"}
 
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -404,6 +406,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				schemaService:   schemaSvc,
 				rowService:      rowSvc,
 				settings:        stubSettingsAPI{settings: storage.Settings{}},
+				tableSettings:   stubTableSettingsAPI{},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -456,6 +459,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
 				settings:        stubSettingsAPI{settings: storage.Settings{}},
+				tableSettings:   stubTableSettingsAPI{},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

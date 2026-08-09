@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -70,6 +71,77 @@ func (m *mockSettingsAPI) UpdateSettings(ctx context.Context, patch storage.Sett
 	args := m.Called(ctx, patch)
 	s, _ := args.Get(0).(storage.Settings)
 	return s, args.Error(1)
+}
+
+// stubTableSettingsAPI is a fixed tableSettingsAPI double resolving every
+// table against global, with no per-table override — most handler tests
+// don't exercise the override path itself.
+type stubTableSettingsAPI struct{ global storage.Settings }
+
+var defaultTestTableSettings = stubTableSettingsAPI{global: defaultTestSettings.settings}
+
+var _ tableSettingsAPI = stubTableSettingsAPI{}
+
+func (s stubTableSettingsAPI) Resolve(tableId string) service.TableSettingsResolved {
+	override := storage.TableSettings{TableId: tableId}
+	return service.TableSettingsResolved{
+		MaxRowLimit:          settings.ResolveRowLimits(s.global, override),
+		MaxFeaturesLimit:     settings.ResolveFeaturesLimits(s.global, override),
+		MaxSimplifyTolerance: settings.ResolveMaxSimplifyTolerance(s.global, override),
+		MaxPrecision:         settings.ResolveMaxPrecision(s.global, override),
+		TileCacheMaxAgeSec:   settings.ResolveTileCacheMaxAgeSec(s.global, override),
+		CoordinateDecimals:   settings.ResolveCoordinateDecimals(s.global, override),
+	}
+}
+
+func (s stubTableSettingsAPI) GetOverride(tableId string) storage.TableSettings {
+	return storage.TableSettings{TableId: tableId}
+}
+
+func (s stubTableSettingsAPI) UpdateOverride(ctx context.Context, tableId string, patch storage.TableSettingsPatch) (storage.TableSettings, error) {
+	return storage.TableSettings{TableId: tableId}, nil
+}
+
+func (s stubTableSettingsAPI) DeleteOverride(ctx context.Context, tableId string) error {
+	return nil
+}
+
+func (s stubTableSettingsAPI) ListOverridden(ctx context.Context) ([]storage.TableSettings, error) {
+	return nil, nil
+}
+
+// mockTableSettingsAPI is a testify mock of tableSettingsAPI, for the
+// handful of tests (TableSettingsHandler's own) that assert on call counts.
+type mockTableSettingsAPI struct{ mock.Mock }
+
+var _ tableSettingsAPI = (*mockTableSettingsAPI)(nil)
+
+func (m *mockTableSettingsAPI) Resolve(tableId string) service.TableSettingsResolved {
+	args := m.Called(tableId)
+	r, _ := args.Get(0).(service.TableSettingsResolved)
+	return r
+}
+
+func (m *mockTableSettingsAPI) GetOverride(tableId string) storage.TableSettings {
+	args := m.Called(tableId)
+	o, _ := args.Get(0).(storage.TableSettings)
+	return o
+}
+
+func (m *mockTableSettingsAPI) UpdateOverride(ctx context.Context, tableId string, patch storage.TableSettingsPatch) (storage.TableSettings, error) {
+	args := m.Called(ctx, tableId, patch)
+	o, _ := args.Get(0).(storage.TableSettings)
+	return o, args.Error(1)
+}
+
+func (m *mockTableSettingsAPI) DeleteOverride(ctx context.Context, tableId string) error {
+	return m.Called(ctx, tableId).Error(0)
+}
+
+func (m *mockTableSettingsAPI) ListOverridden(ctx context.Context) ([]storage.TableSettings, error) {
+	args := m.Called(ctx)
+	o, _ := args.Get(0).([]storage.TableSettings)
+	return o, args.Error(1)
 }
 
 type mockDiagnosticsAPI struct{ mock.Mock }
@@ -223,8 +295,8 @@ func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 	return features, args.Error(1)
 }
 
-func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*service.RowGeometry, error) {
-	args := m.Called(ctx, meta, pkey)
+func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*service.RowGeometry, error) {
+	args := m.Called(ctx, meta, pkey, coordinateDecimals)
 	geometry, _ := args.Get(0).(*service.RowGeometry)
 	return geometry, args.Error(1)
 }

@@ -8,6 +8,7 @@ import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import Typography from '../components/ui/Typography.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import SettingsField from '../components/settings/SettingsField.vue'
+import TableOverridesSection from '../components/settings/TableOverridesSection.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
 
@@ -138,6 +139,8 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                             />
                         </div>
                     </details>
+
+                    <TableOverridesSection />
                 </div>
             </div>
 
