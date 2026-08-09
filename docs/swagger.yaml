@@ -897,10 +897,14 @@ paths:
                   name: tableId
                   required: true
                   type: string
-                - description: csv or geojson
+                - description: csv, geojson or parquet
                   in: query
                   name: format
                   type: string
+                - description: EPSG code the geometry is written in (default lon/lat)
+                  in: query
+                  name: srid
+                  type: integer
             produces:
                 - application/json
                 - text/csv

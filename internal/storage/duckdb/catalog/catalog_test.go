@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,6 +129,32 @@ func Test_Catalog_CreateFromQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "widgets", meta.TableName)
 	assert.Zero(t, meta.Srid, "a derived table has no source file, hence no source CRS to report")
+}
+
+// A geo table's bbox is computed inside the creating transaction, which is
+// the only place its physical table is visible: deriving the geometry from
+// the pooled connection there sees no table yet, takes the count-only
+// branch, and commits a geo table with no bbox at all.
+func Test_Catalog_CreateFromQuery_ComputesBboxOfAGeoTable(t *testing.T) {
+	c := newSpatialTestCatalog(t, geoQueryCreator())
+	ctx := context.Background()
+
+	tableId, err := c.CreateFromQuery(ctx, "points", "SELECT 1")
+	require.NoError(t, err)
+
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	assert.True(t, meta.IsGeo)
+	assert.EqualValues(t, 2, meta.RowCount)
+	require.NotEmpty(t, meta.Bbox, "a geo table must leave its creation with a bbox")
+
+	var minX, minY, maxX, maxY float64
+	_, err = fmt.Sscanf(meta.Bbox, "%g,%g,%g,%g", &minX, &minY, &maxX, &maxY)
+	require.NoError(t, err)
+	assert.InDelta(t, 2.35, minX, 0.01)
+	assert.InDelta(t, 45.76, minY, 0.01)
+	assert.InDelta(t, 4.83, maxX, 0.01)
+	assert.InDelta(t, 48.85, maxY, 0.01)
 }
 
 func Test_Catalog_CreateFromQuery_RollsBackOnMaterializationFailure(t *testing.T) {

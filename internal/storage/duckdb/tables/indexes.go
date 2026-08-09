@@ -17,7 +17,7 @@ func (l *Materializer) createSpatialIndex(ctx context.Context, physicalName, geo
 	if err != nil {
 		return err
 	}
-	_, err = l.conn.Exec(ctx, fmt.Sprintf(
+	_, err = l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(
 		`CREATE INDEX idx_%s_geom ON %s USING RTREE (%s)`,
 		physicalName, physicalName, quotedGeom,
 	))
@@ -25,7 +25,7 @@ func (l *Materializer) createSpatialIndex(ctx context.Context, physicalName, geo
 }
 
 func (l *Materializer) createPkeyIndex(ctx context.Context, physicalName string) error {
-	_, err := l.conn.Exec(ctx, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName))
+	_, err := l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(`CREATE UNIQUE INDEX idx_%s_pkey ON %s (__pkey)`, physicalName, physicalName))
 	return err
 }
 
@@ -62,7 +62,7 @@ func (l *Materializer) clusterByHilbert(ctx context.Context, physicalName, geome
 		`CREATE TABLE %s AS SELECT * FROM %s ORDER BY ST_Hilbert(%s, (SELECT ST_Extent(ST_Extent_Agg(%s))::BOX_2D FROM %s))`,
 		tmpName, physicalName, quotedGeom, quotedGeom, physicalName,
 	)
-	return l.tx.WithTx(ctx, func(tx *sql.Tx) error {
+	return l.tx.WithTx(ctx, storage.TxWriteScope, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, createTmp); err != nil {
 			return fmt.Errorf("clustering rows by Hilbert curve: %w", err)
 		}

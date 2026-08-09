@@ -27,11 +27,6 @@ const (
 	CoordinateDecimals   = 6
 )
 
-// ExportBatchSize sizes the batches ExportService streams an export in. Not
-// runtime-editable (IMP-8, TODO-17): it has no observable effect on an
-// export's result, only on how it is produced.
-const ExportBatchSize = 1000
-
 // config.yaml defaults (config.SettingsConfig): the memory/availability
 // guards TODO-17 moved out of the runtime-editable surface — a request body
 // cap, a per-request timeout, and the size of every in-memory LRU cache.

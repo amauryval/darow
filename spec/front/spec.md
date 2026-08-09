@@ -283,7 +283,7 @@ module level and documents it; that is the exception, not the rule.
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
 | `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
-| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds. WFS is a vector source loading over the XYZ grid the tile endpoint is cut along, the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan | present |
+| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source loading over the XYZ grid the tile endpoint is cut along, the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
@@ -442,8 +442,13 @@ per page (the server's own live cap) until the reported `total` is reached.
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `AddColumnModal`, `ColumnsModal`, `GeometryModal` — one modal = one file, never inline modal
-  markup in a view. `GeometryModal` (`components/tables/`) shows one row's geometry in both
+- `AddColumnModal`, `ColumnsModal`, `GeometryModal`, `ExportModal` — one modal = one file, never
+  inline modal markup in a view. `ExportModal` picks the export's format and its output CRS: the
+  EPSG field only shows for a format that carries geometry (never CSV) on a geo table, and comes
+  pre-filled with the table's own CRS, which is also what the server falls back to — leaving it
+  untouched exports the table as it came in. The downloaded file takes the name the server sends in
+  `Content-Disposition` rather than one rebuilt here: for an export that name carries the CRS, which
+  no format states reliably (back LIM-16). `GeometryModal` (`components/tables/`) shows one row's geometry in both
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
   whole value. There is **no** add-row modal: a row is created empty, in the grid, by the session
   itself (§8.3).

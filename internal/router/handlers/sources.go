@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -128,6 +130,16 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
+	}
+
+	// http.Server.ReadTimeout is a hard deadline on reading the whole
+	// request, body included: a source file of any size takes longer than
+	// any value sized for a normal request, and would be cut off mid-body
+	// regardless of the caps. Clearing it here is the read-side mirror of
+	// what ExportTable does for the write deadline, and affects no other
+	// route.
+	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil {
+		slog.Warn("could not clear read deadline for upload", "error", err)
 	}
 
 	file, header, err := req.FormFile("file")

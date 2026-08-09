@@ -6,12 +6,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_TableColumns(t *testing.T) {
 	conn := openRepoTestDB(t)
 	ctx := context.Background()
-	_, err := conn.Exec(ctx, `CREATE TABLE t_widgets (__pkey TEXT, label TEXT DEFAULT 'x' NOT NULL, geom GEOMETRY)`)
+	_, err := conn.Exec(ctx, storage.GlobalWriteScope, `CREATE TABLE t_widgets (__pkey TEXT, label TEXT DEFAULT 'x' NOT NULL, geom GEOMETRY)`)
 	require.NoError(t, err)
 
 	cols, err := tableColumns(ctx, conn, "t_widgets")
@@ -136,9 +138,9 @@ func Test_TableIndexes(t *testing.T) {
 	conn := openRepoTestDB(t)
 	ctx := context.Background()
 	newGeoTestTable(t, conn)
-	_, err := conn.Exec(ctx, `CREATE UNIQUE INDEX idx_t_geo_pkey ON t_geo (__pkey)`)
+	_, err := conn.Exec(ctx, storage.GlobalWriteScope, `CREATE UNIQUE INDEX idx_t_geo_pkey ON t_geo (__pkey)`)
 	require.NoError(t, err)
-	_, err = conn.Exec(ctx, `CREATE INDEX idx_t_geo_geom ON t_geo USING RTREE (geom)`)
+	_, err = conn.Exec(ctx, storage.GlobalWriteScope, `CREATE INDEX idx_t_geo_geom ON t_geo USING RTREE (geom)`)
 	require.NoError(t, err)
 
 	indexes, err := tableIndexes(ctx, conn, "t_geo")

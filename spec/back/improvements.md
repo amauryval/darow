@@ -18,5 +18,7 @@ IMP-13 and IMP-14, leads for an OGC API - Tiles facade, were dropped on 2026-08-
 itself was declined (`limitations.md` LIM-14) — and did not become todos. IMP-8, IMP-10, IMP-11 and
 IMP-12 were decided on 2026-08-07 (all four taken up) and became [todo.md](todo.md) TODO-17. The
 seven leads this file held before them (IMP-1 through IMP-7) were taken up in the audit of
-2026-08-06 and became TODO-9 through TODO-15. A retired identifier is never reused, so the next lead
-recorded here takes `IMP-15`.
+2026-08-06 and became TODO-9 through TODO-15. IMP-15, lifting the process-wide write lock, was taken
+up and implemented on 2026-08-09: writes now serialize per `storage.WriteScope` rather than globally,
+so the entry left this file without becoming a todo (`limitations.md` LIM-3 records what remains).
+A retired identifier is never reused, so the next lead recorded here takes `IMP-16`.

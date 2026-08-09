@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,50 @@ func Test_Repository_CreateAndGetMetadata(t *testing.T) {
 	assert.False(t, meta.IsGeo)
 	assert.Contains(t, meta.PhysicalName, "t_")
 	assert.Zero(t, meta.Srid, "a freshly created table has no source CRS to report")
+}
+
+func Test_Repository_CreateWithId(t *testing.T) {
+	cases := []struct {
+		name    string
+		tableId string
+		taken   bool
+		wantErr bool
+	}{
+		{
+			name:    "caller-generated identifier is the one stored",
+			tableId: "0c1c9f4e-1f2a-4f1e-9c1a-2b3c4d5e6f70",
+		},
+		{
+			name:    "identifier already registered",
+			tableId: "0c1c9f4e-1f2a-4f1e-9c1a-2b3c4d5e6f70",
+			taken:   true,
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newTestRepository(t)
+			ctx := context.Background()
+
+			if c.taken {
+				require.NoError(t, r.CreateWithId(ctx, c.tableId, "first"))
+			}
+
+			err := r.CreateWithId(ctx, c.tableId, "widgets")
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			meta, err := r.GetMetadata(ctx, c.tableId)
+			require.NoError(t, err)
+			assert.Equal(t, c.tableId, meta.TableId)
+			assert.Equal(t, "widgets", meta.TableName)
+			assert.Equal(t, "t_"+strings.ReplaceAll(c.tableId, "-", ""), meta.PhysicalName)
+		})
+	}
 }
 
 func Test_Repository_GetMetadata_NotFound(t *testing.T) {
@@ -131,6 +176,65 @@ func Test_Repository_UpdateMetadata_RenamesTable(t *testing.T) {
 	assert.Equal(t, "gadgets", meta.TableName)
 }
 
+func Test_Repository_RefreshMissingBbox(t *testing.T) {
+	cases := []struct {
+		name     string
+		geo      bool
+		bbox     string
+		wantBbox bool
+	}{
+		{
+			name:     "a geo table left without a bbox is repaired",
+			geo:      true,
+			wantBbox: true,
+		},
+		{
+			name:     "a geo table that already has one is left alone",
+			geo:      true,
+			bbox:     "1,2,3,4",
+			wantBbox: true,
+		},
+		{
+			name: "a table with no geometry stays without one",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, conn := newSpatialTestRepository(t)
+			ctx := context.Background()
+
+			var tableId string
+			if c.geo {
+				tableId, _ = newGeoTable(t, r, conn)
+			} else {
+				var err error
+				tableId, err = r.Create(ctx, "plain")
+				require.NoError(t, err)
+				meta, err := r.GetMetadata(ctx, tableId)
+				require.NoError(t, err)
+				_, err = conn.Exec(ctx, storage.GlobalWriteScope, fmt.Sprintf(`CREATE TABLE %s AS SELECT 'pk-1' AS __pkey`, meta.PhysicalName))
+				require.NoError(t, err)
+			}
+			_, err := conn.Exec(ctx, storage.GlobalWriteScope, `UPDATE metadata SET bbox = ? WHERE tableId = ?`, c.bbox, tableId)
+			require.NoError(t, err)
+
+			require.NoError(t, r.RefreshMissingBbox(ctx))
+
+			meta, err := r.GetMetadata(ctx, tableId)
+			require.NoError(t, err)
+			if !c.wantBbox {
+				assert.Empty(t, meta.Bbox)
+				return
+			}
+			require.NotEmpty(t, meta.Bbox)
+			if c.bbox != "" {
+				assert.Equal(t, c.bbox, meta.Bbox, "an existing bbox is not recomputed")
+			}
+		})
+	}
+}
+
 func Test_Repository_RefreshDerivedMetadata_RecomputesRowCount(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
@@ -139,7 +243,7 @@ func Test_Repository_RefreshDerivedMetadata_RecomputesRowCount(t *testing.T) {
 	require.NoError(t, err)
 	meta, err := r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
-	_, err = r.conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS SELECT 'pk-1' AS __pkey`, meta.PhysicalName))
+	_, err = r.conn.Exec(ctx, storage.GlobalWriteScope, fmt.Sprintf(`CREATE TABLE %s AS SELECT 'pk-1' AS __pkey`, meta.PhysicalName))
 	require.NoError(t, err)
 
 	require.NoError(t, r.RefreshDerivedMetadata(ctx, tableId, false))
@@ -177,7 +281,7 @@ func Test_Repository_RefreshDerivedMetadata_CountsRowsWithoutGeometry(t *testing
 	r, conn := newSpatialTestRepository(t)
 	ctx := context.Background()
 	tableId, meta := newGeoTable(t, r, conn)
-	_, err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s VALUES (uuid()::TEXT, 'c', NULL)`, meta.PhysicalName))
+	_, err := conn.Exec(ctx, storage.GlobalWriteScope, fmt.Sprintf(`INSERT INTO %s VALUES (uuid()::TEXT, 'c', NULL)`, meta.PhysicalName))
 	require.NoError(t, err)
 
 	require.NoError(t, r.RefreshDerivedMetadata(ctx, tableId, true))
@@ -203,7 +307,7 @@ func Test_Repository_RefreshDerivedMetadata_PreservesBboxWhenNotTouchingGeometry
 	require.NoError(t, err)
 	require.NotEmpty(t, before.Bbox)
 
-	_, err = conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s VALUES (uuid()::TEXT, 'c', NULL)`, meta.PhysicalName))
+	_, err = conn.Exec(ctx, storage.GlobalWriteScope, fmt.Sprintf(`INSERT INTO %s VALUES (uuid()::TEXT, 'c', NULL)`, meta.PhysicalName))
 	require.NoError(t, err)
 
 	require.NoError(t, r.RefreshDerivedMetadata(ctx, tableId, false))

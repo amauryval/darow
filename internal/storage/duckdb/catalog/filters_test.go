@@ -106,7 +106,7 @@ func Test_Catalog_Remove_CascadesToStoredFilters(t *testing.T) {
 	conn := dbQuerier{db}
 	ctx := context.Background()
 
-	c := New(conn, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), fakeFileCreator(nil), fakeQueryCreator(nil))
+	c := New(conn, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), dbGeometryInfoTx(), fakeFileCreator(nil), fakeQueryCreator(nil))
 	filters := NewFilters(conn)
 	c.Register(filters)
 

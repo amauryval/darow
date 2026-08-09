@@ -21,7 +21,9 @@
             "Bash(swag init *)",
             "Bash(echo \"exit=$?\")",
             "Bash(awk:*)",
-            "Bash(gofmt -l internal/)"
+            "Bash(gofmt -l internal/)",
+            "WebSearch",
+            "Bash(gofmt -w internal/storage/)"
         ],
         "deny": [
             "Bash(git merge:*)",

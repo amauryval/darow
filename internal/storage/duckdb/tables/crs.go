@@ -144,7 +144,7 @@ func (l *Materializer) reprojectToWebMercator(ctx context.Context, physicalName,
 		`UPDATE %s SET %s = ST_Transform(%s, ?, 'EPSG:3857')`,
 		physicalName, quotedGeom, quotedGeom,
 	)
-	if _, err := l.conn.Exec(ctx, updateQuery, sourceCRS); err != nil {
+	if _, err := l.conn.Exec(ctx, storage.TxWriteScope, updateQuery, sourceCRS); err != nil {
 		return fmt.Errorf("reprojecting geometry: %w", err)
 	}
 	return nil

@@ -58,6 +58,9 @@ type TableRepository interface {
 	// Types is Schema reshaped into a column-name-to-type map.
 	Types(ctx context.Context) (map[string]string, error)
 	AddColumn(ctx context.Context, colName, colType string) error
+	// CopyTo writes the whole table to req.DestPath in req.Format, through
+	// DuckDB's own COPY.
+	CopyTo(ctx context.Context, req ExportRequest) error
 	Count(ctx context.Context) (int64, error)
 	Rows() RowRepository
 	// Geo returns this table's GeoRepository and true when the table is

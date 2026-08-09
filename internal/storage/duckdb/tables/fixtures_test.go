@@ -20,7 +20,7 @@ import (
 // the repository tests resolve against. It tests nothing itself.
 
 // dbConn adapts a plain *sql.DB to Querier and TxRunner for tests — no
-// writeMu to serialize against, since these tests never run concurrent
+// scope lock to serialize against, since these tests never run concurrent
 // writes.
 type dbConn struct{ db *sql.DB }
 
@@ -30,10 +30,10 @@ func (c dbConn) Query(ctx context.Context, query string, args ...any) (*sql.Rows
 func (c dbConn) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
 	return c.db.QueryRowContext(ctx, query, args...)
 }
-func (c dbConn) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+func (c dbConn) Exec(ctx context.Context, _ storage.WriteScope, query string, args ...any) (sql.Result, error) {
 	return c.db.ExecContext(ctx, query, args...)
 }
-func (c dbConn) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (c dbConn) WithTx(ctx context.Context, _ storage.WriteScope, fn func(tx *sql.Tx) error) error {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -150,7 +150,7 @@ func lambert93Fixture(t *testing.T) string {
 // Parquet-writing tool is needed for a fixture.
 func parquetFixture(t *testing.T, conn dbConn, selectSQL string) string {
 	path := filepath.Join(t.TempDir(), "fixture.parquet")
-	_, err := conn.Exec(context.Background(), fmt.Sprintf(
+	_, err := conn.Exec(context.Background(), storage.GlobalWriteScope, fmt.Sprintf(
 		`COPY (%s) TO '%s' (FORMAT PARQUET)`, selectSQL, path,
 	))
 	require.NoError(t, err)

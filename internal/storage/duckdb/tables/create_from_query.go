@@ -56,7 +56,7 @@ func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, source
 	}
 
 	wrapped := fmt.Sprintf(`SELECT uuid()::TEXT AS __pkey, %s FROM (%s) __derive_source`, wildcard, sourceQuery)
-	if _, err := l.conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, wrapped), args...); err != nil {
+	if _, err := l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(`CREATE TABLE %s AS %s`, physicalName, wrapped), args...); err != nil {
 		return "", false, fmt.Errorf("materializing derived table: %w", err)
 	}
 

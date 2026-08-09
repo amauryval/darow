@@ -125,7 +125,7 @@ func (r *TableSettings) UpdateTableSettings(ctx context.Context, tableId string,
 		return storage.TableSettings{TableId: tableId}, nil
 	}
 
-	if _, err := r.conn.Exec(ctx, fmt.Sprintf(`
+	if _, err := r.conn.Exec(ctx, storage.TableWriteScope(tableId), fmt.Sprintf(`
         INSERT INTO table_settings (%s)
         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         ON CONFLICT (tableId) DO UPDATE SET
@@ -148,7 +148,7 @@ func (r *TableSettings) UpdateTableSettings(ctx context.Context, tableId string,
 // DeleteTableSettings drops every override of tableId. Deleting a table with
 // none is not an error: the caller's intent is already satisfied.
 func (r *TableSettings) DeleteTableSettings(ctx context.Context, tableId string) error {
-	_, err := r.conn.Exec(ctx, `DELETE FROM table_settings WHERE tableId = ?`, tableId)
+	_, err := r.conn.Exec(ctx, storage.TableWriteScope(tableId), `DELETE FROM table_settings WHERE tableId = ?`, tableId)
 	return err
 }
 

@@ -72,7 +72,7 @@ func (t *table) AddColumn(ctx context.Context, colName, colType string) error {
 		return err
 	}
 
-	_, err = t.conn.Exec(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, t.ref.PhysicalName, quotedCol, colType))
+	_, err = t.conn.Exec(ctx, storage.TableWriteScope(t.ref.Meta.TableId), fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, t.ref.PhysicalName, quotedCol, colType))
 	return err
 }
 

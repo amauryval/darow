@@ -261,18 +261,18 @@ func (r *tableRows) Insert(ctx context.Context, values map[string]any) (string, 
 		return "", err
 	}
 
-	if _, err := r.conn.Exec(ctx, query, args...); err != nil {
+	if _, err := r.conn.Exec(ctx, storage.TableWriteScope(r.ref.Meta.TableId), query, args...); err != nil {
 		return "", wrapWriteError(err, writesGeometry)
 	}
 	return pkey, nil
 }
 
 // InsertMany inserts every row in a single transaction, held
-// under writeMu for its whole duration by the adapter's
+// under its table's write scope for its whole duration by the adapter's
 // WithTx.
 func (r *tableRows) InsertMany(ctx context.Context, rows []map[string]any) ([]string, error) {
 	pkeys := make([]string, 0, len(rows))
-	err := r.tx.WithTx(ctx, func(tx *sql.Tx) error {
+	err := r.tx.WithTx(ctx, storage.TableWriteScope(r.ref.Meta.TableId), func(tx *sql.Tx) error {
 		for _, values := range rows {
 			pkey, query, args, writesGeometry, err := buildInsert(r.ref, values)
 			if err != nil {
@@ -330,14 +330,14 @@ func (r *tableRows) Update(ctx context.Context, pkeys []string, updates map[stri
 	if err != nil {
 		return err
 	}
-	if _, err := r.conn.Exec(ctx, query, args...); err != nil {
+	if _, err := r.conn.Exec(ctx, storage.TableWriteScope(r.ref.Meta.TableId), query, args...); err != nil {
 		return wrapWriteError(err, writesGeometry)
 	}
 	return nil
 }
 
 // UpdateMany applies a different set of values to each row, in a single
-// transaction held under writeMu for its whole duration: a topological edit
+// transaction held under the table's write scope for its whole duration: a topological edit
 // moves a shared boundary on several rows at once, and half of it landing
 // is a corrupted boundary, not a partial success.
 func (r *tableRows) UpdateMany(ctx context.Context, updates []storage.RowUpdate) error {
@@ -345,7 +345,7 @@ func (r *tableRows) UpdateMany(ctx context.Context, updates []storage.RowUpdate)
 		return nil
 	}
 
-	return r.tx.WithTx(ctx, func(tx *sql.Tx) error {
+	return r.tx.WithTx(ctx, storage.TableWriteScope(r.ref.Meta.TableId), func(tx *sql.Tx) error {
 		for _, update := range updates {
 			if len(update.Values) == 0 {
 				continue
@@ -368,6 +368,6 @@ func (r *tableRows) Delete(ctx context.Context, pkeys []string) error {
 		return nil
 	}
 	pkeyIn, args := pkeyInClause(pkeys)
-	_, err := r.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE %s`, r.ref.PhysicalName, pkeyIn), args...)
+	_, err := r.conn.Exec(ctx, storage.TableWriteScope(r.ref.Meta.TableId), fmt.Sprintf(`DELETE FROM %s WHERE %s`, r.ref.PhysicalName, pkeyIn), args...)
 	return err
 }

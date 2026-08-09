@@ -8,6 +8,7 @@ web/tsconfig.tsbuildinfo
 # index.html is kept as a tracked placeholder so `go:embed` always has at
 # least one file on a fresh clone, before the UI has been built.
 internal/webui/dist/*
+!internal/webui/dist/index.html
 data/geo.db
 data/sources/*.gpkg
 data/geo.db.wal

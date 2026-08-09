@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"testing/fstest"
 
@@ -57,7 +58,10 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 	m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 	m.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, nil).Maybe()
 
-	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: settingsCfg}
+	cfg := config.Config{
+		Sources:  config.SourcesConfig{WorkDir: t.TempDir(), MaxSizeBytes: 50 * 1024 * 1024},
+		Settings: settingsCfg,
+	}
 	svcs, err := core.NewServices(cfg, m)
 	require.NoError(t, err)
 
@@ -147,6 +151,39 @@ func Test_Router_Setup(t *testing.T) {
 			method:            http.MethodPost,
 			path:              "/api/v1/tables/id-1/rows",
 			contentLength:     999 * 1024 * 1024,
+			wantStatus:        http.StatusRequestEntityTooLarge,
+			wantErrorContains: "exceeds",
+		},
+		{
+			// The upload carries its own, larger cap and is registered
+			// outside the group applying the global one: nested, the
+			// smaller of the two would apply and a source file would be
+			// refused against a JSON-sized limit.
+			name:     "the upload escapes the global body cap",
+			settings: defaultTestSettings(),
+			settingsCfg: func() config.SettingsConfig {
+				c := defaultTestSettingsConfig()
+				c.MaxBodyBytes = 10
+				return c
+			}(),
+			method:        http.MethodPost,
+			path:          "/api/v1/sources/upload",
+			contentLength: 1024 * 1024,
+			wantStatus:    http.StatusBadRequest,
+		},
+		{
+			// Its own cap still applies: past sources.maxSizeBytes the
+			// upload is refused like any oversized body.
+			name:     "the upload is still capped by its own limit",
+			settings: defaultTestSettings(),
+			settingsCfg: func() config.SettingsConfig {
+				c := defaultTestSettingsConfig()
+				c.MaxBodyBytes = 10
+				return c
+			}(),
+			method:            http.MethodPost,
+			path:              "/api/v1/sources/upload",
+			contentLength:     100 * 1024 * 1024,
 			wantStatus:        http.StatusRequestEntityTooLarge,
 			wantErrorContains: "exceeds",
 		},
@@ -254,11 +291,12 @@ func Test_Router_Setup(t *testing.T) {
 			_, exportRouteHadDeadline = args.Get(0).(context.Context).Deadline()
 		})
 		tableRepo := &mocks.TableRepository{}
-		rowRepo := &mocks.RowRepository{}
 		deps.storage.On("Table", storage.Metadata{TableId: "id-2", TableName: "gadgets"}).Return(tableRepo, nil)
-		tableRepo.On("Schema", mock.Anything).Return([]storage.ColumnInfo{}, nil).Once()
-		tableRepo.On("Rows").Return(rowRepo)
-		rowRepo.On("Page", mock.Anything, []storage.SortField(nil), int64(0), int64(1000)).Return([]storage.Row{}, nil).Once()
+		tableRepo.On("CopyTo", mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+			req, ok := args.Get(1).(storage.ExportRequest)
+			require.True(t, ok)
+			require.NoError(t, os.WriteFile(req.DestPath, []byte("pkey\n"), 0o600))
+		})
 
 		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 

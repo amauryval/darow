@@ -37,7 +37,11 @@ export function useMvtLayer(
             // The tile carries the row's pkey; promoting it to the feature's id is
             // what lets a selection survive a tile reload, since a feature is
             // rebuilt from scratch on every pan.
-            format: new MVT({ idProperty: 'pkey', layers: ['layer'] }),
+            //
+            // The server names the MVT layer after the tableId (back §4.7), so the
+            // name is read off the same identifier the URL is built from — naming a
+            // fixed one here would silently parse zero feature out of a full tile.
+            format: new MVT({ idProperty: 'pkey', layers: [tableId.value] }),
             tileGrid: grid,
             url: tileUrl(tableId.value, conditions.value, version.value)
         })

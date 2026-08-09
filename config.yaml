@@ -13,16 +13,16 @@ server:
 
 duckdb:
     path: './data/geo.db'
-    maxSizeBytes: 5368709120 # hard cap on the database's on-disk size, in bytes; 0 = unlimited (5 Go)
+    maxSizeBytes: 53687091200 # plafond dur de la base sur disque, en octets ; 0 = illimité (50 Go)
     maxOpenConns: 20
 
 sources:
     workDir: './data/sources'
-    maxSizeBytes: 1048576000 # 1000 Mo
+    maxSizeBytes: 10737418240 # 10 Go — taille maximale d'un fichier source téléversé
     allowedExtensions: ['.geojson', '.shp', '.csv', '.gpkg', '.parquet']
 
 settings:
-    maxBodyBytes: 10485760 # 10 Mo — request body cap
+    maxBodyBytes: 10485760 # 10 Mo — cap des corps JSON ; l'upload a le sien (sources.maxSizeBytes)
     requestTimeoutSec: 30
     cacheMaxItems: 1000 # shared by the metadata and schema LRU caches
     tileMaxItems: 5000

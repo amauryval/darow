@@ -251,3 +251,7 @@ export type TableSettingsPatch = Partial<Record<TableSettingsFieldKey, number | 
 export interface TableSettingsOverridesPage {
     tables: TableSettings[]
 }
+
+// ExportFormat mirrors storage.ExportFormat: csv carries no geometry, the
+// other two do and are the only ones an output CRS applies to (back §5.6).
+export type ExportFormat = 'csv' | 'geojson' | 'parquet'

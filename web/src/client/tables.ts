@@ -2,6 +2,7 @@ import { del, get, getBlob, patch, post } from './http'
 import type {
     ColumnDTO,
     DeriveSpec,
+    ExportFormat,
     FilterCondition,
     Metadata,
     Row,
@@ -134,15 +135,19 @@ export function deriveTableFromTable(
 // every other action uses.
 export async function exportTable(
     tableId: string,
-    format: 'csv' | 'geojson',
+    format: ExportFormat,
+    srid: number | null,
     tableName: string
 ): Promise<void> {
-    const blob = await getBlob(`/tables/${tableId}/export?format=${format}`)
+    const params = new URLSearchParams({ format })
+    if (srid !== null) params.set('srid', String(srid))
+
+    const { blob, filename } = await getBlob(`/tables/${tableId}/export?${params}`)
     const url = URL.createObjectURL(blob)
     try {
         const link = document.createElement('a')
         link.href = url
-        link.download = `${tableName}.${format}`
+        link.download = filename ?? `${tableName}.${format}`
         link.click()
     } finally {
         URL.revokeObjectURL(url)

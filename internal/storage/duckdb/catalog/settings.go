@@ -131,7 +131,7 @@ func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPat
 	args = append(args, time.Now())
 
 	query := fmt.Sprintf(`UPDATE settings SET %s WHERE id = 1`, strings.Join(sets, ", "))
-	if _, err := r.conn.Exec(ctx, query, args...); err != nil {
+	if _, err := r.conn.Exec(ctx, storage.GlobalWriteScope, query, args...); err != nil {
 		return storage.Settings{}, err
 	}
 	return r.GetSettings(ctx)
