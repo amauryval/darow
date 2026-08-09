@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -31,6 +32,25 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 	types, err := geo.Types(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"POINT"}, types)
+}
+
+// The MVT layer is named after the table's public id, not a fixed "layer"
+// literal (TODO-23): two tables loaded into the same client-side map must
+// not collide under the same layer name. ST_AsMVT encodes the layer name
+// as a length-prefixed protobuf string field, so the raw bytes contain it
+// verbatim.
+func Test_GeoRepository_Tile_LayerNamedAfterTableId(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+
+	mvt, err := geo.Tile(context.Background(), 0, 0, 0, nil, storage.GeoQuery{})
+	require.NoError(t, err)
+
+	assert.True(t, bytes.Contains(mvt, []byte("id-geo")), "MVT layer should be named after the table id")
+	assert.False(t, bytes.Contains(mvt, []byte("layer")), "MVT should no longer carry the fixed \"layer\" name")
 }
 
 func Test_GeoRepository_ValidateGeometries(t *testing.T) {

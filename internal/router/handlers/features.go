@@ -22,6 +22,7 @@ const (
 	mediaTypeJSON    = "application/json"
 	mediaTypeGeoJSON = "application/geo+json"
 	mediaTypeHTML    = "text/html"
+	mediaTypeMVT     = "application/vnd.mapbox-vector-tile"
 )
 
 // baseURL reports the scheme and host the client used to reach this server,

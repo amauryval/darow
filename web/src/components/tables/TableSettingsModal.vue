@@ -116,7 +116,13 @@ async function onResetAll() {
 </script>
 
 <template>
-    <Modal title="Paramètres de la table" :dirty="isDirty" @close="emit('close')" @submit="onSave">
+    <Modal
+        title="Paramètres de la table"
+        wide
+        :dirty="isDirty"
+        @close="emit('close')"
+        @submit="onSave"
+    >
         <Skeleton v-if="loading && !loadedOnce" :rows="4" />
         <ErrorState v-else-if="error" :message="error" @retry="retry" />
 

@@ -36,6 +36,8 @@ definitions:
                 items:
                     type: string
                 type: array
+            maxSizeBytes:
+                type: integer
             memoryUsageBytes:
                 type: integer
             temporaryFilesBytes:

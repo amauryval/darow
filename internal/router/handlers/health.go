@@ -11,14 +11,16 @@ import (
 // OpsHandler serves the liveness/readiness probes and the diagnostics
 // snapshot used by an orchestrator or an operator.
 type OpsHandler struct {
-	ready       func(ctx context.Context) error
-	diagnostics diagnosticsAPI
+	ready        func(ctx context.Context) error
+	diagnostics  diagnosticsAPI
+	maxSizeBytes int64
 }
 
-// NewOpsHandler builds an OpsHandler from the readiness probe and the
-// diagnostics service it needs.
-func NewOpsHandler(ready func(ctx context.Context) error, diagnostics diagnosticsAPI) *OpsHandler {
-	return &OpsHandler{ready: ready, diagnostics: diagnostics}
+// NewOpsHandler builds an OpsHandler from the readiness probe, the
+// diagnostics service, and the configured database size cap
+// (duckdb.maxSizeBytes, 0 meaning unlimited).
+func NewOpsHandler(ready func(ctx context.Context) error, diagnostics diagnosticsAPI, maxSizeBytes int64) *OpsHandler {
+	return &OpsHandler{ready: ready, diagnostics: diagnostics, maxSizeBytes: maxSizeBytes}
 }
 
 // Healthz reports that the process itself is alive, regardless of storage
@@ -51,19 +53,23 @@ func (oh *OpsHandler) Readyz(w http.ResponseWriter, req *http.Request) {
 }
 
 // diagnosticsDTO is the JSON representation of a Diagnostics snapshot.
+// MaxSizeBytes is duckdb.maxSizeBytes from config, not part of
+// storage.Diagnostics itself — 0 means unlimited.
 type diagnosticsDTO struct {
 	DatabaseSizeBytes   int64    `json:"databaseSizeBytes"`
 	MemoryUsageBytes    int64    `json:"memoryUsageBytes"`
 	TemporaryFilesBytes int64    `json:"temporaryFilesBytes"`
 	Extensions          []string `json:"extensions"`
+	MaxSizeBytes        int64    `json:"maxSizeBytes"`
 }
 
-func toDiagnosticsDTO(d storage.Diagnostics) diagnosticsDTO {
+func toDiagnosticsDTO(d storage.Diagnostics, maxSizeBytes int64) diagnosticsDTO {
 	return diagnosticsDTO{
 		DatabaseSizeBytes:   d.DatabaseSizeBytes,
 		MemoryUsageBytes:    d.MemoryUsageBytes,
 		TemporaryFilesBytes: d.TemporaryFilesBytes,
 		Extensions:          d.Extensions,
+		MaxSizeBytes:        maxSizeBytes,
 	}
 }
 
@@ -83,5 +89,5 @@ func (oh *OpsHandler) Diagnostics(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	response.WriteJSON(w, http.StatusOK, toDiagnosticsDTO(d))
+	response.WriteJSON(w, http.StatusOK, toDiagnosticsDTO(d, oh.maxSizeBytes))
 }

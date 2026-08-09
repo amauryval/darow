@@ -38,7 +38,7 @@ async function copy(url: string) {
 </script>
 
 <template>
-    <Modal title="Routes API de la table" wide @close="emit('close')">
+    <Modal title="Routes API de la table" xl @close="emit('close')">
         <div class="flex max-h-96 flex-col gap-4 overflow-y-auto pr-1">
             <div v-for="g in groups" :key="g.group" class="flex flex-col gap-1.5">
                 <Typography variant="eyebrow">{{ g.group }}</Typography>

@@ -113,10 +113,16 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 	// zoom where the feature is sub-pixel, and the invalid geometry it can
 	// leave behind is tolerated by MVT renderers and already caught by the
 	// TRY/NULL filter above.
+	// The layer is named after the public table id, not "layer": two
+	// tables loaded into the same client-side map must not collide under
+	// the same layer name (TODO-23). TableId is server-generated and never
+	// user-supplied at request time, but is still escaped like the attr
+	// struct keys above, since it is inlined as a SQL string literal.
+	layerName := strings.ReplaceAll(g.ref.Meta.TableId, "'", "''")
 	query := fmt.Sprintf(`
         SELECT ST_AsMVT(
             {'geom': mvt_geom, 'pkey': pkey%s},
-            'layer'
+            '%s'
         ) AS mvt
         FROM (
             SELECT TRY(ST_AsMVTGeom(ST_Simplify(%s, ?), ST_Extent(%s))) AS mvt_geom, __pkey AS pkey%s
@@ -124,7 +130,7 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
             %s
         )
         WHERE mvt_geom IS NOT NULL
-    `, strings.Join(structFields, ""), quotedGeom, envelope, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
+    `, strings.Join(structFields, ""), layerName, quotedGeom, envelope, strings.Join(attrSelects, ""), g.ref.PhysicalName, where)
 
 	var mvt []byte
 	err := g.conn.QueryRow(ctx, query, args...).Scan(&mvt)

@@ -42,7 +42,8 @@ type Router struct {
 // uiAssets is the admin UI's built static files, served under /ui. ready
 // backs /readyz — it should ping the underlying storage connection.
 func NewRouter(
-	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error, settingsCfg config.SettingsConfig,
+	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
+	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64,
 ) *Router {
 	return &Router{
 		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings, svcs.TableSettings),
@@ -52,7 +53,7 @@ func NewRouter(
 		sources:       handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
 		filters:       handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:        handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:           handlers.NewOpsHandler(ready, svcs.Diagnostics),
+		ops:           handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
 		settings:      handlers.NewSettingsHandler(svcs.Settings),
 		tableSettings: handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
 		settingsCfg:   settingsCfg,

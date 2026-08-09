@@ -55,7 +55,7 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings)
+	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes)
 
 	srv := &http.Server{
 		Addr:         "localhost:" + strconv.Itoa(cfg.Server.Port),

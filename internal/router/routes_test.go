@@ -70,7 +70,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 }
 
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
-	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg)
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0)
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {

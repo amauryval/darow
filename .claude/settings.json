@@ -19,16 +19,8 @@
             "Bash(xargs -I{} basename {})",
             "Bash(gofmt -l internal/config)",
             "Bash(swag init *)",
-            "Bash(grep -n \"^#\\\\{1,3\\\\} \" spec/back/spec.md)",
-            "Bash(grep -n \"^#\\\\{1,3\\\\} \" spec/front/spec.md spec/project/spec.md)",
-            "Bash(grep -n '``' spec/index.md)",
-            "Bash(gofmt -l internal cmd)",
-            "Bash(gofmt -l internal/router/handlers/features.go internal/router/handlers/dto.go internal/router/handlers/features_test.go)",
-            "Bash(gofmt -l internal/router/handlers internal/storage/settings.go)",
-            "Bash(gofmt -l internal)",
-            "Bash(gofmt -w internal/router/handlers/settings_test.go)",
-            "Bash(git -C /home/amauryvalorge.guest/gogeoserver diff --stat)",
-            "Bash(echo \"exit=$?\")"
+            "Bash(echo \"exit=$?\")",
+            "Bash(awk:*)"
         ],
         "deny": [
             "Bash(git merge:*)",

@@ -12,8 +12,14 @@ import Typography from './Typography.vue'
 // content — a scrollbar appears and the list is clipped at the box's edge.
 // A modal short enough not to need scrolling lets it spill over instead.
 const props = withDefaults(
-    defineProps<{ title: string; wide?: boolean; dirty?: boolean; overflowVisible?: boolean }>(),
-    { wide: false, dirty: false, overflowVisible: false }
+    defineProps<{
+        title: string
+        wide?: boolean
+        xl?: boolean
+        dirty?: boolean
+        overflowVisible?: boolean
+    }>(),
+    { wide: false, xl: false, dirty: false, overflowVisible: false }
 )
 const emit = defineEmits<{ close: []; submit: [] }>()
 
@@ -62,7 +68,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
                 ref="box"
                 class="modal-box"
                 :class="[
-                    props.wide ? 'max-w-2xl' : 'max-w-md',
+                    props.xl ? 'max-w-4xl' : props.wide ? 'max-w-2xl' : 'max-w-md',
                     { 'overflow-visible': props.overflowVisible }
                 ]"
             >

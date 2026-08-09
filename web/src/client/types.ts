@@ -3,6 +3,8 @@ export interface Diagnostics {
     memoryUsageBytes: number
     temporaryFilesBytes: number
     extensions: string[]
+    // duckdb.maxSizeBytes from config.yaml — 0 means unlimited.
+    maxSizeBytes: number
 }
 
 export interface Metadata {

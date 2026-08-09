@@ -2027,6 +2027,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "maxSizeBytes": {
+                    "type": "integer"
+                },
                 "memoryUsageBytes": {
                     "type": "integer"
                 },

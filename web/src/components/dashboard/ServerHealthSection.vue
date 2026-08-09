@@ -9,6 +9,7 @@ import Badge from '../ui/Badge.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import ErrorState from '../ui/ErrorState.vue'
 import BarChart from '../charts/BarChart.vue'
+import DonutChart from '../charts/DonutChart.vue'
 
 const props = defineProps<{
     diagnostics: Diagnostics | null
@@ -27,15 +28,22 @@ const metrics = computed(() =>
           ]
         : []
 )
+
+// maxSizeBytes = 0 means the operator left duckdb.maxSizeBytes unbounded —
+// there is no "remaining" to show against.
+const sizeQuota = computed(() => {
+    const d = props.diagnostics
+    if (!d || d.maxSizeBytes <= 0) return null
+    return [
+        { label: 'Utilisé', value: d.databaseSizeBytes },
+        { label: 'Restant', value: Math.max(d.maxSizeBytes - d.databaseSizeBytes, 0) }
+    ]
+})
 </script>
 
 <template>
     <section class="rounded-lg border border-base-300 bg-base-100 p-4">
-        <Typography variant="h4">Santé du serveur</Typography>
-        <Typography variant="body-sm" class="mb-4 text-base-content/60">
-            L'état du moteur de stockage — ce qui distingue "le serveur répond" de "le serveur va
-            bien".
-        </Typography>
+        <Typography variant="h4" class="mb-4">Santé du serveur</Typography>
 
         <Skeleton v-if="loading && !loadedOnce" :rows="2" :columns="4" />
         <ErrorState v-else-if="error && !diagnostics" :message="error" @retry="$emit('retry')" />
@@ -62,7 +70,15 @@ const metrics = computed(() =>
                     :icon="Puzzle"
                 />
             </div>
-            <BarChart :data="metrics" :value-format="formatSize" />
+            <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <BarChart :data="metrics" :value-format="formatSize" />
+                <div v-if="sizeQuota">
+                    <Typography variant="eyebrow" class="mb-2 block">
+                        Espace disque ({{ formatSize(diagnostics.maxSizeBytes) }} max)
+                    </Typography>
+                    <DonutChart :data="sizeQuota" :value-format="formatSize" />
+                </div>
+            </div>
             <div class="flex flex-wrap gap-1.5">
                 <Badge v-for="ext in diagnostics.extensions" :key="ext" tone="neutral">
                     {{ ext }}

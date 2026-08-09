@@ -13,7 +13,7 @@ server:
 
 duckdb:
     path: './data/geo.db'
-    maxSizeBytes: 0 # hard cap on the database's on-disk size, in bytes; 0 = unlimited
+    maxSizeBytes: 5368709120 # hard cap on the database's on-disk size, in bytes; 0 = unlimited (5 Go)
     maxOpenConns: 20
 
 sources:

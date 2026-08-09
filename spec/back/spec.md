@@ -623,6 +623,14 @@ that govern its cost:
     geometry on certain source/tile combinations. It can only discard an already broken feature,
     never a valid one.
 
+The MVT layer is named after `Metadata.TableId`, escaped like the attribute struct keys it sits
+beside — never the fixed string `"layer"` — so two tables loaded into the same client-side map never
+collide under the same layer name. `z`/`x`/`y` reach `Tile` already validated against the
+WebMercatorQuad tile matrix (`0 ≤ z ≤ 24`, `0 ≤ x, y < 2^z`) by `validateTileCoords`
+(`router/handlers/geo.go`), the layer this file's own doc comment on `tileEnvelope` relies on — its
+four literals are only safe to inline unbound because the caller guarantees they are already in
+range.
+
 ### 4.8 Reading DuckDB's own catalogue
 
 File: `internal/storage/duckdb/tables/introspection.go` — the **single** place DuckDB's catalogue
@@ -951,7 +959,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/healthz` | liveness — the process answers, regardless of the storage's state                                                                                         |
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
-| GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy" |
+| GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy"; also carries `maxSizeBytes` (`duckdb.maxSizeBytes` from config, §2.2, 0 meaning unlimited), for a caller to render on-disk size against its cap |
 
 **Derive**
 
@@ -1009,7 +1017,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                                                  | Description                                                                                                                                                                          |
 | ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution)                    |
+| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution). `404` if `z`/`x`/`y` falls outside the WebMercatorQuad tile matrix (§4.7) |
 | GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation                         |
 | GET    | `/api/v1/tables/{tableId}/geometry-types`             | the distinct geometry types present                                                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/bbox`                       | pkeys of the rows intersecting an extent                                                                                                                                             |

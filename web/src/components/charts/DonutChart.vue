@@ -7,9 +7,13 @@ import { pie, arc } from 'd3-shape'
 // never a generated hue — see spec/front/spec.md §5. Beyond the three
 // available hues, the smallest remaining slices fold into a neutral
 // "Autres" bucket instead of inventing a fourth hue.
-const props = defineProps<{
-    data: { label: string; value: number }[]
-}>()
+const props = withDefaults(
+    defineProps<{
+        data: { label: string; value: number }[]
+        valueFormat?: (n: number) => string
+    }>(),
+    { valueFormat: (n: number) => String(n) }
+)
 
 // Fixed order (validated with the dataviz skill's contrast/CVD checks
 // against this app's daisyUI `light` theme): primary, secondary, info.
@@ -70,7 +74,9 @@ const paths = computed(() => {
             :aria-label="paths.map((p) => `${p.label} : ${p.percent}%`).join(', ')"
         >
             <path v-for="slice in paths" :key="slice.label" :d="slice.d" :fill="slice.color">
-                <title>{{ slice.label }} : {{ slice.value }} ({{ slice.percent }}%)</title>
+                <title>
+                    {{ slice.label }} : {{ valueFormat(slice.value) }} ({{ slice.percent }}%)
+                </title>
             </path>
         </svg>
         <ul class="flex flex-col gap-1.5">

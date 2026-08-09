@@ -12,10 +12,11 @@ Each entry carries a stable identifier (`IMP-n`); a retired identifier is never 
 
 | # | Lead | Motivation | Reference |
 |---|---|---|---|
-| IMP-13 | Give a table a minimum and a maximum zoom, per table like the other geometry settings (§2.5.1) | A tileset document has to state the zoom range its tiles cover (`todo.md` TODO-22), and nothing in the model knows it: a table of building footprints is meaningless below zoom 12 and a table of countries is a full scan above zoom 6, yet both answer every zoom from 0 to whatever a client asks. Publishing the range would also let the server refuse the tiles it knows are pointless, instead of scanning for them | `spec.md` §2.5.1, §4.7 |
 | IMP-9 | Log every accepted settings change at `INFO`, field by field, with the value before and after | `PATCH /api/v1/settings` is the only route that changes how the whole process behaves — caps, timeouts, cache sizes — and it leaves no trace beyond the request line: `UpdatedAt` says when, never what. After an incident there is no way to tell a limit that was always wrong from one that was raised an hour earlier. `SettingsService.UpdateSettings` already computes the merged value against the current one, so both sides are in hand at the point where the log would be written | `spec.md` §5.8 |
 
-IMP-8, IMP-10, IMP-11 and IMP-12 were decided on 2026-08-07 (all four taken up) and became
-[todo.md](todo.md) TODO-17. The seven leads this file held before them (IMP-1 through IMP-7) were
-taken up in the audit of 2026-08-06 and became TODO-9 through TODO-15. A retired identifier is never
-reused, so the next lead recorded here takes `IMP-14`.
+IMP-13 and IMP-14, leads for an OGC API - Tiles facade, were dropped on 2026-08-09 — the facade
+itself was declined (`limitations.md` LIM-14) — and did not become todos. IMP-8, IMP-10, IMP-11 and
+IMP-12 were decided on 2026-08-07 (all four taken up) and became [todo.md](todo.md) TODO-17. The
+seven leads this file held before them (IMP-1 through IMP-7) were taken up in the audit of
+2026-08-06 and became TODO-9 through TODO-15. A retired identifier is never reused, so the next lead
+recorded here takes `IMP-15`.

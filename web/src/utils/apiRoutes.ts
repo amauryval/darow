@@ -24,11 +24,6 @@ export function buildTableApiRoutes(tableId: string, isGeo: boolean): ApiRouteEn
             group: 'Lignes',
             method: 'GET',
             url: absoluteApiUrl(`/tables/${tableId}/rows/{pkey}`)
-        },
-        {
-            group: 'Export',
-            method: 'GET',
-            url: absoluteApiUrl(`/tables/${tableId}/export?format=${isGeo ? 'geojson' : 'csv'}`)
         }
     ]
 
@@ -45,24 +40,9 @@ export function buildTableApiRoutes(tableId: string, isGeo: boolean): ApiRouteEn
                 url: absoluteApiUrl(`/tables/${tableId}/tiles/{z}/{x}/{y}`)
             },
             {
-                group: 'Tuiles',
-                method: 'GET',
-                url: absoluteApiUrl(`/tables/${tableId}/tiles/{z}/{x}/{y}/features`)
-            },
-            {
                 group: 'OGC API - Features',
                 method: 'GET',
                 url: absoluteApiUrl(`/ogc/collections/${tableId}`)
-            },
-            {
-                group: 'OGC API - Features',
-                method: 'GET',
-                url: absoluteApiUrl(`/ogc/collections/${tableId}/items?bbox=&limit=100&offset=0`)
-            },
-            {
-                group: 'OGC API - Features',
-                method: 'GET',
-                url: absoluteApiUrl(`/ogc/collections/${tableId}/items/{featureId}`)
             }
         )
     }

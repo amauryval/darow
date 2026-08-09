@@ -52,6 +52,25 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 	return
 }
 
+// maxTileZoom is the deepest level WebMercatorQuad defines (OGC 17-083r4),
+// the tile matrix set the whole tile grid is built on (§4.7).
+const maxTileZoom = 24
+
+// validateTileCoords rejects a z/x/y outside the WebMercatorQuad tile
+// matrix — a negative or over-deep zoom, or an x/y beyond the 2^z tiles
+// that zoom holds — before it reaches tileEnvelope, which trusts its
+// integers to already be in range.
+func validateTileCoords(z, x, y int) error {
+	if z < 0 || z > maxTileZoom {
+		return fmt.Errorf("zoom %d outside WebMercatorQuad (0-%d)", z, maxTileZoom)
+	}
+	n := 1 << z
+	if x < 0 || x >= n || y < 0 || y >= n {
+		return fmt.Errorf("tile %d/%d/%d outside the tile matrix at zoom %d", z, x, y, z)
+	}
+	return nil
+}
+
 func parseTileAttrs(req *http.Request) []string {
 	raw := req.URL.Query().Get("attrs")
 	if raw == "" {
@@ -82,6 +101,10 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 	z, x, y, err := parseTileCoords(req)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+	if err := validateTileCoords(z, x, y); err != nil {
+		response.WriteError(w, req, err, http.StatusNotFound)
 		return
 	}
 
@@ -127,7 +150,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
+	w.Header().Set("Content-Type", mediaTypeMVT)
 	w.Write(mvt)
 }
 
@@ -165,6 +188,10 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 	z, x, y, err := parseTileCoords(req)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+	if err := validateTileCoords(z, x, y); err != nil {
+		response.WriteError(w, req, err, http.StatusNotFound)
 		return
 	}
 

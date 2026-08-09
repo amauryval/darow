@@ -39,10 +39,7 @@ const topTables = computed(
 
 <template>
     <section class="rounded-lg border border-base-300 bg-base-100 p-4">
-        <Typography variant="h4">Vue d'ensemble des données</Typography>
-        <Typography variant="body-sm" class="mt-1 mb-4 text-base-content/60">
-            Ce que le catalogue de tables contient aujourd'hui.
-        </Typography>
+        <Typography variant="h4" class="mb-4">Vue d'ensemble des données</Typography>
 
         <Skeleton v-if="loading && !loadedOnce" :rows="2" :columns="4" />
         <ErrorState v-else-if="error && !stats" :message="error" @retry="$emit('retry')" />
