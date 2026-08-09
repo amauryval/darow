@@ -167,28 +167,51 @@ export interface ErrorResponse {
 // most it returns when a request asks for more. They are stored, never
 // derived, so what is read here is what the server applies.
 export interface Settings {
-    defaultRowLimit: number
-    defaultListLimit: number
-    defaultFeaturesLimit: number
-    maxSimplifyTolerance: number
-    maxPrecision: number
-    tileCacheMaxAgeSec: number
-    cacheTTLSec: number
-    coordinateDecimals: number
+    defaultRowLimit: SettingsField
+    defaultListLimit: SettingsField
+    defaultFeaturesLimit: SettingsField
+    maxSimplifyTolerance: SettingsField
+    maxPrecision: SettingsField
+    tileCacheMaxAgeSec: SettingsField
+    cacheTTLSec: SettingsField
+    coordinateDecimals: SettingsField
     updatedAt: string
+}
+
+// FieldBounds is what the server enforces on a setting, published beside it:
+// the unit its value is expressed in, and the range internal/settings.Validate
+// refuses outside of. A bound the field does not have is absent — never 0
+// standing in for "none". minimum is inclusive, exclusiveMinimum is not, and
+// a field states one of the two, never both.
+export interface FieldBounds {
+    unit: string
+    minimum?: number
+    exclusiveMinimum?: number
+    maximum?: number
+}
+
+// One setting as the read routes serve it: the value applied and what
+// constrains it, in a single object.
+export interface SettingsField extends FieldBounds {
+    value: number
 }
 
 // The read-only half of Settings: derived server-side, never sent back.
 export type SettingsReadOnlyKey = 'updatedAt'
 
+// The fields a PATCH may carry, one per editable field of Settings.
+export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
+
 // Matches storage.SettingsPatch — every field optional, an omitted one left
-// unchanged server-side.
-export type SettingsPatch = Partial<Omit<Settings, SettingsReadOnlyKey>>
+// unchanged server-side. A patch carries bare numbers: the bounds travel
+// with the read, never back with the write.
+export type SettingsPatch = Partial<Record<SettingsFieldKey, number>>
 
 // OverrideField is a per-table-overridable field: override is the operator's
 // own value for this table, null when inherited from the global row, and
-// effective is the value the server applies to it either way.
-export interface OverrideField {
+// effective is the value the server applies to it either way. Its bounds are
+// the global row's own — an override is validated against them too.
+export interface OverrideField extends FieldBounds {
     override: number | null
     effective: number
 }

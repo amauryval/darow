@@ -1,11 +1,6 @@
-import type {
-    Settings,
-    SettingsReadOnlyKey,
-    TableSettings,
-    TableSettingsFieldKey
-} from '../client/types'
+import type { FieldBounds, OverrideField, SettingsFieldKey, TableSettings } from '../client/types'
 
-export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
+export type { SettingsFieldKey }
 
 export interface SettingsFieldSpec {
     key: SettingsFieldKey
@@ -16,9 +11,10 @@ export interface SettingsFieldSpec {
     // label alone is not enough for someone with no notion of pagination
     // caps or LRU caches to act on it safely.
     description: string
-    unit?: string
     // Whole numbers only, except the two geometry bounds (fractional
-    // tolerances/precisions).
+    // tolerances/precisions). The input's granularity, a display choice —
+    // unlike min/max, which are the server's own bounds and are read off the
+    // payload (FieldBounds), never retyped here.
     step?: number
     // What the value 0 means for this field, when 0 is itself a valid,
     // meaningful input rather than just the bottom of the range — stated
@@ -83,7 +79,6 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
             {
                 key: 'maxSimplifyTolerance',
                 label: 'Simplification maximale autorisée des formes',
-                unit: 'm',
                 step: 0.01,
                 description:
                     'Tolérance en mètres : plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande. Plafond appliqué à ce qu’un client peut demander, pas la valeur que le serveur applique lui-même.',
@@ -93,7 +88,6 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
             {
                 key: 'maxPrecision',
                 label: 'Grille de coordonnées la plus fine autorisée',
-                unit: 'm',
                 step: 0.01,
                 description:
                     'Le serveur arrondit les coordonnées renvoyées à une grille de cette taille, en mètres (EPSG:3857). Plus la valeur est basse, plus les coordonnées sont fines ; un client ne peut pas demander plus fin que ce plafond.',
@@ -103,7 +97,6 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
             {
                 key: 'tileCacheMaxAgeSec',
                 label: 'Durée de mise en cache d’une tuile par le navigateur',
-                unit: 's',
                 description:
                     'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.',
                 zeroMeaning:
@@ -130,7 +123,6 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
             {
                 key: 'cacheTTLSec',
                 label: 'Informations et structure des tables — durée avant relecture',
-                unit: 's',
                 description:
                     'Nombre de lignes, colonnes, types… gardés en mémoire pendant cette durée avant d’être relus en base.',
                 zeroMeaning:
@@ -140,22 +132,38 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
     }
 ]
 
+// inputRange turns the bounds the server publishes into what an <input>
+// accepts: min is inclusive there, so an exclusive minimum becomes the first
+// value the step grid actually allows.
+export function inputRange(
+    bounds: FieldBounds | undefined,
+    step?: number
+): { min?: number; max?: number } {
+    if (!bounds) return {}
+    const min =
+        bounds.minimum ??
+        (bounds.exclusiveMinimum === undefined ? undefined : bounds.exclusiveMinimum + (step ?? 1))
+    return { min, max: bounds.maximum }
+}
+
 // The per-table fields a TableSettingsModal renders, in the same order/
-// grouping the global screen uses — labels, descriptions and units never
-// retyped for the per-table surface.
+// grouping the global screen uses — labels and descriptions never retyped
+// for the per-table surface.
 export const TABLE_SETTINGS_FIELDS: SettingsFieldSpec[] = SETTINGS_FIELD_GROUPS.flatMap(
     (group) => group.fields
 ).filter((field) => field.perTable)
 
-// tableFieldValue reads one field's override/effective pair off a
-// TableSettings response — null for a field the table does not carry (a
-// geometry field on a non-geo table).
+// tableFieldValue reads one field off a TableSettings response — its
+// override, its effective value and its bounds — or null for a field the
+// table does not carry: a global-only field (LIM-12) or a geometry field on
+// a non-geo table. Excluding the two global-only keys first is what lets the
+// lookup type-check without an assertion (§0.9).
 export function tableFieldValue(
     settings: TableSettings,
-    key: TableSettingsFieldKey
-): { override: number | null; effective: number } | null {
-    const value = settings[key]
-    return value ? { override: value.override, effective: value.effective } : null
+    key: SettingsFieldKey
+): OverrideField | null {
+    if (key === 'defaultListLimit' || key === 'cacheTTLSec') return null
+    return settings[key] ?? null
 }
 
 const FIELD_KEYS = new Set<string>(

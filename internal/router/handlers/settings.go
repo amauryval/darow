@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"darow/internal/router/response"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -19,32 +20,45 @@ func NewSettingsHandler(settingsSvc settingsAPI) *SettingsHandler {
 	return &SettingsHandler{settingsService: settingsSvc}
 }
 
+// settingsField is one setting as the read routes serve it: the value
+// applied, and the bounds and unit it is constrained by — one object per
+// field, so a client never has to hold a value and its bounds as two
+// structures kept in step.
+type settingsField[T int | float64] struct {
+	Value T `json:"value"`
+	fieldDescriptorDTO
+}
+
+func settingsFieldOf[T int | float64](field string, value T) settingsField[T] {
+	return settingsField[T]{Value: value, fieldDescriptorDTO: fieldDescriptorOf(field)}
+}
+
 // settingsDTO is the JSON representation of the settings row — every field
 // editable and every field the value actually applied, the three
 // default*Limit page sizes included: the server holds no second, hidden
 // limit a client would have to be told about.
 type settingsDTO struct {
-	DefaultRowLimit      int     `json:"defaultRowLimit"`
-	DefaultListLimit     int     `json:"defaultListLimit"`
-	DefaultFeaturesLimit int     `json:"defaultFeaturesLimit"`
-	MaxSimplifyTolerance float64 `json:"maxSimplifyTolerance"`
-	MaxPrecision         float64 `json:"maxPrecision"`
-	TileCacheMaxAgeSec   int     `json:"tileCacheMaxAgeSec"`
-	CacheTTLSec          int     `json:"cacheTTLSec"`
-	CoordinateDecimals   int     `json:"coordinateDecimals"`
-	UpdatedAt            string  `json:"updatedAt"`
+	DefaultRowLimit      settingsField[int]     `json:"defaultRowLimit"`
+	DefaultListLimit     settingsField[int]     `json:"defaultListLimit"`
+	DefaultFeaturesLimit settingsField[int]     `json:"defaultFeaturesLimit"`
+	MaxSimplifyTolerance settingsField[float64] `json:"maxSimplifyTolerance"`
+	MaxPrecision         settingsField[float64] `json:"maxPrecision"`
+	TileCacheMaxAgeSec   settingsField[int]     `json:"tileCacheMaxAgeSec"`
+	CacheTTLSec          settingsField[int]     `json:"cacheTTLSec"`
+	CoordinateDecimals   settingsField[int]     `json:"coordinateDecimals"`
+	UpdatedAt            string                 `json:"updatedAt"`
 }
 
 func toSettingsDTO(s storage.Settings) settingsDTO {
 	return settingsDTO{
-		DefaultRowLimit:      s.DefaultRowLimit,
-		DefaultListLimit:     s.DefaultListLimit,
-		DefaultFeaturesLimit: s.DefaultFeaturesLimit,
-		MaxSimplifyTolerance: s.MaxSimplifyTolerance,
-		MaxPrecision:         s.MaxPrecision,
-		TileCacheMaxAgeSec:   s.TileCacheMaxAgeSec,
-		CacheTTLSec:          s.CacheTTLSec,
-		CoordinateDecimals:   s.CoordinateDecimals,
+		DefaultRowLimit:      settingsFieldOf(settings.FieldDefaultRowLimit, s.DefaultRowLimit),
+		DefaultListLimit:     settingsFieldOf(settings.FieldDefaultListLimit, s.DefaultListLimit),
+		DefaultFeaturesLimit: settingsFieldOf(settings.FieldDefaultFeaturesLimit, s.DefaultFeaturesLimit),
+		MaxSimplifyTolerance: settingsFieldOf(settings.FieldMaxSimplifyTolerance, s.MaxSimplifyTolerance),
+		MaxPrecision:         settingsFieldOf(settings.FieldMaxPrecision, s.MaxPrecision),
+		TileCacheMaxAgeSec:   settingsFieldOf(settings.FieldTileCacheMaxAgeSec, s.TileCacheMaxAgeSec),
+		CacheTTLSec:          settingsFieldOf(settings.FieldCacheTTLSec, s.CacheTTLSec),
+		CoordinateDecimals:   settingsFieldOf(settings.FieldCoordinateDecimals, s.CoordinateDecimals),
 		UpdatedAt:            s.UpdatedAt.Format(time.RFC3339),
 	}
 }

@@ -86,6 +86,28 @@ func Test_TableSettingsHandler_GetTableSettings(t *testing.T) {
 	}
 }
 
+// An override is validated against the bounds the global value respects, so
+// each field carries them here too rather than sending a client to the
+// global route to find out what it may type.
+func Test_TableSettingsHandler_GetTableSettings_CarriesEachFieldsBounds(t *testing.T) {
+	h, metadataSvc, tableSettingsSvc := setupTableSettingsHandler(t)
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1", IsGeo: true}, nil).Once()
+	tableSettingsSvc.On("GetOverride", "t1").Return(storage.TableSettings{TableId: "t1"}, nil).Once()
+	tableSettingsSvc.On("Resolve", "t1").Return(resolvedForTest()).Once()
+
+	rec := doHandlerRequest(h.GetTableSettings, http.MethodGet, "/api/v1/tables/t1/settings", nil, map[string]string{"tableId": "t1"})
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	got := decodeJSON[tableSettingsDTO](rec)
+	assert.Equal(t, "rows", got.DefaultRowLimit.Unit)
+	require.NotNil(t, got.DefaultRowLimit.Maximum)
+	assert.Equal(t, float64(settings.RowLimitCeiling), *got.DefaultRowLimit.Maximum)
+	require.NotNil(t, got.CoordinateDecimals)
+	assert.Equal(t, "digits", got.CoordinateDecimals.Unit)
+	require.NotNil(t, got.CoordinateDecimals.Maximum)
+	assert.Equal(t, float64(settings.CoordinateDecimalsCeiling), *got.CoordinateDecimals.Maximum)
+}
+
 func Test_TableSettingsHandler_UpdateTableSettings(t *testing.T) {
 	t.Run("sets an override", func(t *testing.T) {
 		h, metadataSvc, tableSettingsSvc := setupTableSettingsHandler(t)

@@ -20,7 +20,8 @@
             "Bash(gofmt -l internal/config)",
             "Bash(swag init *)",
             "Bash(echo \"exit=$?\")",
-            "Bash(awk:*)"
+            "Bash(awk:*)",
+            "Bash(gofmt -l internal/)"
         ],
         "deny": [
             "Bash(git merge:*)",

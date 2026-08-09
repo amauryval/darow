@@ -29,7 +29,7 @@ watch(
     current,
     (value) => {
         if (!value) return
-        for (const field of allFields) draft[field.key] = String(value[field.key])
+        for (const field of allFields) draft[field.key] = String(value[field.key].value)
         savedValues.value = value
     },
     { immediate: true }
@@ -38,7 +38,9 @@ watch(
 const dirtyKeys = computed<SettingsFieldKey[]>(() => {
     const saved = savedValues.value
     if (!saved) return []
-    return allFields.map((field) => field.key).filter((key) => draft[key] !== String(saved[key]))
+    return allFields
+        .map((field) => field.key)
+        .filter((key) => draft[key] !== String(saved[key].value))
 })
 const isDirty = computed(() => dirtyKeys.value.length > 0)
 
@@ -48,7 +50,7 @@ const isDirty = computed(() => dirtyKeys.value.length > 0)
 const localErrors = ref<Partial<Record<SettingsFieldKey, string>>>({})
 watch(draft, () => {
     for (const key of Object.keys(localErrors.value) as SettingsFieldKey[]) {
-        if (savedValues.value && draft[key] !== String(savedValues.value[key])) {
+        if (savedValues.value && draft[key] !== String(savedValues.value[key].value)) {
             delete localErrors.value[key]
         }
     }
@@ -73,7 +75,7 @@ async function onSave() {
 
 function onReset() {
     if (!savedValues.value) return
-    for (const field of allFields) draft[field.key] = String(savedValues.value[field.key])
+    for (const field of allFields) draft[field.key] = String(savedValues.value[field.key].value)
     localErrors.value = {}
 }
 
@@ -109,6 +111,7 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :key="field.key"
                                 v-model="draft[field.key]"
                                 :field="field"
+                                :bounds="savedValues?.[field.key]"
                                 :error="errors[field.key]"
                                 :disabled="saving"
                             />
@@ -132,6 +135,7 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :key="field.key"
                                 v-model="draft[field.key]"
                                 :field="field"
+                                :bounds="savedValues?.[field.key]"
                                 :error="errors[field.key]"
                                 :disabled="saving"
                             />

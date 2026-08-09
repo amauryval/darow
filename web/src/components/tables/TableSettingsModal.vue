@@ -6,7 +6,7 @@ import {
     tableFieldValue,
     type SettingsFieldKey
 } from '../../utils/settingsFields'
-import type { TableSettingsFieldKey, TableSettingsPatch } from '../../client/types'
+import type { OverrideField, TableSettingsFieldKey, TableSettingsPatch } from '../../client/types'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import SettingsField from '../settings/SettingsField.vue'
@@ -47,7 +47,7 @@ watch(
         const nextInherited: Record<string, boolean> = {}
         const nextDraft: Record<string, string> = {}
         for (const field of TABLE_SETTINGS_FIELDS) {
-            const fieldValue = tableFieldValue(value, field.key as TableSettingsFieldKey)
+            const fieldValue = tableFieldValue(value, field.key)
             if (!fieldValue) continue
             const isInherited = fieldValue.override === null
             nextInherited[field.key] = isInherited
@@ -61,15 +61,23 @@ watch(
     { immediate: true }
 )
 
-function toggleInherit(key: string) {
+// The bounds an input is constrained by travel with the field itself, so a
+// per-table override is typed against the very range the server validates it
+// with — the same one the global screen shows.
+function boundsFor(key: SettingsFieldKey): OverrideField | undefined {
+    if (!settings.value) return undefined
+    return tableFieldValue(settings.value, key) ?? undefined
+}
+
+function toggleInherit(key: SettingsFieldKey) {
     if (!settings.value) return
-    const fieldValue = tableFieldValue(settings.value, key as TableSettingsFieldKey)
+    const fieldValue = tableFieldValue(settings.value, key)
     if (!fieldValue) return
     inherited[key] = !inherited[key]
     if (inherited[key]) {
         draft[key] = String(fieldValue.effective)
     }
-    delete localErrors[key as SettingsFieldKey]
+    delete localErrors[key]
 }
 
 const isDirty = computed(() =>
@@ -137,6 +145,7 @@ async function onResetAll() {
                 :key="field.key"
                 v-model="draft[field.key]"
                 :field="field"
+                :bounds="boundsFor(field.key)"
                 :error="localErrors[field.key]"
                 :disabled="saving"
                 :inherited="inherited[field.key]"

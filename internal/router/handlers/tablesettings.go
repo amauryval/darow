@@ -9,6 +9,7 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -30,14 +31,28 @@ func NewTableSettingsHandler(metadataSvc metadataAPI, tableSettingsSvc tableSett
 }
 
 // geoOnlyFields are the JSON keys UpdateTableSettings refuses on a
-// non-geo table — they mean nothing without a geometry column.
-var geoOnlyFields = []string{"defaultFeaturesLimit", "maxSimplifyTolerance", "maxPrecision", "tileCacheMaxAgeSec", "coordinateDecimals"}
+// non-geo table — they mean nothing without a geometry column. The same
+// list decides which descriptors a geo table's payload carries.
+var geoOnlyFields = []string{
+	settings.FieldDefaultFeaturesLimit,
+	settings.FieldMaxSimplifyTolerance,
+	settings.FieldMaxPrecision,
+	settings.FieldTileCacheMaxAgeSec,
+	settings.FieldCoordinateDecimals,
+}
 
-// overrideField is one field's override and the effective value it resolves
-// to — the shape every plain overridable field of tableSettingsDTO shares.
-type overrideField[T any] struct {
+// overrideField is one field's override, the effective value it resolves to,
+// and the bounds and unit both are constrained by — an override is validated
+// against the bounds the global value respects, so it publishes the same
+// ones.
+type overrideField[T int | float64] struct {
 	Override  *T `json:"override"`
 	Effective T  `json:"effective"`
+	fieldDescriptorDTO
+}
+
+func overrideFieldOf[T int | float64](field string, override *T, effective T) overrideField[T] {
+	return overrideField[T]{Override: override, Effective: effective, fieldDescriptorDTO: fieldDescriptorOf(field)}
 }
 
 // tableSettingsDTO is the JSON representation of a table's settings: its
@@ -62,23 +77,26 @@ type tableSettingsDTO struct {
 
 func toTableSettingsDTO(meta storage.Metadata, override storage.TableSettings, resolved service.TableSettingsResolved) tableSettingsDTO {
 	dto := tableSettingsDTO{
-		TableId: meta.TableId,
-		IsGeo:   meta.IsGeo,
-		DefaultRowLimit: overrideField[int]{
-			Override: override.DefaultRowLimit, Effective: int(resolved.DefaultRowLimit),
-		},
-		UpdatedAt: override.UpdatedAt.Format(time.RFC3339),
+		TableId:         meta.TableId,
+		IsGeo:           meta.IsGeo,
+		DefaultRowLimit: overrideFieldOf(settings.FieldDefaultRowLimit, override.DefaultRowLimit, int(resolved.DefaultRowLimit)),
+		UpdatedAt:       override.UpdatedAt.Format(time.RFC3339),
 	}
 	if !meta.IsGeo {
 		return dto
 	}
-	dto.DefaultFeaturesLimit = &overrideField[int]{
-		Override: override.DefaultFeaturesLimit, Effective: int(resolved.DefaultFeaturesLimit),
-	}
-	dto.MaxSimplifyTolerance = &overrideField[float64]{Override: override.MaxSimplifyTolerance, Effective: resolved.MaxSimplifyTolerance}
-	dto.MaxPrecision = &overrideField[float64]{Override: override.MaxPrecision, Effective: resolved.MaxPrecision}
-	dto.TileCacheMaxAgeSec = &overrideField[int]{Override: override.TileCacheMaxAgeSec, Effective: resolved.TileCacheMaxAgeSec}
-	dto.CoordinateDecimals = &overrideField[int]{Override: override.CoordinateDecimals, Effective: resolved.CoordinateDecimals}
+
+	featuresLimit := overrideFieldOf(settings.FieldDefaultFeaturesLimit, override.DefaultFeaturesLimit, int(resolved.DefaultFeaturesLimit))
+	simplifyTolerance := overrideFieldOf(settings.FieldMaxSimplifyTolerance, override.MaxSimplifyTolerance, resolved.MaxSimplifyTolerance)
+	precision := overrideFieldOf(settings.FieldMaxPrecision, override.MaxPrecision, resolved.MaxPrecision)
+	tileCacheMaxAge := overrideFieldOf(settings.FieldTileCacheMaxAgeSec, override.TileCacheMaxAgeSec, resolved.TileCacheMaxAgeSec)
+	coordinateDecimals := overrideFieldOf(settings.FieldCoordinateDecimals, override.CoordinateDecimals, resolved.CoordinateDecimals)
+
+	dto.DefaultFeaturesLimit = &featuresLimit
+	dto.MaxSimplifyTolerance = &simplifyTolerance
+	dto.MaxPrecision = &precision
+	dto.TileCacheMaxAgeSec = &tileCacheMaxAge
+	dto.CoordinateDecimals = &coordinateDecimals
 	return dto
 }
 

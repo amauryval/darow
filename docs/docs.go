@@ -2130,8 +2130,20 @@ const docTemplate = `{
                 "effective": {
                     "type": "number"
                 },
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
                 "override": {
                     "type": "number"
+                },
+                "unit": {
+                    "type": "string"
                 }
             }
         },
@@ -2141,8 +2153,20 @@ const docTemplate = `{
                 "effective": {
                     "type": "integer"
                 },
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
                 "override": {
                     "type": "integer"
+                },
+                "unit": {
+                    "type": "string"
                 }
             }
         },
@@ -2150,31 +2174,71 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "cacheTTLSec": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "coordinateDecimals": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "defaultFeaturesLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "defaultListLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "defaultRowLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "maxPrecision": {
-                    "type": "number"
+                    "$ref": "#/definitions/handlers.settingsField-float64"
                 },
                 "maxSimplifyTolerance": {
-                    "type": "number"
+                    "$ref": "#/definitions/handlers.settingsField-float64"
                 },
                 "tileCacheMaxAgeSec": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.settingsField-float64": {
+            "type": "object",
+            "properties": {
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
+        },
+        "handlers.settingsField-int": {
+            "type": "object",
+            "properties": {
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "integer"
                 }
             }
         },

@@ -2,7 +2,7 @@
 import { RouterLink } from 'vue-router'
 import { useTableSettingsOverrides } from '../../composables/useTableSettingsOverrides'
 import { TABLE_SETTINGS_FIELDS, tableFieldValue } from '../../utils/settingsFields'
-import type { TableSettings, TableSettingsFieldKey } from '../../client/types'
+import type { TableSettings } from '../../client/types'
 import BaseButton from '../ui/BaseButton.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import ErrorState from '../ui/ErrorState.vue'
@@ -17,7 +17,7 @@ const { tables, loading, loadedOnce, error, retry, resettingTableId, resetTable 
 function overriddenFields(table: TableSettings) {
     return TABLE_SETTINGS_FIELDS.map((field) => ({
         label: field.label,
-        value: tableFieldValue(table, field.key as TableSettingsFieldKey)
+        value: tableFieldValue(table, field.key)
     })).filter((entry) => entry.value && entry.value.override !== null)
 }
 </script>

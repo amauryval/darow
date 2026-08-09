@@ -231,6 +231,18 @@ variable, and never requiring a restart. Its default values and bounds are `inte
 exported constants (`constants.go`) and `internal/settings.Validate` (a `Validator` with one method
 per field), the one place they are written and enforced;
 
+**A value never travels without what constrains it.** `internal/settings.Descriptors`
+(`descriptor.go`) states, per field, the unit its value is expressed in and the range `Validate`
+refuses outside of — inclusive `Minimum`, `ExclusiveMinimum` for a field that only accepts a
+positive value, `Maximum`, each absent when the field has no such bound and each read off the very
+constants the `Validator` methods check against, so a published bound cannot drift from the check
+that backs it. `internal/settings.Descriptor` answers for one field, and the field names are that
+package's own constants (`FieldDefaultRowLimit` and its siblings), which are also the JSON keys of
+the settings routes and the keys `geoOnlyFields` (§6.1) is built from. The read routes serve the
+descriptor **inside each field's object**, beside the value (§6.1): a client reads what a setting is
+and what it may be set to in one place, instead of holding a value and a bounds table in step. The
+patch bodies are unchanged — a write carries bare numbers, the bounds travel with the read only.
+
 **One page size per family, and nothing else.** `defaultRowLimit`, `defaultListLimit` and
 `defaultFeaturesLimit` are the only pagination fields the table holds, one per family (rows,
 catalogue listings, features), and each is a plain page size: the number of items a handler serves
@@ -256,7 +268,9 @@ A table may override any of §2.5's fields but two. `defaultRowLimit` (every tab
 stored sparsely in `table_settings` (§4.10) and resolved through `internal/settings`'s `Resolve*`
 functions (§5.8.1) — a table with no override has no row at all, and the global value is what every
 table without one sees. An override is a page size like the global one, bound by the same floor and
-ceiling; it is free to be larger than the global value, which is the point of overriding it.
+ceiling; it is free to be larger than the global value, which is the point of overriding it. Being
+bound by the same range, each field of a table's payload carries the same descriptor the global
+route serves (§2.5), beside its override and its effective value.
 `defaultListLimit` and `cacheTTLSec` stay global only: a page of *tables*
 belongs to no table, and the metadata/schema caches are process-wide (`limitations.md` LIM-12).
 `coordinateDecimals` is new here: the number of decimal digits a GeoJSON coordinate is rounded to
@@ -996,7 +1010,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/filters/{filterId}`     | patches a stored filter's name and/or conditions — an omitted field is left unchanged                                                        |
 | DELETE | `/api/v1/tables/{tableId}/filters/{filterId}`     | deletes a stored filter, `204`                                                                                                               |
 | GET    | `/api/v1/tables/{tableId}/export`                 | streamed export, `?format=csv\|geojson`                                                                                                      |
-| GET    | `/api/v1/tables/{tableId}/settings`               | the table's settings overrides (§2.5.1, §4.10): per field, the override (`null` if inherited) and the effective value                        |
+| GET    | `/api/v1/tables/{tableId}/settings`               | the table's settings overrides (§2.5.1, §4.10): per field, the override (`null` if inherited), the effective value, and the same unit/bounds the global route publishes |
 | PATCH  | `/api/v1/tables/{tableId}/settings`               | sets or clears overrides field by field — a key absent leaves it unchanged, `null` clears it, a number sets it; a geometry-only field named on a non-geo table is `400` with nothing persisted |
 | DELETE | `/api/v1/tables/{tableId}/settings`               | clears every override at once, returning the table to every global value                                                                     |
 
@@ -1028,7 +1042,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                 | Description                                                                                             |
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/settings`   | the current runtime-editable settings — every field stored, every field editable (§2.5)      |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings — every field stored, every field editable (§2.5). One object per field: its `value`, its `unit`, and the bounds `internal/settings.Validate` enforces (`minimum` **or** `exclusiveMinimum`, `maximum`), each absent where the field has none |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
 | GET    | `/api/v1/settings/tables` | every table that carries at least one override (§2.5.1, §4.10), same shape as `GET /tables/{tableId}/settings` |
 

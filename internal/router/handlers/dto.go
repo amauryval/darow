@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -156,6 +157,27 @@ type uploadResultDTO struct {
 	Loaded  bool            `json:"loaded"`
 	TableId string          `json:"tableId,omitempty"`
 	Source  *service.Source `json:"source,omitempty"`
+}
+
+// fieldDescriptorDTO is one setting's operational range, served alongside
+// the values so a client constrains an input against the bounds the server
+// enforces instead of retyping them. A bound the field does not have is
+// absent, never a placeholder number.
+type fieldDescriptorDTO struct {
+	Unit             string   `json:"unit"`
+	Minimum          *float64 `json:"minimum,omitempty"`
+	ExclusiveMinimum *float64 `json:"exclusiveMinimum,omitempty"`
+	Maximum          *float64 `json:"maximum,omitempty"`
+}
+
+func fieldDescriptorOf(field string) fieldDescriptorDTO {
+	d, _ := settings.Descriptor(field)
+	return fieldDescriptorDTO{
+		Unit:             d.Unit,
+		Minimum:          d.Minimum,
+		ExclusiveMinimum: d.ExclusiveMinimum,
+		Maximum:          d.Maximum,
+	}
 }
 
 // rowToJSON flattens row under the reserved "pkey" key alongside its other
