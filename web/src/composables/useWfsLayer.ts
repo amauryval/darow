@@ -13,7 +13,6 @@ import { wfsFlatStyle } from '../utils/mapStyles'
 import { readFeatures } from '../utils/projection'
 import { tileSimplifyTolerance, xyzGrid } from '../utils/tileGrid'
 import { useMapSelection, type FeatureSelection } from './useMapSelection'
-import { useSettings } from './useSettings'
 import { useToast } from './useToast'
 
 // WFS/OGC-Features rendering of a table: real GeoJSON features rather than
@@ -31,7 +30,6 @@ export function useWfsLayer(
     version: Ref<number>
 ) {
     const toast = useToast()
-    const settings = useSettings()
     let layer: WebGLVectorLayer<VectorSource> | null = null
     // The GPU compiles the style once, so a selection change is a new style
     // rather than a repaint — see wfsFlatStyle.
@@ -60,18 +58,12 @@ export function useWfsLayer(
     ) {
         const z = grid.getZForResolution(resolution)
         const [, x, y] = grid.getTileCoordForCoordAndZ(getCenter(extent), z)
-        // The server's own default, clamped to maxFeaturesLimit, is the chunk
-        // size a tile's features are paged by — falls back to 10 000 while
-        // /settings has not loaded yet, same default client/geo.ts used to
-        // hard-code.
-        const pageSize = Math.min(
-            settings.current.value?.defaultFeaturesLimit ?? 10_000,
-            settings.current.value?.maxFeaturesLimit ?? 10_000
-        )
+        // No pageSize override: client/geo.ts's own chunk size is a UI choice,
+        // deliberately independent of the operator's maxFeaturesLimit setting —
+        // a REST API ceiling, not a page-fetch tuning knob.
         const { features, complete } = await getAllTileFeatures(tableId.value, z, x, y, {
             simplify: tileSimplifyTolerance(z),
-            filter: conditions.value,
-            pageSize
+            filter: conditions.value
         })
 
         const read = readFeatures({

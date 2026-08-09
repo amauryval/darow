@@ -6,7 +6,8 @@ import { parseSettingsFieldErrors, type SettingsFieldKey } from '../utils/settin
 import { useToast } from './useToast'
 
 // Module-level: every caller shares the one loaded value, which is what lets
-// a list composable read a live cap (maxListLimit, maxRowLimit) without each
+// a list composable read a live cap (effectiveMaxListLimit, and the page
+// sizes beside it) without each
 // one fetching /settings on its own — the same sharing useToast's queue
 // relies on. A cap lowered from SettingsView has to be visible everywhere a
 // request size depends on it, not just on the settings screen itself.

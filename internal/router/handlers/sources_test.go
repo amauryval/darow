@@ -15,7 +15,7 @@ import (
 
 func Test_newSourcesHandler(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}
+	settings := stubSettingsAPI{settings: storage.Settings{}}
 
 	sh := NewSourcesHandler(sourceSvc, settings)
 
@@ -53,7 +53,7 @@ func Test_parseSrid(t *testing.T) {
 
 func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{}}}
 
 	sourceSvc.On("List", mock.Anything, 0, 50).Return([]service.Source{{Name: "a.geojson"}}, 1, nil).Once()
 
@@ -68,7 +68,7 @@ func Test_sourcesHandler_listSources(t *testing.T) {
 
 func Test_sourcesHandler_listSources_InvalidSort(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
-	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{}}}
 
 	sourceSvc.On("List", mock.Anything, 0, 50).Return(nil, 0, &service.ValidationError{}).Once()
 
@@ -92,7 +92,7 @@ func Test_sourcesHandler_refreshSources(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
-			sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
+			sh := &SourcesHandler{sourceService: sourceSvc, settings: stubSettingsAPI{settings: storage.Settings{}}}
 
 			sourceSvc.On("Refresh", mock.Anything).Return([]service.Source{{Name: "a.geojson"}}, c.refreshErr).Once()
 			if c.wantListed {

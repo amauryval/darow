@@ -7,7 +7,7 @@ import type { Settings, SettingsPatch } from '../client/types'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import Typography from '../components/ui/Typography.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
-import BaseInput from '../components/ui/BaseInput.vue'
+import SettingsField from '../components/settings/SettingsField.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
 
@@ -103,29 +103,15 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                             group.description
                         }}</Typography>
                         <div class="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                            <div v-for="field in group.fields" :key="field.key">
-                                <BaseInput
-                                    v-model="draft[field.key]"
-                                    type="number"
-                                    :inputmode="field.step ? 'decimal' : 'numeric'"
-                                    :step="field.step"
-                                    :label="
-                                        field.unit ? `${field.label} (${field.unit})` : field.label
-                                    "
-                                    :error="errors[field.key]"
-                                    :disabled="saving"
-                                />
-                                <Typography variant="caption" class="mt-1 block">{{
-                                    field.description
-                                }}</Typography>
-                                <Typography
-                                    v-if="field.zeroMeaning && Number(draft[field.key]) === 0"
-                                    variant="caption"
-                                    class="mt-1 block text-base-content/60"
-                                >
-                                    0 = {{ field.zeroMeaning }}
-                                </Typography>
-                            </div>
+                            <SettingsField
+                                v-for="field in group.fields"
+                                :key="field.key"
+                                v-model="draft[field.key]"
+                                :field="field"
+                                :settings="savedValues"
+                                :error="errors[field.key]"
+                                :disabled="saving"
+                            />
                         </div>
                     </section>
 
@@ -141,29 +127,15 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                             group.description
                         }}</Typography>
                         <div class="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                            <div v-for="field in group.fields" :key="field.key">
-                                <BaseInput
-                                    v-model="draft[field.key]"
-                                    type="number"
-                                    :inputmode="field.step ? 'decimal' : 'numeric'"
-                                    :step="field.step"
-                                    :label="
-                                        field.unit ? `${field.label} (${field.unit})` : field.label
-                                    "
-                                    :error="errors[field.key]"
-                                    :disabled="saving"
-                                />
-                                <Typography variant="caption" class="mt-1 block">{{
-                                    field.description
-                                }}</Typography>
-                                <Typography
-                                    v-if="field.zeroMeaning && Number(draft[field.key]) === 0"
-                                    variant="caption"
-                                    class="mt-1 block text-base-content/60"
-                                >
-                                    0 = {{ field.zeroMeaning }}
-                                </Typography>
-                            </div>
+                            <SettingsField
+                                v-for="field in group.fields"
+                                :key="field.key"
+                                v-model="draft[field.key]"
+                                :field="field"
+                                :settings="savedValues"
+                                :error="errors[field.key]"
+                                :disabled="saving"
+                            />
                         </div>
                     </details>
                 </div>

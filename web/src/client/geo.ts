@@ -51,9 +51,9 @@ function getTileFeatures(
 // A tile can hold more features than one page, and dropping the rest
 // silently would make the map look like it is missing data at low zoom,
 // where tiles are large — so a full page is always followed by the next one.
-// The default matches the server's own defaultFeaturesLimit; this module
-// stays Vue-independent (§2), so a caller that can read the live, operator-set
-// value (useWfsLayer, through useSettings) passes it in as pageSize instead.
+// A UI chunk size, deliberately independent of the operator's
+// maxFeaturesLimit setting (a REST API ceiling, not a page-fetch tuning
+// knob) — a caller may still override it via pageSize for a specific need.
 const DEFAULT_TILE_FEATURE_PAGE_SIZE = 10_000
 
 // Every feature of one tile, paged. `complete` is false when a page request

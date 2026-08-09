@@ -58,7 +58,7 @@ func main() {
 	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings)
 
 	srv := &http.Server{
-		Addr:         ":" + strconv.Itoa(cfg.Server.Port),
+		Addr:         "localhost:" + strconv.Itoa(cfg.Server.Port),
 		Handler:      rt.Setup(),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSec) * time.Second,

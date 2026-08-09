@@ -21,16 +21,11 @@ func NewValidator(s storage.Settings) Validator {
 	return Validator{s: s}
 }
 
-func (f Validator) DefaultRowLimit() (int, error) {
-	if f.s.DefaultRowLimit <= 0 {
-		return 0, fmt.Errorf("defaultRowLimit must be positive")
-	}
-	return f.s.DefaultRowLimit, nil
-}
-
+// MaxRowLimit accepts 0 — the value that hands the row limits back to the
+// built-in constants (limits.go) instead of setting one.
 func (f Validator) MaxRowLimit() (int, error) {
-	if f.s.MaxRowLimit < f.s.DefaultRowLimit {
-		return 0, fmt.Errorf("maxRowLimit must be >= defaultRowLimit")
+	if f.s.MaxRowLimit < 0 {
+		return 0, fmt.Errorf("maxRowLimit must not be negative")
 	}
 	if f.s.MaxRowLimit > RowLimitCeiling {
 		return 0, fmt.Errorf("maxRowLimit must be <= %d", RowLimitCeiling)
@@ -38,16 +33,10 @@ func (f Validator) MaxRowLimit() (int, error) {
 	return f.s.MaxRowLimit, nil
 }
 
-func (f Validator) DefaultListLimit() (int, error) {
-	if f.s.DefaultListLimit <= 0 {
-		return 0, fmt.Errorf("defaultListLimit must be positive")
-	}
-	return f.s.DefaultListLimit, nil
-}
-
+// MaxListLimit accepts 0, on the same rule as MaxRowLimit.
 func (f Validator) MaxListLimit() (int, error) {
-	if f.s.MaxListLimit < f.s.DefaultListLimit {
-		return 0, fmt.Errorf("maxListLimit must be >= defaultListLimit")
+	if f.s.MaxListLimit < 0 {
+		return 0, fmt.Errorf("maxListLimit must not be negative")
 	}
 	if f.s.MaxListLimit > ListLimitCeiling {
 		return 0, fmt.Errorf("maxListLimit must be <= %d", ListLimitCeiling)
@@ -55,16 +44,10 @@ func (f Validator) MaxListLimit() (int, error) {
 	return f.s.MaxListLimit, nil
 }
 
-func (f Validator) DefaultFeaturesLimit() (int, error) {
-	if f.s.DefaultFeaturesLimit <= 0 {
-		return 0, fmt.Errorf("defaultFeaturesLimit must be positive")
-	}
-	return f.s.DefaultFeaturesLimit, nil
-}
-
+// MaxFeaturesLimit accepts 0, on the same rule as MaxRowLimit.
 func (f Validator) MaxFeaturesLimit() (int, error) {
-	if f.s.MaxFeaturesLimit < f.s.DefaultFeaturesLimit {
-		return 0, fmt.Errorf("maxFeaturesLimit must be >= defaultFeaturesLimit")
+	if f.s.MaxFeaturesLimit < 0 {
+		return 0, fmt.Errorf("maxFeaturesLimit must not be negative")
 	}
 	if f.s.MaxFeaturesLimit > FeaturesLimitCeiling {
 		return 0, fmt.Errorf("maxFeaturesLimit must be <= %d", FeaturesLimitCeiling)
@@ -125,15 +108,9 @@ func Validate(s storage.Settings) Result {
 		}
 	}
 
-	_, err := f.DefaultRowLimit()
-	collect(err)
-	_, err = f.MaxRowLimit()
-	collect(err)
-	_, err = f.DefaultListLimit()
+	_, err := f.MaxRowLimit()
 	collect(err)
 	_, err = f.MaxListLimit()
-	collect(err)
-	_, err = f.DefaultFeaturesLimit()
 	collect(err)
 	_, err = f.MaxFeaturesLimit()
 	collect(err)

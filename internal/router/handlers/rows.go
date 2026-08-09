@@ -10,6 +10,7 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -49,13 +50,8 @@ func (rh *RowsHandler) paginationParams(req *http.Request) (offset, limit int64)
 		offset = v
 	}
 
-	limit = int64(rh.settings.Current().DefaultRowLimit)
-	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
-		limit = v
-	}
-	if limit > int64(rh.settings.Current().MaxRowLimit) {
-		limit = int64(rh.settings.Current().MaxRowLimit)
-	}
+	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
+	limit = settings.RowLimits(rh.settings.Current().MaxRowLimit).Resolve64(requested)
 	return offset, limit
 }
 

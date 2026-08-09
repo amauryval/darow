@@ -13,6 +13,7 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -181,13 +182,9 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	limit := gh.settings.Current().DefaultFeaturesLimit
-	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
-		limit = v
-	}
-	if limit > gh.settings.Current().MaxFeaturesLimit {
-		limit = gh.settings.Current().MaxFeaturesLimit
-	}
+	// The features limits: see internal/settings.FeaturesLimits.
+	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
+	limit := settings.FeaturesLimits(gh.settings.Current().MaxFeaturesLimit).Resolve(requested)
 	offset := 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
@@ -199,7 +196,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), itemsLinks(req, int64(offset), int64(limit), int64(len(features)))))
+	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), itemsLinks(req, int64(offset), int64(limit), len(features) == limit)))
 }
 
 // tileETag derives an ETag for a tile from its table's UpdatedAt: any write
@@ -310,13 +307,7 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := body.Limit
-	if limit <= 0 {
-		limit = gh.settings.Current().DefaultFeaturesLimit
-	}
-	if limit > gh.settings.Current().MaxRowLimit {
-		limit = gh.settings.Current().MaxRowLimit
-	}
+	limit := settings.FeaturesLimits(gh.settings.Current().MaxFeaturesLimit).Resolve(body.Limit)
 
 	near := storage.NearQuery{
 		Geometry: storage.GeometryValue{
@@ -363,13 +354,7 @@ func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := body.Limit
-	if limit <= 0 {
-		limit = gh.settings.Current().DefaultRowLimit
-	}
-	if limit > gh.settings.Current().MaxRowLimit {
-		limit = gh.settings.Current().MaxRowLimit
-	}
+	limit := settings.RowLimits(gh.settings.Current().MaxRowLimit).Resolve(body.Limit)
 	offset := body.Offset
 	if offset < 0 {
 		offset = 0

@@ -178,6 +178,12 @@ const docTemplate = `{
                         "description": "Pagination offset",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Response format: json or geojson",
+                        "name": "f",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -226,6 +232,12 @@ const docTemplate = `{
                         "name": "featureId",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Response format: json or geojson",
+                        "name": "f",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -234,6 +246,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     },
                     "404": {
@@ -1837,6 +1855,12 @@ const docTemplate = `{
         "handlers.collectionDTO": {
             "type": "object",
             "properties": {
+                "crs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "extent": {
                     "$ref": "#/definitions/handlers.extentDTO"
                 },
@@ -1845,6 +1869,12 @@ const docTemplate = `{
                 },
                 "itemType": {
                     "type": "string"
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.linkDTO"
+                    }
                 },
                 "title": {
                     "type": "string"
@@ -1919,6 +1949,23 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.linkDTO": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "rel": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.metadataDTO": {
             "type": "object",
             "properties": {
@@ -1960,13 +2007,22 @@ const docTemplate = `{
                 "cacheTTLSec": {
                     "type": "integer"
                 },
-                "defaultFeaturesLimit": {
+                "effectiveDefaultFeaturesLimit": {
                     "type": "integer"
                 },
-                "defaultListLimit": {
+                "effectiveDefaultListLimit": {
                     "type": "integer"
                 },
-                "defaultRowLimit": {
+                "effectiveDefaultRowLimit": {
+                    "type": "integer"
+                },
+                "effectiveMaxFeaturesLimit": {
+                    "type": "integer"
+                },
+                "effectiveMaxListLimit": {
+                    "type": "integer"
+                },
+                "effectiveMaxRowLimit": {
                     "type": "integer"
                 },
                 "maxFeaturesLimit": {

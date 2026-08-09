@@ -19,7 +19,7 @@ func Test_newTablesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	deriveSvc := &mockDeriveAPI{}
 	rowSvc := &mockRowAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}
+	settings := stubSettingsAPI{settings: storage.Settings{}}
 
 	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings)
 
@@ -47,7 +47,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 			th := &TablesHandler{
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				metadataService: metadataSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}},
+				settings:        stubSettingsAPI{settings: storage.Settings{}},
 			}
 
 			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
@@ -83,7 +83,7 @@ func Test_tablesHandler_listPaginationParams(t *testing.T) {
 		{name: "limit is capped at MaxListLimit", query: "limit=9999", wantOffset: 0, wantLimit: 500},
 	}
 
-	th := &TablesHandler{settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
+	th := &TablesHandler{settings: stubSettingsAPI{settings: storage.Settings{}}}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -403,7 +403,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:        stubSettingsAPI{settings: storage.Settings{}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -455,7 +455,7 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:        stubSettingsAPI{settings: storage.Settings{}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

@@ -23,8 +23,9 @@ func Test_Settings_GetSettings_SeededAtDefaults(t *testing.T) {
 	got, err := r.GetSettings(context.Background())
 
 	require.NoError(t, err)
-	assert.Equal(t, settings.DefaultRowLimit, got.DefaultRowLimit)
-	assert.Equal(t, settings.MaxRowLimit, got.MaxRowLimit)
+	assert.Zero(t, got.MaxRowLimit)
+	assert.Zero(t, got.MaxListLimit)
+	assert.Zero(t, got.MaxFeaturesLimit)
 	assert.Equal(t, float64(settings.MaxSimplifyTolerance), got.MaxSimplifyTolerance)
 	assert.Equal(t, settings.CacheTTLSec, got.CacheTTLSec)
 	assert.False(t, got.UpdatedAt.IsZero())
@@ -35,11 +36,11 @@ func Test_Settings_UpdateSettings_PatchesOnlyGivenFields(t *testing.T) {
 	ctx := context.Background()
 
 	newLimit := 250
-	updated, err := r.UpdateSettings(ctx, storage.SettingsPatch{DefaultRowLimit: &newLimit})
+	updated, err := r.UpdateSettings(ctx, storage.SettingsPatch{MaxRowLimit: &newLimit})
 
 	require.NoError(t, err)
-	assert.Equal(t, 250, updated.DefaultRowLimit)
-	assert.Equal(t, settings.MaxRowLimit, updated.MaxRowLimit, "an untouched field must survive the patch unchanged")
+	assert.Equal(t, 250, updated.MaxRowLimit)
+	assert.Equal(t, settings.CacheTTLSec, updated.CacheTTLSec, "an untouched field must survive the patch unchanged")
 
 	reread, err := r.GetSettings(ctx)
 	require.NoError(t, err)

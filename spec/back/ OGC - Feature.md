@@ -13,7 +13,6 @@
 5. [Go Implementation Example with Chi](#-go-implementation-example-with-chi)
 6. [Key Implementation Points](#-key-implementation-points)
 7. [Useful Links](#-useful-links)
-8. [Open Questions](#-open-questions)
 
 ***
 
@@ -629,28 +628,6 @@ Return appropriate **HTTP status codes**:
 - **OpenAPI 3.0**: [OpenAPI Specification](https://spec.openapis.org/oas/v3.0.2)
 - **CQL2 (Common Query Language)**: [OGC CQL2](https://docs.ogc.org/DRAFTS/21-065.html)
 - **Chi Router**: [Chi GitHub](https://github.com/go-chi/chi)
-
-***
-
-## ❓ Open Questions
-
-1. **Data Source**:
-   - Where will you store the **features**? (Database like PostGIS, GeoJSON files, etc.)
-   - Do you need support for **write operations** (POST/PUT/DELETE)?
-
-2. **Encodings**:
-   - Do you want to support **GML** or **HTML** in addition to GeoJSON?
-
-3. **Advanced Filters**:
-   - Do you need **CQL2** for complex filters, or are simple filters (`bbox`, `datetime`) sufficient?
-
-4. **Authentication**:
-   - Should the API be **public** or **protected** (e.g., with API keys)?
-
-5. **Performance**:
-   - Do you have any **latency** or **data size** constraints to consider?
-
-***
 
 ## 📝 Additional Notes
 

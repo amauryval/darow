@@ -1,6 +1,6 @@
-import type { Settings } from '../client/types'
+import type { Settings, SettingsReadOnlyKey } from '../client/types'
 
-export type SettingsFieldKey = keyof Omit<Settings, 'updatedAt'>
+export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
 
 export interface SettingsFieldSpec {
     key: SettingsFieldKey
@@ -19,6 +19,10 @@ export interface SettingsFieldSpec {
     // meaningful input rather than just the bottom of the range — stated
     // here so SettingsView never has to special-case a field by key.
     zeroMeaning?: string
+    // The read-only pair the server resolves this limit to, shown under the
+    // input so an operator sees what the server applies today — the built-in
+    // values while the field is at 0, its own value once set.
+    effectiveKeys?: { default: keyof Settings; max: keyof Settings; noun: string }
 }
 
 export interface SettingsFieldGroup {
@@ -41,27 +45,28 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         description: 'Combien de lignes ou d’éléments le serveur renvoie à la fois.',
         fields: [
             {
-                key: 'defaultRowLimit',
-                label: 'Lignes chargées par page dans une table',
-                description:
-                    'Ce que le serveur renvoie quand une requête ne précise pas elle-même de nombre de lignes — c’est ce que l’écran d’une table affiche à l’ouverture.'
-            },
-            {
                 key: 'maxRowLimit',
-                label: 'Nombre de lignes maximum par page',
+                label: 'Nombre de lignes par page dans une table',
                 description:
-                    'Plafond que le serveur applique lui-même : une page de résultats ne peut jamais dépasser ce nombre de lignes, même si une requête en demande davantage.'
-            },
-            {
-                key: 'defaultListLimit',
-                label: 'Éléments chargés par page dans une liste (tables, sources)',
-                description:
-                    'Même principe que ci-dessus, mais pour les catalogues (liste des tables, liste des sources) plutôt que pour les lignes d’une table.'
+                    'La valeur que vous fixez ici sert deux fois : c’est le nombre de lignes que le serveur renvoie quand une requête ne précise rien — ce que l’écran d’une table affiche à l’ouverture — et le plafond qu’il applique à une requête qui en demande davantage.',
+                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
+                effectiveKeys: {
+                    default: 'effectiveDefaultRowLimit',
+                    max: 'effectiveMaxRowLimit',
+                    noun: 'lignes'
+                }
             },
             {
                 key: 'maxListLimit',
-                label: 'Nombre d’éléments maximum par page de liste',
-                description: 'Plafond que le serveur applique lui-même, pour ces mêmes catalogues.'
+                label: 'Nombre d’éléments par page de liste (tables, sources)',
+                description:
+                    'Même principe que ci-dessus, mais pour les catalogues (liste des tables, liste des sources) plutôt que pour les lignes d’une table.',
+                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
+                effectiveKeys: {
+                    default: 'effectiveDefaultListLimit',
+                    max: 'effectiveMaxListLimit',
+                    noun: 'éléments'
+                }
             }
         ]
     },
@@ -70,16 +75,16 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         description: 'Ce que renvoient les API cartographiques (OGC, tuiles vectorielles).',
         fields: [
             {
-                key: 'defaultFeaturesLimit',
-                label: 'Objets géographiques renvoyés par défaut',
-                description:
-                    'Ce que le serveur applique lui-même quand une requête cartographique ne précise pas elle-même de limite (nombre de points, lignes, polygones).'
-            },
-            {
                 key: 'maxFeaturesLimit',
-                label: 'Nombre maximum d’objets géographiques par requête',
+                label: 'Nombre d’objets géographiques par requête',
                 description:
-                    'Plafond que le serveur applique lui-même, même si une requête en demande davantage.'
+                    'Nombre de points, lignes et polygones que le serveur renvoie à une requête cartographique qui ne précise pas de limite, et plafond qu’il applique à une requête qui en demande davantage.',
+                zeroMeaning: 'le serveur applique ses propres valeurs, rappelées ci-dessous.',
+                effectiveKeys: {
+                    default: 'effectiveDefaultFeaturesLimit',
+                    max: 'effectiveMaxFeaturesLimit',
+                    noun: 'objets'
+                }
             },
             {
                 key: 'maxSimplifyTolerance',
@@ -132,7 +137,7 @@ const FIELD_KEYS = new Set<string>(
 )
 
 // SettingsService.UpdateSettings joins every violation into one message
-// ("defaultRowLimit must be positive; maxRowLimit must be >= defaultRowLimit"),
+// ("maxRowLimit must not be negative; maxListLimit must be <= 5000"),
 // each segment starting with the JSON field name it names. Parsed here into
 // a per-field map so the form can attach each refusal to its own input
 // instead of showing one undifferentiated error.

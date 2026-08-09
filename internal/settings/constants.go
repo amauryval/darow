@@ -1,15 +1,16 @@
-// Package settings holds the default values of every parameter stored in
-// the settings table, as constants — the single place those defaults are
-// written, read both by the settings repository (to seed a fresh table) and
-// by SettingsService (to validate an update never leaves a field at zero).
-// It also holds the defaults and bounds of the guards TODO-17 moved to
-// config.Config (internal/config reads them from here, so the same numbers
-// back both halves of the settings surface).
+// Package settings holds, as constants, every value the server falls back to
+// when nothing else says otherwise: the pagination limits it applies on its
+// own, the seed values of the settings table's remaining fields, the defaults
+// and bounds of the config.yaml guards (internal/config reads them from here),
+// and the ceilings internal/settings.Validate enforces.
 package settings
 
-// Runtime-editable defaults (storage.Settings): row and list pagination
-// limits, feature limits, geometry simplification bounds, the tile HTTP
-// cache lifetime, and the shared metadata/schema cache TTL.
+// Built-in pagination limits, never stored and never editable: an operator
+// sets one limit per family (storage.Settings' Max*Limit), and leaving it at
+// 0 is what puts these two back in charge — Default* is the page a handler
+// serves when the caller asks for no limit, Max* the ceiling it applies to
+// what the caller does ask for. Both are read through Limits (limits.go),
+// never directly by a handler.
 const (
 	DefaultRowLimit      = 100
 	MaxRowLimit          = 1000
@@ -17,6 +18,12 @@ const (
 	MaxListLimit         = 500
 	DefaultFeaturesLimit = 100
 	MaxFeaturesLimit     = 10000
+)
+
+// Seed values of the settings table's non-pagination fields (storage.Settings):
+// geometry simplification bounds, the tile HTTP cache lifetime, and the shared
+// metadata/schema cache TTL.
+const (
 	MaxSimplifyTolerance = 1
 	MaxPrecision         = 1000
 	TileCacheMaxAgeSec   = 60

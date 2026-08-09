@@ -17,6 +17,29 @@ import (
 	"darow/internal/storage"
 )
 
+func Test_WriteJSONAs(t *testing.T) {
+	cases := []struct {
+		name            string
+		contentType     string
+		wantContentType string
+	}{
+		{name: "geojson media type is written as given", contentType: "application/geo+json", wantContentType: "application/geo+json"},
+		{name: "plain json media type is written as given", contentType: "application/json", wantContentType: "application/json"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+
+			WriteJSONAs(rec, http.StatusOK, c.contentType, map[string]string{"type": "Feature"})
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, c.wantContentType, rec.Header().Get("Content-Type"))
+			assert.JSONEq(t, `{"type":"Feature"}`, rec.Body.String())
+		})
+	}
+}
+
 // MapServiceError is the single decision point for every error status the
 // API returns; each error type it dispatches on must map to the status the
 // audit expects, and anything unclassified must default to 500 rather than

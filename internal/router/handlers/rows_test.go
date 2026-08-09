@@ -17,7 +17,7 @@ func Test_newRowsHandler(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	schemaSvc := &mockSchemaAPI{}
 	rowSvc := &mockRowAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}
+	settings := stubSettingsAPI{settings: storage.Settings{}}
 
 	geoSvc := &mockGeoAPI{}
 
@@ -51,7 +51,7 @@ func Test_rowsHandler_paginationParams(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rh := &RowsHandler{settings: stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}}
+			rh := &RowsHandler{settings: stubSettingsAPI{settings: storage.Settings{}}}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil)
 
 			offset, limit := rh.paginationParams(req)
@@ -81,7 +81,7 @@ func Test_rowsHandler_listRows(t *testing.T) {
 			rh := &RowsHandler{
 				TableResolver: validation.NewTableResolver(metadataSvc),
 				rowService:    rowSvc,
-				settings:      stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:      stubSettingsAPI{settings: storage.Settings{}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -122,7 +122,7 @@ func Test_rowsHandler_listRows_Sort(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:        stubSettingsAPI{settings: storage.Settings{}},
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -46,12 +47,23 @@ func toMetadataDTO(m storage.Metadata) metadataDTO {
 	return dto
 }
 
+// linkDTO is an OGC API - Features / RFC 8288 link, the navigation element
+// every OGC response carries.
+type linkDTO struct {
+	Href  string `json:"href"`
+	Rel   string `json:"rel"`
+	Type  string `json:"type,omitempty"`
+	Title string `json:"title,omitempty"`
+}
+
 // collectionDTO is an OGC API - Features collection — one per geo table.
 type collectionDTO struct {
 	Id       string    `json:"id"`
 	Title    string    `json:"title"`
 	ItemType string    `json:"itemType"`
+	Crs      []string  `json:"crs"`
 	Extent   extentDTO `json:"extent"`
+	Links    []linkDTO `json:"links"`
 }
 
 type extentDTO struct {
@@ -66,10 +78,19 @@ type spatialExtentDTO struct {
 // toCollectionDTO maps m's Bbox string ("minX,minY,maxX,maxY" in EPSG:4326)
 // to OGC's spatial-extent shape; a missing/malformed Bbox yields an empty
 // bbox list rather than an error, since extent is informational.
-func toCollectionDTO(m storage.Metadata) collectionDTO {
-	dto := collectionDTO{Id: m.TableId, Title: m.TableName, ItemType: "feature", Extent: extentDTO{
-		Spatial: spatialExtentDTO{Crs: ogcCRS84},
-	}}
+func toCollectionDTO(m storage.Metadata, req *http.Request) collectionDTO {
+	self := ogcBasePath(req) + "/collections/" + m.TableId
+	dto := collectionDTO{
+		Id:       m.TableId,
+		Title:    m.TableName,
+		ItemType: "feature",
+		Crs:      []string{ogcCRS84},
+		Extent:   extentDTO{Spatial: spatialExtentDTO{Crs: ogcCRS84}},
+		Links: []linkDTO{
+			{Href: self, Rel: "self", Type: mediaTypeJSON, Title: m.TableName},
+			{Href: self + "/items", Rel: "items", Type: mediaTypeGeoJSON, Title: m.TableName},
+		},
+	}
 
 	parts := strings.Split(m.Bbox, ",")
 	if len(parts) != 4 {

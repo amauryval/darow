@@ -4,8 +4,14 @@ import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
 import { cellValue } from '../utils/rows'
 import { usePaginatedList } from './usePaginatedList'
-import { useSettings } from './useSettings'
 import { useToast } from './useToast'
+
+// The grid's own page size — deliberately independent of the operator's
+// maxRowLimit setting: that value is a REST API ceiling, not a UI choice, and
+// borrowing it as the grid's initial page would make the table open slower
+// the more permissive the operator sets the API (the grid still pages in more
+// as the user scrolls).
+const PAGE_SIZE = 50
 
 // A table's rows: the current (unfiltered) page, server-side sorting,
 // insertion, duplication and deletion. Built on usePaginatedList for the
@@ -20,19 +26,9 @@ export function useTableRows(
     onMutated: () => void
 ) {
     const toast = useToast()
-    const settings = useSettings()
-
-    // The server's own default, clamped to maxRowLimit for the same reason
-    // useSources clamps its own: a lowered cap must not make the grid's
-    // first page request fail against the server's own limit. Falls back to
-    // the previous hard-coded value while /settings has not loaded yet.
-    const pageSize = Math.min(
-        settings.current.value?.defaultRowLimit ?? 20,
-        settings.current.value?.maxRowLimit ?? 20
-    )
 
     const list = usePaginatedList<Row>({
-        limit: pageSize,
+        limit: PAGE_SIZE,
         key: tableId,
         fetchPage: (offset, limit, sort) =>
             listRows(tableId.value, offset, limit, sort).then((page) => ({
@@ -97,7 +93,7 @@ export function useTableRows(
     return {
         rows: list.items,
         total: list.total,
-        pageSize,
+        pageSize: PAGE_SIZE,
         loading: list.loading,
         loadedOnce: list.loadedOnce,
         error: list.error,

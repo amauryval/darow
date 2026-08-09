@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"darow/internal/router/response"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -19,46 +20,58 @@ func NewSettingsHandler(settingsSvc settingsAPI) *SettingsHandler {
 	return &SettingsHandler{settingsService: settingsSvc}
 }
 
-// settingsDTO is the JSON representation of the settings row.
+// settingsDTO is the JSON representation of the settings row. The three
+// max*Limit fields are the operator's own, editable, 0 meaning "the server's
+// built-in limits"; the six effective* fields are read-only, the pair each
+// family actually resolves to (internal/settings.Limits), so a client never
+// has to hold a copy of the server's constants to know what it will get.
 type settingsDTO struct {
-	DefaultRowLimit      int     `json:"defaultRowLimit"`
-	MaxRowLimit          int     `json:"maxRowLimit"`
-	DefaultListLimit     int     `json:"defaultListLimit"`
-	MaxListLimit         int     `json:"maxListLimit"`
-	DefaultFeaturesLimit int     `json:"defaultFeaturesLimit"`
-	MaxFeaturesLimit     int     `json:"maxFeaturesLimit"`
-	MaxSimplifyTolerance float64 `json:"maxSimplifyTolerance"`
-	MaxPrecision         float64 `json:"maxPrecision"`
-	TileCacheMaxAgeSec   int     `json:"tileCacheMaxAgeSec"`
-	CacheTTLSec          int     `json:"cacheTTLSec"`
-	UpdatedAt            string  `json:"updatedAt"`
+	MaxRowLimit                   int     `json:"maxRowLimit"`
+	MaxListLimit                  int     `json:"maxListLimit"`
+	MaxFeaturesLimit              int     `json:"maxFeaturesLimit"`
+	MaxSimplifyTolerance          float64 `json:"maxSimplifyTolerance"`
+	MaxPrecision                  float64 `json:"maxPrecision"`
+	TileCacheMaxAgeSec            int     `json:"tileCacheMaxAgeSec"`
+	CacheTTLSec                   int     `json:"cacheTTLSec"`
+	EffectiveDefaultRowLimit      int     `json:"effectiveDefaultRowLimit"`
+	EffectiveMaxRowLimit          int     `json:"effectiveMaxRowLimit"`
+	EffectiveDefaultListLimit     int     `json:"effectiveDefaultListLimit"`
+	EffectiveMaxListLimit         int     `json:"effectiveMaxListLimit"`
+	EffectiveDefaultFeaturesLimit int     `json:"effectiveDefaultFeaturesLimit"`
+	EffectiveMaxFeaturesLimit     int     `json:"effectiveMaxFeaturesLimit"`
+	UpdatedAt                     string  `json:"updatedAt"`
 }
 
 func toSettingsDTO(s storage.Settings) settingsDTO {
+	rows := settings.RowLimits(s.MaxRowLimit)
+	lists := settings.ListLimits(s.MaxListLimit)
+	features := settings.FeaturesLimits(s.MaxFeaturesLimit)
+
 	return settingsDTO{
-		DefaultRowLimit:      s.DefaultRowLimit,
-		MaxRowLimit:          s.MaxRowLimit,
-		DefaultListLimit:     s.DefaultListLimit,
-		MaxListLimit:         s.MaxListLimit,
-		DefaultFeaturesLimit: s.DefaultFeaturesLimit,
-		MaxFeaturesLimit:     s.MaxFeaturesLimit,
-		MaxSimplifyTolerance: s.MaxSimplifyTolerance,
-		MaxPrecision:         s.MaxPrecision,
-		TileCacheMaxAgeSec:   s.TileCacheMaxAgeSec,
-		CacheTTLSec:          s.CacheTTLSec,
-		UpdatedAt:            s.UpdatedAt.Format(time.RFC3339),
+		MaxRowLimit:                   s.MaxRowLimit,
+		MaxListLimit:                  s.MaxListLimit,
+		MaxFeaturesLimit:              s.MaxFeaturesLimit,
+		MaxSimplifyTolerance:          s.MaxSimplifyTolerance,
+		MaxPrecision:                  s.MaxPrecision,
+		TileCacheMaxAgeSec:            s.TileCacheMaxAgeSec,
+		CacheTTLSec:                   s.CacheTTLSec,
+		EffectiveDefaultRowLimit:      rows.Default,
+		EffectiveMaxRowLimit:          rows.Max,
+		EffectiveDefaultListLimit:     lists.Default,
+		EffectiveMaxListLimit:         lists.Max,
+		EffectiveDefaultFeaturesLimit: features.Default,
+		EffectiveMaxFeaturesLimit:     features.Max,
+		UpdatedAt:                     s.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
 // settingsPatchDTO is the JSON body PATCH /settings accepts — every field
 // optional, a nil field leaving that setting unchanged, mirroring
-// storage.SettingsPatch.
+// storage.SettingsPatch. The effective* fields of settingsDTO have no
+// counterpart here: they are derived, not stored.
 type settingsPatchDTO struct {
-	DefaultRowLimit      *int     `json:"defaultRowLimit"`
 	MaxRowLimit          *int     `json:"maxRowLimit"`
-	DefaultListLimit     *int     `json:"defaultListLimit"`
 	MaxListLimit         *int     `json:"maxListLimit"`
-	DefaultFeaturesLimit *int     `json:"defaultFeaturesLimit"`
 	MaxFeaturesLimit     *int     `json:"maxFeaturesLimit"`
 	MaxSimplifyTolerance *float64 `json:"maxSimplifyTolerance"`
 	MaxPrecision         *float64 `json:"maxPrecision"`
@@ -68,11 +81,8 @@ type settingsPatchDTO struct {
 
 func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 	return storage.SettingsPatch{
-		DefaultRowLimit:      dto.DefaultRowLimit,
 		MaxRowLimit:          dto.MaxRowLimit,
-		DefaultListLimit:     dto.DefaultListLimit,
 		MaxListLimit:         dto.MaxListLimit,
-		DefaultFeaturesLimit: dto.DefaultFeaturesLimit,
 		MaxFeaturesLimit:     dto.MaxFeaturesLimit,
 		MaxSimplifyTolerance: dto.MaxSimplifyTolerance,
 		MaxPrecision:         dto.MaxPrecision,
@@ -89,17 +99,17 @@ func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 // @Success 200 {object} settingsDTO
 // @Router /api/v1/settings [get]
 func (sh *SettingsHandler) GetSettings(w http.ResponseWriter, req *http.Request) {
-	settings, err := sh.settingsService.GetSettings(req.Context())
+	current, err := sh.settingsService.GetSettings(req.Context())
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	response.WriteJSON(w, http.StatusOK, toSettingsDTO(settings))
+	response.WriteJSON(w, http.StatusOK, toSettingsDTO(current))
 }
 
-// UpdateSettings handles PATCH /settings. Every field is optional; an
-// unrecognized combination of values (e.g. maxRowLimit below
-// defaultRowLimit) is rejected as a whole, with nothing persisted.
+// UpdateSettings handles PATCH /settings. Every field is optional; a value
+// out of its bounds (e.g. maxRowLimit above the server's ceiling) is rejected
+// as a whole, with nothing persisted.
 //
 // @Summary Update the runtime-editable settings
 // @Tags settings

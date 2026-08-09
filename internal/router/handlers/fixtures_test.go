@@ -26,12 +26,10 @@ type stubSettingsAPI struct{ settings storage.Settings }
 
 // defaultTestSettings is the settings double for a handler test built by
 // hand (not through its NewXxxHandler constructor) that exercises a code
-// path reading settings but doesn't care what the limits are — generous
-// enough that no case here trips a cap incidentally.
+// path reading settings but doesn't care what the limits are: the three
+// pagination limits are left unset, so internal/settings' built-in values
+// apply and no case here trips a cap incidentally.
 var defaultTestSettings = stubSettingsAPI{settings: storage.Settings{
-	DefaultRowLimit: 100, MaxRowLimit: 1000,
-	DefaultListLimit: 50, MaxListLimit: 500,
-	DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
 	MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 	TileCacheMaxAgeSec: 60,
 	CacheTTLSec:        300,

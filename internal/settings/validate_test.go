@@ -11,42 +11,10 @@ import (
 
 func validTestSettings() storage.Settings {
 	return storage.Settings{
-		DefaultRowLimit: 100, MaxRowLimit: 1000,
-		DefaultListLimit: 50, MaxListLimit: 500,
-		DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
+		MaxRowLimit: 1000, MaxListLimit: 500, MaxFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
 		CacheTTLSec:        300,
-	}
-}
-
-func Test_Validator_DefaultRowLimit(t *testing.T) {
-	cases := []struct {
-		name    string
-		mutate  func(s storage.Settings) storage.Settings
-		wantErr bool
-	}{
-		{name: "positive value is accepted"},
-		{
-			name:    "zero is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.DefaultRowLimit = 0; return s },
-			wantErr: true,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			s := validTestSettings()
-			if c.mutate != nil {
-				s = c.mutate(s)
-			}
-			got, err := NewValidator(s).DefaultRowLimit()
-			if c.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, s.DefaultRowLimit, got)
-		})
 	}
 }
 
@@ -56,10 +24,14 @@ func Test_Validator_MaxRowLimit(t *testing.T) {
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [defaultRowLimit, ceiling] is accepted"},
+		{name: "value within [0, ceiling] is accepted"},
 		{
-			name:    "below defaultRowLimit is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = s.DefaultRowLimit - 1; return s },
+			name:   "zero is accepted, handing the family back to the built-in limits",
+			mutate: func(s storage.Settings) storage.Settings { s.MaxRowLimit = 0; return s },
+		},
+		{
+			name:    "a negative value is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = -1; return s },
 			wantErr: true,
 		},
 		{
@@ -85,46 +57,20 @@ func Test_Validator_MaxRowLimit(t *testing.T) {
 	}
 }
 
-func Test_Validator_DefaultListLimit(t *testing.T) {
-	cases := []struct {
-		name    string
-		mutate  func(s storage.Settings) storage.Settings
-		wantErr bool
-	}{
-		{name: "positive value is accepted"},
-		{
-			name:    "zero is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.DefaultListLimit = 0; return s },
-			wantErr: true,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			s := validTestSettings()
-			if c.mutate != nil {
-				s = c.mutate(s)
-			}
-			got, err := NewValidator(s).DefaultListLimit()
-			if c.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, s.DefaultListLimit, got)
-		})
-	}
-}
-
 func Test_Validator_MaxListLimit(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [defaultListLimit, ceiling] is accepted"},
+		{name: "value within [0, ceiling] is accepted"},
 		{
-			name:    "below defaultListLimit is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxListLimit = s.DefaultListLimit - 1; return s },
+			name:   "zero is accepted, handing the family back to the built-in limits",
+			mutate: func(s storage.Settings) storage.Settings { s.MaxListLimit = 0; return s },
+		},
+		{
+			name:    "a negative value is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.MaxListLimit = -1; return s },
 			wantErr: true,
 		},
 		{
@@ -150,46 +96,20 @@ func Test_Validator_MaxListLimit(t *testing.T) {
 	}
 }
 
-func Test_Validator_DefaultFeaturesLimit(t *testing.T) {
-	cases := []struct {
-		name    string
-		mutate  func(s storage.Settings) storage.Settings
-		wantErr bool
-	}{
-		{name: "positive value is accepted"},
-		{
-			name:    "zero is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.DefaultFeaturesLimit = 0; return s },
-			wantErr: true,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			s := validTestSettings()
-			if c.mutate != nil {
-				s = c.mutate(s)
-			}
-			got, err := NewValidator(s).DefaultFeaturesLimit()
-			if c.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, s.DefaultFeaturesLimit, got)
-		})
-	}
-}
-
 func Test_Validator_MaxFeaturesLimit(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(s storage.Settings) storage.Settings
 		wantErr bool
 	}{
-		{name: "value within [defaultFeaturesLimit, ceiling] is accepted"},
+		{name: "value within [0, ceiling] is accepted"},
 		{
-			name:    "below defaultFeaturesLimit is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = s.DefaultFeaturesLimit - 1; return s },
+			name:   "zero is accepted, handing the family back to the built-in limits",
+			mutate: func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = 0; return s },
+		},
+		{
+			name:    "a negative value is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.MaxFeaturesLimit = -1; return s },
 			wantErr: true,
 		},
 		{
@@ -343,8 +263,8 @@ func Test_Validate(t *testing.T) {
 	}{
 		{name: "every field within bounds is accepted"},
 		{
-			name:    "maxRowLimit below defaultRowLimit is rejected",
-			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = s.DefaultRowLimit - 1; return s },
+			name:    "a negative maxRowLimit is rejected",
+			mutate:  func(s storage.Settings) storage.Settings { s.MaxRowLimit = -1; return s },
 			wantErr: true,
 		},
 		{

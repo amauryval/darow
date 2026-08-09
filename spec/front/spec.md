@@ -287,7 +287,7 @@ module level and documents it; that is the exception, not the rule.
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
-| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value, which is what lets `useSources`, `useTableRows`, `TablesView` and `useWfsLayer` open at the server's own default page size (`defaultListLimit`/`defaultRowLimit`/`defaultFeaturesLimit`), clamped to its cap (`maxListLimit`/`maxRowLimit`/`maxFeaturesLimit`), without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
+| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value, which is what lets `useSources`, `useTableRows`, `TablesView` and `useWfsLayer` open at the page size the server itself applies to a request that asks for none (`effectiveDefaultListLimit`/`effectiveDefaultRowLimit`/`effectiveDefaultFeaturesLimit` — read-only, already lowered to the server's own cap, so no caller clamps anything itself), without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
 
 ---
 
@@ -348,7 +348,7 @@ single, link-less entry naming the page.
 | `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
-| `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, saved as a diff-only patch, per-field refusals attached to their own input |
+| `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, one input per field through `components/settings/SettingsField.vue`, saved as a diff-only patch, per-field refusals attached to their own input. A pagination limit shows, under its input, the pair the server resolves it to (`effective*`) — read-only: the built-in page size is not a setting |
 
 **`DashboardView`** composes two independent sections, each owning its own four-state load
 (`components/dashboard/`): `ServerHealthSection` (`useDiagnostics`) and `DataOverviewSection`
@@ -357,7 +357,7 @@ endpoints, different latency/failure profiles, and a shared retry would re-trigg
 section's failure. `useDashboardStats` is the one composable allowed to page a listing
 (`listTables`) to completion instead of going through `usePaginatedList`'s infinite scroll: the
 dashboard needs the whole catalogue to sum/aggregate (`utils/dashboardStats.ts`'s
-`computeDashboardStats`), not a displayed page — it loops at `useSettings().current.maxListLimit`
+`computeDashboardStats`), not a displayed page — it loops at `useSettings().current.effectiveMaxListLimit`
 per page (the server's own live cap) until the reported `total` is reached.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
@@ -914,6 +914,7 @@ web/
       tables/         table domain components
       sources/        source domain components
       map/            map domain components
+      settings/       settings-form components
     views/
       TablesView.vue
       SourcesView.vue / SourcesView/    sub-views and panels

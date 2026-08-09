@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -29,28 +30,66 @@ func Test_NewSettingsHandler(t *testing.T) {
 }
 
 func Test_SettingsHandler_GetSettings(t *testing.T) {
-	h, settingsSvc := setupSettingsHandler(t)
-	want := storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000, UpdatedAt: time.Unix(0, 0)}
-	settingsSvc.On("GetSettings", mock.Anything).Return(want, nil).Once()
+	cases := []struct {
+		name               string
+		stored             storage.Settings
+		wantEffectiveRow   [2]int
+		wantEffectiveFeats [2]int
+	}{
+		{
+			name:               "unset limits report the server's built-in values",
+			stored:             storage.Settings{UpdatedAt: time.Unix(0, 0)},
+			wantEffectiveRow:   [2]int{settings.DefaultRowLimit, settings.MaxRowLimit},
+			wantEffectiveFeats: [2]int{settings.DefaultFeaturesLimit, settings.MaxFeaturesLimit},
+		},
+		{
+			name:               "a set limit drives both halves, above the built-in default as well as below",
+			stored:             storage.Settings{MaxRowLimit: 5000, MaxFeaturesLimit: 10, UpdatedAt: time.Unix(0, 0)},
+			wantEffectiveRow:   [2]int{5000, 5000},
+			wantEffectiveFeats: [2]int{10, 10},
+		},
+	}
 
-	rec := doHandlerRequest(h.GetSettings, http.MethodGet, "/", nil, nil)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, settingsSvc := setupSettingsHandler(t)
+			settingsSvc.On("GetSettings", mock.Anything).Return(c.stored, nil).Once()
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	got := decodeJSON[settingsDTO](rec)
-	assert.Equal(t, 100, got.DefaultRowLimit)
-	assert.Equal(t, 1000, got.MaxRowLimit)
+			rec := doHandlerRequest(h.GetSettings, http.MethodGet, "/", nil, nil)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			got := decodeJSON[settingsDTO](rec)
+			assert.Equal(t, c.stored.MaxRowLimit, got.MaxRowLimit)
+			assert.Equal(t, c.wantEffectiveRow[0], got.EffectiveDefaultRowLimit)
+			assert.Equal(t, c.wantEffectiveRow[1], got.EffectiveMaxRowLimit)
+			assert.Equal(t, c.wantEffectiveFeats[0], got.EffectiveDefaultFeaturesLimit)
+			assert.Equal(t, c.wantEffectiveFeats[1], got.EffectiveMaxFeaturesLimit)
+		})
+	}
 }
 
 func Test_SettingsHandler_UpdateSettings(t *testing.T) {
 	h, settingsSvc := setupSettingsHandler(t)
-	updated := storage.Settings{DefaultRowLimit: 250, MaxRowLimit: 1000}
-	settingsSvc.On("UpdateSettings", mock.Anything, storage.SettingsPatch{DefaultRowLimit: intPtr(250)}).Return(updated, nil).Once()
+	updated := storage.Settings{MaxRowLimit: 250}
+	settingsSvc.On("UpdateSettings", mock.Anything, storage.SettingsPatch{MaxRowLimit: intPtr(250)}).Return(updated, nil).Once()
 
-	rec := doHandlerRequest(h.UpdateSettings, http.MethodPatch, "/", map[string]any{"defaultRowLimit": 250}, nil)
+	rec := doHandlerRequest(h.UpdateSettings, http.MethodPatch, "/", map[string]any{"maxRowLimit": 250}, nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	got := decodeJSON[settingsDTO](rec)
-	assert.Equal(t, 250, got.DefaultRowLimit)
+	assert.Equal(t, 250, got.MaxRowLimit)
+	assert.Equal(t, 250, got.EffectiveDefaultRowLimit)
+	assert.Equal(t, 250, got.EffectiveMaxRowLimit)
+}
+
+func Test_SettingsHandler_UpdateSettings_IgnoresAReadOnlyField(t *testing.T) {
+	h, settingsSvc := setupSettingsHandler(t)
+	settingsSvc.On("UpdateSettings", mock.Anything, storage.SettingsPatch{}).Return(storage.Settings{}, nil).Once()
+
+	rec := doHandlerRequest(h.UpdateSettings, http.MethodPatch, "/", map[string]any{"effectiveDefaultRowLimit": 7}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	settingsSvc.AssertExpectations(t)
 }
 
 func Test_SettingsHandler_UpdateSettings_RejectsMalformedBody(t *testing.T) {

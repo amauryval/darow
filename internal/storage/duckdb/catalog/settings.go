@@ -12,22 +12,20 @@ import (
 
 // settingsColumns lists the columns every read scans, in scan order —
 // every Settings field but UpdatedAt, which trails them.
-const settingsColumns = `defaultRowLimit, maxRowLimit, defaultListLimit, maxListLimit,
-    defaultFeaturesLimit, maxFeaturesLimit, maxSimplifyTolerance, maxPrecision, tileCacheMaxAgeSec,
-    cacheTTLSec, updatedAt`
+const settingsColumns = `maxRowLimit, maxListLimit, maxFeaturesLimit, maxSimplifyTolerance,
+    maxPrecision, tileCacheMaxAgeSec, cacheTTLSec, updatedAt`
 
 // settingsSchema is the DDL applied on every startup — already at the
 // latest column set (no accumulated pre-1.0 migration history: see LIM-7).
-// settings is a singleton: exactly one row, id fixed at 1, seeded from
-// internal/settings' defaults the first time the table is created.
+// settings is a singleton: exactly one row, id fixed at 1, seeded the first
+// time the table is created: the three pagination limits at 0, the value that
+// leaves internal/settings' built-in constants in charge, the rest from that
+// same package's seed constants.
 var settingsSchema = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY,
-    defaultRowLimit INTEGER NOT NULL,
     maxRowLimit INTEGER NOT NULL,
-    defaultListLimit INTEGER NOT NULL,
     maxListLimit INTEGER NOT NULL,
-    defaultFeaturesLimit INTEGER NOT NULL,
     maxFeaturesLimit INTEGER NOT NULL,
     maxSimplifyTolerance DOUBLE NOT NULL,
     maxPrecision DOUBLE NOT NULL,
@@ -37,13 +35,12 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 INSERT INTO settings (id, %s)
-SELECT 1, %d, %d, %d, %d, %d, %d, %f, %f, %d, %d, NOW()
+SELECT 1, 0, 0, 0, %f, %f, %d, %d, NOW()
 WHERE NOT EXISTS (SELECT 1 FROM settings);
 `,
 	settingsColumns,
-	settings.DefaultRowLimit, settings.MaxRowLimit, settings.DefaultListLimit, settings.MaxListLimit,
-	settings.DefaultFeaturesLimit, settings.MaxFeaturesLimit, float64(settings.MaxSimplifyTolerance),
-	float64(settings.MaxPrecision), settings.TileCacheMaxAgeSec, settings.CacheTTLSec,
+	float64(settings.MaxSimplifyTolerance), float64(settings.MaxPrecision),
+	settings.TileCacheMaxAgeSec, settings.CacheTTLSec,
 )
 
 // settingsMigrations are ALTER statements applied in order, once each, to
@@ -76,9 +73,8 @@ var _ storage.SettingsStore = (*Settings)(nil)
 func scanSettings(row interface{ Scan(...any) error }) (storage.Settings, error) {
 	var s storage.Settings
 	err := row.Scan(
-		&s.DefaultRowLimit, &s.MaxRowLimit, &s.DefaultListLimit, &s.MaxListLimit,
-		&s.DefaultFeaturesLimit, &s.MaxFeaturesLimit, &s.MaxSimplifyTolerance, &s.MaxPrecision,
-		&s.TileCacheMaxAgeSec, &s.CacheTTLSec, &s.UpdatedAt,
+		&s.MaxRowLimit, &s.MaxListLimit, &s.MaxFeaturesLimit, &s.MaxSimplifyTolerance,
+		&s.MaxPrecision, &s.TileCacheMaxAgeSec, &s.CacheTTLSec, &s.UpdatedAt,
 	)
 	return s, err
 }
@@ -100,20 +96,11 @@ func (r *Settings) UpdateSettings(ctx context.Context, patch storage.SettingsPat
 		args = append(args, value)
 	}
 
-	if patch.DefaultRowLimit != nil {
-		add("defaultRowLimit", *patch.DefaultRowLimit)
-	}
 	if patch.MaxRowLimit != nil {
 		add("maxRowLimit", *patch.MaxRowLimit)
 	}
-	if patch.DefaultListLimit != nil {
-		add("defaultListLimit", *patch.DefaultListLimit)
-	}
 	if patch.MaxListLimit != nil {
 		add("maxListLimit", *patch.MaxListLimit)
-	}
-	if patch.DefaultFeaturesLimit != nil {
-		add("defaultFeaturesLimit", *patch.DefaultFeaturesLimit)
 	}
 	if patch.MaxFeaturesLimit != nil {
 		add("maxFeaturesLimit", *patch.MaxFeaturesLimit)

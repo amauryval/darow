@@ -124,7 +124,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
 | `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
-| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Validate`, no other logic                                             |
+| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limits` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
 | `internal/router/handlers`   | one handler per endpoint family + the ports to the services                                                                                                                                      |
@@ -222,14 +222,26 @@ and its ceiling can never drift apart.
 
 ### 2.5 Runtime-editable settings
 
-Every parameter an operator legitimately retunes while the process is serving — row/list pagination
-limits, OGC/tile feature limits, geometry simplification bounds, the tile HTTP cache lifetime, and
-the shared TTL of the metadata/schema caches — is **not** in `config.yaml`. It lives in the
-single-row `settings` table (§4.9), read and written through `SettingsService` (§5.8) and edited at
-runtime through `GET`/`PATCH /api/v1/settings` (§6.1) — never through a file or an environment
+Every parameter an operator legitimately retunes while the process is serving — one pagination limit
+per family (rows, catalogue listings, features), geometry simplification bounds, the tile HTTP cache
+lifetime, and the shared TTL of the metadata/schema caches — is **not** in `config.yaml`. It lives in
+the single-row `settings` table (§4.9), read and written through `SettingsService` (§5.8) and edited
+at runtime through `GET`/`PATCH /api/v1/settings` (§6.1) — never through a file or an environment
 variable, and never requiring a restart. Its default values and bounds are `internal/settings`'s
-exported constants and `internal/settings.Validate` (a `Validator` with one method per field), the
-one place they are written and enforced; `config.yaml` keeps only what the process needs to start at
+exported constants (`constants.go`) and `internal/settings.Validate` (a `Validator` with one method
+per field), the one place they are written and enforced;
+
+**A page size is not a setting.** `maxRowLimit`, `maxListLimit` and `maxFeaturesLimit` are the only
+pagination fields the table holds, and each carries the whole family: the value is the page a handler
+serves when the request asks for no limit **and** the ceiling it applies to what the request does ask
+for, above the server's own built-in default as well as below it. `0` — the seeded value — is not
+"no limit": it hands the family back to `internal/settings`' built-in `Default*Limit`/`Max*Limit`
+constants, which are never stored and never editable. The rule lives in exactly one place,
+`internal/settings.Limits` (`limits.go`, built by `RowLimits`/`ListLimits`/`FeaturesLimits` and
+applied by `Resolve`/`Resolve64`); no handler reads a limit field directly. `GET /api/v1/settings`
+publishes the resolved pair per family as six read-only `effective*` fields, so a client sizes its
+first request off what the server will actually serve instead of a copy of these constants;
+`PATCH` has no counterpart for them. `config.yaml` keeps only what the process needs to start at
 all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
 now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
 only on how it is produced, so it costs an operator a decision they had no way to make honestly.
@@ -633,8 +645,9 @@ per-component migration registry (`migrations.go`) and reached through `Adapter.
 alongside `Catalog()`/`Filters()`/`Materializer()` (§4.6). It is **not** an `Attachment`: nothing
 about it is scoped to a `tableId`, so it never joins the delete cascade `Catalog.Register` builds.
 
-The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded from
-`internal/settings`'s defaults inside `CreateSchema` itself (an `INSERT ... WHERE NOT EXISTS`, run
+The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded inside
+`CreateSchema` itself — the three pagination limits at `0` (§2.5), the rest from `internal/settings`'s
+constants (an `INSERT ... WHERE NOT EXISTS`, run
 once per process the first time the table doesn't exist yet — every later startup finds the row and
 leaves it alone). `GetSettings` reads that row whole; `UpdateSettings` takes a `storage.SettingsPatch`
 (nil fields left unchanged, the same shape as `MetadataPatch`) and writes only the columns given,
@@ -799,15 +812,15 @@ the concrete type). `GetSettings`/`UpdateSettings` are the pair `SettingsHandler
 repository-pattern shape `MetadataService` exposes for `metadata`.
 
 `UpdateSettings` merges the patch onto the current value **in memory first** (`mergeSettings`) and
-validates the *result* through `internal/settings.Validate` — a `maxRowLimit` patched below the
-current `defaultRowLimit` is rejected even though neither field alone is invalid, and every field is
-also checked against its own bound (an upper ceiling, and for `maxBodyBytes` a floor keeping
-`PATCH /api/v1/settings` itself always able to pass) — before writing anything; a rejection is a
+validates the *result* through `internal/settings.Validate` — every field checked against its own
+bound (an upper ceiling, and for `maxBodyBytes` a floor keeping `PATCH /api/v1/settings` itself
+always able to pass), a pagination limit accepting `0` as the value that hands its family back to the
+built-in constants (§2.5) — before writing anything; a rejection is a
 `ValidationError` (§6.4), the store never reached. `internal/settings.Validator` (built by
 `NewValidator`) carries one method per field, each returning that field's own validated value or the
 error naming it; `Validate` runs every one of them and joins the violations, and the ceilings/floor
-each method checks against live as constants in `internal/settings/defaults.go`, next to the field's
-default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
+each method checks against live as constants in `internal/settings/constants.go`, next to the
+field's default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
 replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
 (`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
 constructor.
@@ -935,19 +948,19 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                 | Description                                                                                             |
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/settings`   | the current runtime-editable settings (§2.5)                                                             |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings, plus the six read-only `effective*` pagination values (§2.5)      |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
 
 **OGC API - Features**
 
 | Method | Path                                                  | Description                                                                                  |
 | ------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/ogc/`                                        | landing page (self / conformance / data links)                                               |
+| GET    | `/api/v1/ogc/`                                        | landing page (self / service-desc / service-doc / conformance / data links)                  |
 | GET    | `/api/v1/ogc/conformance`                             | declared classes: Core + GeoJSON                                                             |
 | GET    | `/api/v1/ogc/collections`                             | one collection per geo table                                                                 |
 | GET    | `/api/v1/ogc/collections/{tableId}`                   | description of a collection                                                                  |
-| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset` |
-| GET    | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | one `Feature`, at full resolution                                                            |
+| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset`, `f` |
+| GET    | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | one `Feature`, at full resolution, parameter `f`                                             |
 
 ### 6.2 OGC API - Features
 
@@ -957,15 +970,30 @@ consistent with the all-JSON style of the rest of the API.
 -   `collectionId` **is** `tableId`: already an opaque, stable server identifier, exactly what the
     standard asks for.
 -   A non-geo table returns `404` on every `/ogc/collections/{tableId}/...` route.
--   Declared conformance: Core + GeoJSON only. Neither `oas30` nor CQL2.
--   `filter`, `simplify` and `precision` are **extensions** beyond Core: full CQL2 does not match
-    the whitelisted column/operator model that rule 5 imposes.
--   `datetime` is not supported: the model has no notion of a temporal column.
--   The `next` link is emitted only if the returned page is full — the only "there may be more"
-    signal available without a separate counting query.
+-   Declared conformance: Core + GeoJSON only. Neither `oas30` (the served API definition is Swagger
+    2.0, not OpenAPI 3.0) nor CQL2.
+-   `/items` and `/items/{featureId}` answer as `application/geo+json`, every other OGC route as
+    `application/json` (`response.WriteJSONAs`).
+-   **Links.** Every OGC resource carries the `links` Core requires, as `linkDTO` (`dto.go`): the
+    landing page `self`/`service-desc`/`service-doc`/`conformance`/`data` — the two service links
+    pointing at the Swagger definition and its UI; a collection `self`/`items`; a `FeatureCollection`
+    `self`/`collection` plus `next`/`prev`; a feature `self`/`collection`.
+-   **Parameters.** `bbox` (Core's 2D `minX,minY,maxX,maxY` and its 3D six-ordinate form, whose
+    height ordinates are dropped), `limit`, `offset`, and `f` restricted to `json`/`geojson`, the
+    only encoding served. `filter`, `simplify` and `precision` are **extensions** beyond Core: full
+    CQL2 does not match the whitelisted column/operator model that rule 5 imposes.
+-   **Anything else is a `400`.** A parameter outside that whitelist (`datetime` included), an
+    unparseable or negative `offset`, a `limit` that is not an integer ≥ 1, a malformed `bbox`: all
+    refused rather than ignored, so a client never receives a page it did not ask for. A `limit`
+    above `MaxFeaturesLimit` is the one value clamped rather than refused, as the standard allows.
+-   `datetime` is not supported: the model has no notion of a temporal column (`limitations.md`
+    LIM-11).
+-   `next` is emitted when `offset + limit < numberMatched`, `prev` when `offset > 0`; both keep
+    every other parameter of the request, so a paged traversal stays on the same result set.
 -   `numberMatched` is the total count of features matching the query (`bbox`/`filter`, ignoring
     `limit`/`offset`), from a `COUNT(*)` query run alongside the page query
-    (`GeoRepository.CountFeatures`); `numberReturned` is the page size.
+    (`GeoRepository.CountFeatures`); `numberReturned` is the page size; `timeStamp` is when the
+    response was generated.
 
 ### 6.3 Router and middlewares
 
@@ -1217,7 +1245,7 @@ The rest of the sequence (geometry detection, clustering, indexes) is identical 
 cmd/server/            entrypoint
 internal/
   config/              bootstrap-only configuration loading and validation (§2.1-2.4)
-  settings/            default values/bounds of every setting and config guard, as constants, plus Validate (§2.4, §2.5)
+  settings/            default values/bounds of every setting and config guard, as constants, plus Limits and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
     handlers/          one file per endpoint family + ports.go + dto.go

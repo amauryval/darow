@@ -30,12 +30,11 @@ type routerDeps struct {
 
 // defaultTestSettings is a valid Settings value, sized to satisfy
 // settings.Validate, so NewServices can build its LRU caches without a test
-// having to state every field; overridden per test case via settings.
+// having to state every field; overridden per test case via settings. The
+// three pagination limits are left unset, on internal/settings' built-in
+// values.
 func defaultTestSettings() storage.Settings {
 	return storage.Settings{
-		DefaultRowLimit: 100, MaxRowLimit: 1000,
-		DefaultListLimit: 50, MaxListLimit: 500,
-		DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
 		CacheTTLSec:        300,

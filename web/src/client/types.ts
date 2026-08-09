@@ -160,20 +160,38 @@ export interface ErrorResponse {
 // unauthenticated PATCH route (the request body cap, the per-request
 // timeout, every LRU cache's size) — none of that appears here, so it has no
 // place on a screen of *editable* settings.
+// The three max*Limit fields are one editable limit per family of pages,
+// 0 meaning "the server's own built-in limits"; the six effective* fields are
+// read-only, the pair the server actually applies (page size when a request
+// asks for none, ceiling when it asks for more), so no caller has to hold a
+// copy of the server's constants.
 export interface Settings {
-    defaultRowLimit: number
     maxRowLimit: number
-    defaultListLimit: number
     maxListLimit: number
-    defaultFeaturesLimit: number
     maxFeaturesLimit: number
     maxSimplifyTolerance: number
     maxPrecision: number
     tileCacheMaxAgeSec: number
     cacheTTLSec: number
+    effectiveDefaultRowLimit: number
+    effectiveMaxRowLimit: number
+    effectiveDefaultListLimit: number
+    effectiveMaxListLimit: number
+    effectiveDefaultFeaturesLimit: number
+    effectiveMaxFeaturesLimit: number
     updatedAt: string
 }
 
+// The read-only half of Settings: derived server-side, never sent back.
+export type SettingsReadOnlyKey =
+    | 'updatedAt'
+    | 'effectiveDefaultRowLimit'
+    | 'effectiveMaxRowLimit'
+    | 'effectiveDefaultListLimit'
+    | 'effectiveMaxListLimit'
+    | 'effectiveDefaultFeaturesLimit'
+    | 'effectiveMaxFeaturesLimit'
+
 // Matches storage.SettingsPatch — every field optional, an omitted one left
 // unchanged server-side.
-export type SettingsPatch = Partial<Omit<Settings, 'updatedAt'>>
+export type SettingsPatch = Partial<Omit<Settings, SettingsReadOnlyKey>>
