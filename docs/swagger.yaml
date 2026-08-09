@@ -2,14 +2,46 @@ basePath: /
 definitions:
     handlers.collectionDTO:
         properties:
+            crs:
+                items:
+                    type: string
+                type: array
             extent:
                 $ref: '#/definitions/handlers.extentDTO'
             id:
                 type: string
             itemType:
                 type: string
+            links:
+                items:
+                    $ref: '#/definitions/handlers.linkDTO'
+                type: array
             title:
                 type: string
+        type: object
+    handlers.deletedDTO:
+        properties:
+            id:
+                type: string
+            name:
+                type: string
+            rowsRemoved:
+                type: integer
+        type: object
+    handlers.diagnosticsDTO:
+        properties:
+            databaseSizeBytes:
+                type: integer
+            extensions:
+                items:
+                    type: string
+                type: array
+            maxSizeBytes:
+                type: integer
+            memoryUsageBytes:
+                type: integer
+            temporaryFilesBytes:
+                type: integer
         type: object
     handlers.extentDTO:
         properties:
@@ -31,6 +63,17 @@ definitions:
             tableId:
                 type: string
             updatedAt:
+                type: string
+        type: object
+    handlers.linkDTO:
+        properties:
+            href:
+                type: string
+            rel:
+                type: string
+            title:
+                type: string
+            type:
                 type: string
         type: object
     handlers.metadataDTO:
@@ -56,46 +99,82 @@ definitions:
             updatedAt:
                 type: string
         type: object
+    handlers.overrideField-float64:
+        properties:
+            effective:
+                type: number
+            exclusiveMinimum:
+                type: number
+            maximum:
+                type: number
+            minimum:
+                type: number
+            override:
+                type: number
+            unit:
+                type: string
+        type: object
+    handlers.overrideField-int:
+        properties:
+            effective:
+                type: integer
+            exclusiveMinimum:
+                type: number
+            maximum:
+                type: number
+            minimum:
+                type: number
+            override:
+                type: integer
+            unit:
+                type: string
+        type: object
     handlers.settingsDTO:
         properties:
+            cacheTTLSec:
+                $ref: '#/definitions/handlers.settingsField-int'
+            coordinateDecimals:
+                $ref: '#/definitions/handlers.settingsField-int'
             defaultFeaturesLimit:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-int'
             defaultListLimit:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-int'
             defaultRowLimit:
-                type: integer
-            exportBatchSize:
-                type: integer
-            maxBodyBytes:
-                type: integer
-            maxFeaturesLimit:
-                type: integer
-            maxListLimit:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-int'
             maxPrecision:
-                type: number
-            maxRowLimit:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-float64'
             maxSimplifyTolerance:
-                type: number
-            metadataMaxItems:
-                type: integer
-            metadataTTLSec:
-                type: integer
-            requestTimeoutSec:
-                type: integer
-            schemaMaxItems:
-                type: integer
-            schemaTTLSec:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-float64'
             tileCacheMaxAgeSec:
-                type: integer
-            tileMaxItems:
-                type: integer
-            tileTTLSec:
-                type: integer
+                $ref: '#/definitions/handlers.settingsField-int'
             updatedAt:
                 type: string
+        type: object
+    handlers.settingsField-float64:
+        properties:
+            exclusiveMinimum:
+                type: number
+            maximum:
+                type: number
+            minimum:
+                type: number
+            unit:
+                type: string
+            value:
+                type: number
+        type: object
+    handlers.settingsField-int:
+        properties:
+            exclusiveMinimum:
+                type: number
+            maximum:
+                type: number
+            minimum:
+                type: number
+            unit:
+                type: string
+            value:
+                type: integer
         type: object
     handlers.spatialExtentDTO:
         properties:
@@ -109,6 +188,36 @@ definitions:
             crs:
                 type: string
         type: object
+    handlers.tableSettingsDTO:
+        properties:
+            coordinateDecimals:
+                $ref: '#/definitions/handlers.overrideField-int'
+            defaultFeaturesLimit:
+                $ref: '#/definitions/handlers.overrideField-int'
+            defaultRowLimit:
+                $ref: '#/definitions/handlers.overrideField-int'
+            isGeo:
+                type: boolean
+            maxPrecision:
+                $ref: '#/definitions/handlers.overrideField-float64'
+            maxSimplifyTolerance:
+                $ref: '#/definitions/handlers.overrideField-float64'
+            tableId:
+                type: string
+            tileCacheMaxAgeSec:
+                $ref: '#/definitions/handlers.overrideField-int'
+            updatedAt:
+                type: string
+        type: object
+    handlers.uploadResultDTO:
+        properties:
+            loaded:
+                type: boolean
+            source:
+                $ref: '#/definitions/service.Source'
+            tableId:
+                type: string
+        type: object
     response.ErrorResponse:
         properties:
             code:
@@ -118,6 +227,34 @@ definitions:
             message:
                 type: string
             requestId:
+                type: string
+        type: object
+    service.Source:
+        properties:
+            ext:
+                type: string
+            layers:
+                items:
+                    $ref: '#/definitions/service.SourceLayer'
+                type: array
+            loaded:
+                type: boolean
+            modTime:
+                type: string
+            name:
+                type: string
+            sizeBytes:
+                type: integer
+            tableId:
+                type: string
+        type: object
+    service.SourceLayer:
+        properties:
+            loaded:
+                type: boolean
+            name:
+                type: string
+            tableId:
                 type: string
         type: object
     storage.FilterCondition:
@@ -144,6 +281,30 @@ info:
     title: Darow
     version: '1.0'
 paths:
+    /api/v1/derive:
+        post:
+            consumes:
+                - application/json
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Derive a table from a SELECT query
+            tags:
+                - tables
     /api/v1/ogc/:
         get:
             produces:
@@ -224,6 +385,10 @@ paths:
                   in: query
                   name: offset
                   type: integer
+                - description: 'Response format: json or geojson'
+                  in: query
+                  name: f
+                  type: string
             produces:
                 - application/json
             responses:
@@ -256,6 +421,10 @@ paths:
                   name: featureId
                   required: true
                   type: string
+                - description: 'Response format: json or geojson'
+                  in: query
+                  name: f
+                  type: string
             produces:
                 - application/json
             responses:
@@ -264,6 +433,10 @@ paths:
                     schema:
                         additionalProperties: true
                         type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
                 '404':
                     description: Not Found
                     schema:
@@ -316,6 +489,22 @@ paths:
             summary: Update the runtime-editable settings
             tags:
                 - settings
+    /api/v1/settings/tables:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            items:
+                                $ref: '#/definitions/handlers.tableSettingsDTO'
+                            type: array
+                        type: object
+            summary: List the tables that carry a settings override
+            tags:
+                - settings
     /api/v1/sources:
         get:
             parameters:
@@ -355,8 +544,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
                 '404':
                     description: Not Found
                     schema:
@@ -391,6 +582,10 @@ paths:
                         type: object
                 '409':
                     description: Conflict
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Load a source file into a new table
@@ -468,11 +663,13 @@ paths:
                 '201':
                     description: Created
                     schema:
-                        additionalProperties:
-                            type: string
-                        type: object
+                        $ref: '#/definitions/handlers.uploadResultDTO'
                 '400':
                     description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Upload a file and load it into a new table
@@ -519,8 +716,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
                 '404':
                     description: Not Found
                     schema:
@@ -660,7 +859,7 @@ paths:
             summary: List a column's distinct values
             tags:
                 - tables
-    /api/v1/tables/{tableId}/derive:
+    /api/v1/tables/{tableId}/derive-from-table:
         post:
             consumes:
                 - application/json
@@ -683,30 +882,8 @@ paths:
                     description: Bad Request
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
-            summary: Derive a table from a SELECT query
-            tags:
-                - tables
-    /api/v1/tables/{tableId}/derive-from-table:
-        post:
-            consumes:
-                - application/json
-            parameters:
-                - description: Source table ID
-                  in: path
-                  name: tableId
-                  required: true
-                  type: string
-            produces:
-                - application/json
-            responses:
-                '201':
-                    description: Created
-                    schema:
-                        additionalProperties:
-                            type: string
-                        type: object
-                '400':
-                    description: Bad Request
+                '507':
+                    description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Derive a table from this table's columns, expressions and conditions
@@ -1035,6 +1212,10 @@ paths:
                     description: Bad Request
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
             summary: Add one or more rows
             tags:
                 - rows
@@ -1052,8 +1233,10 @@ paths:
                   required: true
                   type: string
             responses:
-                '204':
-                    description: No Content
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.deletedDTO'
             summary: Delete a row
             tags:
                 - rows
@@ -1185,6 +1368,68 @@ paths:
             summary: Get table schema
             tags:
                 - tables
+    /api/v1/tables/{tableId}/settings:
+        delete:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+            summary: Clear every settings override of a table
+            tags:
+                - settings
+        get:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+                '404':
+                    description: Not Found
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Read a table's settings overrides
+            tags:
+                - settings
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.tableSettingsDTO'
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Set or clear a table's settings overrides
+            tags:
+                - settings
     /api/v1/tables/{tableId}/tiles/{z}/{x}/{y}:
         get:
             parameters:
@@ -1288,6 +1533,22 @@ paths:
             summary: Get features intersecting an MVT-style tile, as GeoJSON
             tags:
                 - geo
+    /diagnostics:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.diagnosticsDTO'
+                '500':
+                    description: Internal Server Error
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Storage engine diagnostics
+            tags:
+                - ops
     /healthz:
         get:
             responses:

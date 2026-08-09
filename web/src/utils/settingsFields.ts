@@ -1,6 +1,6 @@
-import type { Settings } from '../client/types'
+import type { FieldBounds, OverrideField, SettingsFieldKey, TableSettings } from '../client/types'
 
-export type SettingsFieldKey = keyof Omit<Settings, 'updatedAt'>
+export type { SettingsFieldKey }
 
 export interface SettingsFieldSpec {
     key: SettingsFieldKey
@@ -11,21 +11,39 @@ export interface SettingsFieldSpec {
     // label alone is not enough for someone with no notion of pagination
     // caps or LRU caches to act on it safely.
     description: string
-    unit?: string
-    // Whole numbers only (every field but the two geometry bounds, which are
-    // fractional tolerances/precisions).
+    // Whole numbers only, except the two geometry bounds (fractional
+    // tolerances/precisions). The input's granularity, a display choice —
+    // unlike min/max, which are the server's own bounds and are read off the
+    // payload (FieldBounds), never retyped here.
     step?: number
+    // What the value 0 means for this field, when 0 is itself a valid,
+    // meaningful input rather than just the bottom of the range — stated
+    // here so SettingsView never has to special-case a field by key.
+    zeroMeaning?: string
+    // Whether a table can carry its own override of this field
+    // (TableSettingsModal, back/todo.md TODO-18) — defaultListLimit and
+    // cacheTTLSec stay global on purpose (LIM-12) and are the two fields
+    // without this flag.
+    perTable?: boolean
+    // Whether this field only applies to a geo table — absent from a
+    // non-geo table's modal rather than shown disabled.
+    geoOnly?: boolean
 }
 
 export interface SettingsFieldGroup {
     title: string
     description: string
     fields: SettingsFieldSpec[]
+    // Set on a group that tunes a process internal rather than a product
+    // decision (IMP-F11/TODO-F40) — SettingsView folds it into a collapsed
+    // *Avancé* section instead of showing it at the same weight as
+    // Pagination or Cartographie et tuiles.
+    advanced?: boolean
 }
 
 // The families the server itself groups these constants into
 // (internal/settings), used to lay the form out as sections instead of one
-// flat list of eighteen inputs.
+// flat list of inputs.
 export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
     {
         title: 'Pagination',
@@ -33,58 +51,16 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         fields: [
             {
                 key: 'defaultRowLimit',
-                label: 'Lignes chargées par page dans une table',
+                label: 'Nombre de lignes par page dans une table',
                 description:
-                    'Quand on ouvre une table, ce nombre de lignes est affiché sans que personne n’ait à le demander.'
-            },
-            {
-                key: 'maxRowLimit',
-                label: 'Nombre de lignes maximum par page',
-                description:
-                    'Plafond absolu : une page de résultats ne peut jamais dépasser ce nombre de lignes, même si on le demande explicitement.'
+                    'Le nombre de lignes que le serveur renvoie quand une requête ne précise rien — ce que l’écran d’une table affiche à l’ouverture. Une requête qui en demande davantage n’en obtient pas plus.',
+                perTable: true
             },
             {
                 key: 'defaultListLimit',
-                label: 'Éléments chargés par page dans une liste (tables, sources)',
+                label: 'Nombre d’éléments par page de liste (tables, sources)',
                 description:
                     'Même principe que ci-dessus, mais pour les catalogues (liste des tables, liste des sources) plutôt que pour les lignes d’une table.'
-            },
-            {
-                key: 'maxListLimit',
-                label: 'Nombre d’éléments maximum par page de liste',
-                description: 'Plafond absolu pour ces mêmes catalogues.'
-            }
-        ]
-    },
-    {
-        title: 'Requêtes réseau',
-        description: 'Limites appliquées à chaque requête envoyée au serveur.',
-        fields: [
-            {
-                key: 'maxBodyBytes',
-                label: 'Taille maximale d’un envoi de données',
-                unit: 'octets',
-                description:
-                    'Au-delà de cette taille, un envoi (import de fichier, ajout de lignes) est refusé. 1 000 000 octets ≈ 1 Mo.'
-            },
-            {
-                key: 'requestTimeoutSec',
-                label: 'Délai maximum avant abandon d’une requête',
-                unit: 's',
-                description:
-                    'Si le serveur met plus longtemps que ça à répondre, la requête est annulée plutôt que de rester bloquée.'
-            }
-        ]
-    },
-    {
-        title: 'Export',
-        description: 'Comportement d’un export CSV ou GeoJSON.',
-        fields: [
-            {
-                key: 'exportBatchSize',
-                label: 'Lignes écrites à la fois pendant un export',
-                description:
-                    'Un export volumineux est découpé en lots de cette taille pour ne pas surcharger la mémoire du serveur pendant l’opération. Sans effet sur le résultat final, seulement sur la façon dont il est produit.'
             }
         ]
     },
@@ -94,89 +70,108 @@ export const SETTINGS_FIELD_GROUPS: SettingsFieldGroup[] = [
         fields: [
             {
                 key: 'defaultFeaturesLimit',
-                label: 'Objets géographiques renvoyés par défaut',
+                label: 'Nombre d’objets géographiques par requête',
                 description:
-                    'Nombre d’objets (points, lignes, polygones) renvoyés par une requête cartographique qui ne précise pas elle-même de limite.'
-            },
-            {
-                key: 'maxFeaturesLimit',
-                label: 'Nombre maximum d’objets géographiques par requête',
-                description: 'Plafond absolu, même si la requête en demande davantage.'
+                    'Nombre de points, lignes et polygones que le serveur renvoie à une requête cartographique. Une requête qui en demande davantage n’en obtient pas plus.',
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'maxSimplifyTolerance',
                 label: 'Simplification maximale autorisée des formes',
                 step: 0.01,
                 description:
-                    'Plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande.'
+                    'Tolérance en mètres : plus la valeur est élevée, plus une forme géographique peut être allégée (moins de détails, réponse plus rapide) quand un client le demande. Plafond appliqué à ce qu’un client peut demander, pas la valeur que le serveur applique lui-même.',
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'maxPrecision',
-                label: 'Nombre de décimales maximum des coordonnées',
+                label: 'Grille de coordonnées la plus fine autorisée',
                 step: 0.01,
                 description:
-                    'Plafond de précision qu’un client peut demander pour les coordonnées renvoyées.'
+                    'Le serveur arrondit les coordonnées renvoyées à une grille de cette taille, en mètres (EPSG:3857). Plus la valeur est basse, plus les coordonnées sont fines ; un client ne peut pas demander plus fin que ce plafond.',
+                perTable: true,
+                geoOnly: true
             },
             {
                 key: 'tileCacheMaxAgeSec',
                 label: 'Durée de mise en cache d’une tuile par le navigateur',
-                unit: 's',
                 description:
-                    'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.'
+                    'Le navigateur réutilise une tuile de carte déjà téléchargée pendant cette durée avant de la redemander au serveur.',
+                zeroMeaning:
+                    'le navigateur revalide la tuile à chaque affichage, sans jamais la garder en cache.',
+                perTable: true,
+                geoOnly: true
+            },
+            {
+                key: 'coordinateDecimals',
+                label: 'Décimales des coordonnées géographiques renvoyées',
+                description:
+                    'Nombre de chiffres après la virgule des coordonnées GeoJSON renvoyées (hors tuiles vectorielles, qui ont leur propre grille). Réduire cette valeur allège la réponse sans changer la précision stockée.',
+                perTable: true,
+                geoOnly: true
             }
         ]
     },
     {
-        title: 'Mémoire du serveur (caches)',
+        title: 'Avancé',
         description:
-            'Le serveur garde certaines informations en mémoire pour répondre plus vite. Une valeur plus haute consomme plus de mémoire ; une valeur plus basse fait relire la base plus souvent.',
+            'Réglage interne du serveur : la taille de ces caches est fixée au démarrage (config.yaml), seule leur durée de vie se règle ici.',
+        advanced: true,
         fields: [
             {
-                key: 'metadataTTLSec',
-                label: 'Informations sur les tables — durée avant relecture',
-                unit: 's',
+                key: 'cacheTTLSec',
+                label: 'Informations et structure des tables — durée avant relecture',
                 description:
-                    'Nombre de lignes, colonnes, date de mise à jour… gardés en mémoire pendant cette durée avant d’être relus en base.'
-            },
-            {
-                key: 'metadataMaxItems',
-                label: 'Informations sur les tables — nombre maximum gardé en mémoire',
-                description:
-                    'Au-delà, les informations des tables les moins consultées récemment sont oubliées et relues en base au prochain accès.'
-            },
-            {
-                key: 'schemaTTLSec',
-                label: 'Structure des tables (colonnes) — durée avant relecture',
-                unit: 's',
-                description: 'Même principe, pour la liste des colonnes et leurs types.'
-            },
-            {
-                key: 'schemaMaxItems',
-                label: 'Structure des tables — nombre maximum gardé en mémoire',
-                description: 'Même principe que ci-dessus, pour la structure des tables.'
-            },
-            {
-                key: 'tileTTLSec',
-                label: 'Tuiles de carte — durée avant régénération',
-                unit: 's',
-                description:
-                    'Une tuile déjà générée est réutilisée pendant cette durée côté serveur.'
-            },
-            {
-                key: 'tileMaxItems',
-                label: 'Tuiles de carte — nombre maximum gardé en mémoire',
-                description: 'Même principe que ci-dessus, pour les tuiles déjà générées.'
+                    'Nombre de lignes, colonnes, types… gardés en mémoire pendant cette durée avant d’être relus en base.',
+                zeroMeaning:
+                    'aucune expiration automatique — une information reste en mémoire jusqu’à être remplacée faute de place.'
             }
         ]
     }
 ]
+
+// inputRange turns the bounds the server publishes into what an <input>
+// accepts: min is inclusive there, so an exclusive minimum becomes the first
+// value the step grid actually allows.
+export function inputRange(
+    bounds: FieldBounds | undefined,
+    step?: number
+): { min?: number; max?: number } {
+    if (!bounds) return {}
+    const min =
+        bounds.minimum ??
+        (bounds.exclusiveMinimum === undefined ? undefined : bounds.exclusiveMinimum + (step ?? 1))
+    return { min, max: bounds.maximum }
+}
+
+// The per-table fields a TableSettingsModal renders, in the same order/
+// grouping the global screen uses — labels and descriptions never retyped
+// for the per-table surface.
+export const TABLE_SETTINGS_FIELDS: SettingsFieldSpec[] = SETTINGS_FIELD_GROUPS.flatMap(
+    (group) => group.fields
+).filter((field) => field.perTable)
+
+// tableFieldValue reads one field off a TableSettings response — its
+// override, its effective value and its bounds — or null for a field the
+// table does not carry: a global-only field (LIM-12) or a geometry field on
+// a non-geo table. Excluding the two global-only keys first is what lets the
+// lookup type-check without an assertion (§0.9).
+export function tableFieldValue(
+    settings: TableSettings,
+    key: SettingsFieldKey
+): OverrideField | null {
+    if (key === 'defaultListLimit' || key === 'cacheTTLSec') return null
+    return settings[key] ?? null
+}
 
 const FIELD_KEYS = new Set<string>(
     SETTINGS_FIELD_GROUPS.flatMap((group) => group.fields.map((field) => field.key))
 )
 
 // SettingsService.UpdateSettings joins every violation into one message
-// ("defaultRowLimit must be positive; maxRowLimit must be >= defaultRowLimit"),
+// ("defaultRowLimit must be >= 50; defaultListLimit must be <= 5000"),
 // each segment starting with the JSON field name it names. Parsed here into
 // a per-field map so the form can attach each refusal to its own input
 // instead of showing one undifferentiated error.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -39,40 +40,24 @@ type columnLister interface {
 	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 }
 
-// settingsReader is what ExportService needs to size its export batches —
-// live, so a settings.exportBatchSize change takes effect on the next
-// export without rebuilding the service.
-type settingsReader interface {
-	Current() storage.Settings
-}
-
 // ExportService renders a table's rows as CSV or GeoJSON — export is
 // domain logic, not HTTP transport: the router only sets headers and lets
 // Export stream the body directly to the response. Rows are fetched
-// settings.Current().ExportBatchSize at a time, so memory use stays
-// bounded regardless of table size instead of holding every row and the
-// full rendered body at once.
+// settings.ExportBatchSize at a time, so memory use stays bounded
+// regardless of table size instead of holding every row and the full
+// rendered body at once. Not settings-configurable (IMP-8, TODO-17): it has
+// no observable effect on an export's result, only on how it is produced.
 type ExportService struct {
-	rows     rowLister
-	geometry geometryFetcher
-	columns  columnLister
-	settings settingsReader
+	rows      rowLister
+	geometry  geometryFetcher
+	columns   columnLister
+	batchSize int64
 }
 
 // NewExportService builds an ExportService reading rows via rows, column
-// order via columns, and, for GeoJSON, geometry via geometry. settings
-// sizes each export batch from its current ExportBatchSize.
-func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLister, settings settingsReader) *ExportService {
-	return &ExportService{rows: rows, geometry: geometry, columns: columns, settings: settings}
-}
-
-// batchSize reads the current settings' ExportBatchSize, falling back to
-// 1000 for a non-positive value.
-func (s *ExportService) batchSize() int64 {
-	if n := s.settings.Current().ExportBatchSize; n > 0 {
-		return n
-	}
-	return 1000
+// order via columns, and, for GeoJSON, geometry via geometry.
+func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLister) *ExportService {
+	return &ExportService{rows: rows, geometry: geometry, columns: columns, batchSize: settings.ExportBatchSize}
 }
 
 // ContentType validates format ("csv" or "geojson") against meta and
@@ -114,10 +99,9 @@ func (s *ExportService) Export(ctx context.Context, w io.Writer, meta storage.Me
 // more than the limit it was given — so this needs no separate total
 // count to know when to stop.
 func (s *ExportService) forEachPage(ctx context.Context, meta storage.Metadata, fn func([]storage.Row) error) error {
-	batchSize := s.batchSize()
 	var offset int64
 	for {
-		rows, err := s.rows.ListRowsPage(ctx, meta, offset, batchSize)
+		rows, err := s.rows.ListRowsPage(ctx, meta, offset, s.batchSize)
 		if err != nil {
 			return err
 		}
@@ -128,7 +112,7 @@ func (s *ExportService) forEachPage(ctx context.Context, meta storage.Metadata, 
 			return err
 		}
 		offset += int64(len(rows))
-		if int64(len(rows)) < batchSize {
+		if int64(len(rows)) < s.batchSize {
 			return nil
 		}
 	}

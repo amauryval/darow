@@ -3,14 +3,23 @@ package tables
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+
+	"darow/internal/storage"
 )
 
+// errTableNotFound is tableColumns' sentinel for a physical table that does
+// not exist, wrapped rather than returned bare so GeometryInfo can tell it
+// apart from a genuine catalogue read failure.
+var errTableNotFound = errors.New("table does not exist")
+
 // This file is the only place DuckDB's own catalogue functions
-// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions) are
-// read: their result columns are versioned with the engine, so a DuckDB
-// upgrade is a single file to check.
+// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions,
+// pragma_database_size, duckdb_memory, duckdb_temporary_files) are read:
+// their result columns are versioned with the engine, so a DuckDB upgrade
+// is a single file to check.
 
 // catalogColumn describes one column as DuckDB's catalogue reports it. Type is the
 // full declared type, parameters included — a geometry column carrying a
@@ -66,7 +75,7 @@ func tableColumns(ctx context.Context, conn Querier, tableName string) ([]catalo
 		return nil, err
 	}
 	if len(cols) == 0 {
-		return nil, fmt.Errorf("table %q does not exist", tableName)
+		return nil, fmt.Errorf("table %q does not exist: %w", tableName, errTableNotFound)
 	}
 	return cols, nil
 }
@@ -122,6 +131,29 @@ func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
 		}
 		return catalogColumn{}, fmt.Errorf("table has multiple geometry columns %v — multi-geometry sources are not supported", names)
 	}
+}
+
+// GeometryInfo reports whether physicalName currently has a geometry column
+// and, if so, its name — the same tableColumns/soleGeometryColumn read
+// findGeometryColumn uses to detect it during materialization, exposed here
+// so a table's isGeo/geometryColumn can be derived from the catalogue at
+// read time instead of trusted from stored metadata, which can drift from
+// what the physical table actually has (TODO-10). A physical table that
+// does not exist yet — a metadata row registered but not yet materialized —
+// reports no geometry rather than erroring.
+func GeometryInfo(ctx context.Context, conn Querier, physicalName string) (isGeo bool, geometryColumn string, err error) {
+	columns, err := tableColumns(ctx, conn, physicalName)
+	if errors.Is(err, errTableNotFound) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	geometry, err := soleGeometryColumn(columns)
+	if err != nil {
+		return false, "", err
+	}
+	return geometry.Name != "", geometry.Name, nil
 }
 
 // tableIndexes lists the indexes DuckDB holds for tableName, so index
@@ -194,4 +226,86 @@ func ExtensionLoaded(ctx context.Context, conn Querier, name string) (bool, erro
         SELECT COALESCE(MAX(loaded), FALSE) FROM duckdb_extensions() WHERE extension_name = ?
     `, name).Scan(&loaded)
 	return loaded, err
+}
+
+// Diagnostics reads a snapshot of the engine's own operating state — what
+// /diagnostics answers. Every value comes off a byte-typed catalogue
+// column, never off pragma_database_size's formatted ("16.0 MiB") ones,
+// which are meant for display and not for parsing back.
+func Diagnostics(ctx context.Context, conn Querier) (storage.Diagnostics, error) {
+	size, err := databaseSizeBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	memory, err := memoryUsageBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	spilled, err := temporaryFilesBytes(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	extensions, err := loadedExtensions(ctx, conn)
+	if err != nil {
+		return storage.Diagnostics{}, err
+	}
+	return storage.Diagnostics{
+		DatabaseSizeBytes:   size,
+		MemoryUsageBytes:    memory,
+		TemporaryFilesBytes: spilled,
+		Extensions:          extensions,
+	}, nil
+}
+
+// databaseSizeBytes reports the on-disk size of the database, computed from
+// pragma_database_size's block-count columns rather than its
+// human-readable ones.
+func databaseSizeBytes(ctx context.Context, conn Querier) (int64, error) {
+	var totalBlocks, blockSize int64
+	err := conn.QueryRow(ctx, `
+        SELECT total_blocks, block_size FROM pragma_database_size()
+    `).Scan(&totalBlocks, &blockSize)
+	return totalBlocks * blockSize, err
+}
+
+// memoryUsageBytes sums duckdb_memory's per-tag usage into the buffer
+// manager's total footprint — the pressure a readiness probe cannot see.
+func memoryUsageBytes(ctx context.Context, conn Querier) (int64, error) {
+	var usage int64
+	err := conn.QueryRow(ctx, `
+        SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()
+    `).Scan(&usage)
+	return usage, err
+}
+
+// temporaryFilesBytes sums duckdb_temporary_files's per-file size into the
+// bytes currently spilled to disk — zero when nothing is spilling.
+func temporaryFilesBytes(ctx context.Context, conn Querier) (int64, error) {
+	var size int64
+	err := conn.QueryRow(ctx, `
+        SELECT COALESCE(SUM(size), 0) FROM duckdb_temporary_files()
+    `).Scan(&size)
+	return size, err
+}
+
+// loadedExtensions lists the DuckDB extensions loaded in the current
+// session, alphabetically.
+func loadedExtensions(ctx context.Context, conn Querier) ([]string, error) {
+	rows, err := conn.Query(ctx, `
+        SELECT extension_name FROM duckdb_extensions() WHERE loaded ORDER BY extension_name
+    `)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	extensions := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		extensions = append(extensions, name)
+	}
+	return extensions, rows.Err()
 }

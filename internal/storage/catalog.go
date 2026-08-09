@@ -6,10 +6,13 @@ import (
 )
 
 // Metadata holds config fields (set once, changed only via UpdateMetadata)
-// and derived fields (RowCount, Bbox — recomputed by RefreshDerivedMetadata
-// after any write to the underlying table). GeometryType is intentionally
-// absent: a geometry column can hold mixed types, so it is computed on
-// demand via GeoRepository.Types rather than cached as a stale string.
+// and derived fields, read fresh from the physical table rather than
+// trusted from storage: IsGeo/GeometryColumn come off the physical table's
+// own catalogue entry (Catalog.GetMetadata/List), RowCount/Bbox are
+// recomputed by RefreshDerivedMetadata after any write to it. GeometryType
+// is intentionally absent: a geometry column can hold mixed types, so it is
+// computed on demand via GeoRepository.Types rather than cached as a stale
+// string.
 type Metadata struct {
 	TableId        string
 	PhysicalName   string
@@ -20,7 +23,10 @@ type Metadata struct {
 	GeometryColumn string
 	RowCount       int64
 	Bbox           string
-	Srid           int
+	// Srid is the original source CRS, before reprojection — 0 when there
+	// is none to report: a scalar table, or a table created via /derive,
+	// which has no source file of its own (SourceName is empty too).
+	Srid int
 	// SourceName is the workDir file a table was imported from, empty for
 	// a table created via /derive. It is independent of TableName — which
 	// PATCH /tables/{id} may rename freely — so SourceService's
@@ -43,12 +49,10 @@ type SourceKey struct {
 // "unsupported metadata field" can no longer happen at runtime). A nil field
 // leaves that column unchanged.
 type MetadataPatch struct {
-	TableName      *string
-	IsGeo          *bool
-	GeometryColumn *string
-	Srid           *int
-	SourceName     *string
-	SourceLayer    *string
+	TableName   *string
+	Srid        *int
+	SourceName  *string
+	SourceLayer *string
 }
 
 // Catalog is the catalogue aggregate — the metadata table describing every

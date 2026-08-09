@@ -8,6 +8,7 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -23,22 +24,17 @@ func NewSourcesHandler(sourceSvc sourceAPI, settings settingsAPI) *SourcesHandle
 	return &SourcesHandler{sourceService: sourceSvc, settings: settings}
 }
 
-// paginationParams reads offset/limit query params, capped by
-// DefaultListLimit/MaxListLimit — same shape as TablesHandler's, kept as its
-// own method rather than shared, since coupling the two handlers together
-// for ~10 lines isn't worth it.
+// paginationParams reads offset/limit query params, resolved through the
+// list limits — same shape as TablesHandler's, kept as its own method rather
+// than shared, since coupling the two handlers together for ~10 lines isn't
+// worth it.
 func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int) {
 	offset = 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = sh.settings.Current().DefaultListLimit
-	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
-		limit = v
-	}
-	if limit > sh.settings.Current().MaxListLimit {
-		limit = sh.settings.Current().MaxListLimit
-	}
+	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
+	limit = settings.Limit(sh.settings.Current().DefaultListLimit).Resolve(requested)
 	return offset, limit
 }
 
@@ -123,8 +119,9 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // @Accept multipart/form-data
 // @Produce json
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
-// @Success 201 {object} map[string]string
+// @Success 201 {object} uploadResultDTO
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
 func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
 	srid, err := parseSrid(req)
@@ -160,7 +157,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 		}
 	}
 	if uploaded != nil && len(uploaded.Layers) > 1 {
-		response.WriteJSON(w, http.StatusCreated, uploaded)
+		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: false, Source: uploaded})
 		return
 	}
 
@@ -175,7 +172,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 	}
 
 	w.Header().Set("Location", "/tables/"+tableId)
-	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, TableId: tableId})
 }
 
 // LoadSource handles POST /sources/{name}/load. name is validated against
@@ -193,6 +190,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
 // @Success 201 {object} map[string]string
 // @Failure 409 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
 func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
@@ -267,7 +265,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 // @Summary Delete a source file
 // @Tags sources
 // @Param name path string true "Source file name"
-// @Success 204
+// @Success 200 {object} deletedDTO
 // @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name} [delete]
 func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request) {
@@ -277,5 +275,5 @@ func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request)
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: name})
 }

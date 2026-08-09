@@ -10,6 +10,7 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -23,10 +24,11 @@ type TablesHandler struct {
 	deriveService   deriveAPI
 	rowService      rowAPI
 	settings        settingsAPI
+	tableSettings   tableSettingsAPI
 }
 
 // NewTablesHandler builds a TablesHandler from the service ports it needs.
-func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI) *TablesHandler {
+func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI, tableSettings tableSettingsAPI) *TablesHandler {
 	return &TablesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
@@ -35,11 +37,12 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 		deriveService:   deriveSvc,
 		rowService:      rowSvc,
 		settings:        settings,
+		tableSettings:   tableSettings,
 	}
 }
 
 // listPaginationParams reads offset/limit query params, same shape as
-// RowsHandler.paginationParams but capped by DefaultListLimit/MaxListLimit —
+// RowsHandler.paginationParams but resolved through the list limits —
 // tables/sources are metadata records, not data rows, so they get their own,
 // smaller limits.
 func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit int64) {
@@ -47,32 +50,22 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = int64(th.settings.Current().DefaultListLimit)
-	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
-		limit = v
-	}
-	if limit > int64(th.settings.Current().MaxListLimit) {
-		limit = int64(th.settings.Current().MaxListLimit)
-	}
+	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
+	limit = settings.Limit(th.settings.Current().DefaultListLimit).Resolve64(requested)
 	return offset, limit
 }
 
-// distinctValuesPaginationParams reads offset/limit query params, capped by
-// DefaultRowLimit/MaxRowLimit — a column's distinct values are per-row
-// content, not a metadata record, so they share RowsHandler's limits rather
-// than listPaginationParams's smaller ones.
-func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request) (offset, limit int64) {
+// distinctValuesPaginationParams reads offset/limit query params, resolved
+// through the row limits — a column's distinct values are per-row content,
+// not a metadata record, so they share RowsHandler's limits rather than
+// listPaginationParams's smaller ones.
+func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, tableId string) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
 		offset = v
 	}
-	limit = int64(th.settings.Current().DefaultRowLimit)
-	if v, err := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64); err == nil && v > 0 {
-		limit = v
-	}
-	if limit > int64(th.settings.Current().MaxRowLimit) {
-		limit = int64(th.settings.Current().MaxRowLimit)
-	}
+	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
+	limit = th.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
 	return offset, limit
 }
 
@@ -168,7 +161,7 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 // @Description Supprime une table et ses données
 // @Tags tables
 // @Param tableId path string true "Table ID"
-// @Success 204
+// @Success 200 {object} deletedDTO
 // @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId} [delete]
 func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
@@ -181,7 +174,7 @@ func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: meta.TableId, Name: meta.TableName})
 }
 
 // GetSchema handles GET /tables/{tableId}/schema.
@@ -244,24 +237,20 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
 }
 
-// DeriveTable handles POST /tables/{tableId}/derive. DeriveTable rejects
-// anything that isn't a SELECT. Its query reads every registered table,
-// not only the one in the path — /derive-from-table below is the
-// single-source mode.
+// DeriveTable handles POST /derive. DeriveTable rejects anything that
+// isn't a SELECT. Its query reads every registered table — it has no
+// notion of a source table — unlike /tables/{tableId}/derive-from-table
+// below, the single-source mode.
 //
 // @Summary Derive a table from a SELECT query
 // @Tags tables
 // @Accept json
 // @Produce json
-// @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
-// @Router /api/v1/tables/{tableId}/derive [post]
+// @Failure 507 {object} response.ErrorResponse
+// @Router /api/v1/derive [post]
 func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
-	if _, ok := th.ResolveTable(w, req); !ok {
-		return
-	}
-
 	var body struct {
 		Query        string `json:"query"`
 		NewTableName string `json:"newTableName"`
@@ -294,6 +283,7 @@ func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 // @Param tableId path string true "Source table ID"
 // @Success 201 {object} map[string]string
 // @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/derive-from-table [post]
 func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Request) {
 	meta, ok := th.ResolveTable(w, req)
@@ -360,17 +350,11 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// An omitted or non-positive limit falls back to DefaultRowLimit — same
-	// as GET /rows's paginationParams — instead of the JSON zero value
-	// silently producing LIMIT 0. Capped by MaxRowLimit either
-	// way, so a client can't force the whole table into memory.
-	limit := body.Limit
-	if limit <= 0 {
-		limit = th.settings.Current().DefaultRowLimit
-	}
-	if limit > th.settings.Current().MaxRowLimit {
-		limit = th.settings.Current().MaxRowLimit
-	}
+	// An omitted or non-positive limit falls back to the row limits' default
+	// — same as GET /rows's paginationParams — instead of the JSON zero value
+	// silently producing LIMIT 0, and is capped by their maximum either way,
+	// so a client can't force the whole table into memory.
+	limit := th.tableSettings.Resolve(meta.TableId).DefaultRowLimit.Resolve(body.Limit)
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {
@@ -417,7 +401,7 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	offset, limit := th.distinctValuesPaginationParams(req)
+	offset, limit := th.distinctValuesPaginationParams(req, meta.TableId)
 	search := req.URL.Query().Get("search")
 	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, search, int(offset), int(limit))
 	if err != nil {

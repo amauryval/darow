@@ -7,14 +7,21 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_newOpsHandler(t *testing.T) {
 	ready := func(context.Context) error { return nil }
+	diagnosticsSvc := &mockDiagnosticsAPI{}
 
-	oh := NewOpsHandler(ready)
+	oh := NewOpsHandler(ready, diagnosticsSvc, 4096)
 
 	assert.NoError(t, oh.ready(context.Background()))
+	assert.Same(t, diagnosticsSvc, oh.diagnostics)
+	assert.Equal(t, int64(4096), oh.maxSizeBytes)
 }
 
 func Test_opsHandler_healthz(t *testing.T) {
@@ -44,4 +51,26 @@ func Test_opsHandler_readyz(t *testing.T) {
 			assert.Equal(t, c.wantStatus, rec.Code)
 		})
 	}
+}
+
+func Test_opsHandler_diagnostics(t *testing.T) {
+	diagnosticsSvc := &mockDiagnosticsAPI{}
+	want := storage.Diagnostics{DatabaseSizeBytes: 2048, MemoryUsageBytes: 1024, TemporaryFilesBytes: 0, Extensions: []string{"spatial"}}
+	diagnosticsSvc.On("Diagnostics", mock.Anything).Return(want, nil)
+	oh := &OpsHandler{diagnostics: diagnosticsSvc, maxSizeBytes: 1048576}
+
+	rec := doHandlerRequest(oh.Diagnostics, http.MethodGet, "/diagnostics", nil, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"databaseSizeBytes":2048,"memoryUsageBytes":1024,"temporaryFilesBytes":0,"extensions":["spatial"],"maxSizeBytes":1048576}`, rec.Body.String())
+}
+
+func Test_opsHandler_diagnostics_ServiceError(t *testing.T) {
+	diagnosticsSvc := &mockDiagnosticsAPI{}
+	diagnosticsSvc.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, errors.New("duckdb unreachable"))
+	oh := &OpsHandler{diagnostics: diagnosticsSvc}
+
+	rec := doHandlerRequest(oh.Diagnostics, http.MethodGet, "/diagnostics", nil, nil)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

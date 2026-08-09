@@ -1,15 +1,21 @@
 package handlers
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"darow/internal/service"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
-// metadataDTO is the JSON representation of a table's metadata.
+// metadataDTO is the JSON representation of a table's metadata. Srid is a
+// pointer: storage.Metadata.Srid is 0 for a table with no source CRS to
+// report (scalar, or derived via /derive), and omitting it there rather
+// than reporting a meaningless 0 keeps the field present only where it
+// applies.
 type metadataDTO struct {
 	TableId        string `json:"tableId"`
 	PhysicalName   string `json:"physicalName"`
@@ -20,11 +26,11 @@ type metadataDTO struct {
 	GeometryColumn string `json:"geometryColumn,omitempty"`
 	RowCount       int64  `json:"rowCount"`
 	Bbox           string `json:"bbox,omitempty"`
-	Srid           int    `json:"srid"`
+	Srid           *int   `json:"srid,omitempty"`
 }
 
 func toMetadataDTO(m storage.Metadata) metadataDTO {
-	return metadataDTO{
+	dto := metadataDTO{
 		TableId:        m.TableId,
 		PhysicalName:   m.PhysicalName,
 		TableName:      m.TableName,
@@ -34,8 +40,21 @@ func toMetadataDTO(m storage.Metadata) metadataDTO {
 		GeometryColumn: m.GeometryColumn,
 		RowCount:       m.RowCount,
 		Bbox:           m.Bbox,
-		Srid:           m.Srid,
 	}
+	if m.Srid != 0 {
+		srid := m.Srid
+		dto.Srid = &srid
+	}
+	return dto
+}
+
+// linkDTO is an OGC API - Features / RFC 8288 link, the navigation element
+// every OGC response carries.
+type linkDTO struct {
+	Href  string `json:"href"`
+	Rel   string `json:"rel"`
+	Type  string `json:"type,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 // collectionDTO is an OGC API - Features collection — one per geo table.
@@ -43,7 +62,9 @@ type collectionDTO struct {
 	Id       string    `json:"id"`
 	Title    string    `json:"title"`
 	ItemType string    `json:"itemType"`
+	Crs      []string  `json:"crs"`
 	Extent   extentDTO `json:"extent"`
+	Links    []linkDTO `json:"links"`
 }
 
 type extentDTO struct {
@@ -58,10 +79,19 @@ type spatialExtentDTO struct {
 // toCollectionDTO maps m's Bbox string ("minX,minY,maxX,maxY" in EPSG:4326)
 // to OGC's spatial-extent shape; a missing/malformed Bbox yields an empty
 // bbox list rather than an error, since extent is informational.
-func toCollectionDTO(m storage.Metadata) collectionDTO {
-	dto := collectionDTO{Id: m.TableId, Title: m.TableName, ItemType: "feature", Extent: extentDTO{
-		Spatial: spatialExtentDTO{Crs: ogcCRS84},
-	}}
+func toCollectionDTO(m storage.Metadata, req *http.Request) collectionDTO {
+	self := ogcBasePath(req) + "/collections/" + m.TableId
+	dto := collectionDTO{
+		Id:       m.TableId,
+		Title:    m.TableName,
+		ItemType: "feature",
+		Crs:      []string{ogcCRS84},
+		Extent:   extentDTO{Spatial: spatialExtentDTO{Crs: ogcCRS84}},
+		Links: []linkDTO{
+			{Href: self, Rel: "self", Type: mediaTypeJSON, Title: m.TableName},
+			{Href: self + "/items", Rel: "items", Type: mediaTypeGeoJSON, Title: m.TableName},
+		},
+	}
 
 	parts := strings.Split(m.Bbox, ",")
 	if len(parts) != 4 {
@@ -106,6 +136,47 @@ func (d deriveSpecDTO) toSpec() service.DeriveSpec {
 		Columns:      d.Columns,
 		Computed:     computed,
 		Conditions:   d.Conditions,
+	}
+}
+
+// deletedDTO confirms a delete write happened and names what it removed —
+// the id of the deleted object, its name when it has one distinct from the
+// id, and a row count for a row-level delete.
+type deletedDTO struct {
+	Id          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	RowsRemoved int64  `json:"rowsRemoved,omitempty"`
+}
+
+// uploadResultDTO is POST /sources/upload's response. Loaded discriminates
+// its two outcomes explicitly instead of a client probing which fields are
+// set: a multi-layer source is left unloaded (Source carries its layers for
+// the caller to pick one), anything else is loaded immediately (TableId is
+// the new table).
+type uploadResultDTO struct {
+	Loaded  bool            `json:"loaded"`
+	TableId string          `json:"tableId,omitempty"`
+	Source  *service.Source `json:"source,omitempty"`
+}
+
+// fieldDescriptorDTO is one setting's operational range, served alongside
+// the values so a client constrains an input against the bounds the server
+// enforces instead of retyping them. A bound the field does not have is
+// absent, never a placeholder number.
+type fieldDescriptorDTO struct {
+	Unit             string   `json:"unit"`
+	Minimum          *float64 `json:"minimum,omitempty"`
+	ExclusiveMinimum *float64 `json:"exclusiveMinimum,omitempty"`
+	Maximum          *float64 `json:"maximum,omitempty"`
+}
+
+func fieldDescriptorOf(field string) fieldDescriptorDTO {
+	d, _ := settings.Descriptor(field)
+	return fieldDescriptorDTO{
+		Unit:             d.Unit,
+		Minimum:          d.Minimum,
+		ExclusiveMinimum: d.ExclusiveMinimum,
+		Maximum:          d.Maximum,
 	}
 }
 

@@ -12,4 +12,9 @@ type GeoQuery struct {
 	// meters) coordinates are snapped to after simplification. nil means no
 	// reduction.
 	Precision *float64
+	// CoordinateDecimals, if set, is the number of decimal digits CRS84
+	// coordinates are rounded to once emitted as GeoJSON — the resolved
+	// per-table/global setting (TODO-21), never a client override. nil means
+	// full resolution. Applied after ST_Transform, unlike Precision.
+	CoordinateDecimals *int
 }

@@ -33,14 +33,19 @@ func setupRowService(t *testing.T) (svc *RowService, m *mocks.Adapter, rowRepo *
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	schema := NewSchemaService(m, schemaCache)
 	metadata := NewMetadataService(m, metadataCache, &observer.Observer[storage.Metadata]{})
-	svc = NewRowService(m, metadata, schema)
+	svc = NewRowService(m, metadata, schema, &allowSizeGuard{})
 	t.Cleanup(func() { m.AssertExpectations(t); rowRepo.AssertExpectations(t); tableRepo.AssertExpectations(t) })
 	return svc, m, rowRepo, tableRepo
 }
 
+// expectStoredTypes wires the family check's stored-types read, plus the
+// validity check that immediately follows it in checkWrittenGeometry — every
+// written geometry reports valid, since these tests exercise other
+// behaviour, not ST_IsValid's refusal (see geometry_validity_test.go).
 func expectStoredTypes(tableRepo *mocks.TableRepository, geoRepo *mocks.GeoRepository, types []string) {
 	tableRepo.On("Geo").Return(geoRepo, true)
 	geoRepo.On("Types", mock.Anything).Return(types, nil).Once()
+	geoRepo.On("ValidateGeometries", mock.Anything, mock.Anything).Return([]bool{true}, nil).Maybe()
 }
 
 func Test_ConvertValue(t *testing.T) {
@@ -212,7 +217,7 @@ func Test_RowService_UpdateRow(t *testing.T) {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 				geoRepo := &mocks.GeoRepository{}
 				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 
 			result, err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates, storage.DefaultGeometryCRS)
@@ -222,6 +227,34 @@ func Test_RowService_UpdateRow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_RowService_InsertRow_RefusesOverQuota(t *testing.T) {
+	svc, m, _, _ := setupRowService(t)
+	guard := &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+	svc.sizeGuard = guard
+	meta := storage.Metadata{TableId: "id-1"}
+
+	_, err := svc.InsertRow(context.Background(), meta, map[string]any{"height": 1}, storage.DefaultGeometryCRS)
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "Table", mock.Anything)
+}
+
+func Test_RowService_BulkInsertRows_RefusesOverQuota(t *testing.T) {
+	svc, m, _, _ := setupRowService(t)
+	guard := &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+	svc.sizeGuard = guard
+	meta := storage.Metadata{TableId: "id-1"}
+
+	_, err := svc.BulkInsertRows(context.Background(), meta, []map[string]any{{"height": 1}}, storage.DefaultGeometryCRS)
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "Table", mock.Anything)
 }
 
 func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
@@ -247,7 +280,7 @@ func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
 				written["geom"] = storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
 				geoRepo := &mocks.GeoRepository{}
 				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 			rowRepo.On("Insert", mock.Anything, written).Return("pk-1", nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
@@ -391,7 +424,7 @@ func Test_RowService_UpdateRows(t *testing.T) {
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 	geoRepo := &mocks.GeoRepository{}
 	expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 
 	written, err := svc.UpdateRows(context.Background(), meta, []RowUpdate{
 		{Pkey: "pk-1", Values: map[string]any{"geom": geometry}},

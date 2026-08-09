@@ -45,14 +45,16 @@ type schemaReader interface {
 // queries, and from the guided per-table specification of
 // derive_from_table.go.
 type DeriveService struct {
-	metadata metadataStore
-	schema   schemaReader
+	metadata  metadataStore
+	schema    schemaReader
+	sizeGuard sizeGuard
 }
 
 // NewDeriveService builds a DeriveService registering and materializing new
-// tables via metadata, and reading source structure via schema.
-func NewDeriveService(metadata metadataStore, schema schemaReader) *DeriveService {
-	return &DeriveService{metadata: metadata, schema: schema}
+// tables via metadata, reading source structure via schema, and enforcing
+// duckdb.maxSizeBytes on every derivation through guard.
+func NewDeriveService(metadata metadataStore, schema schemaReader, guard sizeGuard) *DeriveService {
+	return &DeriveService{metadata: metadata, schema: schema, sizeGuard: guard}
 }
 
 // DeriveTable materializes a new table from a caller-provided SELECT query
@@ -71,5 +73,14 @@ func (s *DeriveService) materialize(ctx context.Context, query string, args []an
 	if err := validateSelectOnly(query); err != nil {
 		return "", err
 	}
-	return s.metadata.CreateFromQuery(ctx, newTableName, query, args...)
+	if err := s.sizeGuard.Check(ctx); err != nil {
+		return "", err
+	}
+
+	tableId, err := s.metadata.CreateFromQuery(ctx, newTableName, query, args...)
+	if err != nil {
+		return "", err
+	}
+	s.sizeGuard.Grew()
+	return tableId, nil
 }

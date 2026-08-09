@@ -55,7 +55,7 @@ type geoAPI interface {
 	GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 	CountFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error)
 	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
-	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*service.RowGeometry, error)
+	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*service.RowGeometry, error)
 	NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error)
 }
 
@@ -78,6 +78,22 @@ type settingsAPI interface {
 	UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error)
 }
 
+// tableSettingsAPI is everything the router calls on
+// *service.TableSettingsService: Resolve for every handler that reads a
+// table-scoped limit, the rest for TableSettingsHandler's own routes.
+type tableSettingsAPI interface {
+	Resolve(tableId string) service.TableSettingsResolved
+	GetOverride(tableId string) storage.TableSettings
+	UpdateOverride(ctx context.Context, tableId string, patch storage.TableSettingsPatch) (storage.TableSettings, error)
+	DeleteOverride(ctx context.Context, tableId string) error
+	ListOverridden(ctx context.Context) ([]storage.TableSettings, error)
+}
+
+// diagnosticsAPI is everything the router calls on *service.DiagnosticsService.
+type diagnosticsAPI interface {
+	Diagnostics(ctx context.Context) (storage.Diagnostics, error)
+}
+
 // sourceAPI is everything the router calls on *service.SourceService.
 type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
@@ -91,12 +107,14 @@ type sourceAPI interface {
 }
 
 var (
-	_ metadataAPI = (*service.MetadataService)(nil)
-	_ rowAPI      = (*service.RowService)(nil)
-	_ schemaAPI   = (*service.SchemaService)(nil)
-	_ deriveAPI   = (*service.DeriveService)(nil)
-	_ geoAPI      = (*service.GeoService)(nil)
-	_ sourceAPI   = (*service.SourceService)(nil)
-	_ filterAPI   = (*service.FilterService)(nil)
-	_ settingsAPI = (*service.SettingsService)(nil)
+	_ metadataAPI      = (*service.MetadataService)(nil)
+	_ rowAPI           = (*service.RowService)(nil)
+	_ schemaAPI        = (*service.SchemaService)(nil)
+	_ deriveAPI        = (*service.DeriveService)(nil)
+	_ geoAPI           = (*service.GeoService)(nil)
+	_ sourceAPI        = (*service.SourceService)(nil)
+	_ filterAPI        = (*service.FilterService)(nil)
+	_ settingsAPI      = (*service.SettingsService)(nil)
+	_ tableSettingsAPI = (*service.TableSettingsService)(nil)
+	_ diagnosticsAPI   = (*service.DiagnosticsService)(nil)
 )

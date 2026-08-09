@@ -1,3 +1,12 @@
+export interface Diagnostics {
+    databaseSizeBytes: number
+    memoryUsageBytes: number
+    temporaryFilesBytes: number
+    extensions: string[]
+    // duckdb.maxSizeBytes from config.yaml — 0 means unlimited.
+    maxSizeBytes: number
+}
+
 export interface Metadata {
     tableId: string
     physicalName: string
@@ -146,33 +155,99 @@ export interface ErrorResponse {
     requestId: string
 }
 
-// Matches storage.Settings — every server parameter that is safe to change
-// without a restart. What Config keeps instead (listen port, the DuckDB file
-// path, sources.workDir) never appears here: it is needed to open the
-// process itself, before this row can even be read, so it has no place on a
-// screen of *editable* settings.
+// Matches storage.Settings — every server parameter an operator legitimately
+// retunes while the process is serving, without a restart. What Config keeps
+// instead (TODO-17): the listen port, the DuckDB file path, sources.workDir,
+// and the memory/availability guards that sit on this table's own
+// unauthenticated PATCH route (the request body cap, the per-request
+// timeout, every LRU cache's size) — none of that appears here, so it has no
+// place on a screen of *editable* settings.
+// The three default*Limit fields are one page size per family of pages: how
+// many items the server returns when a request asks for no limit, and the
+// most it returns when a request asks for more. They are stored, never
+// derived, so what is read here is what the server applies.
 export interface Settings {
-    defaultRowLimit: number
-    maxRowLimit: number
-    defaultListLimit: number
-    maxListLimit: number
-    maxBodyBytes: number
-    requestTimeoutSec: number
-    exportBatchSize: number
-    defaultFeaturesLimit: number
-    maxFeaturesLimit: number
-    maxSimplifyTolerance: number
-    maxPrecision: number
-    tileCacheMaxAgeSec: number
-    metadataTTLSec: number
-    metadataMaxItems: number
-    schemaTTLSec: number
-    schemaMaxItems: number
-    tileTTLSec: number
-    tileMaxItems: number
+    defaultRowLimit: SettingsField
+    defaultListLimit: SettingsField
+    defaultFeaturesLimit: SettingsField
+    maxSimplifyTolerance: SettingsField
+    maxPrecision: SettingsField
+    tileCacheMaxAgeSec: SettingsField
+    cacheTTLSec: SettingsField
+    coordinateDecimals: SettingsField
     updatedAt: string
 }
 
+// FieldBounds is what the server enforces on a setting, published beside it:
+// the unit its value is expressed in, and the range internal/settings.Validate
+// refuses outside of. A bound the field does not have is absent — never 0
+// standing in for "none". minimum is inclusive, exclusiveMinimum is not, and
+// a field states one of the two, never both.
+export interface FieldBounds {
+    unit: string
+    minimum?: number
+    exclusiveMinimum?: number
+    maximum?: number
+}
+
+// One setting as the read routes serve it: the value applied and what
+// constrains it, in a single object.
+export interface SettingsField extends FieldBounds {
+    value: number
+}
+
+// The read-only half of Settings: derived server-side, never sent back.
+export type SettingsReadOnlyKey = 'updatedAt'
+
+// The fields a PATCH may carry, one per editable field of Settings.
+export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
+
 // Matches storage.SettingsPatch — every field optional, an omitted one left
-// unchanged server-side.
-export type SettingsPatch = Partial<Omit<Settings, 'updatedAt'>>
+// unchanged server-side. A patch carries bare numbers: the bounds travel
+// with the read, never back with the write.
+export type SettingsPatch = Partial<Record<SettingsFieldKey, number>>
+
+// OverrideField is a per-table-overridable field: override is the operator's
+// own value for this table, null when inherited from the global row, and
+// effective is the value the server applies to it either way. Its bounds are
+// the global row's own — an override is validated against them too.
+export interface OverrideField extends FieldBounds {
+    override: number | null
+    effective: number
+}
+
+// Matches the tableSettingsDTO the server returns from GET/PATCH/DELETE
+// /tables/{tableId}/settings and GET /settings/tables: a table's departure
+// from the global row, field by field. defaultRowLimit applies to every
+// table; the rest are present only on a geo table (isGeo) — absent, not
+// disabled, on a table the fields could never apply to.
+export interface TableSettings {
+    tableId: string
+    isGeo: boolean
+    defaultRowLimit: OverrideField
+    defaultFeaturesLimit?: OverrideField
+    maxSimplifyTolerance?: OverrideField
+    maxPrecision?: OverrideField
+    tileCacheMaxAgeSec?: OverrideField
+    coordinateDecimals?: OverrideField
+    updatedAt: string
+}
+
+// The fields a table's settings can carry an override for, one per
+// TableSettings field but the read-only tableId/isGeo/updatedAt.
+export type TableSettingsFieldKey =
+    | 'defaultRowLimit'
+    | 'defaultFeaturesLimit'
+    | 'maxSimplifyTolerance'
+    | 'maxPrecision'
+    | 'tileCacheMaxAgeSec'
+    | 'coordinateDecimals'
+
+// A PATCH body for a table's settings: a key absent leaves that override
+// unchanged, present with null clears it back to "inherit," present with a
+// number sets it.
+export type TableSettingsPatch = Partial<Record<TableSettingsFieldKey, number | null>>
+
+export interface TableSettingsOverridesPage {
+    tables: TableSettings[]
+}

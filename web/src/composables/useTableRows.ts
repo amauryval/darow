@@ -4,31 +4,33 @@ import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
 import { cellValue } from '../utils/rows'
 import { usePaginatedList } from './usePaginatedList'
-import { useSettings } from './useSettings'
 import { useToast } from './useToast'
+
+// The grid's page size before the table's effective row limit has loaded
+// (TODO-F43) — used as the initial value of the rowLimit ref a caller
+// passes to useTableRows, never recomputed here.
+export const PAGE_SIZE = 50
 
 // A table's rows: the current (unfiltered) page, server-side sorting,
 // insertion, duplication and deletion. Built on usePaginatedList for the
 // paging/sorting/scroll-sentinel triplet rather than reimplementing it a
 // fourth time (TODO-F4). onMutated is called after an add/delete, since
 // that changes the table's rowCount — the caller owns table metadata
-// (useTableMetadata) and reloads it.
+// (useTableMetadata) and reloads it. rowLimit is the table's effective row
+// limit (useTableSettings), PAGE_SIZE serving only until it has loaded — a
+// table with a raised limit must not stay capped at the client's own
+// constant.
 export function useTableRows(
     tableId: Ref<string>,
     rowColumns: Ref<string[]>,
     geometryColumn: Ref<string | undefined>,
-    onMutated: () => void
+    onMutated: () => void,
+    rowLimit: Ref<number>
 ) {
     const toast = useToast()
-    const settings = useSettings()
-
-    // Capped at maxRowLimit, for the same reason useSources caps its own
-    // default against maxListLimit: a lowered cap must not make the grid's
-    // first page request fail against the server's own limit.
-    const pageSize = Math.min(20, settings.current.value?.maxRowLimit ?? 20)
 
     const list = usePaginatedList<Row>({
-        limit: pageSize,
+        limit: rowLimit,
         key: tableId,
         fetchPage: (offset, limit, sort) =>
             listRows(tableId.value, offset, limit, sort).then((page) => ({
@@ -93,7 +95,7 @@ export function useTableRows(
     return {
         rows: list.items,
         total: list.total,
-        pageSize,
+        pageSize: rowLimit,
         loading: list.loading,
         loadedOnce: list.loadedOnce,
         error: list.error,

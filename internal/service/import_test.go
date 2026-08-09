@@ -19,7 +19,7 @@ import (
 func setupImportService(t *testing.T) (*ImportService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
 	metadata := NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute), &observer.Observer[storage.Metadata]{})
-	svc := NewImportService(metadata, m)
+	svc := NewImportService(metadata, m, &allowSizeGuard{})
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
 }
@@ -76,6 +76,18 @@ func Test_ImportService_DetectCRS(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "EPSG", authName)
 	assert.Equal(t, 2154, authCode)
+}
+
+func Test_ImportService_ImportFromFile_RefusesOverQuota(t *testing.T) {
+	svc, m := setupImportService(t)
+	svc.sizeGuard = &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+
+	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "CreateFromFile", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func Test_ImportService_ImportFromFile(t *testing.T) {

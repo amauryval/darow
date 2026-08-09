@@ -1,7 +1,9 @@
 # config.yaml — bootstrap-only parameters, needed to start the process itself
-# (before the settings table can even be read). Everything else (row/list
-# limits, cache TTLs and sizes...) is edited at runtime through the
-# settings table — see spec/back/spec.md.
+# (before the settings table can even be read), plus the memory/availability
+# guards TODO-17 moved out of the runtime-editable settings table (settings:
+# below). Everything else (row/list limits, cache TTL, geometry bounds, the
+# tile cache lifetime) is edited at runtime through the settings table —
+# see spec/back/spec.md.
 server:
     port: 8080
     readTimeoutSec: 15
@@ -11,8 +13,16 @@ server:
 
 duckdb:
     path: './data/geo.db'
+    maxSizeBytes: 5368709120 # hard cap on the database's on-disk size, in bytes; 0 = unlimited (5 Go)
+    maxOpenConns: 20
 
 sources:
     workDir: './data/sources'
     maxSizeBytes: 1048576000 # 1000 Mo
     allowedExtensions: ['.geojson', '.shp', '.csv', '.gpkg', '.parquet']
+
+settings:
+    maxBodyBytes: 10485760 # 10 Mo — request body cap
+    requestTimeoutSec: 30
+    cacheMaxItems: 1000 # shared by the metadata and schema LRU caches
+    tileMaxItems: 5000

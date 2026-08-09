@@ -25,7 +25,13 @@ const statusClientClosedRequest = 499
 // WriteJSON writes v as a JSON response with the given status code, always
 // setting Content-Type so clients never have to rely on content sniffing.
 func WriteJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	WriteJSONAs(w, code, "application/json", v)
+}
+
+// WriteJSONAs writes v as JSON under an explicit media type, for the JSON
+// dialects a standard names by their own type — OGC's application/geo+json.
+func WriteJSONAs(w http.ResponseWriter, code int, contentType string, v any) {
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("encoding json response", "error", err)
@@ -61,6 +67,8 @@ func errorCode(code int) string {
 		return "timeout"
 	case http.StatusServiceUnavailable:
 		return "unavailable"
+	case http.StatusInsufficientStorage:
+		return "quota_exceeded"
 	case statusClientClosedRequest:
 		return "client_closed_request"
 	}
@@ -136,6 +144,10 @@ func MapServiceError(err error) int {
 	var conflictErr *service.ConflictError
 	if errors.As(err, &conflictErr) {
 		return http.StatusConflict
+	}
+	var quotaErr *service.QuotaExceededError
+	if errors.As(err, &quotaErr) {
+		return http.StatusInsufficientStorage
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return http.StatusGatewayTimeout

@@ -2,9 +2,9 @@
 
 ![DAROW](img/darow_logo.png)
 
-Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and make
-sure all your details, tasks, or resources are fully prepared before starting an important project
-or event dictionary.cambridge.org
+"Get your ducks in a row" is a common English idiom that means to get organized, plan ahead, and
+make sure all your details, tasks, or resources are fully prepared before starting an important
+project or event.
 
 Backed by DuckDB. Darow is a tabular data server: it turns tabular and spatial files into a REST API
 — sources, tables, rows, MVT tiles, and SQL-derived tables — with an admin UI embedded in the same
@@ -22,7 +22,8 @@ binary to manage it.
     API, for any OGC-compliant client.
 -   **SQL-derived tables** — create a new table from a `SELECT` query, with rollback if it fails.
 -   **An admin UI** — browse sources and tables, inspect schemas, edit rows attributes (geometry
-    edition), embedded in the server binary, no separate deployment.
+    edition), a dashboard of server health and data stats, embedded in the server binary, no
+    separate deployment.
 -   **A single self-contained binary** — DuckDB, the API, the Swagger docs, and the admin UI all
     ship together.
 

@@ -21,7 +21,7 @@ func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
 	c := expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute)
 	schemaCache := expirable.NewLRU[string, []ColumnSchema](1000, nil, 5*time.Minute)
 	metadata := NewMetadataService(m, c, &observer.Observer[storage.Metadata]{})
-	svc := NewDeriveService(metadata, NewSchemaService(m, schemaCache))
+	svc := NewDeriveService(metadata, NewSchemaService(m, schemaCache), &allowSizeGuard{})
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
 }
@@ -52,6 +52,18 @@ func Test_ValidateSelectOnly(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
+}
+
+func Test_DeriveService_DeriveTable_RefusesOverQuota(t *testing.T) {
+	svc, m := setupDeriveService(t)
+	svc.sizeGuard = &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+
+	_, err := svc.DeriveTable(context.Background(), "SELECT * FROM t_source", "derived")
+
+	require.Error(t, err)
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "CreateFromQuery", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func Test_DeriveService_DeriveTable(t *testing.T) {

@@ -33,16 +33,17 @@ const spatialExtension = "spatial"
 // reader — reopenMu serializes that swap itself, so two callers observing
 // the same fatal instance at once reopen it only once.
 type Adapter struct {
-	db           *sql.DB
-	dbMu         sync.RWMutex
-	writeMu      sync.Mutex
-	reopenMu     sync.Mutex
-	path         string
-	maxOpenConns int
-	catalog      *catalog.Catalog
-	filters      *catalog.Filters
-	settings     *catalog.Settings
-	materializer *tables.Materializer
+	db            *sql.DB
+	dbMu          sync.RWMutex
+	writeMu       sync.Mutex
+	reopenMu      sync.Mutex
+	path          string
+	maxOpenConns  int
+	catalog       *catalog.Catalog
+	filters       *catalog.Filters
+	settings      *catalog.Settings
+	tableSettings *catalog.TableSettings
+	materializer  *tables.Materializer
 }
 
 // openDB opens a fresh DuckDB connection pool at path with the spatial
@@ -101,13 +102,18 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	queryCreator := func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (string, bool, error) {
 		return tables.NewTxMaterializer(tx, a.catalog).CreateFromQuery(ctx, physicalName, sourceQuery, args...)
 	}
-	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), fileCreator, queryCreator)
+	geometryInfo := func(ctx context.Context, physicalName string) (bool, string, error) {
+		return tables.GeometryInfo(ctx, a, physicalName)
+	}
+	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), geometryInfo, fileCreator, queryCreator)
 	a.materializer = tables.NewMaterializer(a, a, a.catalog)
 
 	// Registered at construction, so deleting a table can never forget the
 	// filters attached to it.
 	a.filters = catalog.NewFilters(a)
 	a.catalog.Register(a.filters)
+	a.tableSettings = catalog.NewTableSettings(a)
+	a.catalog.Register(a.tableSettings)
 	a.settings = catalog.NewSettings(a)
 	return a, nil
 }
@@ -282,8 +288,20 @@ func (a *Adapter) Settings() storage.SettingsStore {
 	return a.settings
 }
 
+// TableSettings returns the per-table settings-override repository,
+// attached to the catalogue's delete cascade.
+func (a *Adapter) TableSettings() storage.TableSettingsStore {
+	return a.tableSettings
+}
+
 // Table resolves meta into a storage.TableRepository, validating its
 // identifiers once rather than on every subsequent call.
 func (a *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
 	return tables.Open(a, a, meta)
+}
+
+// Diagnostics reads a snapshot of the engine's own operating state — size,
+// memory, spilling, loaded extensions.
+func (a *Adapter) Diagnostics(ctx context.Context) (storage.Diagnostics, error) {
+	return tables.Diagnostics(ctx, a)
 }

@@ -16,7 +16,12 @@
             "Bash(npm run build)",
             "Bash(echo \"tsc exit: $?\")",
             "Bash(echo \"eslint exit: $?\")",
-            "Bash(xargs -I{} basename {})"
+            "Bash(xargs -I{} basename {})",
+            "Bash(gofmt -l internal/config)",
+            "Bash(swag init *)",
+            "Bash(echo \"exit=$?\")",
+            "Bash(awk:*)",
+            "Bash(gofmt -l internal/)"
         ],
         "deny": [
             "Bash(git merge:*)",

@@ -20,3 +20,6 @@ Each entry carries a stable identifier (`IMP-Fn`); a retired identifier is never
 | IMP-F1 | Show what is left to load in paginated lists ("50 of 1,240") now that `total` is known | The user cannot tell a complete list from its first screen | §8.6 |
 | IMP-F2 | Show upload progress | A large file leaves with no feedback at all until it is done | §8.2 |
 | IMP-F3 | Show tile loading | A map pan in WFS mode signals nothing as long as nothing is rendered | §8.8 |
+
+IMP-F11 was decided on 2026-08-07 (taken up) and became [todo.md](todo.md) TODO-F40, alongside the
+server-side reshaping of the same screen (`../back/todo.md` TODO-17).

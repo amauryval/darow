@@ -15,6 +15,10 @@ files it cites, named in each section. It only describes the **stable** state: g
 rules below and the current state of the code, accepted limitations, blockers and improvement leads
 live in separate files, listed in §12.
 
+Its sections are indexed by title, grouped by layer, in [`spec/index.md`](../index.md) — the entry
+point to read only what a task needs. **Any section added, renamed, removed or renumbered here is
+mirrored there in the same change.**
+
 ---
 
 ## 0. Non-negotiable rules
@@ -133,7 +137,8 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `settings.ts` — one function per endpoint **the
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `settings.ts`,
+  `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
   return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
   contract is described on its own side, and an unreachable function here is code that rots without
@@ -259,10 +264,10 @@ module level and documents it; that is the exception, not the rule.
 | Composable | Subject | Today |
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
-| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page | present |
+| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` accepts a `Ref<number>` as well as a plain number — a page size resolved asynchronously (a table's effective row limit, `useTableRows`) reloads from page 1 the moment it changes, the same way a sort change does | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
-| `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
+| `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
@@ -283,7 +288,9 @@ module level and documents it; that is the exception, not the rule.
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
-| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value, which is what lets `useSources`, `useTableRows` and `TablesView` cap their own default page size against `maxListLimit`/`maxRowLimit` without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
+| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value — `useDashboardStats` sweeps the catalogue at `defaultListLimit`, the page size the server itself applies, so it never asks for more than one response can carry — without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
+| `useTableSettings` | one table's settings overrides: load, patch, reset, its own four states (§0.18 — unlike `useTableMetadata`, a settings read can fail and the modal shows that rather than toasting past it). `tableId`-scoped like `useTableMetadata`, but **not** shared module state like `useSettings` — every caller (the modal, `TableDataPanel`'s row limit) gets its own load, since a table's overrides are not a cross-cutting default the way the global row is | present |
+| `useTableSettingsOverrides` | the tables that carry a settings override, for the settings screen's own section: a dedicated load (`GET /settings/tables`), its own four states, and a per-table reset. Never the table catalogue filtered client-side — a deployment with a thousand tables must not load them all to find the few that override something | present |
 
 ---
 
@@ -315,26 +322,46 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
 | `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
 | `Tabs` | daisyUI `tabs`/`tab`/`tab-active` plus the `role="tablist"`/`role="tab"`/`aria-selected` wiring, `v-model` over a caller-supplied `{ value, label }[]`. Generic over the mode's own union so a caller's `v-model` stays typed to its two or three modes rather than widening to a bare string |
+| `StatTile` | a single-number KPI card, on daisyUI's own `stats`/`stat` component — `label`, `value`, optional `hint` and `icon` |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
 rich cells (source actions, EPSG input, row actions, editable cell) are of this kind — that is what
 replaces the `h()` trees.
 
+**`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
+`ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
+fixed hue order — `var(--color-primary)`/`--color-secondary`/`--color-info`, folding anything past
+the third slice into a neutral "Autres" bucket rather than generating a fourth hue). D3
+(`d3-scale`/`d3-shape`/`d3-array`) computes geometry only — scales, a pie layout, an arc generator —
+and Vue owns every DOM node via `v-for` over a `computed`; D3 never calls `.select()`/`.append()`
+itself. Props in, no fetch, no store, same contract as `ui/`.
+
 ---
 
 ## 6. Views and sub-views (`src/views/`)
 
 One view per route; its sub-views live in a directory named after it. Every view opens with a
-`Breadcrumbs` trail (§5) — `TableDetailView`'s is `Tables > {tableName}`, the two others are a
+`Breadcrumbs` trail (§5) — `TableDetailView`'s is `Tables > {tableName}`, the others are a
 single, link-less entry naming the page.
 
 | Route | View | Role |
 |---|---|---|
+| `/dashboard` | `DashboardView` | landing route (`/` redirects here). Server diagnostics (`GET /diagnostics`, including a disk-quota donut against `maxSizeBytes` when it is set) and data stats aggregated client-side from every page of `GET /tables` — table count, row totals, geo/non-geo split, SRID distribution, top tables by row count |
 | `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
-| `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, saved as a diff-only patch, per-field refusals attached to their own input |
+| `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, one input per field through `components/settings/SettingsField.vue`, saved as a diff-only patch, per-field refusals attached to their own input. A page size is one plain number per family (§back 2.5): what the input holds is what the server serves, so nothing is shown under it. An input's `min`/`max` and a field's unit come from the payload the value was read in (§back 2.5's descriptor), never from `utils/settingsFields.ts` — which carries what the server has no opinion on: the label, the description, the input `step`, the meaning of `0`, and whether the field is per-table. `inputRange` is the one place the server's bounds become an `<input>`'s, an exclusive minimum becoming the first value the step grid allows |
+
+**`DashboardView`** composes two independent sections, each owning its own four-state load
+(`components/dashboard/`): `ServerHealthSection` (`useDiagnostics`) and `DataOverviewSection`
+(`useDashboardStats`). The two composables stay separate rather than merging into one — different
+endpoints, different latency/failure profiles, and a shared retry would re-trigger both on one
+section's failure. `useDashboardStats` is the one composable allowed to page a listing
+(`listTables`) to completion instead of going through `usePaginatedList`'s infinite scroll: the
+dashboard needs the whole catalogue to sum/aggregate (`utils/dashboardStats.ts`'s
+`computeDashboardStats`), not a displayed page — it loops at `useSettings().current.defaultListLimit`
+per page (the server's own live cap) until the reported `total` is reached.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
@@ -890,6 +917,7 @@ web/
       tables/         table domain components
       sources/        source domain components
       map/            map domain components
+      settings/       settings-form components
     views/
       TablesView.vue
       SourcesView.vue / SourcesView/    sub-views and panels

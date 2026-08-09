@@ -11,8 +11,12 @@ import {
 import type { Source } from '../client/types'
 import { errorMessage } from '../client/http'
 import { usePaginatedList } from './usePaginatedList'
-import { useSettings } from './useSettings'
 import { useToast } from './useToast'
+
+// The list's own page size — deliberately independent of the operator's
+// defaultListLimit setting, a REST API page size rather than a UI choice; see
+// useTableRows' PAGE_SIZE for why.
+const PAGE_SIZE = 50
 
 // Display column ids that don't match the API's Source field names 1:1
 // ("size" formats sizeBytes+layerCount, "status" formats loaded).
@@ -27,14 +31,9 @@ export function layerKey(source: Source, layerName: string): string {
 // triplet (TODO-F4).
 export function useSources(initialSorting?: SortingState) {
     const toast = useToast()
-    const settings = useSettings()
 
-    // Capped at maxListLimit: a value the operator has lowered below this
-    // default from /settings would otherwise make the list's own first
-    // fetch fail against the server's own cap.
-    const limit = Math.min(50, settings.current.value?.maxListLimit ?? 50)
     const list = usePaginatedList<Source>({
-        limit,
+        limit: PAGE_SIZE,
         initialSorting,
         sortColumnMap: sourceSortColumnMap,
         fetchPage: (offset, limit, sort) =>
@@ -49,7 +48,7 @@ export function useSources(initialSorting?: SortingState) {
     // of just re-fetching the already-known list.
     async function refresh() {
         try {
-            const page = await refreshSources(0, limit, list.sortQuery())
+            const page = await refreshSources(0, PAGE_SIZE, list.sortQuery())
             list.replace({ items: page.sources, total: page.total })
         } catch (e) {
             toast.error(errorMessage(e, 'Impossible de rafraîchir les sources'))

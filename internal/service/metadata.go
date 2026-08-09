@@ -36,7 +36,8 @@ func NewMetadataService(s storage.Catalog, c *expirable.LRU[string, storage.Meta
 
 // ResetCache swaps the metadata cache for a freshly built one sized
 // maxItems with the given ttl — called by core.NewServices when
-// SettingsService reports a change to cache.metadataMaxItems/TTLSec.
+// SettingsService reports a change to settings.cacheTTLSec (maxItems itself
+// is config.SettingsConfig.CacheMaxItems, fixed for the process's life).
 // Every entry the old cache held is dropped rather than migrated: a cache
 // miss just costs one extra catalogue read.
 func (s *MetadataService) ResetCache(maxItems int, ttl time.Duration) {

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
@@ -15,26 +13,19 @@ import (
 
 // GeoService provides tile and geospatial query access on top of the
 // storage layer, caching MVT tiles per table version in a size-bounded LRU
-// with expiration, held behind an atomic pointer so ResetCache can swap it
-// for a freshly sized one.
+// with no time-based expiry (TODO-17/IMP-10): the key already carries the
+// table's UpdatedAt, so a tile is never stale, and its size is fixed at
+// startup from config.SettingsConfig.TileMaxItems — neither knob changes at
+// runtime, so the cache itself never needs swapping.
 type GeoService struct {
 	storage   tableResolver
-	tileCache atomic.Pointer[expirable.LRU[string, []byte]]
+	tileCache *expirable.LRU[string, []byte]
 }
 
 // NewGeoService builds a GeoService backed by storage, using tileCache to
 // cache rendered tiles.
 func NewGeoService(storage tableResolver, tileCache *expirable.LRU[string, []byte]) *GeoService {
-	svc := &GeoService{storage: storage}
-	svc.tileCache.Store(tileCache)
-	return svc
-}
-
-// ResetCache swaps the tile cache for a freshly built one sized maxItems
-// with the given ttl — called by core.NewServices when SettingsService
-// reports a change to cache.tileMaxItems/TTLSec.
-func (g *GeoService) ResetCache(maxItems int, ttl time.Duration) {
-	g.tileCache.Store(expirable.NewLRU[string, []byte](maxItems, nil, ttl))
+	return &GeoService{storage: storage, tileCache: tileCache}
 }
 
 // geoRepo resolves meta's GeoRepository, rejecting a scalar table with a
@@ -68,8 +59,7 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 	sortedAttrs := slices.Clone(attrs)
 	slices.Sort(sortedAttrs)
 	key := fmt.Sprintf("tile_%s_%d_%d_%d_%d_%s_%s_%v", meta.TableId, zoom, x, y, meta.UpdatedAt.UnixNano(), strings.Join(sortedAttrs, ","), q.Filter, q.Args)
-	cache := g.tileCache.Load()
-	if mvt, ok := cache.Get(key); ok {
+	if mvt, ok := g.tileCache.Get(key); ok {
 		return mvt, nil
 	}
 
@@ -82,7 +72,7 @@ func (g *GeoService) GetTile(ctx context.Context, meta storage.Metadata, zoom, x
 		return nil, NewDisplayError(fmt.Sprintf("unable to render tile %d/%d/%d of table %q", zoom, x, y, meta.TableId), err)
 	}
 
-	cache.Add(key, mvt)
+	g.tileCache.Add(key, mvt)
 	return mvt, nil
 }
 
@@ -175,7 +165,7 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 	if err != nil {
 		return nil, err
 	}
-	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys)
+	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys, nil)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch geometries of table %q", meta.TableId), err)
 	}
@@ -200,8 +190,9 @@ func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 }
 
 // RowGeometry is one row's geometry, in both the encodings a caller reads
-// it for: GeoJSON to draw it, WKT to copy it. Both are at full resolution,
-// in OGC:CRS84.
+// it for: GeoJSON to draw it, WKT to copy it. WKT is always at full
+// resolution; GeoJSON follows coordinateDecimals (TODO-21). Both are in
+// OGC:CRS84.
 type RowGeometry struct {
 	Pkey    string
 	GeoJSON string
@@ -211,14 +202,15 @@ type RowGeometry struct {
 // RowGeometry returns a single row's geometry, or nil if the row does not
 // exist — the third named exception to never returning the geometry
 // column, alongside export and OGC API - Features: here the geometry is
-// the requested data.
-func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string) (*RowGeometry, error) {
+// the requested data. coordinateDecimals is the caller's already-resolved
+// per-table/global setting (TODO-21), rounding both encodings.
+func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*RowGeometry, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
 
-	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey})
+	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey}, &coordinateDecimals)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}
@@ -227,7 +219,7 @@ func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pke
 		return nil, nil
 	}
 
-	wkt, err := geo.WKTByPkey(ctx, []string{pkey})
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, &coordinateDecimals)
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
 	}

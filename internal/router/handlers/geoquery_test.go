@@ -93,8 +93,11 @@ func Test_parseBboxParam(t *testing.T) {
 	}{
 		{name: "no bbox returns nil"},
 		{name: "valid bbox parses", bbox: "1,2,3,4", wantBbox: &[4]float64{1, 2, 3, 4}},
+		{name: "3D bbox drops its height ordinates", bbox: "1,2,10,3,4,20", wantBbox: &[4]float64{1, 2, 3, 4}},
 		{name: "wrong number of parts is rejected", bbox: "1,2,3", wantErr: true},
+		{name: "five parts are rejected", bbox: "1,2,3,4,5", wantErr: true},
 		{name: "non-numeric part is rejected", bbox: "1,2,3,a", wantErr: true},
+		{name: "inverted latitudes are rejected", bbox: "1,9,3,4", wantErr: true},
 	}
 
 	for _, c := range cases {

@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
+import { isRef, onMounted, onUnmounted, ref, unref, watch, type Ref } from 'vue'
 import type { SortingState, Updater } from '@tanstack/vue-table'
 import { stringifySorting } from '../utils/sort'
 
@@ -8,7 +8,11 @@ export interface Page<T> {
 }
 
 export interface UsePaginatedListOptions<T> {
-    limit?: number
+    // A page size that can change after mount (a table's effective row
+    // limit, resolved async from its settings) is passed as a Ref rather
+    // than a plain number — the list reloads from page 1 when it changes,
+    // same as a sort change.
+    limit?: number | Ref<number>
     initialSorting?: SortingState
     sortColumnMap?: Record<string, string>
     // What the list is a list *of*, when that is a route parameter: the
@@ -31,7 +35,9 @@ export interface UsePaginatedListOptions<T> {
 // but keeps the current items on screen until the new page lands, so a
 // sort change never flashes an empty table (règle 8.1).
 export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
-    const limit = options.limit ?? 50
+    function currentLimit(): number {
+        return unref(options.limit) ?? 50
+    }
     // ref() unwraps a generic T through UnwrapRef, which the checker cannot
     // prove equal to T for an arbitrary caller's T — a plain annotation is
     // rejected (TS2322) even though the runtime value is exactly T[]. The cast
@@ -53,7 +59,7 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
         if (loading.value || (loadedOnce.value && items.value.length >= total.value)) return
         loading.value = true
         try {
-            const page = await options.fetchPage(offset.value, limit, sortQuery())
+            const page = await options.fetchPage(offset.value, currentLimit(), sortQuery())
             items.value = [...items.value, ...page.items]
             total.value = page.total
             offset.value += page.items.length
@@ -84,7 +90,7 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
     async function reloadSorted() {
         loading.value = true
         try {
-            const page = await options.fetchPage(0, limit, sortQuery())
+            const page = await options.fetchPage(0, currentLimit(), sortQuery())
             items.value = page.items
             total.value = page.total
             offset.value = page.items.length
@@ -126,6 +132,12 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
     // one has nothing to react to and loads once, on mount. The observer is
     // always a mount concern: it needs the sentinel element.
     if (options.key) watch(options.key, () => reload(), { immediate: true })
+
+    // A reactive limit (a table's effective row limit, resolved after its
+    // settings load) reloads from page 1 when it changes — not immediate,
+    // since the key watch above (or the mount below) already covers the
+    // first load, with whatever the limit held at that moment.
+    if (isRef(options.limit)) watch(options.limit, () => reload())
 
     // The sentinel is at the foot of the list, so it only enters the DOM once
     // there is a list to put a foot on: a first load renders a skeleton

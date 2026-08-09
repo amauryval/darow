@@ -13,32 +13,43 @@ import (
 )
 
 // metadataSchema is the DDL applied on every startup — already at the
-// latest column set (no accumulated pre-1.0 migration history: see LIM-7).
+// latest column set (LIM-7: a fresh database gets it directly, an existing
+// one catches up through schemaMigrations below). isGeo/geometryColumn are
+// not columns here: they are derived from the
+// physical table's own catalogue entry at read time (TODO-10), never
+// stored, so they can never drift from what the physical table actually
+// has.
 const metadataSchema = `
 CREATE TABLE IF NOT EXISTS metadata (
     tableId TEXT PRIMARY KEY,
     physicalName TEXT NOT NULL UNIQUE,
     tableName TEXT NOT NULL,
-    isGeo BOOLEAN DEFAULT FALSE,
     createdAt TIMESTAMP DEFAULT NOW(),
     updatedAt TIMESTAMP DEFAULT NOW(),
-    geometryColumn TEXT,
     rowCount BIGINT DEFAULT 0,
     bbox TEXT,
-    srid INTEGER DEFAULT 4326,
+    srid INTEGER,
     sourceName TEXT,
     sourceLayer TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_metadata_geo ON metadata(isGeo);
 CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
 `
 
 // schemaMigrations are ALTER statements applied in order, once each, to an
-// existing metadata table whose recorded version trails this list — empty
-// today (LIM-7: no pre-1.0 database is migrated in place), populated once
-// the server has a first stable release to carry schema changes across.
-var schemaMigrations = []string{}
+// existing metadata table whose recorded version trails this list. The
+// first non-empty entry this package has had (LIM-7): isGeo/geometryColumn
+// move from stored columns to a value derived at read time (TODO-10).
+var schemaMigrations = []string{
+	`DROP INDEX IF EXISTS idx_metadata_geo`,
+	`ALTER TABLE metadata DROP COLUMN IF EXISTS isGeo`,
+	`ALTER TABLE metadata DROP COLUMN IF EXISTS geometryColumn`,
+	// srid loses its DEFAULT 4326: that default made every scalar table and
+	// every derived geo table (CreateFromQuery never sets it) report a CRS
+	// it does not have. A row already carrying the old default keeps that
+	// concrete value — the migration only stops new rows from getting one.
+	`ALTER TABLE metadata ALTER COLUMN srid DROP DEFAULT`,
+}
 
 func init() {
 	register(Component{
@@ -54,7 +65,6 @@ func init() {
 var metadataSortColumns = map[string]string{
 	"tableId":     "tableId",
 	"tableName":   "tableName",
-	"isGeo":       "isGeo",
 	"createdAt":   "createdAt",
 	"updatedAt":   "updatedAt",
 	"rowCount":    "rowCount",
@@ -135,7 +145,9 @@ func (r *Repository) PhysicalNames(ctx context.Context) (map[string]bool, error)
 	return names, rows.Err()
 }
 
-// GetMetadata fetches the metadata row for tableId.
+// GetMetadata fetches the metadata row for tableId, with IsGeo/
+// GeometryColumn derived from the physical table's own catalogue entry
+// rather than trusted from a stored column — see GeometryInfo.
 func (r *Repository) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	row := r.conn.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM metadata WHERE tableId = ?`, metadataColumns), tableId)
 
@@ -146,27 +158,42 @@ func (r *Repository) GetMetadata(ctx context.Context, tableId string) (storage.M
 	if err != nil {
 		return m, err
 	}
-	return m, nil
+	return r.deriveGeometry(ctx, m)
 }
 
 // metadataColumns lists the columns GetMetadata/List scan, in scan order.
+// srid coalesces to 0 — no known CRS, same "unset" sentinel
+// SourceService.DetectCRS already uses for an undetectable one — rather
+// than a NULL a scalar or derived table has no reason to carry.
 const metadataColumns = `
-    tableId, physicalName, tableName, isGeo, createdAt, updatedAt,
-    COALESCE(geometryColumn, ''), rowCount, COALESCE(bbox, ''), srid,
+    tableId, physicalName, tableName, createdAt, updatedAt,
+    rowCount, COALESCE(bbox, ''), COALESCE(srid, 0),
     COALESCE(sourceName, ''), COALESCE(sourceLayer, '')
 `
 
 func scanMetadata(row interface{ Scan(...any) error }) (storage.Metadata, error) {
 	var m storage.Metadata
 	err := row.Scan(
-		&m.TableId, &m.PhysicalName, &m.TableName, &m.IsGeo, &m.CreatedAt, &m.UpdatedAt,
-		&m.GeometryColumn, &m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
+		&m.TableId, &m.PhysicalName, &m.TableName, &m.CreatedAt, &m.UpdatedAt,
+		&m.RowCount, &m.Bbox, &m.Srid, &m.SourceName, &m.SourceLayer,
 	)
 	return m, err
 }
 
+// deriveGeometry overwrites m's IsGeo/GeometryColumn with what geometryInfo
+// reads off the physical table.
+func (r *Repository) deriveGeometry(ctx context.Context, m storage.Metadata) (storage.Metadata, error) {
+	isGeo, geometryColumn, err := r.geometryInfo(ctx, m.PhysicalName)
+	if err != nil {
+		return storage.Metadata{}, err
+	}
+	m.IsGeo, m.GeometryColumn = isGeo, geometryColumn
+	return m, nil
+}
+
 // List returns one page of metadata ordered by sort (or by tableId when
-// empty), plus the total number of registered tables.
+// empty), plus the total number of registered tables. Each row's IsGeo/
+// GeometryColumn is derived exactly as GetMetadata's.
 func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error) {
 	orderBy, err := metadataOrderBy(sort)
 	if err != nil {
@@ -194,7 +221,17 @@ func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset,
 		}
 		tables = append(tables, m)
 	}
-	return tables, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	for i := range tables {
+		tables[i], err = r.deriveGeometry(ctx, tables[i])
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return tables, total, nil
 }
 
 // BySource maps every loaded table's source key to its tableId in a single
@@ -223,16 +260,17 @@ func (r *Repository) BySource(ctx context.Context) (map[storage.SourceKey]string
 
 // Create registers a new logical table in metadata and returns its
 // generated tableId. It does not create the underlying physical table —
-// callers use TableCreator for that, then persist the resolved geometry
-// column via UpdateMetadata.
-func (r *Repository) Create(ctx context.Context, tableName string, isGeo bool, geometryColumn string) (string, error) {
+// callers use TableCreator for that; isGeo/geometryColumn need no
+// persisting afterward, GetMetadata derives them once the physical table
+// exists (TODO-10).
+func (r *Repository) Create(ctx context.Context, tableName string) (string, error) {
 	tableId := uuid.NewString()
 	physicalName := "t_" + strings.ReplaceAll(tableId, "-", "")
 
 	_, err := r.conn.Exec(ctx, `
-        INSERT INTO metadata (tableId, physicalName, tableName, isGeo, geometryColumn)
-        VALUES (?, ?, ?, ?, ?)
-    `, tableId, physicalName, tableName, isGeo, geometryColumn)
+        INSERT INTO metadata (tableId, physicalName, tableName)
+        VALUES (?, ?, ?)
+    `, tableId, physicalName, tableName)
 	if err != nil {
 		return "", err
 	}
@@ -243,20 +281,12 @@ func (r *Repository) Create(ctx context.Context, tableName string, isGeo bool, g
 // non-nil field of patch is written; nil fields leave their column
 // unchanged. A zero-value patch is a no-op.
 func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error {
-	sets := make([]string, 0, 6)
-	args := make([]any, 0, 7)
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 5)
 
 	if patch.TableName != nil {
 		sets = append(sets, "tableName = ?")
 		args = append(args, *patch.TableName)
-	}
-	if patch.IsGeo != nil {
-		sets = append(sets, "isGeo = ?")
-		args = append(args, *patch.IsGeo)
-	}
-	if patch.GeometryColumn != nil {
-		sets = append(sets, "geometryColumn = ?")
-		args = append(args, *patch.GeometryColumn)
 	}
 	if patch.Srid != nil {
 		sets = append(sets, "srid = ?")

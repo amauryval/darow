@@ -22,10 +22,12 @@ type Adapter struct {
 }
 
 var (
-	_ storage.Catalog           = (*Adapter)(nil)
-	_ storage.TableMaterializer = (*Adapter)(nil)
-	_ storage.FilterStore       = (*Adapter)(nil)
-	_ storage.SettingsStore     = (*Adapter)(nil)
+	_ storage.Catalog            = (*Adapter)(nil)
+	_ storage.TableMaterializer  = (*Adapter)(nil)
+	_ storage.FilterStore        = (*Adapter)(nil)
+	_ storage.SettingsStore      = (*Adapter)(nil)
+	_ storage.TableSettingsStore = (*Adapter)(nil)
+	_ storage.DiagnosticsReader  = (*Adapter)(nil)
 )
 
 // Catalog returns m itself: Adapter already implements storage.Catalog, so
@@ -46,6 +48,11 @@ func (m *Adapter) Filters() storage.FilterStore {
 
 // Settings returns m itself, for the same reason as Catalog.
 func (m *Adapter) Settings() storage.SettingsStore {
+	return m
+}
+
+// TableSettings returns m itself, for the same reason as Catalog.
+func (m *Adapter) TableSettings() storage.TableSettingsStore {
 	return m
 }
 
@@ -171,4 +178,32 @@ func (m *Adapter) UpdateSettings(ctx context.Context, patch storage.SettingsPatc
 	callArgs := m.Called(ctx, patch)
 	s, _ := callArgs.Get(0).(storage.Settings)
 	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) GetTableSettings(ctx context.Context, tableId string) (storage.TableSettings, error) {
+	callArgs := m.Called(ctx, tableId)
+	s, _ := callArgs.Get(0).(storage.TableSettings)
+	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) UpdateTableSettings(ctx context.Context, tableId string, patch storage.TableSettingsPatch) (storage.TableSettings, error) {
+	callArgs := m.Called(ctx, tableId, patch)
+	s, _ := callArgs.Get(0).(storage.TableSettings)
+	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) DeleteTableSettings(ctx context.Context, tableId string) error {
+	return m.Called(ctx, tableId).Error(0)
+}
+
+func (m *Adapter) ListOverriddenTables(ctx context.Context) ([]storage.TableSettings, error) {
+	callArgs := m.Called(ctx)
+	s, _ := callArgs.Get(0).([]storage.TableSettings)
+	return s, callArgs.Error(1)
+}
+
+func (m *Adapter) Diagnostics(ctx context.Context) (storage.Diagnostics, error) {
+	callArgs := m.Called(ctx)
+	d, _ := callArgs.Get(0).(storage.Diagnostics)
+	return d, callArgs.Error(1)
 }

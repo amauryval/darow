@@ -15,7 +15,7 @@ func Test_Repository_CreateAndGetMetadata(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
 
-	tableId, err := r.Create(ctx, "widgets", false, "")
+	tableId, err := r.Create(ctx, "widgets")
 	require.NoError(t, err)
 
 	meta, err := r.GetMetadata(ctx, tableId)
@@ -23,6 +23,7 @@ func Test_Repository_CreateAndGetMetadata(t *testing.T) {
 	assert.Equal(t, "widgets", meta.TableName)
 	assert.False(t, meta.IsGeo)
 	assert.Contains(t, meta.PhysicalName, "t_")
+	assert.Zero(t, meta.Srid, "a freshly created table has no source CRS to report")
 }
 
 func Test_Repository_GetMetadata_NotFound(t *testing.T) {
@@ -39,7 +40,7 @@ func Test_Repository_List(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"b_widget", "a_widget", "c_widget"} {
-		_, err := r.Create(ctx, name, false, "")
+		_, err := r.Create(ctx, name)
 		require.NoError(t, err)
 	}
 
@@ -62,9 +63,9 @@ func Test_Repository_BySource(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
 
-	derivedId, err := r.Create(ctx, "derived", false, "")
+	derivedId, err := r.Create(ctx, "derived")
 	require.NoError(t, err)
-	importedId, err := r.Create(ctx, "imported", false, "")
+	importedId, err := r.Create(ctx, "imported")
 	require.NoError(t, err)
 	sourceName, sourceLayer := "buildings.geojson", ""
 	require.NoError(t, r.UpdateMetadata(ctx, importedId, storage.MetadataPatch{
@@ -85,7 +86,7 @@ func Test_Repository_PhysicalNames(t *testing.T) {
 	r, conn := newTestRepositoryWithConn(t)
 	ctx := context.Background()
 
-	tableId, err := r.Create(ctx, "widgets", false, "")
+	tableId, err := r.Create(ctx, "widgets")
 	require.NoError(t, err)
 	meta, err := r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -102,12 +103,12 @@ func Test_Repository_PhysicalNames_SkipsMissingPhysicalTable(t *testing.T) {
 	r, conn := newTestRepositoryWithConn(t)
 	ctx := context.Background()
 
-	presentId, err := r.Create(ctx, "present", false, "")
+	presentId, err := r.Create(ctx, "present")
 	require.NoError(t, err)
 	present, err := r.GetMetadata(ctx, presentId)
 	require.NoError(t, err)
 	materialize(t, conn, present.PhysicalName)
-	_, err = r.Create(ctx, "orphan", false, "")
+	_, err = r.Create(ctx, "orphan")
 	require.NoError(t, err)
 
 	names, err := r.PhysicalNames(ctx)
@@ -119,7 +120,7 @@ func Test_Repository_UpdateMetadata_RenamesTable(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
 
-	tableId, err := r.Create(ctx, "widgets", false, "")
+	tableId, err := r.Create(ctx, "widgets")
 	require.NoError(t, err)
 
 	renamed := "gadgets"
@@ -134,7 +135,7 @@ func Test_Repository_RefreshDerivedMetadata_RecomputesRowCount(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
 
-	tableId, err := r.Create(ctx, "widgets", false, "")
+	tableId, err := r.Create(ctx, "widgets")
 	require.NoError(t, err)
 	meta, err := r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -217,9 +218,9 @@ func Test_Repository_TableIds_Sort(t *testing.T) {
 	r := newTestRepository(t)
 	ctx := context.Background()
 
-	id1, err := r.Create(ctx, "b-table", false, "")
+	id1, err := r.Create(ctx, "b-table")
 	require.NoError(t, err)
-	id2, err := r.Create(ctx, "a-table", false, "")
+	id2, err := r.Create(ctx, "a-table")
 	require.NoError(t, err)
 
 	ids, err := r.TableIds(ctx, []storage.SortField{{Column: "tableName"}})

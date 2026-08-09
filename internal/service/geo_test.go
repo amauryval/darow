@@ -222,10 +222,11 @@ func Test_GeoService_RowGeometry(t *testing.T) {
 
 	t.Run("returns both encodings", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
-		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}).Return(map[string]string{"pk-1": "POINT (1 2)"}, nil).Once()
+		decimals := 6
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}, &decimals).Return(map[string]string{"pk-1": "POINT (1 2)"}, nil).Once()
 
-		geometry, err := svc.RowGeometry(ctx, meta, "pk-1")
+		geometry, err := svc.RowGeometry(ctx, meta, "pk-1", decimals)
 		require.NoError(t, err)
 		require.NotNil(t, geometry)
 		assert.Equal(t, RowGeometry{Pkey: "pk-1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)"}, *geometry)
@@ -234,9 +235,10 @@ func Test_GeoService_RowGeometry(t *testing.T) {
 
 	t.Run("an unknown row reports nothing", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"nope"}).Return(map[string]string{}, nil).Once()
+		decimals := 6
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"nope"}, &decimals).Return(map[string]string{}, nil).Once()
 
-		geometry, err := svc.RowGeometry(ctx, meta, "nope")
+		geometry, err := svc.RowGeometry(ctx, meta, "nope", decimals)
 		require.NoError(t, err)
 		assert.Nil(t, geometry)
 		geoRepo.AssertExpectations(t)
@@ -244,9 +246,10 @@ func Test_GeoService_RowGeometry(t *testing.T) {
 
 	t.Run("a storage failure is wrapped", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}).Return(nil, errors.New("boom")).Once()
+		decimals := 6
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals).Return(nil, errors.New("boom")).Once()
 
-		_, err := svc.RowGeometry(ctx, meta, "pk-1")
+		_, err := svc.RowGeometry(ctx, meta, "pk-1", decimals)
 		require.Error(t, err)
 	})
 }
@@ -280,21 +283,4 @@ func Test_GeoService_NeighbourFeatures(t *testing.T) {
 		var displayErr *DisplayError
 		require.ErrorAs(t, err, &displayErr)
 	})
-}
-
-func Test_GeoService_ResetCache(t *testing.T) {
-	geoSvc, geoRepo := setupGeoService(t)
-	meta := storage.Metadata{TableId: "id-1", UpdatedAt: time.Unix(1000, 0)}
-	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("mvt-data"), nil).Once()
-	_, err := geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
-	require.NoError(t, err)
-
-	geoSvc.ResetCache(1000, 5*time.Minute)
-
-	// A second Tile call proves the cache was actually dropped: the mock
-	// expectation below only matches once, so a stale hit would leave it
-	// unfulfilled and fail via AssertExpectations.
-	geoRepo.On("Tile", context.Background(), 1, 2, 3, []string(nil), storage.GeoQuery{}).Return([]byte("mvt-data"), nil).Once()
-	_, err = geoSvc.GetTile(context.Background(), meta, 1, 2, 3, nil, storage.GeoQuery{})
-	require.NoError(t, err)
 }

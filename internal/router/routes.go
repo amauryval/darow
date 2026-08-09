@@ -10,58 +10,54 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	_ "darow/docs"
+	"darow/internal/config"
 	"darow/internal/core"
 	"darow/internal/router/handlers"
-	"darow/internal/storage"
 )
-
-// settingsReader is what Router itself needs from SettingsService, read
-// live on every request rather than captured at Setup time — the same
-// port handlers.settingsAPI narrows to, declared again here since this
-// package never imports the handlers-only one.
-type settingsReader interface {
-	Current() storage.Settings
-}
 
 // Router wires the HTTP layer to the service layer. Each family of
 // endpoints (tables, rows, geo, sources, export, ops, settings) is served
 // by its own handler struct, holding only the service ports it actually
 // needs — never the concrete service types.
 type Router struct {
-	tables   *handlers.TablesHandler
-	rows     *handlers.RowsHandler
-	geo      *handlers.GeoHandler
-	features *handlers.FeaturesHandler
-	sources  *handlers.SourcesHandler
-	filters  *handlers.FiltersHandler
-	export   *handlers.ExportHandler
-	ops      *handlers.OpsHandler
-	settings *handlers.SettingsHandler
-	current  settingsReader
-	uiAssets fs.FS
+	tables        *handlers.TablesHandler
+	rows          *handlers.RowsHandler
+	geo           *handlers.GeoHandler
+	features      *handlers.FeaturesHandler
+	sources       *handlers.SourcesHandler
+	filters       *handlers.FiltersHandler
+	export        *handlers.ExportHandler
+	ops           *handlers.OpsHandler
+	settings      *handlers.SettingsHandler
+	tableSettings *handlers.TableSettingsHandler
+	settingsCfg   config.SettingsConfig
+	uiAssets      fs.FS
 }
 
 // NewRouter builds a Router serving every service in svcs — every row/list
-// limit, body size and timeout is read live off svcs.Settings.Current()
-// rather than captured at Setup time, so an update through PATCH /settings
-// takes effect on the next request. uiAssets is the admin UI's built
-// static files, served under /ui. ready backs /readyz — it should ping the
-// underlying storage connection.
+// limit and geometry bound is read live off svcs.Settings.Current() by the
+// handlers, so an update through PATCH /settings takes effect on the next
+// request; the body cap and the request timeout are fixed at Setup instead,
+// from settingsCfg (TODO-17 — a memory/availability guard, restart-only).
+// uiAssets is the admin UI's built static files, served under /ui. ready
+// backs /readyz — it should ping the underlying storage connection.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
+	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64,
 ) *Router {
 	return &Router{
-		tables:   handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings),
-		rows:     handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings),
-		geo:      handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
-		features: handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings),
-		sources:  handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
-		filters:  handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
-		export:   handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:      handlers.NewOpsHandler(ready),
-		settings: handlers.NewSettingsHandler(svcs.Settings),
-		current:  svcs.Settings,
-		uiAssets: uiAssets,
+		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings, svcs.TableSettings),
+		rows:          handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		geo:           handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		features:      handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		sources:       handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
+		filters:       handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
+		export:        handlers.NewExportHandler(svcs.Metadata, svcs.Export),
+		ops:           handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
+		settings:      handlers.NewSettingsHandler(svcs.Settings),
+		tableSettings: handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
+		settingsCfg:   settingsCfg,
+		uiAssets:      uiAssets,
 	}
 }
 
@@ -75,10 +71,11 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(slogLogger)
 	r.Use(recoverJSON)
-	r.Use(maxBodyBytes(func() int64 { return rt.current.Current().MaxBodyBytes }))
+	r.Use(maxBodyBytes(func() int64 { return rt.settingsCfg.MaxBodyBytes }))
 
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
+	r.Get("/diagnostics", rt.ops.Diagnostics)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -94,7 +91,7 @@ func (rt *Router) Setup() http.Handler {
 		// route is registered outside the Group precisely to escape it.
 		// Everything else keeps the same bounded-request budget as before.
 		v1.Group(func(v1 chi.Router) {
-			v1.Use(requestTimeout(func() int { return rt.current.Current().RequestTimeoutSec }))
+			v1.Use(requestTimeout(func() int { return rt.settingsCfg.RequestTimeoutSec }))
 
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
@@ -110,6 +107,8 @@ func (rt *Router) Setup() http.Handler {
 				sub.Delete("/{name}", rt.sources.DeleteSource)
 			})
 
+			v1.Post("/derive", rt.tables.DeriveTable)
+
 			v1.Route("/tables", func(sub chi.Router) {
 				sub.Get("/", rt.tables.ListTables)
 
@@ -120,9 +119,14 @@ func (rt *Router) Setup() http.Handler {
 
 					sub.Get("/schema", rt.tables.GetSchema)
 					sub.Post("/columns", rt.tables.AddColumn)
-					sub.Post("/derive", rt.tables.DeriveTable)
 					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
+
+					sub.Route("/settings", func(sub chi.Router) {
+						sub.Get("/", rt.tableSettings.GetTableSettings)
+						sub.Patch("/", rt.tableSettings.UpdateTableSettings)
+						sub.Delete("/", rt.tableSettings.DeleteTableSettings)
+					})
 
 					sub.Route("/filters", func(sub chi.Router) {
 						sub.Get("/", rt.filters.ListFilters)
@@ -157,6 +161,7 @@ func (rt *Router) Setup() http.Handler {
 			v1.Route("/settings", func(sub chi.Router) {
 				sub.Get("/", rt.settings.GetSettings)
 				sub.Patch("/", rt.settings.UpdateSettings)
+				sub.Get("/tables", rt.tableSettings.ListOverriddenTables)
 			})
 
 			v1.Route("/ogc", func(sub chi.Router) {

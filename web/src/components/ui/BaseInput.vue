@@ -5,6 +5,10 @@ withDefaults(
         type?: string
         inputmode?: 'text' | 'numeric' | 'decimal' | 'email' | 'tel' | 'url' | 'search' | 'none'
         step?: number
+        // Bounds of a number input, sourced from whatever the server itself
+        // enforces — never a figure written on this side.
+        min?: number
+        max?: number
         label?: string
         placeholder?: string
         size?: 'xs' | 'sm' | 'md'
@@ -43,6 +47,8 @@ function onInput(event: Event) {
             :type="type"
             :inputmode="inputmode"
             :step="step"
+            :min="min"
+            :max="max"
             :placeholder="placeholder"
             :disabled="disabled"
             :aria-label="ariaLabel"

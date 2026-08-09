@@ -10,4 +10,4 @@
 
 Each entry carries a stable identifier (`BLK-Fn`); a retired identifier is never reused.
 
-*No blocker identified.*
+No blocker is currently open.

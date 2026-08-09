@@ -37,16 +37,26 @@ type TxRunner interface {
 // caller with nothing but a connection has nothing to name a type after.
 type ExistingTables func(ctx context.Context) (map[string]bool, error)
 
+// GeometryInfo reports a physical table's actual isGeo/geometryColumn, read
+// from DuckDB's own catalogue as duckdb/tables.GeometryInfo does. Declared
+// locally for the same reason ExistingTables is: this package never imports
+// duckdb/tables. Repository.GetMetadata/List call it to derive the pair
+// rather than trust metadata's own isGeo/geometryColumn columns, which can
+// drift from what the physical table actually has (TODO-10).
+type GeometryInfo func(ctx context.Context, physicalName string) (isGeo bool, geometryColumn string, err error)
+
 // Repository owns every read and write against the metadata table.
 type Repository struct {
-	conn     Querier
-	existing ExistingTables
+	conn         Querier
+	existing     ExistingTables
+	geometryInfo GeometryInfo
 }
 
 // NewRepository creates a Repository backed by conn, checking a metadata
-// row's physical table against existing.
-func NewRepository(conn Querier, existing ExistingTables) *Repository {
-	return &Repository{conn: conn, existing: existing}
+// row's physical table against existing and deriving its geometry info
+// through geometryInfo.
+func NewRepository(conn Querier, existing ExistingTables, geometryInfo GeometryInfo) *Repository {
+	return &Repository{conn: conn, existing: existing, geometryInfo: geometryInfo}
 }
 
 // Dropper drops a physical table within the *sql.Tx a delete cascade runs
@@ -93,12 +103,12 @@ type Catalog struct {
 
 // New builds a Catalog whose metadata repository reads/writes through conn,
 // whose cascading deletes and transactional creates run through tx, and
-// whose physical-table drop, materialization and listing are obtained from
-// dropper, fileCreator, queryCreator and existing rather than formatted
-// here.
-func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
+// whose physical-table drop, materialization, listing and geometry
+// introspection are obtained from dropper, fileCreator, queryCreator,
+// existing and geometryInfo rather than formatted here.
+func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, geometryInfo GeometryInfo, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	return &Catalog{
-		Repository:   NewRepository(conn, existing),
+		Repository:   NewRepository(conn, existing, geometryInfo),
 		tx:           tx,
 		dropper:      dropper,
 		fileCreator:  fileCreator,
@@ -149,10 +159,10 @@ func (c *Catalog) createTable(
 ) (string, error) {
 	var tableId string
 	err := c.tx.WithTx(ctx, func(tx *sql.Tx) error {
-		repo := newTxRepository(tx, c.existing)
+		repo := newTxRepository(tx, c.existing, c.geometryInfo)
 
 		var err error
-		tableId, err = repo.Create(ctx, tableName, false, "")
+		tableId, err = repo.Create(ctx, tableName)
 		if err != nil {
 			return err
 		}
@@ -189,14 +199,11 @@ func (c *Catalog) createTable(
 // behind, rolled back together.
 func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
 	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
-		geometryColumn, isGeo, err := c.queryCreator(ctx, tx, physicalName, sourceQuery, args...)
-		if err != nil {
-			return err
-		}
-		if !isGeo {
-			return nil
-		}
-		return repo.UpdateMetadata(ctx, tableId, storage.MetadataPatch{IsGeo: &isGeo, GeometryColumn: &geometryColumn})
+		// isGeo/geometryColumn are read back off the physical table by
+		// GetMetadata once it exists (below, via RefreshDerivedMetadata),
+		// not persisted here — see GeometryInfo.
+		_, _, err := c.queryCreator(ctx, tx, physicalName, sourceQuery, args...)
+		return err
 	})
 }
 
@@ -206,14 +213,16 @@ func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery st
 // the source carries geometry.
 func (c *Catalog) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
 	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
-		geometryColumn, isGeo, srid, err := c.fileCreator(ctx, tx, physicalName, sourcePath, layer, sridOverride)
+		_, isGeo, srid, err := c.fileCreator(ctx, tx, physicalName, sourcePath, layer, sridOverride)
 		if err != nil {
 			return err
 		}
 
+		// Srid is not derivable (TODO-10) and stays persisted; isGeo/
+		// geometryColumn are read back off the physical table instead.
 		patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
 		if isGeo {
-			patch.IsGeo, patch.GeometryColumn, patch.Srid = &isGeo, &geometryColumn, &srid
+			patch.Srid = &srid
 		}
 		return repo.UpdateMetadata(ctx, tableId, patch)
 	})

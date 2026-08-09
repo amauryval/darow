@@ -22,47 +22,55 @@ import (
 )
 
 type routerDeps struct {
-	svcs     *core.Services
-	storage  *mocks.Adapter
-	uiAssets fstest.MapFS
+	svcs        *core.Services
+	storage     *mocks.Adapter
+	settingsCfg config.SettingsConfig
+	uiAssets    fstest.MapFS
 }
 
 // defaultTestSettings is a valid Settings value, sized to satisfy
-// validateSettings, so NewServices can build its LRU caches without a test
-// having to state every field; overridden per test case via settings.
+// settings.Validate, so NewServices can build its LRU caches without a test
+// having to state every field; overridden per test case via settings. The
+// three pagination limits are left unset, on internal/settings' built-in
+// values.
 func defaultTestSettings() storage.Settings {
 	return storage.Settings{
-		DefaultRowLimit: 100, MaxRowLimit: 1000,
-		DefaultListLimit: 50, MaxListLimit: 500,
-		MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30,
-		ExportBatchSize:      1000,
-		DefaultFeaturesLimit: 100, MaxFeaturesLimit: 10000,
 		MaxSimplifyTolerance: 10000, MaxPrecision: 1000,
 		TileCacheMaxAgeSec: 60,
-		MetadataMaxItems:   1000, MetadataTTLSec: 300,
-		SchemaMaxItems: 1000, SchemaTTLSec: 300,
-		TileMaxItems: 1000, TileTTLSec: 300,
+		CacheTTLSec:        300,
 	}
 }
 
-func setupRouterDeps(t *testing.T, settings storage.Settings) routerDeps {
+// defaultTestSettingsConfig is a valid SettingsConfig, overridden per test
+// case (the body cap in particular) via settingsCfg.
+func defaultTestSettingsConfig() config.SettingsConfig {
+	return config.SettingsConfig{
+		MaxBodyBytes: 10 * 1024 * 1024, RequestTimeoutSec: 30,
+		CacheMaxItems: 1000, TileMaxItems: 1000,
+	}
+}
+
+func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config.SettingsConfig) routerDeps {
 	m := &mocks.Adapter{}
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	m.On("GetSettings", mock.Anything).Return(settings, nil)
+	m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
+	m.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, nil).Maybe()
 
-	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}}
+	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: settingsCfg}
 	svcs, err := core.NewServices(cfg, m)
 	require.NoError(t, err)
 
 	return routerDeps{
-		svcs:     svcs,
-		storage:  m,
-		uiAssets: fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}},
+		svcs:        svcs,
+		storage:     m,
+		settingsCfg: settingsCfg,
+		uiAssets:    fstest.MapFS{"index.html": {Data: []byte("<html>ui</html>")}},
 	}
 }
 
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
-	return NewRouter(d.svcs, d.uiAssets, ready)
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0)
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {
@@ -80,7 +88,7 @@ func doRequest(handler http.Handler, method, path string, contentLength int64) *
 // Test_Router_Setup below exercises the full request path through every
 // handler.
 func Test_NewRouter(t *testing.T) {
-	deps := setupRouterDeps(t, defaultTestSettings())
+	deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
 	ready := func(context.Context) error { return nil }
 
 	rt := deps.newRouter(ready)
@@ -100,6 +108,7 @@ func Test_Router_Setup(t *testing.T) {
 	cases := []struct {
 		name              string
 		settings          storage.Settings
+		settingsCfg       config.SettingsConfig
 		method            string
 		path              string
 		contentLength     int64
@@ -121,11 +130,19 @@ func Test_Router_Setup(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name: "enforces MaxBodyBytes before routing reaches a handler",
-			settings: func() storage.Settings {
-				s := defaultTestSettings()
-				s.MaxBodyBytes = 10
-				return s
+			name:       "mounts the diagnostics route",
+			settings:   defaultTestSettings(),
+			method:     http.MethodGet,
+			path:       "/diagnostics",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:     "enforces MaxBodyBytes before routing reaches a handler",
+			settings: defaultTestSettings(),
+			settingsCfg: func() config.SettingsConfig {
+				c := defaultTestSettingsConfig()
+				c.MaxBodyBytes = 10
+				return c
 			}(),
 			method:            http.MethodPost,
 			path:              "/api/v1/tables/id-1/rows",
@@ -208,7 +225,11 @@ func Test_Router_Setup(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			deps := setupRouterDeps(t, c.settings)
+			settingsCfg := c.settingsCfg
+			if settingsCfg == (config.SettingsConfig{}) {
+				settingsCfg = defaultTestSettingsConfig()
+			}
+			deps := setupRouterDeps(t, c.settings, settingsCfg)
 			handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
 			rec := doRequest(handler, c.method, c.path, c.contentLength)
@@ -223,7 +244,7 @@ func Test_Router_Setup(t *testing.T) {
 	}
 
 	t.Run("exempts exportTable from the request timeout group", func(t *testing.T) {
-		deps := setupRouterDeps(t, defaultTestSettings())
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
 
 		var normalRouteHadDeadline, exportRouteHadDeadline bool
 		deps.storage.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil).Once().Run(func(args mock.Arguments) {

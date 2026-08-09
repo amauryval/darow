@@ -151,7 +151,7 @@ const table = useVueTable({
     manualPagination: true,
     manualSorting: true,
     get pageCount() {
-        return Math.ceil(props.state.total.value / props.state.pageSize)
+        return Math.ceil(props.state.total.value / props.state.pageSize.value)
     },
     state: {
         get sorting() {

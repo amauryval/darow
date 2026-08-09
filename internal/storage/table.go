@@ -128,14 +128,20 @@ type GeoRepository interface {
 	Extent(ctx context.Context, q GeoQuery) (string, error)
 	// GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
 	// keyed by pkey — an export-only exception to never returning the
-	// geometry column.
-	GeoJSONByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
+	// geometry column. decimals, if non-nil, rounds CRS84 coordinates to
+	// that many digits after the transform; nil is full resolution.
+	GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
 	// WKTByPkey returns each row's geometry as Well-Known Text, keyed by
-	// pkey, at full resolution and in the same OGC:CRS84 lon/lat
-	// GeoJSONByPkey reports.
-	WKTByPkey(ctx context.Context, pkeys []string) (map[string]string, error)
+	// pkey, in the same OGC:CRS84 lon/lat GeoJSONByPkey reports. decimals
+	// behaves as in GeoJSONByPkey.
+	WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
+	// ValidateGeometries reports, for each of values in order, whether it is
+	// valid (ST_IsValid) once parsed and reprojected exactly as a write
+	// would store it (rule 23) — evaluated in one batched query rather than
+	// one round trip per geometry.
+	ValidateGeometries(ctx context.Context, values []GeometryValue) ([]bool, error)
 }
 
 // TableMaterializer answers questions about a source file before any table

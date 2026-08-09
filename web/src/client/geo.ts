@@ -51,7 +51,10 @@ function getTileFeatures(
 // A tile can hold more features than one page, and dropping the rest
 // silently would make the map look like it is missing data at low zoom,
 // where tiles are large — so a full page is always followed by the next one.
-const TILE_FEATURE_PAGE_SIZE = 10_000
+// A UI chunk size, deliberately independent of the operator's
+// defaultFeaturesLimit setting (a REST API page size, not a page-fetch tuning
+// knob) — a caller may still override it via pageSize for a specific need.
+const DEFAULT_TILE_FEATURE_PAGE_SIZE = 10_000
 
 // Every feature of one tile, paged. `complete` is false when a page request
 // failed partway through: the caller gets what did load (rendering something
@@ -63,22 +66,23 @@ export async function getAllTileFeatures(
     z: number,
     x: number,
     y: number,
-    opts: Omit<TileFeatureQueryOptions, 'limit' | 'offset'> = {}
+    opts: Omit<TileFeatureQueryOptions, 'limit' | 'offset'> & { pageSize?: number } = {}
 ): Promise<{ features: OgcFeatureCollection['features']; complete: boolean }> {
+    const { pageSize = DEFAULT_TILE_FEATURE_PAGE_SIZE, ...queryOpts } = opts
     const features: OgcFeatureCollection['features'] = []
-    for (let offset = 0; ; offset += TILE_FEATURE_PAGE_SIZE) {
+    for (let offset = 0; ; offset += pageSize) {
         let page
         try {
             page = await getTileFeatures(tableId, z, x, y, {
-                ...opts,
-                limit: TILE_FEATURE_PAGE_SIZE,
+                ...queryOpts,
+                limit: pageSize,
                 offset
             })
         } catch {
             return { features, complete: false }
         }
         features.push(...page.features)
-        if (page.features.length < TILE_FEATURE_PAGE_SIZE) return { features, complete: true }
+        if (page.features.length < pageSize) return { features, complete: true }
     }
 }
 

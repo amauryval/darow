@@ -15,7 +15,7 @@ func Test_Catalog_Remove_CascadesToRegisteredRepositories(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
-	tableId, err := c.Create(ctx, "widgets", false, "")
+	tableId, err := c.Create(ctx, "widgets")
 	require.NoError(t, err)
 
 	child := &fakeAttachment{}
@@ -33,7 +33,7 @@ func Test_Catalog_Remove_DropsPhysicalTable(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
-	tableId, err := c.Create(ctx, "widgets", false, "")
+	tableId, err := c.Create(ctx, "widgets")
 	require.NoError(t, err)
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
 
-	tableId, err := c.Create(ctx, "widgets", false, "")
+	tableId, err := c.Create(ctx, "widgets")
 	require.NoError(t, err)
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
@@ -74,6 +74,49 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 	require.NoError(t, err, "metadata row must survive a rolled-back cascade")
 }
 
+// GetMetadata/List derive IsGeo/GeometryColumn from the physical table's own
+// catalogue entry — nothing in metadata stores them anymore (TODO-10), so a
+// table with no geometry column reports as scalar however it was created.
+func Test_Catalog_GetMetadata_DerivesGeometryFromThePhysicalTable(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.Create(ctx, "widgets")
+	require.NoError(t, err)
+	materialize(t, c.conn.(dbQuerier), mustGetPhysicalName(t, c, tableId))
+
+	meta, err := c.GetMetadata(ctx, tableId)
+
+	require.NoError(t, err)
+	assert.False(t, meta.IsGeo)
+	assert.Empty(t, meta.GeometryColumn)
+}
+
+func Test_Catalog_List_DerivesGeometryFromThePhysicalTable(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.Create(ctx, "widgets")
+	require.NoError(t, err)
+	materialize(t, c.conn.(dbQuerier), mustGetPhysicalName(t, c, tableId))
+
+	rows, _, err := c.List(ctx, nil, 0, 10)
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].IsGeo)
+	assert.Empty(t, rows[0].GeometryColumn)
+}
+
+// mustGetPhysicalName reads a just-Created row's physicalName. The physical
+// table does not exist yet at this point, which GetMetadata's derivation
+// tolerates gracefully (see GeometryInfo).
+func mustGetPhysicalName(t *testing.T, c *Catalog, tableId string) string {
+	meta, err := c.GetMetadata(context.Background(), tableId)
+	require.NoError(t, err)
+	return meta.PhysicalName
+}
+
 func Test_Catalog_CreateFromQuery(t *testing.T) {
 	c := newTestCatalog(t)
 	ctx := context.Background()
@@ -84,6 +127,7 @@ func Test_Catalog_CreateFromQuery(t *testing.T) {
 	meta, err := c.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 	assert.Equal(t, "widgets", meta.TableName)
+	assert.Zero(t, meta.Srid, "a derived table has no source file, hence no source CRS to report")
 }
 
 func Test_Catalog_CreateFromQuery_RollsBackOnMaterializationFailure(t *testing.T) {

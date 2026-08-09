@@ -19,15 +19,17 @@ func Test_newTablesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	deriveSvc := &mockDeriveAPI{}
 	rowSvc := &mockRowAPI{}
-	settings := stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}}
+	settings := defaultTestSettings
+	tableSettings := defaultTestTableSettings
 
-	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings)
+	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings, tableSettings)
 
 	assert.Same(t, metadataSvc, th.metadataService)
 	assert.Same(t, schemaSvc, th.schemaService)
 	assert.Same(t, deriveSvc, th.deriveService)
 	assert.Same(t, rowSvc, th.rowService)
 	assert.Equal(t, settings, th.settings)
+	assert.Equal(t, tableSettings, th.tableSettings)
 }
 
 func Test_tablesHandler_listTables(t *testing.T) {
@@ -47,7 +49,7 @@ func Test_tablesHandler_listTables(t *testing.T) {
 			th := &TablesHandler{
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				metadataService: metadataSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}},
+				settings:        defaultTestSettings,
 			}
 
 			tables := []storage.Metadata{{TableId: "t1"}, {TableId: "t2"}}
@@ -80,10 +82,10 @@ func Test_tablesHandler_listPaginationParams(t *testing.T) {
 		{name: "parses explicit offset/limit", query: "offset=10&limit=20", wantOffset: 10, wantLimit: 20},
 		{name: "negative offset falls back to zero", query: "offset=-1", wantOffset: 0, wantLimit: 50},
 		{name: "non-positive limit falls back to default", query: "limit=0", wantOffset: 0, wantLimit: 50},
-		{name: "limit is capped at MaxListLimit", query: "limit=9999", wantOffset: 0, wantLimit: 500},
+		{name: "limit is capped at the list page size", query: "limit=9999", wantOffset: 0, wantLimit: 50},
 	}
 
-	th := &TablesHandler{settings: stubSettingsAPI{settings: storage.Settings{DefaultListLimit: 50, MaxListLimit: 500}}}
+	th := &TablesHandler{settings: defaultTestSettings}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,7 +112,7 @@ func Test_tablesHandler_getTableMetadata(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc)}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc)}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 
@@ -139,7 +141,7 @@ func Test_tablesHandler_renameTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil && c.body.(map[string]string)["tableName"] != "" {
@@ -165,7 +167,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 		removeErr  error
 		wantStatus int
 	}{
-		{name: "deletes the table", wantStatus: http.StatusNoContent},
+		{name: "deletes the table", wantStatus: http.StatusOK},
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "removal failure returns 500", removeErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 	}
@@ -173,7 +175,7 @@ func Test_tablesHandler_deleteTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), metadataService: metadataSvc}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
 			if c.lookupErr == nil {
@@ -204,7 +206,7 @@ func Test_tablesHandler_getSchema(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &TablesHandler{settings: defaultTestSettings,
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
@@ -242,7 +244,7 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			schemaSvc := &mockSchemaAPI{}
-			th := &TablesHandler{settings: defaultTestSettings,
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
@@ -267,13 +269,11 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 func Test_tablesHandler_deriveTable(t *testing.T) {
 	cases := []struct {
 		name            string
-		lookupErr       error
 		deriveErr       error
 		wantStatus      int
 		wantBodyExcerpt string
 	}{
 		{name: "derives a new table", wantStatus: http.StatusCreated},
-		{name: "unknown source table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
 			// The server is never exposed on the Internet (LIM-1), so a raw
@@ -289,23 +289,18 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			metadataSvc := &mockMetadataAPI{}
 			deriveSvc := &mockDeriveAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, deriveService: deriveSvc}
 
-			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(storage.Metadata{TableId: "t1"}, c.lookupErr).Once()
-			if c.lookupErr == nil {
-				deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
-			}
+			deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 
 			body := map[string]string{"query": "SELECT 1", "newTableName": "derived"}
-			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/tables/t1/derive", body, map[string]string{"tableId": "t1"})
+			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {
 				assert.Contains(t, rec.Body.String(), c.wantBodyExcerpt)
 			}
-			metadataSvc.AssertExpectations(t)
 			deriveSvc.AssertExpectations(t)
 		})
 	}
@@ -329,7 +324,7 @@ func Test_tablesHandler_deriveFromTable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
 			deriveSvc := &mockDeriveAPI{}
-			th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 			meta := storage.Metadata{TableId: "t1"}
 
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
@@ -367,7 +362,7 @@ func Test_tablesHandler_deriveFromTable(t *testing.T) {
 func Test_tablesHandler_deriveFromTable_EmptySpec(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	deriveSvc := &mockDeriveAPI{}
-	th := &TablesHandler{settings: defaultTestSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+	th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
 	meta := storage.Metadata{TableId: "t1"}
 
 	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
@@ -397,7 +392,7 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
 		{name: "schema failure returns 500", schemaErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		{name: "filter failure maps to 500", filterErr: assert.AnError, wantLimit: 100, wantStatus: http.StatusInternalServerError},
-		{name: "limit above MaxRowLimit is capped", bodyLimit: 100000000, wantLimit: 1000, wantStatus: http.StatusOK},
+		{name: "limit above the table's page size is capped", bodyLimit: 100000000, wantLimit: 100, wantStatus: http.StatusOK},
 	}
 
 	for _, c := range cases {
@@ -410,7 +405,8 @@ func Test_tablesHandler_filterRows(t *testing.T) {
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				schemaService:   schemaSvc,
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:        defaultTestSettings,
+				tableSettings:   defaultTestTableSettings,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}
@@ -462,7 +458,8 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 				TableResolver:   validation.NewTableResolver(metadataSvc),
 				ColumnValidator: validation.NewColumnValidator(schemaSvc),
 				rowService:      rowSvc,
-				settings:        stubSettingsAPI{settings: storage.Settings{DefaultRowLimit: 100, MaxRowLimit: 1000}},
+				settings:        defaultTestSettings,
+				tableSettings:   defaultTestTableSettings,
 			}
 
 			meta := storage.Metadata{TableId: "t1"}

@@ -15,6 +15,43 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/derive": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Derive a table from a SELECT query",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/ogc/": {
             "get": {
                 "produces": [
@@ -141,6 +178,12 @@ const docTemplate = `{
                         "description": "Pagination offset",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Response format: json or geojson",
+                        "name": "f",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -189,6 +232,12 @@ const docTemplate = `{
                         "name": "featureId",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Response format: json or geojson",
+                        "name": "f",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -197,6 +246,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     },
                     "404": {
@@ -273,6 +328,31 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/settings/tables": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "List the tables that carry a settings override",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/handlers.tableSettingsDTO"
+                                }
+                            }
                         }
                     }
                 }
@@ -394,14 +474,17 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.uploadResultDTO"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
@@ -425,8 +508,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -479,6 +565,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
@@ -623,8 +715,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -803,46 +898,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/tables/{tableId}/derive": {
-            "post": {
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tables"
-                ],
-                "summary": "Derive a table from a SELECT query",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/tables/{tableId}/derive-from-table": {
             "post": {
                 "consumes": [
@@ -876,6 +931,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
@@ -1327,6 +1388,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
                     }
                 }
             },
@@ -1475,8 +1542,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "No Content"
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.deletedDTO"
+                        }
                     }
                 }
             },
@@ -1590,6 +1660,101 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/settings": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Read a table's settings overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Clear every settings override of a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Set or clear a table's settings overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.tableSettingsDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     }
                 }
@@ -1748,6 +1913,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/diagnostics": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Storage engine diagnostics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.diagnosticsDTO"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/healthz": {
             "get": {
                 "tags": [
@@ -1785,6 +1975,12 @@ const docTemplate = `{
         "handlers.collectionDTO": {
             "type": "object",
             "properties": {
+                "crs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "extent": {
                     "$ref": "#/definitions/handlers.extentDTO"
                 },
@@ -1794,8 +1990,51 @@ const docTemplate = `{
                 "itemType": {
                     "type": "string"
                 },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.linkDTO"
+                    }
+                },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.deletedDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rowsRemoved": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.diagnosticsDTO": {
+            "type": "object",
+            "properties": {
+                "databaseSizeBytes": {
+                    "type": "integer"
+                },
+                "extensions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "maxSizeBytes": {
+                    "type": "integer"
+                },
+                "memoryUsageBytes": {
+                    "type": "integer"
+                },
+                "temporaryFilesBytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -1829,6 +2068,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.linkDTO": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "rel": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
                     "type": "string"
                 }
             }
@@ -1868,65 +2124,121 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.overrideField-float64": {
+            "type": "object",
+            "properties": {
+                "effective": {
+                    "type": "number"
+                },
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "override": {
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.overrideField-int": {
+            "type": "object",
+            "properties": {
+                "effective": {
+                    "type": "integer"
+                },
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "override": {
+                    "type": "integer"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.settingsDTO": {
             "type": "object",
             "properties": {
+                "cacheTTLSec": {
+                    "$ref": "#/definitions/handlers.settingsField-int"
+                },
+                "coordinateDecimals": {
+                    "$ref": "#/definitions/handlers.settingsField-int"
+                },
                 "defaultFeaturesLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "defaultListLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "defaultRowLimit": {
-                    "type": "integer"
-                },
-                "exportBatchSize": {
-                    "type": "integer"
-                },
-                "maxBodyBytes": {
-                    "type": "integer"
-                },
-                "maxFeaturesLimit": {
-                    "type": "integer"
-                },
-                "maxListLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "maxPrecision": {
-                    "type": "number"
-                },
-                "maxRowLimit": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-float64"
                 },
                 "maxSimplifyTolerance": {
-                    "type": "number"
-                },
-                "metadataMaxItems": {
-                    "type": "integer"
-                },
-                "metadataTTLSec": {
-                    "type": "integer"
-                },
-                "requestTimeoutSec": {
-                    "type": "integer"
-                },
-                "schemaMaxItems": {
-                    "type": "integer"
-                },
-                "schemaTTLSec": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-float64"
                 },
                 "tileCacheMaxAgeSec": {
-                    "type": "integer"
-                },
-                "tileMaxItems": {
-                    "type": "integer"
-                },
-                "tileTTLSec": {
-                    "type": "integer"
+                    "$ref": "#/definitions/handlers.settingsField-int"
                 },
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.settingsField-float64": {
+            "type": "object",
+            "properties": {
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number"
+                }
+            }
+        },
+        "handlers.settingsField-int": {
+            "type": "object",
+            "properties": {
+                "exclusiveMinimum": {
+                    "type": "number"
+                },
+                "maximum": {
+                    "type": "number"
+                },
+                "minimum": {
+                    "type": "number"
+                },
+                "unit": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "integer"
                 }
             }
         },
@@ -1948,6 +2260,52 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.tableSettingsDTO": {
+            "type": "object",
+            "properties": {
+                "coordinateDecimals": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "defaultFeaturesLimit": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "defaultRowLimit": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "isGeo": {
+                    "type": "boolean"
+                },
+                "maxPrecision": {
+                    "$ref": "#/definitions/handlers.overrideField-float64"
+                },
+                "maxSimplifyTolerance": {
+                    "$ref": "#/definitions/handlers.overrideField-float64"
+                },
+                "tableId": {
+                    "type": "string"
+                },
+                "tileCacheMaxAgeSec": {
+                    "$ref": "#/definitions/handlers.overrideField-int"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.uploadResultDTO": {
+            "type": "object",
+            "properties": {
+                "loaded": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "$ref": "#/definitions/service.Source"
+                },
+                "tableId": {
+                    "type": "string"
+                }
+            }
+        },
         "response.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -1961,6 +2319,49 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "requestId": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.Source": {
+            "type": "object",
+            "properties": {
+                "ext": {
+                    "type": "string"
+                },
+                "layers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/service.SourceLayer"
+                    }
+                },
+                "loaded": {
+                    "type": "boolean"
+                },
+                "modTime": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sizeBytes": {
+                    "type": "integer"
+                },
+                "tableId": {
+                    "type": "string"
+                }
+            }
+        },
+        "service.SourceLayer": {
+            "type": "object",
+            "properties": {
+                "loaded": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tableId": {
                     "type": "string"
                 }
             }

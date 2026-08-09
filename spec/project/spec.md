@@ -12,6 +12,10 @@
 This file describes the **current, stable** state. The repository is the source of truth; this
 document states its contracts. It changes only when the repository changes.
 
+Its sections are indexed by title in [`spec/index.md`](../index.md) — the entry point to the three
+specifications. **Any section added, renamed, removed or renumbered here is mirrored there in the
+same change.**
+
 ## 0. Non-negotiable rules
 
 1. **One product, one name.** The name appears in the module path, the binary, the API title, the

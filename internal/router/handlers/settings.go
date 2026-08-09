@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"darow/internal/router/response"
+	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
@@ -19,97 +20,73 @@ func NewSettingsHandler(settingsSvc settingsAPI) *SettingsHandler {
 	return &SettingsHandler{settingsService: settingsSvc}
 }
 
-// settingsDTO is the JSON representation of the settings row.
+// settingsField is one setting as the read routes serve it: the value
+// applied, and the bounds and unit it is constrained by — one object per
+// field, so a client never has to hold a value and its bounds as two
+// structures kept in step.
+type settingsField[T int | float64] struct {
+	Value T `json:"value"`
+	fieldDescriptorDTO
+}
+
+func settingsFieldOf[T int | float64](field string, value T) settingsField[T] {
+	return settingsField[T]{Value: value, fieldDescriptorDTO: fieldDescriptorOf(field)}
+}
+
+// settingsDTO is the JSON representation of the settings row — every field
+// editable and every field the value actually applied, the three
+// default*Limit page sizes included: the server holds no second, hidden
+// limit a client would have to be told about.
 type settingsDTO struct {
-	DefaultRowLimit      int     `json:"defaultRowLimit"`
-	MaxRowLimit          int     `json:"maxRowLimit"`
-	DefaultListLimit     int     `json:"defaultListLimit"`
-	MaxListLimit         int     `json:"maxListLimit"`
-	MaxBodyBytes         int64   `json:"maxBodyBytes"`
-	RequestTimeoutSec    int     `json:"requestTimeoutSec"`
-	ExportBatchSize      int64   `json:"exportBatchSize"`
-	DefaultFeaturesLimit int     `json:"defaultFeaturesLimit"`
-	MaxFeaturesLimit     int     `json:"maxFeaturesLimit"`
-	MaxSimplifyTolerance float64 `json:"maxSimplifyTolerance"`
-	MaxPrecision         float64 `json:"maxPrecision"`
-	TileCacheMaxAgeSec   int     `json:"tileCacheMaxAgeSec"`
-	MetadataTTLSec       int     `json:"metadataTTLSec"`
-	MetadataMaxItems     int     `json:"metadataMaxItems"`
-	SchemaTTLSec         int     `json:"schemaTTLSec"`
-	SchemaMaxItems       int     `json:"schemaMaxItems"`
-	TileTTLSec           int     `json:"tileTTLSec"`
-	TileMaxItems         int     `json:"tileMaxItems"`
-	UpdatedAt            string  `json:"updatedAt"`
+	DefaultRowLimit      settingsField[int]     `json:"defaultRowLimit"`
+	DefaultListLimit     settingsField[int]     `json:"defaultListLimit"`
+	DefaultFeaturesLimit settingsField[int]     `json:"defaultFeaturesLimit"`
+	MaxSimplifyTolerance settingsField[float64] `json:"maxSimplifyTolerance"`
+	MaxPrecision         settingsField[float64] `json:"maxPrecision"`
+	TileCacheMaxAgeSec   settingsField[int]     `json:"tileCacheMaxAgeSec"`
+	CacheTTLSec          settingsField[int]     `json:"cacheTTLSec"`
+	CoordinateDecimals   settingsField[int]     `json:"coordinateDecimals"`
+	UpdatedAt            string                 `json:"updatedAt"`
 }
 
 func toSettingsDTO(s storage.Settings) settingsDTO {
 	return settingsDTO{
-		DefaultRowLimit:      s.DefaultRowLimit,
-		MaxRowLimit:          s.MaxRowLimit,
-		DefaultListLimit:     s.DefaultListLimit,
-		MaxListLimit:         s.MaxListLimit,
-		MaxBodyBytes:         s.MaxBodyBytes,
-		RequestTimeoutSec:    s.RequestTimeoutSec,
-		ExportBatchSize:      s.ExportBatchSize,
-		DefaultFeaturesLimit: s.DefaultFeaturesLimit,
-		MaxFeaturesLimit:     s.MaxFeaturesLimit,
-		MaxSimplifyTolerance: s.MaxSimplifyTolerance,
-		MaxPrecision:         s.MaxPrecision,
-		TileCacheMaxAgeSec:   s.TileCacheMaxAgeSec,
-		MetadataTTLSec:       s.MetadataTTLSec,
-		MetadataMaxItems:     s.MetadataMaxItems,
-		SchemaTTLSec:         s.SchemaTTLSec,
-		SchemaMaxItems:       s.SchemaMaxItems,
-		TileTTLSec:           s.TileTTLSec,
-		TileMaxItems:         s.TileMaxItems,
+		DefaultRowLimit:      settingsFieldOf(settings.FieldDefaultRowLimit, s.DefaultRowLimit),
+		DefaultListLimit:     settingsFieldOf(settings.FieldDefaultListLimit, s.DefaultListLimit),
+		DefaultFeaturesLimit: settingsFieldOf(settings.FieldDefaultFeaturesLimit, s.DefaultFeaturesLimit),
+		MaxSimplifyTolerance: settingsFieldOf(settings.FieldMaxSimplifyTolerance, s.MaxSimplifyTolerance),
+		MaxPrecision:         settingsFieldOf(settings.FieldMaxPrecision, s.MaxPrecision),
+		TileCacheMaxAgeSec:   settingsFieldOf(settings.FieldTileCacheMaxAgeSec, s.TileCacheMaxAgeSec),
+		CacheTTLSec:          settingsFieldOf(settings.FieldCacheTTLSec, s.CacheTTLSec),
+		CoordinateDecimals:   settingsFieldOf(settings.FieldCoordinateDecimals, s.CoordinateDecimals),
 		UpdatedAt:            s.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
 // settingsPatchDTO is the JSON body PATCH /settings accepts — every field
 // optional, a nil field leaving that setting unchanged, mirroring
-// storage.SettingsPatch.
+// storage.SettingsPatch — one accepted field per field of settingsDTO.
 type settingsPatchDTO struct {
 	DefaultRowLimit      *int     `json:"defaultRowLimit"`
-	MaxRowLimit          *int     `json:"maxRowLimit"`
 	DefaultListLimit     *int     `json:"defaultListLimit"`
-	MaxListLimit         *int     `json:"maxListLimit"`
-	MaxBodyBytes         *int64   `json:"maxBodyBytes"`
-	RequestTimeoutSec    *int     `json:"requestTimeoutSec"`
-	ExportBatchSize      *int64   `json:"exportBatchSize"`
 	DefaultFeaturesLimit *int     `json:"defaultFeaturesLimit"`
-	MaxFeaturesLimit     *int     `json:"maxFeaturesLimit"`
 	MaxSimplifyTolerance *float64 `json:"maxSimplifyTolerance"`
 	MaxPrecision         *float64 `json:"maxPrecision"`
 	TileCacheMaxAgeSec   *int     `json:"tileCacheMaxAgeSec"`
-	MetadataTTLSec       *int     `json:"metadataTTLSec"`
-	MetadataMaxItems     *int     `json:"metadataMaxItems"`
-	SchemaTTLSec         *int     `json:"schemaTTLSec"`
-	SchemaMaxItems       *int     `json:"schemaMaxItems"`
-	TileTTLSec           *int     `json:"tileTTLSec"`
-	TileMaxItems         *int     `json:"tileMaxItems"`
+	CacheTTLSec          *int     `json:"cacheTTLSec"`
+	CoordinateDecimals   *int     `json:"coordinateDecimals"`
 }
 
 func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 	return storage.SettingsPatch{
 		DefaultRowLimit:      dto.DefaultRowLimit,
-		MaxRowLimit:          dto.MaxRowLimit,
 		DefaultListLimit:     dto.DefaultListLimit,
-		MaxListLimit:         dto.MaxListLimit,
-		MaxBodyBytes:         dto.MaxBodyBytes,
-		RequestTimeoutSec:    dto.RequestTimeoutSec,
-		ExportBatchSize:      dto.ExportBatchSize,
 		DefaultFeaturesLimit: dto.DefaultFeaturesLimit,
-		MaxFeaturesLimit:     dto.MaxFeaturesLimit,
 		MaxSimplifyTolerance: dto.MaxSimplifyTolerance,
 		MaxPrecision:         dto.MaxPrecision,
 		TileCacheMaxAgeSec:   dto.TileCacheMaxAgeSec,
-		MetadataTTLSec:       dto.MetadataTTLSec,
-		MetadataMaxItems:     dto.MetadataMaxItems,
-		SchemaTTLSec:         dto.SchemaTTLSec,
-		SchemaMaxItems:       dto.SchemaMaxItems,
-		TileTTLSec:           dto.TileTTLSec,
-		TileMaxItems:         dto.TileMaxItems,
+		CacheTTLSec:          dto.CacheTTLSec,
+		CoordinateDecimals:   dto.CoordinateDecimals,
 	}
 }
 
@@ -121,17 +98,17 @@ func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 // @Success 200 {object} settingsDTO
 // @Router /api/v1/settings [get]
 func (sh *SettingsHandler) GetSettings(w http.ResponseWriter, req *http.Request) {
-	settings, err := sh.settingsService.GetSettings(req.Context())
+	current, err := sh.settingsService.GetSettings(req.Context())
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}
-	response.WriteJSON(w, http.StatusOK, toSettingsDTO(settings))
+	response.WriteJSON(w, http.StatusOK, toSettingsDTO(current))
 }
 
-// UpdateSettings handles PATCH /settings. Every field is optional; an
-// unrecognized combination of values (e.g. maxRowLimit below
-// defaultRowLimit) is rejected as a whole, with nothing persisted.
+// UpdateSettings handles PATCH /settings. Every field is optional; a value
+// out of its bounds (e.g. defaultRowLimit above the server's ceiling) is rejected
+// as a whole, with nothing persisted.
 //
 // @Summary Update the runtime-editable settings
 // @Tags settings

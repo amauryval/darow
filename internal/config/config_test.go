@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/settings"
 )
 
 func writeConfigFile(t *testing.T, content string) string {
@@ -73,6 +75,25 @@ server: [this is not
 	}
 }
 
+func Test_Load_DuckDBMaxSizeBytesDefaultsToUnlimited(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, cfg.DuckDB.MaxSizeBytes)
+}
+
+func Test_Load_DuckDBMaxSizeBytesEnvOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	t.Setenv("GEOAPI_DUCKDB_MAX_SIZE_BYTES", "1073741824")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 1073741824, cfg.DuckDB.MaxSizeBytes)
+}
+
 func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	path := writeConfigFile(t, "server:\n  port: 9090\n")
 	t.Setenv("GEOAPI_SERVER_PORT", "7070")
@@ -105,7 +126,14 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 		{"negative timeout", "server:\n  readTimeoutSec: -1\n"},
 		{"empty workDir", "sources:\n  workDir: \"\"\n"},
 		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
+		{"negative duckdb maxSizeBytes", "duckdb:\n  maxSizeBytes: -1\n"},
 		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
+		{"settings.maxBodyBytes below its floor", "settings:\n  maxBodyBytes: 1\n"},
+		{"settings.maxBodyBytes past its ceiling", "settings:\n  maxBodyBytes: 999999999999\n"},
+		{"settings.requestTimeoutSec negative", "settings:\n  requestTimeoutSec: -1\n"},
+		{"settings.requestTimeoutSec past its ceiling", "settings:\n  requestTimeoutSec: 601\n"},
+		{"settings.cacheMaxItems zero", "settings:\n  cacheMaxItems: 0\n"},
+		{"settings.tileMaxItems zero", "settings:\n  tileMaxItems: 0\n"},
 	}
 
 	for _, c := range cases {
@@ -117,4 +145,32 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func Test_Load_SettingsDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, settings.MaxBodyBytes, cfg.Settings.MaxBodyBytes)
+	assert.Equal(t, settings.RequestTimeoutSec, cfg.Settings.RequestTimeoutSec)
+	assert.Equal(t, settings.CacheMaxItems, cfg.Settings.CacheMaxItems)
+	assert.Equal(t, settings.TileMaxItems, cfg.Settings.TileMaxItems)
+}
+
+func Test_Load_SettingsEnvOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	t.Setenv("GEOAPI_SETTINGS_MAX_BODY_BYTES", "1048576")
+	t.Setenv("GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC", "45")
+	t.Setenv("GEOAPI_SETTINGS_CACHE_MAX_ITEMS", "500")
+	t.Setenv("GEOAPI_SETTINGS_TILE_MAX_ITEMS", "2000")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.EqualValues(t, 1048576, cfg.Settings.MaxBodyBytes)
+	assert.Equal(t, 45, cfg.Settings.RequestTimeoutSec)
+	assert.Equal(t, 500, cfg.Settings.CacheMaxItems)
+	assert.Equal(t, 2000, cfg.Settings.TileMaxItems)
 }

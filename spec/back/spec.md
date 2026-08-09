@@ -9,6 +9,10 @@ document that must be fixed. It deliberately contains no code: exact signatures 
 files it cites, named in each section. It only describes the **stable** state: blockers, accepted
 limitations, identified debt and improvement leads live in separate files, listed in §11.
 
+Its sections are indexed by title, grouped by layer, in [`spec/index.md`](../index.md) — the entry
+point to read only what a task needs. **Any section added, renamed, removed or renumbered here is
+mirrored there in the same change.**
+
 Its scope is the **Go server** alone. The Vue 3 admin application (`web/`) has its own
 specification, `spec/front/spec.md`; the two documents are disjoint and their only contact point is
 the REST API, described here (§6) and consumed there. `docs/swagger.json` / `docs/swagger.yaml` /
@@ -119,8 +123,8 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
-| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields (§2.1–2.3)                                                                                                              |
-| `internal/settings`          | exported constants: every runtime-editable setting's default value (§2.4), no logic                                                                                                              |
+| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
+| `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
 | `internal/router/handlers`   | one handler per endpoint family + the ports to the services                                                                                                                                      |
@@ -172,9 +176,16 @@ File: `internal/config/config.go`.
 | -------------- | --------------- | ------------------------------ |
 | `path`         | `./data/geo.db` | `GEOAPI_DUCKDB_PATH`           |
 | `maxOpenConns` | 4               | `GEOAPI_DUCKDB_MAX_OPEN_CONNS` |
+| `maxSizeBytes` | 0 (unlimited)   | `GEOAPI_DUCKDB_MAX_SIZE_BYTES` |
 
 The parent directory is created if it does not exist — DuckDB refuses to open a file in a missing
 directory.
+
+`maxSizeBytes` is a hard cap on the database's on-disk size, enforced by `service.SizeGuardService`
+(§5.10) — an operator decision about the disk the process runs on, and deliberately config-only:
+unlike the settings table (§2.5), it is never exposed through `PATCH /api/v1/settings`, so raising it
+always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMaxItems`/`tileMaxItems`
+(§2.4) are config-only for the same reason.
 
 ### 2.3 `sources`
 
@@ -185,20 +196,88 @@ directory.
 | `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
-which takes priority over everything else (§2.5).
+which takes priority over everything else (§2.6).
 
-### 2.4 Runtime-editable settings
+### 2.4 `settings`
 
-Every parameter a request path or a cache reads once the process is up — row/list pagination
-limits, request body size, per-request timeout, export batch size, OGC/tile feature limits,
-geometry simplification bounds, the tile HTTP cache lifetime, and the TTL/size of the three LRU
-caches — is **not** in `config.yaml`. It lives in the single-row `settings` table (§4.9), read and
-written through `SettingsService` (§5.8) and edited at runtime through `GET`/`PATCH /api/v1/settings`
-(§6.1) — never through a file or an environment variable, and never requiring a restart. Its default
-values are `internal/settings`'s exported constants, the one place they are written; `config.yaml`
-keeps only what the process needs to start at all, before that table can even be read.
+| Field               | Default               | Env variable                        | Constraint             |
+| ------------------- | ---------------------- | ------------------------------------ | ----------------------- |
+| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `GEOAPI_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
+| `requestTimeoutSec` | 30                      | `GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
+| `cacheMaxItems`     | 1000                    | `GEOAPI_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
+| `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
-### 2.5 Command-line flags
+The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
+config-only for the same reason `duckdb.maxSizeBytes` is (§2.2): they sit on `PATCH
+/api/v1/settings`, an unauthenticated route (`limitations.md` LIM-1), and a guard whose own limit is
+edited through the surface it guards is not a guard. `maxBodyBytes` bounds the global request body
+cap (`routes.go`'s `maxBodyBytes` middleware) and `requestTimeoutSec` the `/api/v1` group's request
+timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
+every request" the way the settings table's own fields are (§6.3). `cacheMaxItems` sizes both the
+metadata and the schema `expirable.LRU` (merged from two separate fields, IMP-11); `tileMaxItems`
+sizes the tile cache, which additionally carries no TTL at all (IMP-10 — its key already carries the
+table's `UpdatedAt`, so a time-based expiry would invalidate nothing). Defaults and bounds are
+`internal/settings`'s exported constants, the same ones §2.5's bound table draws from — so a guard
+and its ceiling can never drift apart.
+
+### 2.5 Runtime-editable settings
+
+Every parameter an operator legitimately retunes while the process is serving — one pagination limit
+per family (rows, catalogue listings, features), geometry simplification bounds, the tile HTTP cache
+lifetime, and the shared TTL of the metadata/schema caches — is **not** in `config.yaml`. It lives in
+the single-row `settings` table (§4.9), read and written through `SettingsService` (§5.8) and edited
+at runtime through `GET`/`PATCH /api/v1/settings` (§6.1) — never through a file or an environment
+variable, and never requiring a restart. Its default values and bounds are `internal/settings`'s
+exported constants (`constants.go`) and `internal/settings.Validate` (a `Validator` with one method
+per field), the one place they are written and enforced;
+
+**A value never travels without what constrains it.** `internal/settings.Descriptors`
+(`descriptor.go`) states, per field, the unit its value is expressed in and the range `Validate`
+refuses outside of — inclusive `Minimum`, `ExclusiveMinimum` for a field that only accepts a
+positive value, `Maximum`, each absent when the field has no such bound and each read off the very
+constants the `Validator` methods check against, so a published bound cannot drift from the check
+that backs it. `internal/settings.Descriptor` answers for one field, and the field names are that
+package's own constants (`FieldDefaultRowLimit` and its siblings), which are also the JSON keys of
+the settings routes and the keys `geoOnlyFields` (§6.1) is built from. The read routes serve the
+descriptor **inside each field's object**, beside the value (§6.1): a client reads what a setting is
+and what it may be set to in one place, instead of holding a value and a bounds table in step. The
+patch bodies are unchanged — a write carries bare numbers, the bounds travel with the read only.
+
+**One page size per family, and nothing else.** `defaultRowLimit`, `defaultListLimit` and
+`defaultFeaturesLimit` are the only pagination fields the table holds, one per family (rows,
+catalogue listings, features), and each is a plain page size: the number of items a handler serves
+when the request asks for no limit, and the most it serves when the request asks for more. There is
+no second, hidden ceiling and no sentinel — the row is **seeded** with `internal/settings`'
+`Default*Limit` constants (`constants.go`) rather than with `0`, so the value read is always the
+value applied, and an operator's own value replaces it rather than shadowing it. `0` is not a legal
+value: `internal/settings.Validate` refuses anything below `LimitFloor` (50), the point under which
+a page stops being a page, and anything above the family's ceiling
+(`RowLimitCeiling`/`ListLimitCeiling`/`FeaturesLimitCeiling`). A handler never reads a limit field
+raw: it goes through `internal/settings.Limit` (`limits.go`, `Resolve`/`Resolve64`), the one place
+that rule is written. `GET /api/v1/settings` therefore publishes exactly what it stores — every
+field editable, none derived. `config.yaml` keeps only what the process needs to start at
+all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
+now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
+only on how it is produced, so it costs an operator a decision they had no way to make honestly.
+
+### 2.5.1 Per-table overrides
+
+A table may override any of §2.5's fields but two. `defaultRowLimit` (every table) and
+`defaultFeaturesLimit`, `maxSimplifyTolerance`, `maxPrecision`, `tileCacheMaxAgeSec`,
+`coordinateDecimals` (geo tables only) each accept a per-table value on top of the global row,
+stored sparsely in `table_settings` (§4.10) and resolved through `internal/settings`'s `Resolve*`
+functions (§5.8.1) — a table with no override has no row at all, and the global value is what every
+table without one sees. An override is a page size like the global one, bound by the same floor and
+ceiling; it is free to be larger than the global value, which is the point of overriding it. Being
+bound by the same range, each field of a table's payload carries the same descriptor the global
+route serves (§2.5), beside its override and its effective value.
+`defaultListLimit` and `cacheTTLSec` stay global only: a page of *tables*
+belongs to no table, and the metadata/schema caches are process-wide (`limitations.md` LIM-12).
+`coordinateDecimals` is new here: the number of decimal digits a GeoJSON coordinate is rounded to
+once emitted, applied after the CRS84 transform in every GeoJSON-producing route but the MVT tile
+(§4.7) — a plain default, not a client-overridable ceiling like `simplify`/`precision`.
+
+### 2.6 Command-line flags
 
 | Flag        | Default       | Effect                                          |
 | ----------- | ------------- | ----------------------------------------------- |
@@ -318,16 +397,21 @@ A system table, one record per logical table. Columns:
 | `tableId`                 | `TEXT PRIMARY KEY`     | config                | UUID v4, the logical/API identifier                                                           |
 | `physicalName`            | `TEXT NOT NULL UNIQUE` | config                | real name of the SQL table (`t_<uuid>`)                                                       |
 | `tableName`               | `TEXT NOT NULL`        | config                | display name, renameable                                                                      |
-| `isGeo`                   | `BOOLEAN`              | config                | the table has a geometry column                                                               |
 | `createdAt` / `updatedAt` | `TIMESTAMP`            | derived (`updatedAt`) | `updatedAt` is bumped by every derived refresh — it is the tile invalidation signal (rule 20) |
-| `geometryColumn`          | `TEXT`                 | config                | name of the geometry column, which varies with the source format                              |
 | `rowCount`                | `INTEGER`              | derived               | recomputed by `RefreshDerivedMetadata` (rule 9)                                               |
 | `bbox`                    | `TEXT`                 | derived               | `"minX,minY,maxX,maxY"` in **OGC:CRS84** (lon/lat)                                            |
-| `srid`                    | `INTEGER`              | config                | the original **source** CRS, before reprojection                                              |
+| `srid`                    | `INTEGER`              | config                | the original **source** CRS, before reprojection; `NULL` for a scalar table or one created via `/derive`, which has no source file |
 | `sourceName`              | `TEXT`                 | config                | originating `workDir` file; empty for a `/derive` table                                       |
 | `sourceLayer`             | `TEXT`                 | config                | originating layer for a multi-layer source                                                    |
 
-Two indexes: on `isGeo` and on `tableName`.
+One index, on `tableName`.
+
+`storage.Metadata.IsGeo`/`GeometryColumn` are **not** columns of this table: they are derived on
+every read (`Repository.GetMetadata`/`List`, `duckdb/catalog/catalog.go`'s `GeometryInfo`) from the
+physical table's own catalogue entry (§4.8, `duckdb/tables.GeometryInfo`) — the same
+`tableColumns`/`soleGeometryColumn` read `CreateFromFile` uses to detect the geometry column when a
+table is created. This is why they cannot drift from what the physical table actually has: there is
+nothing stored to drift.
 
 `Metadata` is a **value type** on the Go side: every caller receives its own copy, no
 synchronization is needed.
@@ -471,9 +555,9 @@ filter posts; `storage.FilterStore` is the read/write contract, implemented by
 
 ### 4.6 The DuckDB adapter
 
-Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the three
-accessors (`Catalog`, `Materializer`, `Filters`, `Table`) the rest of the server reaches the engine
-through — plus the sub-packages `duckdb/catalog/` (metadata, stored filters, migrations, delete
+Files: `internal/storage/duckdb/adapter.go` — the connection, the write serialization and the
+accessors (`Catalog`, `Materializer`, `Filters`, `Settings`, `TableSettings`, `Table`) the rest of the
+server reaches the engine through — plus the sub-packages `duckdb/catalog/` (metadata, stored filters, migrations, delete
 cascade) and `duckdb/tables/` (one file per family: table resolution, rows, geo, `introspection.go`
 — the engine catalogue reads (§4.8) — and the `Materializer` type split across
 `create_from_file.go`, `create_from_query.go` (`/derive` and its query validation), `crs.go`
@@ -506,8 +590,9 @@ constructions run in that order rather than through a deferred closure.
     reopen it only once. `db` itself is guarded by `dbMu`, read through `conn()`, so the swap never
     races a concurrent reader.
 -   **Migrations** (`duckdb/catalog/migrations.go`): a registry of `Component`s, one per
-    catalogue-owned table — `metadata` (registered from `duckdb/catalog/metadata.go`'s `init`) and
-    `filters` (from `duckdb/catalog/filters.go`'s), a future settings table tomorrow. Each
+    catalogue-owned table — `metadata` (registered from `duckdb/catalog/metadata.go`'s `init`),
+    `filters` (`filters.go`), `settings` (`settings.go`) and `table_settings` (`tablesettings.go`).
+    Each
     `Component` carries its own creation DDL and its own ordered list of `ALTER` statements, and
     `schema_version` tracks one `(component, version)` row per component rather than a single
     whole-database integer, so adding a component never touches another's history. Per component: a
@@ -544,11 +629,21 @@ that govern its cost:
 -   **The tolerance comes from the zoom**, `tileSimplifyTolerance`: one MVT extent unit converted to
     Web Mercator metres, floored at 0.25 m. The HTTP request's `simplify`/`precision` parameters are
     therefore ignored on the MVT route (they only apply to the GeoJSON routes), and do not enter the
-    cache key.
+    cache key. `coordinateDecimals` (§2.5.1, §5.8.1) is ignored here for the same reason: a tile
+    re-quantizes every coordinate onto its own 4096-unit integer grid, so a digit count on the
+    pre-quantization value means nothing (`limitations.md` LIM-5).
 -   **`TRY(...)` + `WHERE mvt_geom IS NOT NULL`** around `ST_AsMVTGeom`: a safety net against an
     upstream duckdb-spatial defect (`duckdb/duckdb-spatial#792`) that produces corrupt clipped
     geometry on certain source/tile combinations. It can only discard an already broken feature,
     never a valid one.
+
+The MVT layer is named after `Metadata.TableId`, escaped like the attribute struct keys it sits
+beside — never the fixed string `"layer"` — so two tables loaded into the same client-side map never
+collide under the same layer name. `z`/`x`/`y` reach `Tile` already validated against the
+WebMercatorQuad tile matrix (`0 ≤ z ≤ 24`, `0 ≤ x, y < 2^z`) by `validateTileCoords`
+(`router/handlers/geo.go`), the layer this file's own doc comment on `tileEnvelope` relies on — its
+four literals are only safe to inline unbound because the caller guarantees they are already in
+range.
 
 ### 4.8 Reading DuckDB's own catalogue
 
@@ -559,10 +654,17 @@ keep it portable for.
 
 | Function              | Read through                                                                           | Answers                                                                                                                                    |
 | --------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `duckdb_columns()`    | `tableColumns`                                                                         | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default |
+| `duckdb_columns()`    | `tableColumns`, and `GeometryInfo` built on top of it plus `soleGeometryColumn`         | the columns of an **existing** table: name, declaration index, full declared type (`GEOMETRY('EPSG:2154')` included), nullability, default; `GeometryInfo` reduces that to isGeo/the geometry column's name, exposed to `duckdb/catalog` as a `GeometryInfo` function value (mirroring `ExistingTables`) so `Repository.GetMetadata`/`List` derive `storage.Metadata.IsGeo`/`GeometryColumn` rather than store them (§4.1) |
 | `duckdb_indexes()`    | `tableIndexes`                                                                         | the indexes really created on a table (rule 19's assertion, §4.2)                                                                          |
 | `duckdb_tables()`     | `existingTableNames`, reached from outside through the `ExistingTables` function value | the tables that physically exist, for the catalogue to tell a live registration from a metadata row whose table is gone                    |
-| `duckdb_extensions()` | `ExtensionLoaded`                                                                      | whether `spatial` is loaded, for `/readyz`                                                                                                 |
+| `duckdb_extensions()` | `ExtensionLoaded`, `loadedExtensions`                                                  | whether `spatial` is loaded, for `/readyz`; the full loaded list, for `/diagnostics`                                                       |
+| `pragma_database_size()` | `databaseSizeBytes`                                                                 | on-disk size, from the exact `total_blocks`/`block_size` columns — never the human-readable ones, not meant to be parsed back              |
+| `duckdb_memory()`     | `memoryUsageBytes`                                                                     | buffer-manager memory usage, summed across tags                                                                                            |
+| `duckdb_temporary_files()` | `temporaryFilesBytes`                                                            | bytes currently spilled to disk, summed across files — zero when nothing is spilling                                                       |
+
+`Diagnostics` (also in `introspection.go`) composes the four into a `storage.Diagnostics` value, read
+by `duckdb.Adapter.Diagnostics` and served whole by `GET /diagnostics` (§6.1) — no
+`duckdb_settings()` involved, that surface staying out of scope (rule 16).
 
 The table name is a **bound parameter** in every one of them: no physical name is interpolated to
 list a structure, so rule 1 is structurally satisfied there rather than validated after the fact.
@@ -585,18 +687,41 @@ per-component migration registry (`migrations.go`) and reached through `Adapter.
 alongside `Catalog()`/`Filters()`/`Materializer()` (§4.6). It is **not** an `Attachment`: nothing
 about it is scoped to a `tableId`, so it never joins the delete cascade `Catalog.Register` builds.
 
-The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded from
-`internal/settings`'s defaults inside `CreateSchema` itself (an `INSERT ... WHERE NOT EXISTS`, run
+The table is a singleton, `id` fixed at `1`, one column per `storage.Settings` field, seeded inside
+`CreateSchema` itself — every column from `internal/settings`'s constants, the three page sizes
+included (§2.5), so no reader of this table ever needs a fallback (an `INSERT ... WHERE NOT EXISTS`, run
 once per process the first time the table doesn't exist yet — every later startup finds the row and
 leaves it alone). `GetSettings` reads that row whole; `UpdateSettings` takes a `storage.SettingsPatch`
 (nil fields left unchanged, the same shape as `MetadataPatch`) and writes only the columns given,
 stamping `updatedAt`.
 
+### 4.10 The `table_settings` repository
+
+`duckdb/catalog.TableSettings` (`tablesettings.go`) owns every per-table override (§2.5.1), on the
+model `Filters` (§4.5.1) already follows rather than `Settings`' singleton row: registered as a
+`Component` in the migration registry, reached through `Adapter.TableSettings()`, and registered as
+an `Attachment` on `Catalog` — `Catalog.Remove` deletes a table's overrides inside the same
+transaction as its metadata row and its physical table, the one failure mode this pattern rules out
+(an orphan override row keyed on a `tableId` that no longer exists).
+
+The table is **sparse**: one row per table that carries at least one override, never one per table.
+Every column but `tableId` is nullable, `NULL` meaning "inherit" — the Go type mirrors this exactly,
+`storage.TableSettings` a pointer per overridable field. `GetTableSettings` returns the zero value
+(every field `nil`), never a `NotFoundError`, when a table has no row: absence is a normal, sparse
+state, not a missing entity. `UpdateTableSettings` takes a `storage.TableSettingsPatch` whose fields
+are `**T` — a `nil` field leaves that override unchanged, a non-nil field pointing to `nil` clears it
+back to "inherit," a non-nil field pointing to a value sets it — merges it onto the current row, and
+either upserts (`INSERT ... ON CONFLICT (tableId) DO UPDATE`) or, when the merge leaves every field
+`nil`, deletes the row instead: a table with no more override goes back to having no row.
+`ListOverriddenTables` returns every row, ordered by `tableId` — the settings screen's per-table list
+(§6.1) reads this and nothing wider, so a deployment with a thousand tables never has to load them
+all to find the few that override something.
+
 ---
 
 ## 5. Service layer
 
-Ten services, each the exclusive owner of its state. Files: `internal/service/`.
+Twelve services, each the exclusive owner of its state. Files: `internal/service/`.
 
 **Error wrapping.** Every service method that calls into the storage layer wraps a raw failure it
 did not itself construct (a DuckDB error, an `os` error) in `service.DisplayError` (§6.4) before
@@ -646,13 +771,21 @@ WKT, an object is a GeoJSON geometry, anything else is a `ValidationError` — a
 geometry back as GeoJSON (`RowWriteResult`), so the client redraws what the server kept rather than
 its own draft. A bulk insert carries the same CRS and echoes nothing.
 
-Before any of that reaches the repository, a write that sets the geometry column is checked against
-what the table already holds (rule 23, `geometry_family.go`): the families of the written geometries
-— read off the WKT type name or the GeoJSON `type`, so nothing is parsed twice — against the
-families of `GeoRepository.Types`. One family stored and another written is a `ValidationError`, and
-the whole request is refused, batch included: a save that half-landed would leave the caller's grid
-and map disagreeing. The types are read **once per request**, which is one distinct scan of the
-geometry column per write.
+Before any of that reaches the repository, a write that sets the geometry column passes two guards,
+in sequence, both raising a `ValidationError` **before** anything is written, batch included — a save
+that half-landed would leave the caller's grid and map disagreeing. `RowService.checkWrittenGeometry`
+(`geometry_validity.go`) runs them in order, from `UpdateRow`/`UpdateRows`/`InsertRow`/`BulkInsertRows`:
+
+1. **Family homogeneity** (rule 22, `geometry_family.go`): the families of the written geometries —
+   read off the WKT type name or the GeoJSON `type`, so nothing is parsed twice — checked against the
+   families of `GeoRepository.Types`. One family stored and another written is refused. The stored
+   types are read **once per request**, one distinct scan of the geometry column per write.
+2. **Validity** (`geometry_validity.go`): `GeoRepository.ValidateGeometries` runs `ST_IsValid` on the
+   geometry exactly as it will be stored — after `ST_GeomFromText`/`ST_GeomFromGeoJSON` and the
+   `ST_Transform` of rule 23, never on the raw literal — in one batched query covering every written
+   geometry of the request. A self-intersecting polygon or an unclosed ring is refused naming the
+   written literal, not an engine explanation: DuckDB's spatial extension has no `ST_IsValidReason`,
+   unlike PostGIS.
 
 `UpdateRows` is the multi-row form: each row carries its own values, the whole set is written in one
 transaction, and derived metadata is refreshed once. `UpdateRow` writes every column in **one**
@@ -707,16 +840,19 @@ since all of them change the tile's contents for a given table version.
 
 Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
 `GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single row's geometry in both
-encodings, rule 7's third exception), `NeighbourFeatures` (the rows within a buffer of a geometry —
-the query an edit session runs, unbounded in its key space like every other filtered read). The
-reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a tile's z/x/y.
+encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
+§5.8.1), `NeighbourFeatures` (the rows within a buffer of a
+geometry — the query an edit session runs, unbounded in its key space like every other filtered
+read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
+tile's z/x/y.
 
 ### 5.6 `ExportService` — export is domain, not transport
 
 The router only validates the format, sets the headers, and lets the service write directly into the
 response body.
 
--   Rows are read **page by page** (`exportBatchSize`), never all in memory.
+-   Rows are read **page by page** (`internal/settings.ExportBatchSize`, a constant — not
+    settings-editable, IMP-8), never all in memory.
 -   The format is validated **before** the first byte is written: once the streaming has started,
     the status code can no longer change. `ExportHandler.ExportTable` tracks whether any byte has
     actually reached the response (`firstByteWriter`): a failure before that point is answered as a
@@ -742,30 +878,92 @@ the concrete type). `GetSettings`/`UpdateSettings` are the pair `SettingsHandler
 repository-pattern shape `MetadataService` exposes for `metadata`.
 
 `UpdateSettings` merges the patch onto the current value **in memory first** (`mergeSettings`) and
-validates the *result* — a `maxRowLimit` patched below the current `defaultRowLimit` is rejected even
-though neither field alone is invalid — before writing anything; a rejection is a `ValidationError`
-(§6.4), the store never reached. On success it persists through `SettingsStore.UpdateSettings`,
+validates the *result* through `internal/settings.Validate` — every field checked against its own
+bound (an upper ceiling, and for `maxBodyBytes` a floor keeping `PATCH /api/v1/settings` itself
+always able to pass), a page size checked against `LimitFloor` as well as its family's ceiling
+(§2.5) — before writing anything; a rejection is a
+`ValidationError` (§6.4), the store never reached. `internal/settings.Validator` (built by
+`NewValidator`) carries one method per field, each returning that field's own validated value or the
+error naming it; `Validate` runs every one of them and joins the violations, and the ceilings/floor
+each method checks against live as constants in `internal/settings/constants.go`, next to the
+field's default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
 replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
 (`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
 constructor.
 
-`core.NewServices` registers three callbacks onto that observer, one per LRU cache
-(`MetadataService`/`SchemaService`/`GeoService`.`ResetCache`): `expirable.LRU` bakes its size and TTL
-into `expirable.NewLRU` at construction, with no live-resize API, so a changed
-`cache.*MaxItems`/`*TTLSec` takes effect by swapping the cache for a freshly built one — each of the
-three services holds its cache behind `atomic.Pointer` for exactly this — rather than by mutating a
-field; every entry the old cache held is simply dropped, a cache miss costing one extra read, not a
-migration. Every other setting (row/list limits, `maxBodyBytes`, `requestTimeoutSec`,
-`exportBatchSize`, OGC/tile feature limits, simplification bounds, `tileCacheMaxAgeSec`) needs no
-callback at all: `Router` and every handler read it live off `Current()` on each request instead
-(§6.3), and `ExportService` off `Current().ExportBatchSize` on each export.
+`core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
+and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
+`ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
+construction, with no live-resize API, so a changed `cacheTTLSec` takes effect by swapping the cache
+for a freshly built one, sized `cfg.Settings.CacheMaxItems` (fixed, never itself the reason for a
+swap) — each of the two services holds its cache behind `atomic.Pointer` for exactly this — rather
+than by mutating a field; every entry the old cache held is simply dropped, a cache miss costing one
+extra read, not a migration. The tile cache is built once at `NewServices` and never swapped: neither
+its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry, IMP-10) is
+settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer`, no `ResetCache`.
+Every other setting (the three page sizes, simplification bounds,
+`tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
+`Current()` on each request instead (§6.3).
+
+### 5.8.1 `TableSettingsService` — per-table overrides
+
+The read/write port onto `storage.TableSettingsStore` (§4.10), built on top of `SettingsService`
+rather than beside it — every resolution needs the current global row as its fallback. `Load`
+(called once, by `core.Setup`, right after `SettingsService.Load`) populates an in-memory
+`map[tableId]storage.TableSettings` holding only the tables that carry an override; `GetOverride`
+reads it directly, `Resolve(tableId)` collapses it against `SettingsService.Current()` into a
+`TableSettingsResolved` — `settings.Limit` for `defaultRowLimit`/`defaultFeaturesLimit`, a plain
+value for the rest — through `internal/settings`'s `Resolve*` functions, the one place the two-level
+chain (global row → table override) is written. There is no third level and no sentinel: an override
+is either present, and it is the page size, or absent, and the global row is. Every handler that
+reads a table-scoped limit calls `Resolve(meta.TableId)` at the same
+point it already resolves `meta` (`validation.TableResolver`), never `SettingsService.Current()`
+directly for a field this service overrides.
+
+`UpdateOverride` merges the patch onto the current override **in memory first**, resolves the merge
+into the `storage.Settings` shape `internal/settings.Validate` already checks (§5.8), and validates
+it there — a per-table value can never sit outside the bounds the global one respects, and the
+mapping is exactly `ResolveRowLimit`/`ResolveFeaturesLimit`'s own fallback rule, reused rather than
+reforked. On success it persists through `TableSettingsStore.UpdateTableSettings` and replaces the
+map entry (or removes it, once the merge leaves no override). `core.NewServices` also registers this
+service on the `tableRemoved` observer (§5.1): a table's removal already cascades its
+`table_settings` row away in storage (§4.10), and `InvalidateOverride` drops the now-stale map entry
+without a second store read.
+
+### 5.9 `DiagnosticsService`
+
+A single pass-through onto `storage.DiagnosticsReader` (§4.8): `Diagnostics` reads live off
+`duckdb.Adapter.Diagnostics` and wraps a raw storage failure in `service.DisplayError`, same as every
+other service. It owns no cache — a stale spike would misreport the one thing a caller of
+`GET /diagnostics` (§6.1) is asking about.
+
+### 5.10 `SizeGuardService` — enforcing `duckdb.maxSizeBytes`
+
+Every data-growing write — `RowService.InsertRow`/`BulkInsertRows`, `ImportService.ImportFromFile`,
+`DeriveService`'s shared `materialize` (both `DeriveTable` and `DeriveFromTable` go through it) —
+calls `Check(ctx)` before writing and `Grew()` right after the write succeeds. `Check` refuses with a
+`QuotaExceededError` (mapped to `507` by `response.MapServiceError`, §6.4) once the database's size is
+at or over `duckdb.maxSizeBytes`; `duckdb.maxSizeBytes` ≤ 0 disables the guard, `Check` always
+succeeding.
+
+The size itself is **not** read on every write: `Check` answers off a cached value, read through the
+same `storage.DiagnosticsReader` `DiagnosticsService` uses. `Grew` invalidates that cache so the next
+`Check` re-reads it; a `ttl` (`core.NewServices`' `sizeGuardTTL`, 5s) is a backstop, not the primary
+invalidation path, for the rare case a write path forgets to call `Grew`. The cap is therefore
+enforced with at most one write's worth of drift, never with a `pragma_database_size` query added to
+every single write in the server.
+
+Deliberately out of the guard's scope: `UpdateRow`/`UpdateRows`/`RemoveRows`, `AddColumn`, rename and
+every metadata patch — none of them can push the database further over the limit, and blocking them
+would lock an operator out of the very moves (deleting rows, dropping a table) that shrink it back
+down.
 
 ---
 
 ## 6. REST API
 
 The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`, `/readyz`,
-`/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
+`/diagnostics`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
 
 ### 6.1 Endpoints
 
@@ -775,6 +973,13 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/healthz` | liveness — the process answers, regardless of the storage's state                                                                                         |
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
+| GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy"; also carries `maxSizeBytes` (`duckdb.maxSizeBytes` from config, §2.2, 0 meaning unlimited), for a caller to render on-disk size against its cap |
+
+**Derive**
+
+| Method | Path              | Description                                                                                                                |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/v1/derive`  | creates a new table from a free `SELECT` query, over **every** registered table — a top-level route, scoped to no table    |
 
 **Sources**
 
@@ -782,10 +987,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/sources`                 | paginated, sortable listing of the cache (`offset`, `limit`, `sort`)                                                                                                                                 |
 | POST   | `/api/v1/sources/refresh`         | rescans `workDir` then returns the same paginated envelope                                                                                                                                           |
-| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table. `?srid=` optional. A multi-layer source is returned as is without loading (the layer choice is the caller's) |
+| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table, `{loaded: true, tableId}`. `?srid=` optional. A multi-layer source is left unloaded, `{loaded: false, source}` — the layer choice is the caller's |
 | POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly                                                                           |
 | GET    | `/api/v1/sources/{name}/metadata` | the file's detected CRS, without importing. `srid` is `null` if undetectable                                                                                                                         |
-| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**                                                                                                                           |
+| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**; `200` with the source's name                                                                                             |
 
 **Tables**
 
@@ -794,11 +999,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/tables`                                  | paginated, sortable listing of the metadata                                                                                                  |
 | GET    | `/api/v1/tables/{tableId}`                        | a table's metadata                                                                                                                           |
 | PATCH  | `/api/v1/tables/{tableId}`                        | rename (`tableName` only)                                                                                                                    |
-| DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data                                                                                                               |
+| DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data, `200` with the deleted table's id and name                                                                   |
 | GET    | `/api/v1/tables/{tableId}/schema`                 | columns and types, geometry included                                                                                                         |
 | POST   | `/api/v1/tables/{tableId}/columns`                | adds a column                                                                                                                                |
 | GET    | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search`          |
-| POST   | `/api/v1/tables/{tableId}/derive`                 | creates a new table from a free `SELECT` query, over **every** registered table — `{tableId}` is the route it is posted to, not a scope      |
 | POST   | `/api/v1/tables/{tableId}/derive-from-table`      | creates a new table from `{tableId}` alone, described structurally (columns, computed expressions, row conditions) rather than as SQL (§8.1) |
 | POST   | `/api/v1/tables/{tableId}/filter`                 | filters by conditions (`BuildFilter`)                                                                                                        |
 | GET    | `/api/v1/tables/{tableId}/filters`                | lists the table's stored filters (§4.5.1), oldest first                                                                                      |
@@ -806,6 +1010,9 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/filters/{filterId}`     | patches a stored filter's name and/or conditions — an omitted field is left unchanged                                                        |
 | DELETE | `/api/v1/tables/{tableId}/filters/{filterId}`     | deletes a stored filter, `204`                                                                                                               |
 | GET    | `/api/v1/tables/{tableId}/export`                 | streamed export, `?format=csv\|geojson`                                                                                                      |
+| GET    | `/api/v1/tables/{tableId}/settings`               | the table's settings overrides (§2.5.1, §4.10): per field, the override (`null` if inherited), the effective value, and the same unit/bounds the global route publishes |
+| PATCH  | `/api/v1/tables/{tableId}/settings`               | sets or clears overrides field by field — a key absent leaves it unchanged, `null` clears it, a number sets it; a geometry-only field named on a non-geo table is `400` with nothing persisted |
+| DELETE | `/api/v1/tables/{tableId}/settings`               | clears every override at once, returning the table to every global value                                                                     |
 
 **Rows**
 
@@ -816,15 +1023,15 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/rows`                 | updates several rows, each with its own values, in **one transaction**; `?crs=` as on the insert, and every row that set a geometry gets the stored one back                                                    |
 | POST   | `/api/v1/tables/{tableId}/rows/batch`           | fetches several rows by pkeys                                                                                                                                                                                   |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
-| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, at full resolution in `OGC:CRS84`; `404` on a scalar table or an unknown row                                                                               |
+| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1) and in `OGC:CRS84`; `404` on a scalar table or an unknown row              |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
-| DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row                                                                                                                                                                                                   |
+| DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 
 **Geo**
 
 | Method | Path                                                  | Description                                                                                                                                                                          |
 | ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution)                    |
+| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution). `404` if `z`/`x`/`y` falls outside the WebMercatorQuad tile matrix (§4.7) |
 | GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation                         |
 | GET    | `/api/v1/tables/{tableId}/geometry-types`             | the distinct geometry types present                                                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/bbox`                       | pkeys of the rows intersecting an extent                                                                                                                                             |
@@ -835,19 +1042,20 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 
 | Method | Path                 | Description                                                                                             |
 | ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/settings`   | the current runtime-editable settings (§2.4)                                                             |
+| GET    | `/api/v1/settings`   | the current runtime-editable settings — every field stored, every field editable (§2.5). One object per field: its `value`, its `unit`, and the bounds `internal/settings.Validate` enforces (`minimum` **or** `exclusiveMinimum`, `maximum`), each absent where the field has none |
 | PATCH  | `/api/v1/settings`   | patches one or more settings; an omitted field is left unchanged, an invalid resulting value is `400` and nothing is persisted |
+| GET    | `/api/v1/settings/tables` | every table that carries at least one override (§2.5.1, §4.10), same shape as `GET /tables/{tableId}/settings` |
 
 **OGC API - Features**
 
 | Method | Path                                                  | Description                                                                                  |
 | ------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/ogc/`                                        | landing page (self / conformance / data links)                                               |
+| GET    | `/api/v1/ogc/`                                        | landing page (self / service-desc / service-doc / conformance / data links)                  |
 | GET    | `/api/v1/ogc/conformance`                             | declared classes: Core + GeoJSON                                                             |
 | GET    | `/api/v1/ogc/collections`                             | one collection per geo table                                                                 |
 | GET    | `/api/v1/ogc/collections/{tableId}`                   | description of a collection                                                                  |
-| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset` |
-| GET    | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | one `Feature`, at full resolution                                                            |
+| GET    | `/api/v1/ogc/collections/{tableId}/items`             | `FeatureCollection`, parameters `bbox`, `filter`, `simplify`, `precision`, `limit`, `offset`, `f`; coordinates rounded to the resolved `coordinateDecimals` (§2.5.1) |
+| GET    | `/api/v1/ogc/collections/{tableId}/items/{featureId}` | one `Feature`, at full resolution, parameter `f`                                             |
 
 ### 6.2 OGC API - Features
 
@@ -857,15 +1065,30 @@ consistent with the all-JSON style of the rest of the API.
 -   `collectionId` **is** `tableId`: already an opaque, stable server identifier, exactly what the
     standard asks for.
 -   A non-geo table returns `404` on every `/ogc/collections/{tableId}/...` route.
--   Declared conformance: Core + GeoJSON only. Neither `oas30` nor CQL2.
--   `filter`, `simplify` and `precision` are **extensions** beyond Core: full CQL2 does not match
-    the whitelisted column/operator model that rule 5 imposes.
--   `datetime` is not supported: the model has no notion of a temporal column.
--   The `next` link is emitted only if the returned page is full — the only "there may be more"
-    signal available without a separate counting query.
+-   Declared conformance: Core + GeoJSON only. Neither `oas30` (the served API definition is Swagger
+    2.0, not OpenAPI 3.0) nor CQL2.
+-   `/items` and `/items/{featureId}` answer as `application/geo+json`, every other OGC route as
+    `application/json` (`response.WriteJSONAs`).
+-   **Links.** Every OGC resource carries the `links` Core requires, as `linkDTO` (`dto.go`): the
+    landing page `self`/`service-desc`/`service-doc`/`conformance`/`data` — the two service links
+    pointing at the Swagger definition and its UI; a collection `self`/`items`; a `FeatureCollection`
+    `self`/`collection` plus `next`/`prev`; a feature `self`/`collection`.
+-   **Parameters.** `bbox` (Core's 2D `minX,minY,maxX,maxY` and its 3D six-ordinate form, whose
+    height ordinates are dropped), `limit`, `offset`, and `f` restricted to `json`/`geojson`, the
+    only encoding served. `filter`, `simplify` and `precision` are **extensions** beyond Core: full
+    CQL2 does not match the whitelisted column/operator model that rule 5 imposes.
+-   **Anything else is a `400`.** A parameter outside that whitelist (`datetime` included), an
+    unparseable or negative `offset`, a `limit` that is not an integer ≥ 1, a malformed `bbox`: all
+    refused rather than ignored, so a client never receives a page it did not ask for. A `limit`
+    above `MaxFeaturesLimit` is the one value clamped rather than refused, as the standard allows.
+-   `datetime` is not supported: the model has no notion of a temporal column (`limitations.md`
+    LIM-13).
+-   `next` is emitted when `offset + limit < numberMatched`, `prev` when `offset > 0`; both keep
+    every other parameter of the request, so a paged traversal stays on the same result set.
 -   `numberMatched` is the total count of features matching the query (`bbox`/`filter`, ignoring
     `limit`/`offset`), from a `COUNT(*)` query run alongside the page query
-    (`GeoRepository.CountFeatures`); `numberReturned` is the page size.
+    (`GeoRepository.CountFeatures`); `numberReturned` is the page size; `timeStamp` is when the
+    response was generated.
 
 ### 6.3 Router and middlewares
 
@@ -874,19 +1097,22 @@ File: `internal/router/routes.go`.
 The global chain, in order: `RequestID` → structured `slog` logging → `Recoverer` → request body
 cap.
 
-Every handler holds `SettingsService` through the same narrow `Current() storage.Settings` port
-(§5.8), never a value captured once at `Setup`: a limit changed through `PATCH /api/v1/settings`
-applies to the very next request, router middleware included.
+Every table/row/geo/source handler holds `SettingsService` through the same narrow
+`Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
+through `PATCH /api/v1/settings` applies to the very next request. The body cap and the per-request
+timeout are the exception (TODO-17): both are guards, config-only (§2.4), so `NewRouter` receives
+`config.SettingsConfig` and captures the two values once, at `Setup` — a change to either now costs a
+restart, not a `PATCH`.
 
--   **Body cap** (`maxBodyBytes`, `middleware.go`): reads `settings.maxBodyBytes` **fresh on every
-    request** and rejects immediately with `413` if `Content-Length` exceeds it, **before** reading a
-    single byte. Necessary because an overrun detected mid-stream forces Go to close the connection
-    with unread bytes, which the client sees as an abrupt cut with no HTTP status. The
-    `/sources/upload` route gets a dedicated cap (max source size + 64 KiB of headroom for the
-    multipart framing).
+-   **Body cap** (`maxBodyBytes`, `middleware.go`): rejects immediately with `413` if `Content-Length`
+    exceeds `settingsCfg.MaxBodyBytes`, **before** reading a single byte. Necessary because an overrun
+    detected mid-stream forces Go to close the connection with unread bytes, which the client sees as
+    an abrupt cut with no HTTP status. The `/sources/upload` route gets a dedicated cap (max source
+    size + 64 KiB of headroom for the multipart framing) — still computed fresh per request, since it
+    depends on `SourceService`, not on a fixed config value.
 -   **Per-request timeout** (`requestTimeout`, `middleware.go`): applied to the `/api/v1` **group**
-    only, reading `settings.requestTimeoutSec` fresh on every request and building a
-    `middleware.Timeout` around it — `0` leaves that request unbounded.
+    only, building a `middleware.Timeout` around `settingsCfg.RequestTimeoutSec` — `0` leaves every
+    request unbounded.
 -   **`/tables/{tableId}/export` is registered outside that group**: a large export legitimately
     exceeds a normal request's budget, and the timeout would truncate a response already committed
     to `200`. The handler additionally neutralizes the server's `WriteTimeout` just before
@@ -946,6 +1172,7 @@ overrun budget from a genuine internal failure.
 | `storage.InvalidSortError`      | 400                                                 |
 | `service.NotFoundError`         | 404                                                 |
 | `service.ConflictError`         | 409                                                 |
+| `service.QuotaExceededError`    | 507 (`duckdb.maxSizeBytes`, §2.2, §5.10)            |
 | `context.DeadlineExceeded`      | 504                                                 |
 | `context.Canceled`              | 499 (non-standard, nginx's "client closed request") |
 | everything else                 | 500                                                 |
@@ -1038,9 +1265,8 @@ anywhere.
 Two modes, one materialization path. Both produce a **frozen snapshot**: no synchronization with the
 source, in either direction.
 
--   **Free SQL** (`POST /tables/{tableId}/derive`) — the caller supplies the `SELECT`, which may
-    read any registered table. It ignores the `{tableId}` it is nested under (`improvements.md`
-    IMP-6).
+-   **Free SQL** (`POST /derive`, a top-level route) — the caller supplies the `SELECT`, which may
+    read any registered table. It has no source table, hence no `{tableId}` in its path.
 -   **Guided** (`POST /tables/{tableId}/derive-from-table`, §8.1) — the caller supplies a structure
     and the server assembles the SQL; the source is `{tableId}` and nothing else.
 
@@ -1113,8 +1339,8 @@ The rest of the sequence (geometry detection, clustering, indexes) is identical 
 ```
 cmd/server/            entrypoint
 internal/
-  config/              bootstrap-only configuration loading and validation (§2.1-2.3)
-  settings/            default values of every runtime-editable setting, as constants (§2.4)
+  config/              bootstrap-only configuration loading and validation (§2.1-2.4)
+  settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
     handlers/          one file per endpoint family + ports.go + dto.go
