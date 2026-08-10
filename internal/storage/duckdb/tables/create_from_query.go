@@ -39,7 +39,7 @@ func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, source
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
 	}
-	if err := l.validateDeriveQuery(ctx, sourceQuery); err != nil {
+	if err := validateDeriveQuery(ctx, l.conn, l.names, sourceQuery); err != nil {
 		return "", false, err
 	}
 
@@ -92,10 +92,13 @@ type parsedQuery struct {
 // isn't a single SELECT over already-registered tables. json_serialize_sql
 // itself rejects any non-SELECT statement, so this also enforces the
 // SELECT-only rule with the engine's own grammar rather than a regex
-// approximation of it.
-func (l *Materializer) validateDeriveQuery(ctx context.Context, query string) error {
+// approximation of it. Package-level so both the materializer (a /derive
+// query) and the row-transform write path (an assignment expression probed
+// as a SELECT) go through the exact same gate — a second, weaker validator
+// for the write path is what this shape prevents.
+func validateDeriveQuery(ctx context.Context, conn Querier, names physicalNamesReader, query string) error {
 	var raw string
-	if err := l.conn.QueryRow(ctx, `SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
 		return fmt.Errorf("parsing query: %w", err)
 	}
 
@@ -110,7 +113,7 @@ func (l *Materializer) validateDeriveQuery(ctx context.Context, query string) er
 		return fmt.Errorf("query must be a single statement")
 	}
 
-	allowed, err := l.names.PhysicalNames(ctx)
+	allowed, err := names.PhysicalNames(ctx)
 	if err != nil {
 		return err
 	}

@@ -20,10 +20,12 @@ defineProps<{
     isGeo: boolean
     editing: boolean
     focusPanel: 'split' | 'table' | 'map'
+    activeFilterId: string | null
 }>()
 const emit = defineEmits<{
     'update:nodes': [nodes: DraftNode[]]
     'update:focusPanel': [panel: 'split' | 'table' | 'map']
+    'update:activeFilterId': [id: string | null]
     toggleEditing: []
     openColumns: []
 }>()
@@ -34,7 +36,9 @@ const emit = defineEmits<{
         <TableFilterBar
             :table-id="tableId"
             :columns="columns"
+            :active-filter-id="activeFilterId"
             @update:nodes="emit('update:nodes', $event)"
+            @update:active-filter-id="emit('update:activeFilterId', $event)"
         />
 
         <!-- Editing is one mode of the table, armed here and detailed by the bar

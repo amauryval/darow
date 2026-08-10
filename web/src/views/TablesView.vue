@@ -8,6 +8,7 @@ import {
     getFilteredRowModel,
     useVueTable
 } from '@tanstack/vue-table'
+import { GitBranch } from '@lucide/vue'
 import { listTables, renameTable } from '../client/tables'
 import type { Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
@@ -16,12 +17,14 @@ import { useDocumentTitle } from '../composables/useDocumentTitle'
 import { parseSorting, stringifySorting } from '../utils/sort'
 import { queryString } from '../utils/routeQuery'
 import Badge from '../components/ui/Badge.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import BaseInput from '../components/ui/BaseInput.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import TableNameCell from '../components/tables/TableNameCell.vue'
+import DeriveSqlModal from '../components/tables/DeriveSqlModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -76,6 +79,16 @@ watch(globalFilter, async (filter) => {
 
 function onRowClick(row: Row<Metadata>) {
     router.push(`/tables/${row.original.tableId}`)
+}
+
+// Free-SQL derivation acts on the whole catalogue, not one table's page
+// (TODO-F38), so it opens from here. The created table is what the user
+// wants to see next, the way a source's upload already navigates there.
+const showDeriveSql = ref(false)
+
+async function onDerived(result: { tableId: string }) {
+    showDeriveSql.value = false
+    await router.push(`/tables/${result.tableId}`)
 }
 
 const renamingId = ref<string | null>(null)
@@ -164,6 +177,13 @@ const table = useVueTable({
         <Breadcrumbs :items="[{ label: 'Tables disponibles' }]" />
         <div class="flex shrink-0 items-center justify-between">
             <BaseInput v-model="globalFilter" placeholder="Rechercher une table…" class="w-56" />
+            <BaseButton
+                variant="secondary"
+                size="sm"
+                :icon="GitBranch"
+                @click="showDeriveSql = true"
+                >Dériver par SQL</BaseButton
+            >
         </div>
 
         <Skeleton v-if="loading && !loadedOnce" />
@@ -187,5 +207,7 @@ const table = useVueTable({
                 </p>
             </template>
         </DataTable>
+
+        <DeriveSqlModal v-if="showDeriveSql" @close="showDeriveSql = false" @derived="onDerived" />
     </div>
 </template>

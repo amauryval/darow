@@ -42,6 +42,12 @@ func (m *TableRepository) Count(ctx context.Context) (int64, error) {
 	return count, callArgs.Error(1)
 }
 
+func (m *TableRepository) CountFiltered(ctx context.Context, where string, args []any) (int64, error) {
+	callArgs := m.Called(ctx, where, args)
+	count, _ := callArgs.Get(0).(int64)
+	return count, callArgs.Error(1)
+}
+
 func (m *TableRepository) Rows() storage.RowRepository {
 	callArgs := m.Called()
 	repo, _ := callArgs.Get(0).(storage.RowRepository)
@@ -114,6 +120,23 @@ func (m *RowRepository) UpdateMany(ctx context.Context, updates []storage.RowUpd
 
 func (m *RowRepository) Delete(ctx context.Context, pkeys []string) error {
 	return m.Called(ctx, pkeys).Error(0)
+}
+
+func (m *RowRepository) ProbeExpressionType(ctx context.Context, expression string, args ...any) (string, error) {
+	callArgs := m.Called(ctx, expression, args)
+	return callArgs.String(0), callArgs.Error(1)
+}
+
+func (m *RowRepository) Transform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any) (int64, error) {
+	callArgs := m.Called(ctx, column, setExpr, setArgs, where, whereArgs)
+	count, _ := callArgs.Get(0).(int64)
+	return count, callArgs.Error(1)
+}
+
+func (m *RowRepository) PreviewTransform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any, limit int) ([]storage.TransformSample, error) {
+	callArgs := m.Called(ctx, column, setExpr, setArgs, where, whereArgs, limit)
+	samples, _ := callArgs.Get(0).([]storage.TransformSample)
+	return samples, callArgs.Error(1)
 }
 
 // GeoRepository is a testify mock implementing storage.GeoRepository,

@@ -1,4 +1,5 @@
 import { ref, type Ref } from 'vue'
+import type { SortingState } from '@tanstack/vue-table'
 import { addRows, deleteRow, getRowGeometry, listRows } from '../client/tables'
 import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
@@ -25,13 +26,15 @@ export function useTableRows(
     rowColumns: Ref<string[]>,
     geometryColumn: Ref<string | undefined>,
     onMutated: () => void,
-    rowLimit: Ref<number>
+    rowLimit: Ref<number>,
+    initialSorting?: SortingState
 ) {
     const toast = useToast()
 
     const list = usePaginatedList<Row>({
         limit: rowLimit,
         key: tableId,
+        initialSorting,
         fetchPage: (offset, limit, sort) =>
             listRows(tableId.value, offset, limit, sort).then((page) => ({
                 items: page.rows,
@@ -55,10 +58,10 @@ export function useTableRows(
     async function deleteOneRow(pkey: string) {
         deletingPkey.value = pkey
         try {
-            await deleteRow(tableId.value, pkey)
+            const deleted = await deleteRow(tableId.value, pkey)
             await list.reload()
             onMutated()
-            toast.success('Ligne supprimée.')
+            toast.success(`Ligne ${deleted.id} supprimée.`)
         } catch (e) {
             toast.error(errorMessage(e, 'Impossible de supprimer la ligne'))
         } finally {

@@ -771,6 +771,36 @@ paths:
             summary: Rename a table
             tags:
                 - tables
+    /api/v1/tables/{tableId}/aggregate-from-table:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Source table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '201':
+                    description: Created
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Derive a table from this table's grouped columns and aggregate expressions
+            tags:
+                - tables
     /api/v1/tables/{tableId}/bbox:
         post:
             consumes:
@@ -857,6 +887,72 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: List a column's distinct values
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/columns/{col}/transform:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Column name
+                  in: path
+                  name: col
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            format: int64
+                            type: integer
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+                '507':
+                    description: Insufficient Storage
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Transform a column's values in place
+            tags:
+                - tables
+    /api/v1/tables/{tableId}/columns/{col}/transform/preview:
+        post:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Column name
+                  in: path
+                  name: col
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Preview a column transform
             tags:
                 - tables
     /api/v1/tables/{tableId}/derive-from-table:

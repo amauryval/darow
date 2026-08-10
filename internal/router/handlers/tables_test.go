@@ -19,15 +19,17 @@ func Test_newTablesHandler(t *testing.T) {
 	schemaSvc := &mockSchemaAPI{}
 	deriveSvc := &mockDeriveAPI{}
 	rowSvc := &mockRowAPI{}
+	columnSvc := &mockColumnAPI{}
 	settings := defaultTestSettings
 	tableSettings := defaultTestTableSettings
 
-	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, settings, tableSettings)
+	th := NewTablesHandler(metadataSvc, schemaSvc, deriveSvc, rowSvc, columnSvc, settings, tableSettings)
 
 	assert.Same(t, metadataSvc, th.metadataService)
 	assert.Same(t, schemaSvc, th.schemaService)
 	assert.Same(t, deriveSvc, th.deriveService)
 	assert.Same(t, rowSvc, th.rowService)
+	assert.Same(t, columnSvc, th.columnService)
 	assert.Equal(t, settings, th.settings)
 	assert.Equal(t, tableSettings, th.tableSettings)
 }
@@ -487,6 +489,139 @@ func Test_tablesHandler_getDistinctValues(t *testing.T) {
 			metadataSvc.AssertExpectations(t)
 			schemaSvc.AssertExpectations(t)
 			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_tablesHandler_transformColumn(t *testing.T) {
+	cases := []struct {
+		name         string
+		col          string
+		lookupErr    error
+		transformErr error
+		wantStatus   int
+	}{
+		{name: "transforms the column", col: "score", wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", col: "score", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "unknown column is rejected", col: "bogus", wantStatus: http.StatusBadRequest},
+		{name: "validation error returns 400", col: "score", transformErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", col: "score", transformErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			columnSvc := &mockColumnAPI{}
+			th := &TablesHandler{
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				columnService:   columnSvc,
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "score", Type: "INTEGER"}}, nil).Once()
+			}
+			if c.lookupErr == nil && c.col == "score" {
+				wantSpec := service.TransformSpec{
+					Column:  "score",
+					Cases:   []service.TransformCase{},
+					Default: service.Assignment{Kind: service.AssignmentConstant, Constant: float64(5), Concat: []service.Operand{}},
+				}
+				columnSvc.On("Transform", mock.Anything, meta, wantSpec).Return(int64(2), c.transformErr).Once()
+			}
+
+			body := transformSpecDTO{Default: assignmentDTO{Kind: service.AssignmentConstant, Constant: float64(5)}}
+			rec := doHandlerRequest(th.TransformColumn, http.MethodPost, "/api/v1/tables/t1/columns/"+c.col+"/transform", body,
+				map[string]string{"tableId": "t1", "col": c.col})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
+			columnSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_tablesHandler_previewColumnTransform(t *testing.T) {
+	metadataSvc := &mockMetadataAPI{}
+	schemaSvc := &mockSchemaAPI{}
+	columnSvc := &mockColumnAPI{}
+	th := &TablesHandler{
+		TableResolver:   validation.NewTableResolver(metadataSvc),
+		ColumnValidator: validation.NewColumnValidator(schemaSvc),
+		columnService:   columnSvc,
+	}
+
+	meta := storage.Metadata{TableId: "t1"}
+	metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema{{Name: "score", Type: "INTEGER"}}, nil).Once()
+
+	wantSpec := service.TransformSpec{
+		Column:  "score",
+		Cases:   []service.TransformCase{},
+		Default: service.Assignment{Kind: service.AssignmentConstant, Constant: float64(5), Concat: []service.Operand{}},
+	}
+	sample := []storage.TransformSample{{Pkey: "1", Before: 1, After: 5}}
+	columnSvc.On("PreviewTransform", mock.Anything, meta, wantSpec).Return(int64(3), sample, nil).Once()
+
+	body := transformSpecDTO{Default: assignmentDTO{Kind: service.AssignmentConstant, Constant: float64(5)}}
+	rec := doHandlerRequest(th.PreviewColumnTransform, http.MethodPost, "/api/v1/tables/t1/columns/score/transform/preview", body,
+		map[string]string{"tableId": "t1", "col": "score"})
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	out := decodeJSON[map[string]any](rec)
+	assert.EqualValues(t, 3, out["matched"])
+	metadataSvc.AssertExpectations(t)
+	schemaSvc.AssertExpectations(t)
+	columnSvc.AssertExpectations(t)
+}
+
+func Test_tablesHandler_aggregateFromTable(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		deriveErr  error
+		wantStatus int
+	}{
+		{name: "aggregates from the resolved table", wantStatus: http.StatusCreated},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "a rejected spec maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", deriveErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			deriveSvc := &mockDeriveAPI{}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), deriveService: deriveSvc}
+			meta := storage.Metadata{TableId: "t1"}
+
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				deriveSvc.On("AggregateFromTable", mock.Anything, meta, service.AggregateSpec{
+					NewTableName: "aggregated",
+					GroupBy:      []string{"name"},
+					Aggregates:   []service.AggregateColumn{{Alias: "total", Expression: "SUM(height)"}},
+				}).Return("t2", c.deriveErr).Once()
+			}
+
+			body := map[string]any{
+				"newTableName": "aggregated",
+				"groupBy":      []string{"name"},
+				"aggregates":   []map[string]string{{"alias": "total", "expression": "SUM(height)"}},
+			}
+			rec := doHandlerRequest(th.AggregateFromTable, http.MethodPost, "/api/v1/tables/t1/aggregate-from-table", body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusCreated {
+				assert.Contains(t, rec.Body.String(), "t2")
+				assert.Equal(t, "/tables/t2", rec.Header().Get("Location"))
+			}
+			metadataSvc.AssertExpectations(t)
+			deriveSvc.AssertExpectations(t)
 		})
 	}
 }

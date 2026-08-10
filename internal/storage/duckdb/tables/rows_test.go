@@ -12,7 +12,7 @@ import (
 
 func Test_RowRepository_PkeysByPkeyFilteredDistinct(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -59,7 +59,7 @@ func Test_RowRepository_Distinct_Search(t *testing.T) {
         ('1', 'Paris', 10), ('2', 'PARIS-SUD', 11), ('3', 'Lyon', 120), ('4', '100%', 12)`)
 	require.NoError(t, err)
 
-	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-search", PhysicalName: "t_search"})
+	repo, err := Open(conn, conn, nil, storage.Metadata{TableId: "id-search", PhysicalName: "t_search"})
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -99,7 +99,7 @@ func Test_RowRepository_Filtered_ValueIncompatibleWithColumnType(t *testing.T) {
 	_, err = conn.db.Exec(`INSERT INTO t_typed VALUES ('1', 'a', 10), ('2', 'b', 20)`)
 	require.NoError(t, err)
 
-	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-typed", PhysicalName: "t_typed"})
+	repo, err := Open(conn, conn, nil, storage.Metadata{TableId: "id-typed", PhysicalName: "t_typed"})
 	require.NoError(t, err)
 	columns := []storage.ColumnInfo{{Name: "name", Type: "VARCHAR"}, {Name: "qty", Type: "INTEGER"}}
 	ctx := context.Background()
@@ -129,7 +129,7 @@ func Test_RowRepository_Filtered_ValueIncompatibleWithColumnType(t *testing.T) {
 
 func Test_RowRepository_InsertUpdateDelete(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -156,7 +156,7 @@ func Test_RowRepository_InsertUpdateDelete(t *testing.T) {
 }
 func Test_RowRepository_InsertMany(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -175,7 +175,7 @@ func Test_RowRepository_InsertMany(t *testing.T) {
 // key so a page boundary never drops or repeats a value.
 func Test_RowRepository_PkeysAndDistinctPagination(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -202,7 +202,7 @@ func Test_RowRepository_PkeysAndDistinctPagination(t *testing.T) {
 func Test_RowRepository_Insert_GeometryColumn_ReprojectsFromItsCRS(t *testing.T) {
 	conn := openRepoTestDB(t)
 	meta := newGeoTestTable(t, conn)
-	repo, err := Open(conn, conn, meta)
+	repo, err := Open(conn, conn, nil, meta)
 	require.NoError(t, err)
 	ctx := context.Background()
 	geo, ok := repo.Geo()
@@ -233,7 +233,7 @@ func Test_RowRepository_Insert_GeometryColumn_ReprojectsFromItsCRS(t *testing.T)
 // from the lon/lat default.
 func Test_RowRepository_Insert_GeometryColumn_HonoursTheStatedCRS(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	geo, ok := repo.Geo()
@@ -255,7 +255,7 @@ func Test_RowRepository_Insert_GeometryColumn_HonoursTheStatedCRS(t *testing.T) 
 // than store a NULL geometry silently.
 func Test_RowRepository_Update_GeometryColumn_RejectsInvalidWKT(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()
@@ -271,7 +271,7 @@ func Test_RowRepository_Update_GeometryColumn_RejectsInvalidWKT(t *testing.T) {
 // order is only deterministic because Pkeys sorts by pkey itself.
 func Test_RowRepository_Pkeys_OrderedDeterministically(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -287,7 +287,7 @@ func Test_RowRepository_Pkeys_OrderedDeterministically(t *testing.T) {
 }
 func Test_RowRepository_Pkeys_RejectsUnknownSortColumn(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 
 	_, err = repo.Rows().Pkeys(context.Background(), []storage.SortField{{Column: "no such column"}}, 0, 100)
@@ -299,7 +299,7 @@ func Test_RowRepository_Pkeys_RejectsUnknownSortColumn(t *testing.T) {
 // untouched rather than half a boundary behind.
 func Test_RowRepository_UpdateMany_IsAtomic(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	ctx := context.Background()
 	rows := repo.Rows()

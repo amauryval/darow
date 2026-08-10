@@ -1,6 +1,8 @@
 import { del, get, getBlob, patch, post } from './http'
 import type {
+    AggregateSpec,
     ColumnDTO,
+    Deleted,
     DeriveSpec,
     ExportFormat,
     FilterCondition,
@@ -10,7 +12,10 @@ import type {
     RowsPage,
     RowValue,
     SchemaResponse,
-    TablesPage
+    TablesPage,
+    TransformPreview,
+    TransformResult,
+    TransformSpec
 } from './types'
 
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
@@ -22,7 +27,7 @@ export function getTable(tableId: string): Promise<Metadata> {
     return get(`/tables/${tableId}`)
 }
 
-export function deleteTable(tableId: string): Promise<void> {
+export function deleteTable(tableId: string): Promise<Deleted> {
     return del(`/tables/${tableId}`)
 }
 
@@ -103,19 +108,15 @@ export function getRowGeometry(tableId: string, pkey: string): Promise<RowGeomet
     return get(`/tables/${tableId}/rows/${pkey}/geometry`)
 }
 
-export function deleteRow(tableId: string, pkey: string): Promise<void> {
+export function deleteRow(tableId: string, pkey: string): Promise<Deleted> {
     return del(`/tables/${tableId}/rows/${pkey}`)
 }
 
-// Free-SQL derivation: the query may read any registered table, not only
-// tableId — which is only the route it is posted to. deriveTableFromTable
-// below is the single-source mode.
-export function deriveTable(
-    tableId: string,
-    query: string,
-    newTableName: string
-): Promise<{ tableId: string }> {
-    return post(`/tables/${tableId}/derive`, { query, newTableName })
+// Free-SQL derivation: a top-level route, scoped to no table — the query may
+// read any registered table. deriveTableFromTable below is the
+// single-source mode.
+export function deriveTable(query: string, newTableName: string): Promise<{ tableId: string }> {
+    return post(`/derive`, { query, newTableName })
 }
 
 // Guided derivation: the source is tableId and nothing else, and the server
@@ -125,6 +126,15 @@ export function deriveTableFromTable(
     spec: DeriveSpec
 ): Promise<{ tableId: string }> {
     return post(`/tables/${tableId}/derive-from-table`, spec)
+}
+
+// Guided aggregation: a GROUP BY over tableId's columns, the aggregation
+// counterpart of deriveTableFromTable.
+export function aggregateTableFromTable(
+    tableId: string,
+    spec: AggregateSpec
+): Promise<{ tableId: string }> {
+    return post(`/tables/${tableId}/aggregate-from-table`, spec)
 }
 
 // Streams a table export and triggers a browser download through this
@@ -179,4 +189,25 @@ export function getDistinctValues(
     if (opts.limit !== undefined) params.set('limit', String(opts.limit))
     const query = params.size > 0 ? `?${params}` : ''
     return get(`/tables/${tableId}/columns/${encodeURIComponent(col)}/distinct${query}`)
+}
+
+// Rewrites col's values in place, on the rows spec.conditions names —
+// irreversible (§8.3), which is why previewColumnTransform below shares the
+// same spec and exists to be called first.
+export function transformColumn(
+    tableId: string,
+    col: string,
+    spec: TransformSpec
+): Promise<TransformResult> {
+    return post(`/tables/${tableId}/columns/${encodeURIComponent(col)}/transform`, spec)
+}
+
+// How many rows spec would touch and a bounded before/after sample, writing
+// nothing — what stands in for an undo a column transform does not have.
+export function previewColumnTransform(
+    tableId: string,
+    col: string,
+    spec: TransformSpec
+): Promise<TransformPreview> {
+    return post(`/tables/${tableId}/columns/${encodeURIComponent(col)}/transform/preview`, spec)
 }

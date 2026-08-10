@@ -276,6 +276,28 @@ func (m *mockDeriveAPI) DeriveFromTable(ctx context.Context, meta storage.Metada
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockDeriveAPI) AggregateFromTable(ctx context.Context, meta storage.Metadata, spec service.AggregateSpec) (string, error) {
+	args := m.Called(ctx, meta, spec)
+	return args.String(0), args.Error(1)
+}
+
+type mockColumnAPI struct{ mock.Mock }
+
+var _ columnAPI = (*mockColumnAPI)(nil)
+
+func (m *mockColumnAPI) Transform(ctx context.Context, meta storage.Metadata, spec service.TransformSpec) (int64, error) {
+	args := m.Called(ctx, meta, spec)
+	written, _ := args.Get(0).(int64)
+	return written, args.Error(1)
+}
+
+func (m *mockColumnAPI) PreviewTransform(ctx context.Context, meta storage.Metadata, spec service.TransformSpec) (int64, []storage.TransformSample, error) {
+	args := m.Called(ctx, meta, spec)
+	matched, _ := args.Get(0).(int64)
+	sample, _ := args.Get(1).([]storage.TransformSample)
+	return matched, sample, args.Error(2)
+}
+
 type mockGeoAPI struct{ mock.Mock }
 
 var _ geoAPI = (*mockGeoAPI)(nil)

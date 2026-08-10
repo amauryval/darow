@@ -3,9 +3,23 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 const FOCUSABLE_SELECTOR =
     'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// A control carrying this attribute (Modal.vue's ✕) is still part of the
+// Tab/Shift+Tab cycle but is never the *initial* focus target — that has to
+// land on the modal's first meaningful field (§8.5), not its
+// destructive-adjacent close control.
+const SKIP_INITIAL_FOCUS_ATTR = 'data-focus-trap-skip-initial'
+
 function focusablesOf(container: HTMLElement | null): HTMLElement[] {
     if (!container) return []
     return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+}
+
+// The first focusable that isn't marked skip-initial, or that control itself
+// when it's all the container has — a modal whose slot renders nothing
+// focusable yet (a loading skeleton) still needs somewhere to send focus.
+function initialFocusTargetOf(container: HTMLElement | null): HTMLElement | null {
+    const items = focusablesOf(container)
+    return items.find((el) => !el.hasAttribute(SKIP_INITIAL_FOCUS_ATTR)) ?? items[0] ?? null
 }
 
 // One open/close cycle: activate() moves focus inside and holds it there,
@@ -31,7 +45,7 @@ function createFocusTrap(container: Ref<HTMLElement | null>) {
     function activate() {
         previouslyFocused =
             document.activeElement instanceof HTMLElement ? document.activeElement : null
-        focusablesOf(container.value)[0]?.focus()
+        initialFocusTargetOf(container.value)?.focus()
         document.addEventListener('keydown', onKeydown)
     }
 

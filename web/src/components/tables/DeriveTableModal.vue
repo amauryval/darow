@@ -6,25 +6,18 @@ import { useSavedFilters } from '../../composables/useSavedFilters'
 import { useToast } from '../../composables/useToast'
 import Modal from '../ui/Modal.vue'
 import DeriveFromTableForm from './DeriveFromTableForm.vue'
-import DeriveSqlForm from './DeriveSqlForm.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
-import Tabs from '../ui/Tabs.vue'
 import Typography from '../ui/Typography.vue'
 
-const MODE_TABS: { value: 'table' | 'sql'; label: string }[] = [
-    { value: 'table', label: 'Depuis cette table' },
-    { value: 'sql', label: 'SQL' }
-]
-
-// Two modes, deliberately separated: "Depuis cette table" derives from the
-// table in hand, offering its columns and reusing the filter editor for its
-// conditions; "SQL" is the free query, which reads every registered table.
-// They used to be one SQL box pre-filled with this table's name, which stated
-// a scope the endpoint never had.
+// The guided mode alone: derives from the table in hand, offering its
+// columns and reusing the filter editor for its conditions. The free-SQL
+// mode used to be a second tab here, pre-filled with this table's name — a
+// scope the endpoint never had, since it reads every registered table. It now
+// lives in its own modal opened from the catalogue screen (`DeriveSqlModal`,
+// TODO-F38).
 const props = defineProps<{
     tableId: string
-    physicalName: string
     columns: ColumnSchema[]
     geometryColumn?: string
 }>()
@@ -43,20 +36,15 @@ const {
     addComputed,
     updateComputed,
     removeComputed,
-    submitSpec,
-    submitQuery
+    submitSpec
 } = useDeriveTable(toRef(props, 'tableId'), toRef(props, 'columns'))
 const { filters: savedFilters } = useSavedFilters(toRef(props, 'tableId'))
 
-const mode = ref<'table' | 'sql'>('table')
 const name = ref('')
-const query = ref(`SELECT * FROM "${props.physicalName}"`)
 
-const canSubmit = computed(() => {
-    if (name.value.trim() === '' || isLoading.value) return false
-    if (mode.value === 'sql') return query.value.trim() !== ''
-    return !incompleteComputed.value
-})
+const canSubmit = computed(
+    () => name.value.trim() !== '' && !isLoading.value && !incompleteComputed.value
+)
 
 // Anything the user has actually put in is worth a confirmation before a
 // stray backdrop click throws it away (§8.3).
@@ -70,10 +58,7 @@ const dirty = computed(
 
 async function onSubmit() {
     if (!canSubmit.value) return
-    const result =
-        mode.value === 'sql'
-            ? await submitQuery(query.value.trim(), name.value.trim())
-            : await submitSpec(name.value.trim())
+    const result = await submitSpec(name.value.trim())
     // A null result means the call failed and `error` already carries the
     // message — it stays in front of the user rather than going out as a
     // toast (§8.4).
@@ -87,10 +72,7 @@ async function onSubmit() {
 
 <template>
     <Modal title="Dériver une table" wide :dirty="dirty" @close="emit('close')" @submit="onSubmit">
-        <Tabs v-model="mode" :tabs="MODE_TABS" class="mb-4" />
-
         <DeriveFromTableForm
-            v-if="mode === 'table'"
             :table-id="tableId"
             :columns="columns"
             :geometry-column="geometryColumn"
@@ -106,7 +88,6 @@ async function onSubmit() {
             @update:conditions="conditions = $event"
             @update:conditions-bool="conditionsBool = $event"
         />
-        <DeriveSqlForm v-else v-model="query" />
 
         <div class="mt-4 border-t border-base-300 pt-4">
             <BaseInput

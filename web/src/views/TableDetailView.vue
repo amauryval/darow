@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import type { SortingState } from '@tanstack/vue-table'
 import { exportTable } from '../client/tables'
 import type { ExportFormat } from '../client/types'
 import { errorMessage } from '../client/http'
@@ -8,23 +9,62 @@ import ColumnsModal from '../components/tables/ColumnsModal.vue'
 import TableDataPanel from '../components/tables/TableDataPanel.vue'
 import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
+import AggregateTableModal from '../components/tables/AggregateTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
 import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
 import ExportModal from '../components/tables/ExportModal.vue'
 import TableSettingsModal from '../components/tables/TableSettingsModal.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
+import ErrorState from '../components/ui/ErrorState.vue'
+import Skeleton from '../components/ui/Skeleton.vue'
 import { useFeatureSelection } from '../composables/useFeatureSelection'
 import { useTableMetadata } from '../composables/useTableMetadata'
 import { useToast } from '../composables/useToast'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
+import { queryString } from '../utils/routeQuery'
+import { parseSorting, stringifySorting } from '../utils/sort'
 
 const props = defineProps<{ tableId: string }>()
 const router = useRouter()
+const route = useRoute()
 const toast = useToast()
 
-const { table, columns, rowColumns, loadTable, rename, remove, addNewColumn } = useTableMetadata(
-    toRef(props, 'tableId')
-)
+// The applied filter and the sort are the workspace's own URL state (§9): read
+// once here — TableDataPanel/TableFilterBar own the rest of the sync, this
+// view only mirrors their current value into the query string. The filter
+// identifier belongs to one table and is dropped by TableFilterBar's own
+// tableId watch on navigation; an id the URL names that the catalogue no
+// longer holds simply applies no filter (TableFilterBar.activeFilter), never
+// an error.
+const activeFilterId = ref<string | null>(queryString(route.query.filterId) || null)
+const initialSort = queryString(route.query.sort)
+    ? parseSorting(queryString(route.query.sort))
+    : undefined
+const sort = ref<SortingState>(initialSort ?? [])
+
+watch([activeFilterId, sort], ([filterId, sorting]) => {
+    router.replace({
+        query: {
+            ...route.query,
+            filterId: filterId ?? undefined,
+            sort: stringifySorting(sorting) || undefined
+        }
+    })
+})
+
+const {
+    table,
+    columns,
+    rowColumns,
+    loading,
+    loadedOnce,
+    error,
+    retry,
+    loadTable,
+    rename,
+    remove,
+    addNewColumn
+} = useTableMetadata(toRef(props, 'tableId'))
 
 useDocumentTitle(computed(() => table.value?.tableName ?? 'Table'))
 
@@ -69,6 +109,7 @@ watch(
 
 const showColumns = ref(false)
 const showDerive = ref(false)
+const showAggregate = ref(false)
 const showAddColumn = ref(false)
 const showApiRoutes = ref(false)
 const showTableSettings = ref(false)
@@ -91,9 +132,8 @@ async function onRename(name: string) {
 
 async function onDeleteTable() {
     try {
-        const name = table.value?.tableName
-        await remove()
-        toast.success(`Table "${name}" supprimée.`)
+        const deleted = await remove()
+        toast.success(`Table "${deleted.name}" supprimée.`)
         router.push('/tables')
     } catch (e) {
         toast.error(errorMessage(e, 'Impossible de supprimer la table'))
@@ -138,6 +178,9 @@ async function onColumnAdded(name: string, type: string) {
             :items="[{ label: 'Tables', to: '/tables' }, { label: table?.tableName ?? '…' }]"
         />
 
+        <Skeleton v-if="loading && !loadedOnce" :rows="6" />
+        <ErrorState v-else-if="error" :message="error" @retry="retry" />
+
         <TableHeader
             v-if="table"
             :table="table"
@@ -152,6 +195,7 @@ async function onColumnAdded(name: string, type: string) {
             @rename="onRename"
             @add-column="openAddColumn"
             @derive="showDerive = true"
+            @aggregate="showAggregate = true"
             @export="showExport = true"
             @api-routes="showApiRoutes = true"
             @table-settings="showTableSettings = true"
@@ -168,18 +212,30 @@ async function onColumnAdded(name: string, type: string) {
             :columns="columns"
             :geometry-column="table.geometryColumn"
             :selection="selection"
+            :active-filter-id="activeFilterId"
+            :initial-sort="initialSort"
             @mutated="loadTable"
             @open-columns="showColumns = true"
+            @update:active-filter-id="activeFilterId = $event"
+            @update:sort="sort = $event"
         />
 
         <DeriveTableModal
             v-if="showDerive && table"
             :table-id="table.tableId"
-            :physical-name="table.physicalName"
             :columns="columns"
             :geometry-column="table.geometryColumn"
             @derived="onDeriveSuccess"
             @close="showDerive = false"
+        />
+
+        <AggregateTableModal
+            v-if="showAggregate && table"
+            :table-id="table.tableId"
+            :columns="columns"
+            :geometry-column="table.geometryColumn"
+            @derived="onDeriveSuccess"
+            @close="showAggregate = false"
         />
 
         <ColumnsModal

@@ -66,8 +66,7 @@ export function useSources(initialSorting?: SortingState) {
         uploading.value = true
         try {
             const result = await uploadSource(file)
-            if ('tableId' in result && result.tableId !== undefined)
-                return { tableId: result.tableId }
+            if (result.loaded) return { tableId: result.tableId }
             await list.reload()
             return null
         } finally {
@@ -137,9 +136,9 @@ export function useSources(initialSorting?: SortingState) {
     async function remove(name: string) {
         deletingName.value = name
         try {
-            await deleteSource(name)
+            const deleted = await deleteSource(name)
             await list.reload()
-            toast.success(`${name} supprimé.`)
+            toast.success(`${deleted.id} supprimé.`)
         } catch (e) {
             toast.error(errorMessage(e, `Impossible de supprimer ${name}`))
         } finally {

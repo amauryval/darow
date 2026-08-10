@@ -312,7 +312,7 @@ func (a *Adapter) TableSettings() storage.TableSettingsStore {
 // Table resolves meta into a storage.TableRepository, validating its
 // identifiers once rather than on every subsequent call.
 func (a *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
-	return tables.Open(a, a, meta)
+	return tables.Open(a, a, a.catalog, meta)
 }
 
 // Diagnostics reads a snapshot of the engine's own operating state — size,

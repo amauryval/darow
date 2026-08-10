@@ -1,15 +1,14 @@
 import { computed, ref, type Ref } from 'vue'
-import { deriveTable, deriveTableFromTable } from '../client/tables'
+import { deriveTableFromTable } from '../client/tables'
 import { errorMessage } from '../client/http'
 import type { ColumnSchema, ComputedColumn, DeriveSpec } from '../client/types'
 import { coerceByType } from '../utils/columnTypes'
 import { pruneActive, type DraftNode } from '../utils/filterTree'
 
-// Deriving a table from the table being viewed, in both modes the modal
-// offers: guided (a spec the server turns into SQL) and free SQL. They share
-// this composable because they share everything around the call — the busy
-// state, the inline error, the created table's id — and differ only in what
-// they send.
+// The guided derivation from the table being viewed: a spec the server turns
+// into SQL. Free-SQL derivation is `useDeriveFromQuery` — a top-level route
+// scoped to no table, opened from the catalogue rather than one table's page
+// (TODO-F38).
 //
 // The guided draft lives here rather than in the form component: pruning the
 // condition tree and coercing each value to the column's JSON type are
@@ -83,13 +82,6 @@ export function useDeriveTable(tableId: Ref<string>, columns: Ref<ColumnSchema[]
         )
     }
 
-    function submitQuery(query: string, newTableName: string) {
-        return run(
-            () => deriveTable(tableId.value, query, newTableName),
-            'Impossible de dériver la table'
-        )
-    }
-
     return {
         isLoading,
         error,
@@ -102,7 +94,6 @@ export function useDeriveTable(tableId: Ref<string>, columns: Ref<ColumnSchema[]
         addComputed,
         updateComputed,
         removeComputed,
-        submitSpec,
-        submitQuery
+        submitSpec
     }
 }

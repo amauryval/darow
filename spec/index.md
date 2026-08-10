@@ -96,6 +96,8 @@ place an audit's findings are written — never a `spec.md`.
 | `### 7.2 Parquet and GeoParquet` | parquet specifics                                          |
 | `## 8. Table derivation` | `/derive`, CTAS from a query                               |
 | `### 8.1 Guided derivation` | the guided derivation payload                              |
+| `### 8.2 Guided aggregation` | the GROUP BY spec, its projection rules, the aggregate expression escape hatch |
+| `### 8.3 In-place column transform` | the column transform's rendered SQL, the shared AST validator, the type probe |
 
 ### Service layer (`internal/service`)
 
@@ -113,6 +115,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 5.8.1 TableSettingsService — per-table overrides` | resolving/validating a table's own overrides |
 | `### 5.9 DiagnosticsService` | diagnostics endpoint                |
 | `### 5.10 SizeGuardService` | enforcing `duckdb.maxSizeBytes`     |
+| `### 5.11 ColumnService` | in-place column transform, its preview                     |
 
 ### Transport layer (`internal/router`)
 

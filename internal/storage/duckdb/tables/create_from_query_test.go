@@ -10,11 +10,11 @@ import (
 	"darow/internal/storage"
 )
 
-func Test_Materializer_ValidateDeriveQuery(t *testing.T) {
+func Test_validateDeriveQuery(t *testing.T) {
 	conn := openRepoTestDB(t)
 	_, err := conn.Exec(context.Background(), storage.GlobalWriteScope, `CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
 	require.NoError(t, err)
-	l := NewMaterializer(conn, conn, fakePhysicalNames{"t_a1b2c3": true})
+	names := fakePhysicalNames{"t_a1b2c3": true}
 
 	cases := []struct {
 		name    string
@@ -57,7 +57,7 @@ func Test_Materializer_ValidateDeriveQuery(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := l.validateDeriveQuery(context.Background(), c.query)
+			err := validateDeriveQuery(context.Background(), conn, names, c.query)
 			if c.wantErr == "" {
 				assert.NoError(t, err)
 				return

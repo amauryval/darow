@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
+import type { SortingState } from '@tanstack/vue-table'
 import type { ColumnSchema, Row } from '../../client/types'
 import type { LayerChanges } from '../../composables/useEditLayer'
 import type { useFeatureSelection } from '../../composables/useFeatureSelection'
@@ -16,6 +17,7 @@ import TableEditBar from './TableEditBar.vue'
 import TableMapPanel from './TableMapPanel.vue'
 import TableRowsPanel from './TableRowsPanel.vue'
 import TableToolbar from './TableToolbar.vue'
+import TransformColumnModal from './TransformColumnModal.vue'
 
 const props = defineProps<{
     tableId: string
@@ -29,12 +31,22 @@ const props = defineProps<{
     // it is stated with the others (TableHeader). One instance, so the map and
     // the grid share the single selection they are supposed to (§8.8).
     selection: ReturnType<typeof useFeatureSelection>
+    // The applied filter and the grid's sort are the view's state, carried in
+    // the URL (§9) — read once at creation (initialSort) or controlled
+    // (activeFilterId), the two traps of TODO-F33.
+    activeFilterId: string | null
+    initialSort?: SortingState
 }>()
 // mutated: after any row add/edit/delete, since that changes the table's
 // rowCount — the parent owns table metadata and reloads it.
 // openColumns: the visible-column choice is the view's state (it survives a
 // schema reload), so the toolbar's button only asks for its modal.
-const emit = defineEmits<{ mutated: []; openColumns: [] }>()
+const emit = defineEmits<{
+    mutated: []
+    openColumns: []
+    'update:activeFilterId': [id: string | null]
+    'update:sort': [sort: SortingState]
+}>()
 
 const tableId = toRef(props, 'tableId')
 const columns = toRef(props, 'columns')
@@ -67,8 +79,10 @@ const rowsState = useTableRows(
         dataVersion.value += 1
         emit('mutated')
     },
-    rowLimit
+    rowLimit,
+    props.initialSort
 )
+watch(rowsState.sorting, (sort) => emit('update:sort', sort), { deep: true })
 const rowEdits = useRowEdits(columns, toRef(props, 'rowColumns'))
 const rowGeometry = useRowGeometry(tableId)
 const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
@@ -186,6 +200,24 @@ function onRowClick(row: { original: Row }) {
     if (!props.isGeo || isDraft(row.original.pkey)) return
     selection.toggle(row.original.pkey)
 }
+
+// Opened from the grid's own column header, not from TableHeader: it acts on
+// one column of the table in hand, the same register as GeometryModal below.
+const transformColumn = ref<string | null>(null)
+const transformColumnSchema = computed(
+    () => columns.value.find((c) => c.name === transformColumn.value) ?? null
+)
+
+// The write happens outside useTableRows/useLayerEditing, so it reloads
+// through the exact path their own writes already trigger: bump
+// dataVersion (the map's tiles are cached by URL, and the transform bumped
+// UpdatedAt), reload the current page, and let the parent refresh the
+// table's metadata.
+async function onColumnTransformed() {
+    dataVersion.value += 1
+    await rowsState.retry()
+    emit('mutated')
+}
 </script>
 
 <template>
@@ -196,8 +228,10 @@ function onRowClick(row: { original: Row }) {
             :is-geo="isGeo"
             :editing="editing"
             :focus-panel="focusPanel"
+            :active-filter-id="activeFilterId"
             @update:nodes="filter.conditions.value = $event"
             @update:focus-panel="focusPanel = $event"
+            @update:active-filter-id="emit('update:activeFilterId', $event)"
             @toggle-editing="toggleEditing"
             @open-columns="emit('openColumns')"
         />
@@ -250,6 +284,7 @@ function onRowClick(row: { original: Row }) {
                     :row-class="rowClassFor"
                     @geometry="rowGeometry.open"
                     @row-click="onRowClick"
+                    @transform="transformColumn = $event"
                 />
             </div>
 
@@ -288,5 +323,15 @@ function onRowClick(row: { original: Row }) {
         @close="rowGeometry.close"
         @retry="rowGeometry.retry"
         @copy="rowGeometry.copy"
+    />
+
+    <TransformColumnModal
+        v-if="transformColumnSchema"
+        :table-id="tableId"
+        :column="transformColumnSchema"
+        :columns="columns"
+        :geometry-column="geometryColumn"
+        @close="transformColumn = null"
+        @transformed="onColumnTransformed"
     />
 </template>

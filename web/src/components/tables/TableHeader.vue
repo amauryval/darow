@@ -9,6 +9,7 @@ import {
     Pencil,
     Plus,
     Settings2,
+    Sigma,
     Trash2,
     X
 } from '@lucide/vue'
@@ -48,6 +49,7 @@ const emit = defineEmits<{
     rename: [name: string]
     addColumn: []
     derive: []
+    aggregate: []
     export: []
     apiRoutes: []
     tableSettings: []
@@ -182,6 +184,16 @@ function submitRename() {
                         }
                     "
                     >Dériver une table</MenuItem
+                >
+                <MenuItem
+                    :icon="Sigma"
+                    @click="
+                        () => {
+                            close()
+                            emit('aggregate')
+                        }
+                    "
+                    >Agréger une table</MenuItem
                 >
                 <MenuItem :icon="Download" :disabled="exporting" @click="emit('export')">
                     {{ exporting ? 'Export en cours…' : 'Exporter' }}

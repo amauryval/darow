@@ -9,6 +9,7 @@ import type { useTableRows } from '../../composables/useTableRows'
 import { columnType } from '../../utils/columnTypes'
 import { cellValue } from '../../utils/rows'
 import DataTable from '../ui/DataTable.vue'
+import TableColumnHeaderCell from './TableColumnHeaderCell.vue'
 import TableGeometryCell from './TableGeometryCell.vue'
 import TableRowLeadCell from './TableRowLeadCell.vue'
 import TableRowEditCell from './TableRowEditCell.vue'
@@ -39,6 +40,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     geometry: [pkey: string]
     rowClick: [row: { original: Row }]
+    transform: [column: string]
 }>()
 
 const columnHelper = createColumnHelper<Row>()
@@ -46,7 +48,8 @@ const columnDefs = computed(() => {
     const defs: ColumnDef<Row, RowValue>[] = props.visibleColumns.map((col) =>
         columnHelper.accessor((row) => cellValue(row, col), {
             id: col,
-            header: col,
+            header: () =>
+                h(TableColumnHeaderCell, { name: col, onTransform: () => emit('transform', col) }),
             cell: (info) => {
                 const row = info.row.original
                 if (props.edits.active.value && props.editableColumns.includes(col)) {

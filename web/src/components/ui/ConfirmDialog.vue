@@ -7,17 +7,24 @@ import Typography from './Typography.vue'
 // always this box, never a native confirm() and never an inline pair of
 // buttons (§8.3). `ConfirmButton` is it with its own trigger; a caller whose
 // trigger is something else (a menu entry) opens this one directly.
-defineProps<{
-    // Names what is about to disappear and any cascade effect.
-    message: string
-    confirmLabel?: string
-    busy?: boolean
-}>()
+// title defaults to the deletion wording every existing caller relies on;
+// a caller confirming a different irreversible write (a column transform)
+// names it instead.
+const props = withDefaults(
+    defineProps<{
+        title?: string
+        // Names what is about to disappear and any cascade effect.
+        message: string
+        confirmLabel?: string
+        busy?: boolean
+    }>(),
+    { title: 'Confirmer la suppression' }
+)
 const emit = defineEmits<{ confirm: []; close: [] }>()
 </script>
 
 <template>
-    <Modal title="Confirmer la suppression" @close="emit('close')" @submit="emit('confirm')">
+    <Modal :title="props.title" @close="emit('close')" @submit="emit('confirm')">
         <Typography variant="body-sm">{{ message }}</Typography>
         <div class="mt-4 flex justify-end gap-2">
             <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>

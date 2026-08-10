@@ -12,20 +12,33 @@ import ActiveFilterPill from './ActiveFilterPill.vue'
 import SavedFilterMenu from './SavedFilterMenu.vue'
 import BaseButton from '../ui/BaseButton.vue'
 
-const props = defineProps<{ tableId: string; columns: ColumnSchema[] }>()
+// activeFilterId is owned by the view (TableDetailView, §9 — the URL carries
+// the applied filter) and controlled here through the usual prop/emit pair,
+// so the reset-on-tableId-change watch below still assigns to it directly.
+const props = defineProps<{
+    tableId: string
+    columns: ColumnSchema[]
+    activeFilterId: string | null
+}>()
 // The tree the parent filters on is *derived* here, never held in two places:
 // every filter is persisted, so the catalogue is the single source of truth
 // and the bar only tracks which of its filters is applied. Keeping a parallel
 // draft tree is what let an edit save a second filter instead of updating the
 // one it came from.
-const emit = defineEmits<{ 'update:nodes': [nodes: DraftNode[]] }>()
+const emit = defineEmits<{
+    'update:nodes': [nodes: DraftNode[]]
+    'update:activeFilterId': [id: string | null]
+}>()
 
 const toast = useToast()
 const saved = useSavedFilters(toRef(props, 'tableId'))
 
 // Only one filter applies at a time: a second one would silently AND with the
 // first, which the toolbar cannot show.
-const activeFilterId = ref<string | null>(null)
+const activeFilterId = computed({
+    get: () => props.activeFilterId,
+    set: (id) => emit('update:activeFilterId', id)
+})
 const activeFilter = computed(
     () => saved.filters.value.find((f) => f.filterId === activeFilterId.value) ?? null
 )
