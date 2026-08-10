@@ -1,5 +1,6 @@
 import { del, get, getBlob, patch, post } from './http'
 import type {
+    AggregateSpec,
     ColumnDTO,
     Deleted,
     DeriveSpec,
@@ -125,6 +126,15 @@ export function deriveTableFromTable(
     spec: DeriveSpec
 ): Promise<{ tableId: string }> {
     return post(`/tables/${tableId}/derive-from-table`, spec)
+}
+
+// Guided aggregation: a GROUP BY over tableId's columns, the aggregation
+// counterpart of deriveTableFromTable.
+export function aggregateTableFromTable(
+    tableId: string,
+    spec: AggregateSpec
+): Promise<{ tableId: string }> {
+    return post(`/tables/${tableId}/aggregate-from-table`, spec)
 }
 
 // Streams a table export and triggers a browser download through this

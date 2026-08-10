@@ -9,6 +9,7 @@ import ColumnsModal from '../components/tables/ColumnsModal.vue'
 import TableDataPanel from '../components/tables/TableDataPanel.vue'
 import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
+import AggregateTableModal from '../components/tables/AggregateTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
 import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
 import ExportModal from '../components/tables/ExportModal.vue'
@@ -108,6 +109,7 @@ watch(
 
 const showColumns = ref(false)
 const showDerive = ref(false)
+const showAggregate = ref(false)
 const showAddColumn = ref(false)
 const showApiRoutes = ref(false)
 const showTableSettings = ref(false)
@@ -193,6 +195,7 @@ async function onColumnAdded(name: string, type: string) {
             @rename="onRename"
             @add-column="openAddColumn"
             @derive="showDerive = true"
+            @aggregate="showAggregate = true"
             @export="showExport = true"
             @api-routes="showApiRoutes = true"
             @table-settings="showTableSettings = true"
@@ -224,6 +227,15 @@ async function onColumnAdded(name: string, type: string) {
             :geometry-column="table.geometryColumn"
             @derived="onDeriveSuccess"
             @close="showDerive = false"
+        />
+
+        <AggregateTableModal
+            v-if="showAggregate && table"
+            :table-id="table.tableId"
+            :columns="columns"
+            :geometry-column="table.geometryColumn"
+            @derived="onDeriveSuccess"
+            @close="showAggregate = false"
         />
 
         <ColumnsModal

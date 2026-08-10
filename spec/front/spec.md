@@ -290,6 +290,7 @@ module level and documents it; that is the exception, not the rule.
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery` | present |
 | `useDeriveFromQuery` | the free-SQL derivation: busy state, inline error, submission of a bare query against every registered table. Scoped to no table — opened from the catalogue screen, not one table's page | present |
+| `useAggregateFromTable` | the guided aggregation from the table being viewed: group-by columns, aggregate expressions (alias plus a free SQL expression) and a condition tree applied before grouping, plus its submission. Its own composable rather than a third mode of `useDeriveTable` — a column there is either carried over row-wise or grouped/aggregated here, never both, and sharing one draft would let a column be "selected" without being either, which `GROUP BY` refuses as a query error rather than a default | present |
 | `useColumnTransform` | rewriting one column's values in place, over the rows a filter names: the case list (each a condition tree plus an assignment draft), the default assignment, the row-scope condition tree, the server preview (invalidated by any further edit) and the write itself | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
@@ -474,6 +475,17 @@ per page (the server's own live cap) until the reported `total` is reached.
   the query runs against every registered table: it used to run inside a table's own modal,
   pre-filled with that table's name, which stated a scope the endpoint never had — it is now a
   top-level route (back §6.1), and the modal that posts to it opens from no particular table.
+- **Aggregating** is a third act, not a third mode of `DeriveTableModal`: `AggregateTableModal`
+  (`components/tables/`), opened from a table's own `TableHeader` *Actions* menu under **Agréger**,
+  next to **Dériver**. Its form, `DeriveAggregateForm`, offers a group-by column list, a list of
+  aggregate rows (an alias plus a free SQL expression, the aggregate counterpart of
+  `DeriveFromTableForm`'s computed-column rows), and a condition tree applied before grouping
+  (`FilterNodeEditor` again, plus the same "reprendre un filtre enregistré" copy-in). The geometry
+  column is excluded from the group-by list — grouping it by value makes no sense, though it can
+  still be aggregated (`ST_Union(geom)`) through the free expression field, which is untyped SQL.
+  `useAggregateFromTable` holds the draft and makes the one combination the server refuses
+  (no group-by column and no aggregate) unrepresentable as a submit rather than left for the server
+  to reject.
 - **Updating a column in place** is a separate act from deriving, in `components/tables/`:
   `TransformColumnModal` is the shell, opened from a pencil button on the column's own header
   (`TableColumnHeaderCell`, rendered by `TableRowsPanel`'s grid — a one-item menu here used to render

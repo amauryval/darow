@@ -141,6 +141,25 @@ export interface DeriveSpec {
     conditions?: FilterCondition[]
 }
 
+// One column a guided aggregation computes: a free SQL aggregate expression
+// (`COUNT(*)`, `SUM(height)`) under a chosen alias — the aggregation
+// counterpart of ComputedColumn.
+export interface AggregateColumn {
+    alias: string
+    expression: string
+}
+
+// Matches service.AggregateSpec — a GROUP BY derivation from one source
+// table, distinct from DeriveSpec: an empty groupBy aggregates the whole
+// table into one row, never "every column" (invalid under GROUP BY unless
+// grouped or aggregated).
+export interface AggregateSpec {
+    newTableName: string
+    groupBy?: string[]
+    aggregates?: AggregateColumn[]
+    conditions?: FilterCondition[]
+}
+
 // A filter saved against a table, server-side. Its conditions are the same
 // tree an ad-hoc filter posts, validated against the table's real schema at
 // save time — so a stored filter is always applicable. Deleting the table
