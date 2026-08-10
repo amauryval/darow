@@ -137,8 +137,8 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `settings.ts`,
-  `tablesettings.ts` — one function per endpoint **the
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `session.ts`,
+  `settings.ts`, `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
   return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
   contract is described on its own side, and an unreachable function here is code that rots without
@@ -269,6 +269,7 @@ module level and documents it; that is the exception, not the rule.
 | `useToast` | application notification queue (shared module state) | present |
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` accepts a `Ref<number>` as well as a plain number — a page size resolved asynchronously (a table's effective row limit, `useTableRows`) reloads from page 1 the moment it changes, the same way a sort change does | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
+| `useSession` | who is calling and what they may do, from `GET /api/v1/session` (back `spec.md` §6.7): whether authentication is in force at all, the display name, `canWrite`, and `signIn`/`signOut`, which leave the application for the gateway's own pages through a full navigation — the session is a cookie this application never sees, so acquiring one means coming back through the gateway. Shared module state like `useToast`'s, read once per page load: nothing the application does can change who is calling. A failed probe is treated as authentication off, so a server that did not answer leaves the UI usable rather than locked on a failed request | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
 | `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
@@ -990,6 +991,7 @@ web/
     composables/      one composable per subject (§4)
     components/
       ui/             domain-free primitives (§5)
+      session/        the navbar's account control (§5)
       tables/         table domain components
       sources/        source domain components
       map/            map domain components

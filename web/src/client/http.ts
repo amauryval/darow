@@ -55,6 +55,8 @@ export class ApiError extends Error {
 // a raw "Internal Server Error"/"Not Found" reads as untranslated in an
 // otherwise all-French interface.
 function statusPhrase(code: number): string {
+    if (code === 401) return 'Connexion requise'
+    if (code === 403) return 'Action non autorisée'
     if (code === 404) return 'Introuvable'
     if (code === 409) return 'Conflit'
     if (code === 413) return 'Fichier ou requête trop volumineux'

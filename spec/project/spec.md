@@ -57,11 +57,13 @@ carries the previous name; renaming it is out of scope for the repository itself
 |---|---|
 | `cmd/server` | the single entrypoint; the built binary's import graph |
 | `internal/` | all server code — see [../back/spec.md](../back/spec.md) §9 |
+| `pkg/auth/` | the forward-auth package: **its own Go module** (`darow/pkg/auth`, its own `go.mod`, `go.sum` and `README.md`), standard library only, so another application can import it — the root module reaches it by a `replace` directive, and every Go task runs a second time inside it |
 | `web/` | the Vue 3 admin UI sources — see [../front/spec.md](../front/spec.md) |
 | `internal/webui/dist/` | the UI production build, embedded by `go:embed`; a tracked placeholder until built |
 | `docs/` | generated Swagger only (`docs.go`, `swagger.json`, `swagger.yaml`) |
 | `spec/` | this documentation tree: `back/`, `front/`, `project/` |
 | `data/`, `config.yaml` | the local working directory and its configuration |
+| `config.example.yaml` | every configuration field at its default value, commented — the file to copy, kept in step with the defaults by a test in `internal/config` |
 | `mise.toml` | the tool versions and every task |
 | `Dockerfile`, `.dockerignore` | the multi-stage image build |
 | `.github/workflows/ci.yml` | continuous integration |

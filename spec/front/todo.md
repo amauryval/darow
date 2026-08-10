@@ -26,14 +26,15 @@ instruction, not the patch — the code is written later, against the code as it
 `mise run ui-build` (type-check) and `mise run ui-lint` pass — a type error is part of the chantier,
 not a follow-up.
 
-No chantier is currently open. TODO-F37 (guided aggregation, server counterpart
-`../back/todo.md` TODO-14) was taken up and shipped — `AggregateTableModal`,
-`DeriveAggregateForm`, `useAggregateFromTable`. A retired identifier is never reused, so the
-next chantier recorded here takes `TODO-F38`.
+TODO-F37 (guided aggregation, server counterpart `../back/todo.md` TODO-14) was taken up and shipped
+— `AggregateTableModal`, `DeriveAggregateForm`, `useAggregateFromTable`. A retired identifier is
+never reused, so the next chantier recorded here takes `TODO-F39`.
 
 ## 1. Architecture and code
 
-No chantier is currently open in this section.
+No chantier is currently open in this section. TODO-F38 (handling the `401`/`403` the protected API
+answers) shipped with the session control: `client/session.ts`, `useSession`, `SessionMenu` in the
+navbar, and the two French status phrases in `http.ts` — see `spec.md` §2, §4, §11.
 
 ## 2. User experience
 

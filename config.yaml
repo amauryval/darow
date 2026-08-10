@@ -5,6 +5,7 @@
 # tile cache lifetime) is edited at runtime through the settings table —
 # see spec/back/spec.md.
 server:
+    host: '0.0.0.0' # interface d'écoute ; 127.0.0.1 pour n'accepter que la loopback
     port: 8080
     readTimeoutSec: 15
     writeTimeoutSec: 30
@@ -26,3 +27,11 @@ settings:
     requestTimeoutSec: 30
     cacheMaxItems: 1000 # shared by the metadata and schema LRU caches
     tileMaxItems: 5000
+
+# Public reads, authorized writes. Every field and the full explanation are in
+# config.example.yaml; see also pkg/auth/README.md.
+auth:
+    mode: 'off'
+    # trustedProxies: ['10.0.0.0/8'] # required in proxy mode: the gateway's IP or CIDR
+    # writeUsers: ['alice'] # ids allowed to write
+    # writeGroups: ['editors'] # groups allowed to write — one of the two lists is required in proxy mode

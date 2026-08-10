@@ -35,6 +35,7 @@ place an audit's findings are written — never a `spec.md`.
 | Package / path            | Sections                                                    |
 | ------------------------- | ----------------------------------------------------------- |
 | `cmd/server`              | back §1, §9                                                 |
+| `pkg/auth`                | back §2.7, §6.7 (its own module)                            |
 | `internal/config`         | back §2                                                     |
 | `internal/settings`       | back §2.4, §2.5                                             |
 | `internal/core`           | back §1                                                     |
@@ -74,6 +75,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 2.5 Runtime-editable settings` | settings editable through the API/UI               |
 | `### 2.5.1 Per-table overrides` | a table's own departure from a global setting        |
 | `### 2.6 Command-line flags` | `--workdir` and friends                              |
+| `### 2.7 auth` | the auth block: modes, trusted upstream, who may write, why it is config-only |
 
 ### Storage layer (`internal/storage`, `internal/storage/duckdb`)
 
@@ -122,13 +124,13 @@ place an audit's findings are written — never a `spec.md`.
 | Section                        | Read it when                                     |
 | ------------------------------ | ------------------------------------------------ |
 | `## 6. REST API` | any handler change — the API contract             |
-| `### 6.1 Endpoints` | the endpoint list (largest section — grep it)     |
+| `### 6.1 Endpoints` | the endpoint list, `/session` included (largest section — grep it) |
 | `### 6.2 OGC API - Features` | OGC-conformant routes                             |
 | `### 6.3 Router and middlewares` | mounting, middleware order                       |
 | `### 6.4 Errors` | error → status mapping, error body                |
 | `### 6.5 HTTP tile caching` | tile cache headers                                |
 | `### 6.6 Swagger documentation` | `swag init` annotations                           |
-| `### 6.7 Security — current state` | auth/exposure state, before touching security     |
+| `### 6.7 Security — reads are public, writes are authenticated` | the read/write split, how it is enforced, what is trusted |
 
 ### Domain model (`internal/service`, sources)
 

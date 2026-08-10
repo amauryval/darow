@@ -127,7 +127,8 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
-| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
+| `pkg/auth`                   | who is calling, and may that caller do this (§2.7, §6.7): `Config`, `User`, the `Authenticate`/`Authenticated`/`Authorized` middlewares, and `ServeSession`, the endpoint publishing that answer to a browser (§6.1). **Its own Go module** (`darow/pkg/auth`, reached by a `replace` from the root `go.mod`) importing the standard library alone, so another application can depend on it without dragging DuckDB in — no domain, no error format, no identity provider, and the host application's error body reaches it through `DenyFunc`; `pkg/auth/README.md` is its own documentation |
+| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4), and the `auth` block it embeds from `auth` (§2.7)                 |
 | `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
@@ -157,8 +158,10 @@ error alongside `*Services` for that settings load to fail into.
 
 ## 2. Configuration
 
-A `config.yaml` file at the root, **optional** (defaults apply if it is absent). Order of
-application: defaults → file → `GEOAPI_*` environment variables → validation. A malformed file, an
+A `config.yaml` file at the root, **optional** (defaults apply if it is absent);
+`config.example.yaml` beside it states every field at its default value, commented, and a test in
+`internal/config` fails if the two drift apart. Order of application: defaults → file → `GEOAPI_*`
+environment variables → validation. A malformed file, an
 unparsable variable or an invalid value are fatal errors at startup, never silently ignored.
 Validation collects **all** violations before failing.
 
@@ -168,11 +171,18 @@ File: `internal/config/config.go`.
 
 | Field                | Default | Env variable                         | Constraint |
 | -------------------- | ------- | ------------------------------------ | ---------- |
+| `host`               | `0.0.0.0` | `GEOAPI_SERVER_HOST`               | not empty  |
 | `port`               | 8080    | `GEOAPI_SERVER_PORT`                 | 1..65535   |
 | `readTimeoutSec`     | 15      | `GEOAPI_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
 | `writeTimeoutSec`    | 30      | `GEOAPI_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
 | `idleTimeoutSec`     | 60      | `GEOAPI_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
 | `shutdownTimeoutSec` | 10      | `GEOAPI_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
+
+`host` is the interface the listener binds to, joined to `port` by `cmd/server`. The default accepts
+connections from every interface, which is what a containerized process behind a reverse proxy
+needs: bound to the loopback, a process in a container answers nothing through a published port, and
+no gateway on another host or in another container can reach it. An operator who wants the previous
+behaviour asks for it explicitly, with `127.0.0.1`.
 
 ### 2.2 `duckdb`
 
@@ -212,9 +222,9 @@ which takes priority over everything else (§2.6).
 | `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
 The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
-config-only for the same reason `duckdb.maxSizeBytes` is (§2.2): they sit on `PATCH
-/api/v1/settings`, an unauthenticated route (`limitations.md` LIM-1), and a guard whose own limit is
-edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
+config-only for the same reason `duckdb.maxSizeBytes` is (§2.2), and the same reason the `auth`
+block is (§2.7): they sit on `PATCH /api/v1/settings`, a route every authorized writer reaches
+(§6.7), and a guard whose own limit is edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
 cap (`routes.go`'s `maxBodyBytes` middleware; the upload carries its own, §6.3) and
 `requestTimeoutSec` the same group's request
 timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
@@ -288,6 +298,60 @@ once emitted, applied after the CRS84 transform in every GeoJSON-producing route
 | ----------- | ------------- | ----------------------------------------------- |
 | `--config`  | `config.yaml` | path of the configuration file                  |
 | `--workdir` | empty         | overrides `sources.workDir` after the full load |
+
+### 2.7 `auth`
+
+The block that decides who may write. Its type is **`auth.Config`, declared in `auth`**, not
+in `internal/config`: the package is a self-contained module of its own (§1, §9,
+`pkg/auth/README.md`), so
+it owns its own schema, its own defaults (`auth.DefaultConfig`) and its own `Validate`, and
+`internal/config` embeds it as one field and adds the environment overrides.
+
+| Field            | Default         | Env variable                  | Constraint                          |
+| ---------------- | --------------- | ----------------------------- | ----------------------------------- |
+| `mode`           | `off`           | `GEOAPI_AUTH_MODE`            | `off` or `proxy`                    |
+| `trustedProxies` | empty           | `GEOAPI_AUTH_TRUSTED_PROXIES` | ≥ 1 IP or CIDR in `proxy` mode      |
+| `userHeader`     | `Remote-User`   | `GEOAPI_AUTH_USER_HEADER`     | not empty in `proxy` mode           |
+| `nameHeader`     | `Remote-Name`   | `GEOAPI_AUTH_NAME_HEADER`     | —                                   |
+| `groupsHeader`   | `Remote-Groups` | `GEOAPI_AUTH_GROUPS_HEADER`   | not empty when `writeGroups` is set |
+| `writeUsers`     | empty           | `GEOAPI_AUTH_WRITE_USERS`     | with `writeGroups`, ≥ 1 name between them in `proxy` mode |
+| `writeGroups`    | empty           | `GEOAPI_AUTH_WRITE_GROUPS`    | idem                                |
+| `loginUrl`       | empty           | `GEOAPI_AUTH_LOGIN_URL`       | —                                   |
+| `logoutUrl`      | empty           | `GEOAPI_AUTH_LOGOUT_URL`      | —                                   |
+
+`off` is the default and the mode a development run uses: nobody is identified and nothing is
+refused. `proxy` reads the caller off the headers an authenticating reverse proxy sets — the
+forward-auth contract tinyAuth, Authelia, `oauth2-proxy`, Traefik and Caddy all speak. **No identity
+provider is named anywhere**: which headers carry the identity, which upstream may set them, and
+which groups this server accepts is the whole configuration, so changing gateway is a configuration
+edit and no code change.
+
+`writeUsers` and `writeGroups` are the **authorization** half of the block, and naming somebody in
+one of the two is mandatory in `proxy` mode for the reason §6.7 states: being authenticated is not
+being authorized, and a configuration where every caller the gateway lets through may also write is
+an authorization that decides nothing. `writeUsers` matches `userHeader`, `writeGroups` matches
+`groupsHeader`, and either one admits a caller. Both exist because several gateways know no group
+for their own local accounts — tinyauth fills `Remote-Groups` for OIDC and LDAP only — so a
+groups-only model would leave such an installation able to authenticate everybody and authorize
+nobody. **The server holds no user of its own**: the accounts live in the gateway, this block only
+names which of them may write, with the installation's own names.
+
+`loginUrl` and `logoutUrl` are the gateway's own pages. The server hosts no sign-in screen and never
+will (§6.7), so they are the only way the admin UI can offer a link to one; `GET /api/v1/session`
+serves them beside the caller. Both empty is legitimate — the UI then shows an account with no
+sign-in link rather than a link that goes nowhere.
+
+**Config-only, like §2.4's guards and for the same reason.** The block never reaches the `settings`
+table and never appears on `PATCH /api/v1/settings` — a guard editable through the surface it guards
+is not a guard, and that route is precisely one of the surfaces being guarded. Turning
+authentication on or off costs a restart.
+
+**A half-configured block is fatal at startup**, collected with every other violation by
+`config.Load` (§2): `proxy` with no trusted upstream, `proxy` with an unparseable one, `proxy` with
+no `userHeader`, `proxy` naming nobody in `writeUsers` or `writeGroups`, `writeGroups` with no
+`groupsHeader`. An authentication that loads but authenticates nobody, or an authorization that
+allows everyone it authenticated, would leave the API open while reading as closed — worse than
+none.
 
 ---
 
@@ -1113,6 +1177,12 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | POST   | `/api/v1/tables/{tableId}/neighbours`                 | the features within `buffer` meters of a GeoJSON geometry (`ST_Intersects` against `ST_Buffer`), minus the rows named by `exclude` — what an edit session snaps to and carries along |
 | GET    | `/api/v1/tables/{tableId}/filtered-extent`            | extent of the rows matching a filter, to recentre a map                                                                                                                              |
 
+**Session**
+
+| Method | Path                 | Description                                                                                             |
+| ------ | -------------------- | --------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/session`    | the current caller: `enabled` (is authentication in force at all), `authenticated`, `userId`, `name`, `groups`, `canWrite`, and the gateway's `loginUrl`/`logoutUrl` (§2.7). A **read**, so it answers an anonymous caller too — that is what lets a client offer a sign-in instead of discovering the refusal on the first write. The only route served by a handler outside `router/handlers`: `auth.Authenticator.ServeSession` (§6.7) |
+
 **Settings**
 
 | Method | Path                 | Description                                                                                             |
@@ -1169,8 +1239,15 @@ consistent with the all-JSON style of the rest of the API.
 
 File: `internal/router/routes.go`.
 
-The global chain, in order: `RequestID` → structured `slog` logging → `Recoverer` → request body
-cap.
+The global chain, in order: `RequestID` → `auth.Authenticator.Authenticate` → structured `slog`
+logging → `Recoverer` → request body cap.
+
+-   **Authentication** (`Authenticate`, `auth`): resolves the caller once and puts an
+    `auth.User` in the request context — anonymous rather than absent when nobody is identified, so
+    no handler downstream has to deal with a missing value. It **refuses nothing**: reads are public
+    (§6.7). It sits above the logger so a request's log line carries the caller's id beside the
+    request id (`middleware_log.go`), and every route is covered, `/ui`, `/swagger` and the ops
+    routes included. Authorization is a separate middleware, described in §6.7.
 
 Every table/row/geo/source handler holds `SettingsService` through the same narrow
 `Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
@@ -1212,16 +1289,18 @@ geometry through a generic path). Used by `/filter`, `/distinct`, the rows' `sor
 
 A single error body: `{"error", "message", "code", "requestId"}` (`router/response/response.go`).
 `error` is a stable, coarse, machine-readable discriminator (`errorCode`, e.g. `not_found`,
-`bad_request`, `timeout`, `internal_error`) a client can switch on without matching on prose;
+`bad_request`, `unauthorized`, `forbidden`, `timeout`, `internal_error`) a client can switch on
+without matching on prose;
 `message` is the human-readable detail; `requestId` is the same identifier `middleware.RequestID`
 attaches to the request and the server log line, so a caller can quote it and an operator can find
 the matching entry.
 
 **A 5xx carries the same underlying message a 4xx does** — `err.Error()`, unmasked. This is a
-deliberate trade-off, not an oversight: the server is designed for a trusted network, never exposed
-directly on the Internet (§6.7, `LIM-1`), so the diagnostic value of the raw message (which may name
-a `physicalName` or quote a DuckDB error verbatim) outweighs what masking it behind the status's
-generic text would buy on this deployment model. A 5xx is still logged server-side with the request
+deliberate trade-off, not an oversight: the diagnostic value of the raw message (which may name a
+`physicalName` or quote a DuckDB error verbatim) is judged to outweigh what masking it behind the
+status's generic text would buy. It rested on the server never being exposed at all, a premise §6.7
+has narrowed — `improvements.md` IMP-17 is the open question of whether a non-operator caller should
+still see it. A 5xx is still logged server-side with the request
 identifier, for the case where the caller doesn't relay what they saw.
 
 A service showing a clean message instead of an internal cause's raw text — a DuckDB error too far
@@ -1248,6 +1327,8 @@ overrun budget from a genuine internal failure.
 
 | Error type                      | Status                                              |
 | ------------------------------- | --------------------------------------------------- |
+| `auth.ErrUnauthenticated`       | 401 (written by the guard itself, §6.7)             |
+| `auth.ErrForbidden`             | 403 (written by the guard itself, §6.7)             |
 | `service.ValidationError`       | 400                                                 |
 | `service.ExportValidationError` | 400                                                 |
 | `storage.InvalidSortError`      | 400                                                 |
@@ -1261,8 +1342,11 @@ overrun budget from a genuine internal failure.
 ### 6.5 HTTP tile caching
 
 On top of the application cache (rule 20), `GET /tiles/{z}/{x}/{y}` emits an `ETag` derived from
-`UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60` —
-nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
+`UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60`.
+`public` is correct because a tile is a read and every read is open to everyone (§6.7): no shared
+cache can serve one caller a tile another was not entitled to. It stops being correct the day
+authorization goes finer than global (`improvements.md` IMP-18), and would become `private` then.
+Nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
 touching storage.
 
 ### 6.6 Swagger documentation
@@ -1271,17 +1355,77 @@ Generated by `swag init` from the handler annotations (`mise run docs`). `docs/d
 `docs/swagger.json` and `docs/swagger.yaml` are **generated**: never edit them by hand. Served under
 `/swagger/`.
 
-### 6.7 Security — current state
+### 6.7 Security — reads are public, writes are authenticated
 
-**There is no authentication, no authorization, no CORS and no rate limiting.** Every write route
-(`POST /rows`, `DELETE /tables/{id}`, `POST /derive`, `POST /sources/upload`,
-`DELETE /sources/{name}`) is open. This is consistent with the scope (rule 16): the server is
-designed for deployment on a trusted network or behind a reverse proxy carrying those functions.
-**It is not an oversight, it is a decision** — but it rules out direct exposure on the Internet.
+**Every read is open to everyone; every route that changes state demands an authenticated caller.**
+That is the whole authorization model, and it is stated once here rather than route by route:
 
-The protections in place are: request body cap, pagination caps, per-request timeout, systematic
-whitelisting of identifiers and columns, restriction of `/derive` to registered tables, and
-confinement of file paths to the `workDir` cache.
+-   **Read** — every `GET`, plus the `POST`s that only query: `/tables/{tableId}/filter`, `/bbox`,
+    `/neighbours`, `/rows/batch`, `/columns/{col}/transform/preview`, `/sources/refresh` (a rescan
+    of `workDir` writes nothing), and the whole `/ogc` group. The ops routes `/healthz` and
+    `/readyz` are reads too, and must stay reachable without traversing the gateway: an
+    orchestrator's probe carries no credentials, and a readiness check behind authentication turns
+    an authentication outage into a rolling restart. `/diagnostics`, `/swagger/*` and `/ui/*` are
+    reads as well, deliberately — the same decision, not an oversight of where they were registered.
+-   **Write** — everything else: row create/update/delete, `/columns` and `/columns/{col}/transform`,
+    table rename and delete, the `/filters` writes, per-table and global settings writes, `/derive`,
+    `/derive-from-table`, `/aggregate-from-table`, `/sources/upload`, `/sources/{name}/load` and
+    `DELETE /sources/{name}`.
+
+**Authentication and authorization are two questions, answered by two middlewares** (`pkg/auth`, a
+module of its own so another application can import it). `Authenticate`
+(§6.3) only resolves the caller. On a write route, `auth.Authenticator.Authenticated` then answers
+"is anybody calling" with `401` (`unauthorized`), and `CanWrite` — `Authorized` against the
+`auth.Policy` §2.7's `writeUsers`/`writeGroups` build — answers "may this caller write" with `403`
+(`forbidden`). **Being known is never being allowed**: a caller the gateway vouched for still has to
+be named by this server, which is why the two lists cannot both be empty. The order matters and is
+always the same: an anonymous caller gets the `401`, never the `403` of a decision nobody was there
+to take.
+
+Both refusals go through the same error envelope as every other exit out of the router (§6.4) —
+`cmd/server` hands the package `response.WriteError` as its `DenyFunc`, so `auth` imposes no
+body of its own. The pair is mounted with `Use` on **one `Group` per level of the route tree**,
+never once over a subtree: reads
+and writes share every path, and a route registered outside a group to escape that group's other
+middlewares would escape this one with it — which is exactly the case of `/sources/upload`, outside
+the `/api/v1` group for its own body cap (§6.3) and carrying the guard on its own group. `routes_test.go`
+holds the inventory of every write route and asserts each answers `401` with no credentials, so a
+route added later without a thought for authorization fails the build rather than shipping open.
+
+**Trust.** In `proxy` mode (§2.7) the identity is a request header, therefore client-controlled: it
+is read only when the request's peer falls inside `auth.trustedProxies`, and from any other peer the
+identity headers are **cleared off the request** — together with `Forwarded`, `X-Forwarded-For`,
+`X-Forwarded-Host` and `X-Forwarded-Proto`, which `FeaturesHandler` builds its OGC links from
+(§6.2). Clearing beats rejecting: a header the gateway forgot to overwrite must never be read.
+With `auth.mode: off` — the default, and a development run — nothing is identified, nothing is
+refused and nothing is stripped.
+
+**What a client is told.** `GET /api/v1/session` (§6.1) publishes the decision this section
+describes, for the caller of that very request: whether authentication is in force, who they are,
+whether they may write, and where they sign in or out. It exists because the alternative is a client
+guessing — a browser application cannot evaluate `writeUsers`/`writeGroups`, and discovering the
+answer through a failed write costs the user the work they had just done. It is a read like any
+other: anonymous, it answers `authenticated: false` rather than `401`.
+
+**Its handler is `auth.Authenticator.ServeSession`, in the package, not in `router/handlers`** — the
+one endpoint of this API whose body, field names and Swagger annotations are the `pkg/auth` module's
+rather than this repository's. The package is meant to be reused (§1), and a session endpoint every
+consumer would have to rewrite by hand is a decision made twice; what stays the application's is the
+path it is mounted at, here inside the `/api/v1` group, above the write groups so it answers
+anonymously. `Session(ctx)` returns the same value as a Go struct for a caller wanting its own body.
+`swag` walks the source tree rather than the module graph, so the annotations are picked up with no
+change to the generation command (§6.6).
+
+**Accountability.** `slogLogger` adds the caller's id to a request's log line when there is one
+(§6.3), which is what ties a destructive write — `DELETE /tables/{tableId}`, a column transform that
+LIM-17 says has no undo — to whoever asked for it.
+
+**Not done, on purpose** (`limitations.md` LIM-19): no CORS and no rate limiting, both delegated to
+the same gateway. Authorization is global, never per table or per row (`improvements.md` IMP-18).
+
+The protections around all of this are unchanged: request body cap, pagination caps, per-request
+timeout, systematic whitelisting of identifiers and columns, restriction of `/derive` to registered
+tables, and confinement of file paths to the `workDir` cache.
 
 ---
 
@@ -1490,6 +1634,10 @@ read-only `SELECT __pkey, <col> AS before, (<assignment>) AS after ... LIMIT n`)
 
 ```
 cmd/server/            entrypoint
+pkg/auth/              self-contained forward-auth package: Config, User, Policy, the three
+                        middlewares (§2.7, §6.7). Its own Go module, with its own go.mod/go.sum and
+                        its own README.md — outside internal/ and outside the root module so another
+                        application can import it; the root module reaches it by a replace directive
 internal/
   config/              bootstrap-only configuration loading and validation (§2.1-2.4)
   settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
@@ -1537,12 +1685,13 @@ test files build on — sits in `fixtures_test.go`, which tests nothing itself; 
 
 | Level             | Approach                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pkg/auth`            | header extraction, trusted/untrusted peers, group authorization, both middlewares — standard library and `httptest` only, no other package of this repository                                                                                                                                                                                                                                                                                                  |
 | `config`          | loading with/without a file, environment overrides, invalid cases                                                                                                                                                                                                                                                                                                                                                                                             |
 | `storage`         | unit tests of the primitives (`BuildFilter`, identifiers, sorting)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` and `write_locks.go` alone (opening, pool, per-scope write locks, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
 | `service`         | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it                                                                                   |
 | `router/handlers` | `httptest` + light doubles of the ports declared in `ports.go`                                                                                                                                                                                                                                                                                                                                                                                                |
-| `router`          | route and middleware wiring                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `router`          | route and middleware wiring, plus the inventory of every write route against the authorization guard (§6.7)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 Rule 17: a struct, method or handler delivered without its test is not finished.
 
@@ -1555,7 +1704,12 @@ _tested and vetted_, never linked — the binary is made only of `cmd/server`'s 
 `internal/webui` embeds `dist/` alone — but that is CI time spent on third-party code and a
 potential `gofmt` failure on code we do not control. Since the go tool has no exclusion mechanism,
 the package list is filtered explicitly (`go list ./... | grep -v /web/`) and `gofmt` only sweeps
-`cmd internal docs`.
+`cmd internal pkg docs`.
+
+`pkg/auth` is a **second module**, so `./...` does not reach into it either: `test`, `test-race` and
+`lint` each run a second time inside its directory, and the CI workflow has the matching step. The
+`Dockerfile` copies its `go.mod`/`go.sum` before `go mod download`, since the root module's `replace`
+points at a directory that must already exist.
 
 ---
 

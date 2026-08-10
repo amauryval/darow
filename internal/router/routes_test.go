@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"darow/internal/router/response"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
+	"darow/pkg/auth"
 )
 
 type routerDeps struct {
@@ -74,7 +76,15 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 }
 
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
-	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0)
+	return d.newAuthenticatedRouter(ready, auth.DefaultConfig())
+}
+
+func (d routerDeps) newAuthenticatedRouter(ready func(context.Context) error, authCfg auth.Config) *Router {
+	authenticator, err := auth.New(authCfg, response.WriteError)
+	if err != nil {
+		panic(err)
+	}
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, authenticator)
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {
@@ -307,5 +317,163 @@ func Test_Router_Setup(t *testing.T) {
 		rec = doRequest(handler, http.MethodGet, "/api/v1/tables/id-2/export", 0)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.False(t, exportRouteHadDeadline)
+	})
+}
+
+// proxyAuthConfig authenticates through the headers of a proxy at the
+// address httptest.NewRequest gives every request it builds, and lets the
+// "editors" group write.
+func proxyAuthConfig() auth.Config {
+	cfg := auth.DefaultConfig()
+	cfg.Mode = auth.ModeProxy
+	cfg.TrustedProxies = []string{"192.0.2.1/32"}
+	cfg.WriteGroups = []string{"editors"}
+	return cfg
+}
+
+func doAuthenticatedRequest(handler http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewReader(nil))
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// writeRoutes is every route that changes state, the inventory the
+// authorization guard is checked against: a route added without a thought
+// for it fails here rather than shipping open.
+func writeRoutes() [][2]string {
+	return [][2]string{
+		{http.MethodPost, "/api/v1/sources/upload"},
+		{http.MethodPost, "/api/v1/sources/roads.geojson/load"},
+		{http.MethodDelete, "/api/v1/sources/roads.geojson"},
+		{http.MethodPost, "/api/v1/derive"},
+		{http.MethodPatch, "/api/v1/tables/id-1"},
+		{http.MethodDelete, "/api/v1/tables/id-1"},
+		{http.MethodPost, "/api/v1/tables/id-1/columns"},
+		{http.MethodPost, "/api/v1/tables/id-1/derive-from-table"},
+		{http.MethodPost, "/api/v1/tables/id-1/aggregate-from-table"},
+		{http.MethodPatch, "/api/v1/tables/id-1/settings"},
+		{http.MethodDelete, "/api/v1/tables/id-1/settings"},
+		{http.MethodPost, "/api/v1/tables/id-1/filters"},
+		{http.MethodPatch, "/api/v1/tables/id-1/filters/f-1"},
+		{http.MethodDelete, "/api/v1/tables/id-1/filters/f-1"},
+		{http.MethodPost, "/api/v1/tables/id-1/columns/name/transform"},
+		{http.MethodPost, "/api/v1/tables/id-1/rows"},
+		{http.MethodPatch, "/api/v1/tables/id-1/rows"},
+		{http.MethodPatch, "/api/v1/tables/id-1/rows/1"},
+		{http.MethodDelete, "/api/v1/tables/id-1/rows/1"},
+		{http.MethodPatch, "/api/v1/settings"},
+	}
+}
+
+// readRoutes is a route of every read family, including the ones shaped as
+// a POST and the ops routes an orchestrator's probe reaches with no
+// credentials at all.
+func readRoutes() [][2]string {
+	return [][2]string{
+		{http.MethodGet, "/healthz"},
+		{http.MethodGet, "/readyz"},
+		{http.MethodGet, "/diagnostics"},
+		{http.MethodGet, "/ui/"},
+		{http.MethodGet, "/api/v1/sources"},
+		{http.MethodPost, "/api/v1/sources/refresh"},
+		{http.MethodGet, "/api/v1/tables"},
+		{http.MethodGet, "/api/v1/tables/id-1"},
+		{http.MethodGet, "/api/v1/tables/id-1/schema"},
+		{http.MethodPost, "/api/v1/tables/id-1/filter"},
+		{http.MethodGet, "/api/v1/tables/id-1/settings"},
+		{http.MethodGet, "/api/v1/tables/id-1/filters"},
+		{http.MethodGet, "/api/v1/tables/id-1/columns/name/distinct"},
+		{http.MethodPost, "/api/v1/tables/id-1/columns/name/transform/preview"},
+		{http.MethodGet, "/api/v1/tables/id-1/rows"},
+		{http.MethodPost, "/api/v1/tables/id-1/rows/batch"},
+		{http.MethodGet, "/api/v1/tables/id-1/rows/1"},
+		{http.MethodPost, "/api/v1/tables/id-1/bbox"},
+		{http.MethodPost, "/api/v1/tables/id-1/neighbours"},
+		{http.MethodGet, "/api/v1/tables/id-1/export"},
+		{http.MethodGet, "/api/v1/session"},
+		{http.MethodGet, "/api/v1/settings"},
+		{http.MethodGet, "/api/v1/ogc/"},
+	}
+}
+
+func Test_Router_Setup_Authorization(t *testing.T) {
+	t.Run("refuses every write route to an anonymous caller", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+
+		for _, route := range writeRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doRequest(handler, route[0], route[1], 0)
+
+				assert.Equal(t, http.StatusUnauthorized, rec.Code)
+				var body response.ErrorResponse
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+				assert.Equal(t, "unauthorized", body.Error)
+			})
+		}
+	})
+
+	t.Run("leaves every read route open to an anonymous caller", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		deps.storage.On("GetMetadata", mock.Anything, mock.Anything).Return(storage.Metadata{}, errors.New("not wired")).Maybe()
+		deps.storage.On("ListTables", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("not wired")).Maybe()
+		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+
+		for _, route := range readRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doRequest(handler, route[0], route[1], 0)
+
+				assert.NotEqual(t, http.StatusUnauthorized, rec.Code)
+				assert.NotEqual(t, http.StatusForbidden, rec.Code)
+			})
+		}
+	})
+
+	t.Run("refuses a write to a caller outside the authorized groups", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+
+		rec := doAuthenticatedRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", map[string]string{
+			"Remote-User":   "alice",
+			"Remote-Groups": "viewers",
+		})
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+		var body response.ErrorResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "forbidden", body.Error)
+	})
+
+	t.Run("lets an authorized caller reach the handler", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		deps.storage.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil)
+		deps.storage.On("Remove", mock.Anything, "id-1").Return(nil)
+		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+
+		rec := doAuthenticatedRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", map[string]string{
+			"Remote-User":   "alice",
+			"Remote-Groups": "viewers,editors",
+		})
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("leaves every write route open when authentication is off", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		deps.storage.On("GetMetadata", mock.Anything, mock.Anything).Return(storage.Metadata{}, errors.New("not wired")).Maybe()
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
+
+		for _, route := range writeRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doRequest(handler, route[0], route[1], 0)
+
+				assert.NotEqual(t, http.StatusUnauthorized, rec.Code)
+				assert.NotEqual(t, http.StatusForbidden, rec.Code)
+			})
+		}
 	})
 }

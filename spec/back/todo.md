@@ -21,7 +21,14 @@ the file, and a wrong line sends the reader to the wrong place with confidence. 
 search and stays true. What stays out is **code itself**: no snippet, no full signature, no diff.
 Write the instruction, not the patch — the code is written later, against the code as it is then.
 
-No chantier is currently open. TODO-14 (guided aggregation, front counterpart
-[`../front/todo.md`](../front/todo.md) TODO-F37) and TODO-18 (in-place column transform, front
-counterpart TODO-F44) were both taken up and shipped — see `spec.md` §5.11, §8.2, §8.3. A retired
-identifier is never reused, so the next chantier recorded here takes `TODO-19`.
+
+No chantier is currently open. TODO-19 through TODO-26 — protecting the API — all shipped in one
+pass: `auth` (its own `README.md`), the `auth` configuration block, the trusted upstream and
+the header stripping, the caller in the context and in the log line, the read/write split enforced by
+the `Authenticated`/`CanWrite` pair and its route inventory in `routes_test.go`, and the
+`unauthorized`/`forbidden` codes in the error envelope — see `spec.md` §2.7, §6.3, §6.4, §6.7. TODO-26 (the tile
+`Cache-Control`) closed without a change: reads being public, `public` stays correct, and §6.5 now
+says why and when it would stop being. TODO-14 (guided aggregation, front counterpart [`../front/todo.md`](../front/todo.md)
+TODO-F37) and TODO-18 (in-place column transform, front counterpart TODO-F44) were both taken up and
+shipped — see `spec.md` §5.11, §8.2, §8.3. A retired identifier is never reused, so the next chantier
+recorded here takes `TODO-27`.

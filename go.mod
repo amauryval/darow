@@ -3,6 +3,7 @@ module darow
 go 1.26.4
 
 require (
+	darow/pkg/auth v0.0.0
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -49,3 +50,5 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace darow/pkg/auth => ./pkg/auth

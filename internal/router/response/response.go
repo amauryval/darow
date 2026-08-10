@@ -57,6 +57,10 @@ func errorCode(code int) string {
 	switch code {
 	case http.StatusBadRequest:
 		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
 	case http.StatusNotFound:
 		return "not_found"
 	case http.StatusConflict:
@@ -80,12 +84,13 @@ func errorCode(code int) string {
 
 // WriteError writes a JSON error response with the given status code. A 5xx
 // is additionally logged server-side, but the client gets the same
-// underlying message a 4xx does — the server is designed for a trusted
-// network (LIM-1), never exposed directly on the Internet, so the detail
-// (which may name a physicalName or quote a DuckDB error) is worth more to
-// an operator diagnosing a failure than the risk of a generic-status-text
-// alternative is worth avoiding. If err wraps a *service.DisplayError, its
-// DisplayMessage is sent instead of the wrapped cause's own text — a
+// underlying message a 4xx does: the detail (which may name a physicalName
+// or quote a DuckDB error) is worth more to an operator diagnosing a
+// failure than the risk of a generic-status-text alternative is worth
+// avoiding. Reads being open to everyone (LIM-20), IMP-17 is the open
+// question of whether an anonymous caller should still see it. If err
+// wraps a *service.DisplayError, its DisplayMessage is sent instead of the
+// wrapped cause's own text — a
 // service reaches for that when the cause's raw message is too internal to
 // show as is, without changing how MapServiceError classifies the failure.
 func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {

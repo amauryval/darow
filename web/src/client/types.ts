@@ -353,3 +353,19 @@ export interface TransformPreview {
     matched: number
     sample: TransformSample[]
 }
+
+// Matches handlers.SessionDTO: what the server knows about the caller of
+// the current request. `enabled` false means the server runs with
+// authentication off — nobody is identified and everybody may write, so a
+// client hides the whole notion. `loginUrl`/`logoutUrl` are the gateway's
+// own pages: the server never hosts a sign-in screen (back spec.md §6.7).
+export interface Session {
+    enabled: boolean
+    authenticated: boolean
+    userId?: string
+    name?: string
+    groups: string[]
+    canWrite: boolean
+    loginUrl?: string
+    logoutUrl?: string
+}

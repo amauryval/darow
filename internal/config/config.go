@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"darow/internal/settings"
+	"darow/pkg/auth"
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
@@ -18,8 +19,8 @@ import (
 const envPrefix = "GEOAPI_"
 
 // Config holds the parameters needed to initialize the server itself, plus
-// the settings that are memory/availability guards on an unauthenticated
-// route (TODO-17) rather than a product decision an operator retunes while
+// the settings that are memory/availability guards on the settings route
+// (TODO-17) rather than a product decision an operator retunes while
 // serving — those two categories are what Settings holds, restart-only.
 // Everything an operator legitimately retunes live (row/list limits, cache
 // TTL, geometry bounds, the tile cache lifetime) lives instead in the
@@ -30,17 +31,21 @@ type Config struct {
 	DuckDB   DuckDBConfig   `yaml:"duckdb"`
 	Sources  SourcesConfig  `yaml:"sources"`
 	Settings SettingsConfig `yaml:"settings"`
+	Auth     auth.Config    `yaml:"auth"`
 }
 
-// ServerConfig holds HTTP server settings: the listen port, per-connection
-// timeouts, and how long a graceful shutdown waits for in-flight requests
-// before giving up.
+// ServerConfig holds HTTP server settings: the listen host and port,
+// per-connection timeouts, and how long a graceful shutdown waits for
+// in-flight requests before giving up. Host is the interface the listener
+// binds to — the default accepts connections from anywhere, which is what a
+// containerized process behind a reverse proxy needs.
 type ServerConfig struct {
-	Port               int `yaml:"port"`
-	ReadTimeoutSec     int `yaml:"readTimeoutSec"`
-	WriteTimeoutSec    int `yaml:"writeTimeoutSec"`
-	IdleTimeoutSec     int `yaml:"idleTimeoutSec"`
-	ShutdownTimeoutSec int `yaml:"shutdownTimeoutSec"`
+	Host               string `yaml:"host"`
+	Port               int    `yaml:"port"`
+	ReadTimeoutSec     int    `yaml:"readTimeoutSec"`
+	WriteTimeoutSec    int    `yaml:"writeTimeoutSec"`
+	IdleTimeoutSec     int    `yaml:"idleTimeoutSec"`
+	ShutdownTimeoutSec int    `yaml:"shutdownTimeoutSec"`
 }
 
 // DuckDBConfig holds the DuckDB database file path and connection pool
@@ -78,6 +83,7 @@ type SettingsConfig struct {
 func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
+			Host:               "0.0.0.0",
 			Port:               8080,
 			ReadTimeoutSec:     15,
 			WriteTimeoutSec:    30,
@@ -96,6 +102,7 @@ func defaultConfig() Config {
 			CacheMaxItems:     settings.CacheMaxItems,
 			TileMaxItems:      settings.TileMaxItems,
 		},
+		Auth: auth.DefaultConfig(),
 	}
 }
 
@@ -139,6 +146,7 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 	}
 
+	envString(&cfg.Server.Host, envPrefix+"SERVER_HOST")
 	check(envInt(&cfg.Server.Port, envPrefix+"SERVER_PORT"))
 	check(envInt(&cfg.Server.ReadTimeoutSec, envPrefix+"SERVER_READ_TIMEOUT_SEC"))
 	check(envInt(&cfg.Server.WriteTimeoutSec, envPrefix+"SERVER_WRITE_TIMEOUT_SEC"))
@@ -157,6 +165,16 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.Settings.RequestTimeoutSec, envPrefix+"SETTINGS_REQUEST_TIMEOUT_SEC"))
 	check(envInt(&cfg.Settings.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
 	check(envInt(&cfg.Settings.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
+
+	envString(&cfg.Auth.Mode, envPrefix+"AUTH_MODE")
+	envStringSlice(&cfg.Auth.TrustedProxies, envPrefix+"AUTH_TRUSTED_PROXIES")
+	envString(&cfg.Auth.UserHeader, envPrefix+"AUTH_USER_HEADER")
+	envString(&cfg.Auth.NameHeader, envPrefix+"AUTH_NAME_HEADER")
+	envString(&cfg.Auth.GroupsHeader, envPrefix+"AUTH_GROUPS_HEADER")
+	envStringSlice(&cfg.Auth.WriteUsers, envPrefix+"AUTH_WRITE_USERS")
+	envStringSlice(&cfg.Auth.WriteGroups, envPrefix+"AUTH_WRITE_GROUPS")
+	envString(&cfg.Auth.LoginURL, envPrefix+"AUTH_LOGIN_URL")
+	envString(&cfg.Auth.LogoutURL, envPrefix+"AUTH_LOGOUT_URL")
 
 	return errors.Join(errs...)
 }
@@ -211,6 +229,7 @@ func (cfg Config) validate() error {
 		}
 	}
 
+	check(cfg.Server.Host != "", "server.host must not be empty")
 	check(cfg.Server.Port > 0 && cfg.Server.Port <= 65535, "server.port must be between 1 and 65535")
 	check(cfg.Server.ReadTimeoutSec >= 0, "server.readTimeoutSec must not be negative")
 	check(cfg.Server.WriteTimeoutSec >= 0, "server.writeTimeoutSec must not be negative")
@@ -238,6 +257,8 @@ func (cfg Config) validate() error {
 		fmt.Sprintf("settings.cacheMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
 	check(cfg.Settings.TileMaxItems > 0 && cfg.Settings.TileMaxItems <= settings.CacheMaxItemsCeiling,
 		fmt.Sprintf("settings.tileMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
+
+	errs = append(errs, cfg.Auth.Validate()...)
 
 	return errors.Join(errs...)
 }

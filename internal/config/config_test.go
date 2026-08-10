@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/settings"
+	"darow/pkg/auth"
 )
 
 func writeConfigFile(t *testing.T, content string) string {
@@ -173,4 +174,133 @@ func Test_Load_SettingsEnvOverride(t *testing.T) {
 	assert.Equal(t, 45, cfg.Settings.RequestTimeoutSec)
 	assert.Equal(t, 500, cfg.Settings.CacheMaxItems)
 	assert.Equal(t, 2000, cfg.Settings.TileMaxItems)
+}
+
+func Test_Load_ServerHostDefaultsToEveryInterface(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, "0.0.0.0", cfg.Server.Host)
+}
+
+func Test_Load_ServerHostOverrides(t *testing.T) {
+	t.Run("from the file", func(t *testing.T) {
+		path := writeConfigFile(t, "server:\n  host: 127.0.0.1\n")
+
+		cfg, err := Load(path)
+
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1", cfg.Server.Host)
+	})
+
+	t.Run("from the environment", func(t *testing.T) {
+		path := writeConfigFile(t, "server:\n  host: 127.0.0.1\n")
+		t.Setenv("GEOAPI_SERVER_HOST", "::1")
+
+		cfg, err := Load(path)
+
+		require.NoError(t, err)
+		assert.Equal(t, "::1", cfg.Server.Host)
+	})
+
+	t.Run("empty is refused", func(t *testing.T) {
+		path := writeConfigFile(t, "server:\n  host: \"\"\n")
+
+		_, err := Load(path)
+
+		assert.Error(t, err)
+	})
+}
+
+func Test_Load_AuthDefaultsToOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, auth.DefaultConfig(), cfg.Auth)
+}
+
+func Test_Load_AuthFromFile(t *testing.T) {
+	path := writeConfigFile(t, "auth:\n  mode: proxy\n  trustedProxies: [\"10.0.0.0/8\"]\n  writeGroups: [\"editors\"]\n  writeUsers: [\"root\"]\n")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, auth.ModeProxy, cfg.Auth.Mode)
+	assert.Equal(t, []string{"10.0.0.0/8"}, cfg.Auth.TrustedProxies)
+	assert.Equal(t, []string{"editors"}, cfg.Auth.WriteGroups)
+	assert.Equal(t, []string{"root"}, cfg.Auth.WriteUsers)
+	assert.Equal(t, "Remote-User", cfg.Auth.UserHeader)
+}
+
+func Test_Load_AuthEnvOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	t.Setenv("GEOAPI_AUTH_MODE", "proxy")
+	t.Setenv("GEOAPI_AUTH_TRUSTED_PROXIES", "10.0.0.0/8,192.0.2.10")
+	t.Setenv("GEOAPI_AUTH_USER_HEADER", "X-Auth-User")
+	t.Setenv("GEOAPI_AUTH_NAME_HEADER", "X-Auth-Name")
+	t.Setenv("GEOAPI_AUTH_GROUPS_HEADER", "X-Auth-Groups")
+	t.Setenv("GEOAPI_AUTH_WRITE_USERS", "root")
+	t.Setenv("GEOAPI_AUTH_WRITE_GROUPS", "editors,admins")
+	t.Setenv("GEOAPI_AUTH_LOGIN_URL", "https://auth.example/login")
+	t.Setenv("GEOAPI_AUTH_LOGOUT_URL", "https://auth.example/logout")
+
+	cfg, err := Load(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, auth.Config{
+		Mode:           auth.ModeProxy,
+		TrustedProxies: []string{"10.0.0.0/8", "192.0.2.10"},
+		UserHeader:     "X-Auth-User",
+		NameHeader:     "X-Auth-Name",
+		GroupsHeader:   "X-Auth-Groups",
+		WriteUsers:     []string{"root"},
+		WriteGroups:    []string{"editors", "admins"},
+		LoginURL:       "https://auth.example/login",
+		LogoutURL:      "https://auth.example/logout",
+	}, cfg.Auth)
+}
+
+func Test_Load_RejectsInvalidAuth(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"unknown mode", "auth:\n  mode: oidc\n"},
+		{"proxy mode with no trusted upstream", "auth:\n  mode: proxy\n  writeGroups: [\"editors\"]\n"},
+		{"proxy mode with an unparseable upstream", "auth:\n  mode: proxy\n  trustedProxies: [\"nope\"]\n  writeGroups: [\"editors\"]\n"},
+		{"proxy mode with no user header", "auth:\n  mode: proxy\n  trustedProxies: [\"10.0.0.0/8\"]\n  userHeader: \"\"\n  writeGroups: [\"editors\"]\n"},
+		{"proxy mode naming nobody as allowed to write", "auth:\n  mode: proxy\n  trustedProxies: [\"10.0.0.0/8\"]\n"},
+		{"write groups with no groups header", "auth:\n  mode: proxy\n  trustedProxies: [\"10.0.0.0/8\"]\n  groupsHeader: \"\"\n  writeGroups: [\"editors\"]\n"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeConfigFile(t, c.content)
+
+			_, err := Load(path)
+
+			assert.Error(t, err)
+		})
+	}
+}
+
+// Test_ExampleConfigMatchesDefaults keeps config.example.yaml honest: it
+// documents every field at its default value, so a default that moves
+// without the example moving with it fails here rather than misleading
+// whoever copies the file. The two empty lists are the only difference the
+// YAML can produce — an empty sequence unmarshals to an empty slice where
+// the default is nil.
+func Test_ExampleConfigMatchesDefaults(t *testing.T) {
+	cfg, err := Load("../../config.example.yaml")
+
+	require.NoError(t, err)
+	want := defaultConfig()
+	want.Auth.TrustedProxies = []string{}
+	want.Auth.WriteUsers = []string{}
+	want.Auth.WriteGroups = []string{}
+	assert.Equal(t, want, cfg)
 }

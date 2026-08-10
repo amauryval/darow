@@ -17,7 +17,10 @@ FROM golang:1.26-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+# pkg/auth is a nested module the main one reaches through a replace directive,
+# so its go.mod has to exist before go mod download resolves anything.
 COPY go.mod go.sum ./
+COPY pkg/auth/go.mod pkg/auth/go.sum ./pkg/auth/
 RUN go mod download
 COPY . .
 COPY --from=ui /app/internal/webui/dist ./internal/webui/dist

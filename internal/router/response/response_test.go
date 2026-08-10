@@ -88,7 +88,7 @@ func Test_WriteError(t *testing.T) {
 			wantErrCode: "bad_request",
 		},
 		{
-			name:        "5xx keeps the underlying error detail too — the server is never exposed on the Internet (LIM-1)",
+			name:        "5xx keeps the underlying error detail too (IMP-17)",
 			code:        http.StatusInternalServerError,
 			err:         errors.New("duckdb: table t_a1b2c3 not found"),
 			wantMessage: "duckdb: table t_a1b2c3 not found",

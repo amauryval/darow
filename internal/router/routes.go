@@ -13,6 +13,7 @@ import (
 	"darow/internal/config"
 	"darow/internal/core"
 	"darow/internal/router/handlers"
+	"darow/pkg/auth"
 )
 
 // Router wires the HTTP layer to the service layer. Each family of
@@ -31,6 +32,7 @@ type Router struct {
 	settings      *handlers.SettingsHandler
 	tableSettings *handlers.TableSettingsHandler
 	settingsCfg   config.SettingsConfig
+	auth          *auth.Authenticator
 	uiAssets      fs.FS
 }
 
@@ -41,9 +43,10 @@ type Router struct {
 // from settingsCfg (TODO-17 — a memory/availability guard, restart-only).
 // uiAssets is the admin UI's built static files, served under /ui. ready
 // backs /readyz — it should ping the underlying storage connection.
+// authenticator guards every state-changing route; reads stay public.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
-	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64,
+	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, authenticator *auth.Authenticator,
 ) *Router {
 	return &Router{
 		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
@@ -57,6 +60,7 @@ func NewRouter(
 		settings:      handlers.NewSettingsHandler(svcs.Settings),
 		tableSettings: handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
 		settingsCfg:   settingsCfg,
+		auth:          authenticator,
 		uiAssets:      uiAssets,
 	}
 }
@@ -69,6 +73,7 @@ func (rt *Router) Setup() http.Handler {
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	r.Use(middleware.RequestID)
+	r.Use(rt.auth.Authenticate)
 	r.Use(slogLogger)
 	r.Use(recoverJSON)
 
@@ -97,6 +102,7 @@ func (rt *Router) Setup() http.Handler {
 		// check runs.
 		v1.Group(func(upload chi.Router) {
 			upload.Use(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 }))
+			upload.Use(rt.auth.Authenticated, rt.auth.CanWrite)
 			upload.Post("/sources/upload", rt.sources.UploadSource)
 		})
 
@@ -111,55 +117,86 @@ func (rt *Router) Setup() http.Handler {
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
 				sub.Post("/refresh", rt.sources.RefreshSources)
-				sub.Post("/{name}/load", rt.sources.LoadSource)
 				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
-				sub.Delete("/{name}", rt.sources.DeleteSource)
+
+				sub.Group(func(w chi.Router) {
+					w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+					w.Post("/{name}/load", rt.sources.LoadSource)
+					w.Delete("/{name}", rt.sources.DeleteSource)
+				})
 			})
 
-			v1.Post("/derive", rt.tables.DeriveTable)
+			v1.Group(func(w chi.Router) {
+				w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+				w.Post("/derive", rt.tables.DeriveTable)
+			})
 
 			v1.Route("/tables", func(sub chi.Router) {
 				sub.Get("/", rt.tables.ListTables)
 
 				sub.Route("/{tableId}", func(sub chi.Router) {
 					sub.Get("/", rt.tables.GetTableMetadata)
-					sub.Patch("/", rt.tables.RenameTable)
-					sub.Delete("/", rt.tables.DeleteTable)
-
 					sub.Get("/schema", rt.tables.GetSchema)
-					sub.Post("/columns", rt.tables.AddColumn)
-					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
-					sub.Post("/aggregate-from-table", rt.tables.AggregateFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
+
+					sub.Group(func(w chi.Router) {
+						w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+						w.Patch("/", rt.tables.RenameTable)
+						w.Delete("/", rt.tables.DeleteTable)
+						w.Post("/derive-from-table", rt.tables.DeriveFromTable)
+						w.Post("/aggregate-from-table", rt.tables.AggregateFromTable)
+					})
 
 					sub.Route("/settings", func(sub chi.Router) {
 						sub.Get("/", rt.tableSettings.GetTableSettings)
-						sub.Patch("/", rt.tableSettings.UpdateTableSettings)
-						sub.Delete("/", rt.tableSettings.DeleteTableSettings)
+
+						sub.Group(func(w chi.Router) {
+							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Patch("/", rt.tableSettings.UpdateTableSettings)
+							w.Delete("/", rt.tableSettings.DeleteTableSettings)
+						})
 					})
 
 					sub.Route("/filters", func(sub chi.Router) {
 						sub.Get("/", rt.filters.ListFilters)
-						sub.Post("/", rt.filters.CreateFilter)
-						sub.Patch("/{filterId}", rt.filters.UpdateFilter)
-						sub.Delete("/{filterId}", rt.filters.DeleteFilter)
+
+						sub.Group(func(w chi.Router) {
+							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Post("/", rt.filters.CreateFilter)
+							w.Patch("/{filterId}", rt.filters.UpdateFilter)
+							w.Delete("/{filterId}", rt.filters.DeleteFilter)
+						})
 					})
 					sub.Route("/columns", func(sub chi.Router) {
 						sub.Get("/{col}/distinct", rt.tables.GetDistinctValues)
-						sub.Post("/{col}/transform", rt.tables.TransformColumn)
 						sub.Post("/{col}/transform/preview", rt.tables.PreviewColumnTransform)
+
+						sub.Group(func(w chi.Router) {
+							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Post("/", rt.tables.AddColumn)
+							w.Post("/{col}/transform", rt.tables.TransformColumn)
+						})
 					})
 
 					sub.Route("/rows", func(sub chi.Router) {
 						sub.Get("/", rt.rows.ListRows)
-						sub.Post("/", rt.rows.AddRows)
-						sub.Patch("/", rt.rows.UpdateRows)
 						sub.Post("/batch", rt.rows.GetRowsByPkey)
+
+						sub.Group(func(w chi.Router) {
+							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Post("/", rt.rows.AddRows)
+							w.Patch("/", rt.rows.UpdateRows)
+						})
+
 						sub.Route("/{pkey}", func(sub chi.Router) {
 							sub.Get("/", rt.rows.GetRow)
-							sub.Patch("/", rt.rows.UpdateRow)
-							sub.Delete("/", rt.rows.DeleteRow)
 							sub.Get("/geometry", rt.rows.GetRowGeometry)
+
+							sub.Group(func(w chi.Router) {
+								w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+								w.Patch("/", rt.rows.UpdateRow)
+								w.Delete("/", rt.rows.DeleteRow)
+							})
 						})
 					})
 
@@ -172,10 +209,18 @@ func (rt *Router) Setup() http.Handler {
 				})
 			})
 
+			// The endpoint is the auth package's own (path excepted, which
+			// is ours): it answers with the caller that package resolved.
+			v1.Get("/session", rt.auth.ServeSession)
+
 			v1.Route("/settings", func(sub chi.Router) {
 				sub.Get("/", rt.settings.GetSettings)
-				sub.Patch("/", rt.settings.UpdateSettings)
 				sub.Get("/tables", rt.tableSettings.ListOverriddenTables)
+
+				sub.Group(func(w chi.Router) {
+					w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+					w.Patch("/", rt.settings.UpdateSettings)
+				})
 			})
 
 			v1.Route("/ogc", func(sub chi.Router) {

@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,7 +26,9 @@ import (
 	"darow/internal/config"
 	"darow/internal/core"
 	"darow/internal/router"
+	"darow/internal/router/response"
 	"darow/internal/webui"
+	"darow/pkg/auth"
 )
 
 func main() {
@@ -55,10 +58,15 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes)
+	authenticator, err := auth.New(cfg.Auth, response.WriteError)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+
+	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes, authenticator)
 
 	srv := &http.Server{
-		Addr:         "localhost:" + strconv.Itoa(cfg.Server.Port),
+		Addr:         net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),
 		Handler:      rt.Setup(),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSec) * time.Second,

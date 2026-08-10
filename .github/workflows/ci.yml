@@ -14,3 +14,5 @@ jobs:
               with:
                   go-version: '1.26.4'
             - run: go test -race $(go list ./... | grep -v /web/)
+            - run: go test -race ./...
+              working-directory: pkg/auth

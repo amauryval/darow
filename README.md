@@ -37,7 +37,18 @@ mise run build   # regenerates Swagger docs and the admin UI, then builds ./serv
 ```
 
 The server reads `config.yaml` from the current directory by default; pass `--config` to point it
-elsewhere. It listens on port 8080 (see `server.port` in `config.yaml`).
+elsewhere. `config.example.yaml` lists every field at its default value — copy it and keep only what
+you change; the file itself is optional. It listens on every interface, port 8080 (`server.host`,
+`server.port`).
+
+### Protect it
+
+Reads are open to everyone. Every route that changes data needs a caller who is **authenticated**
+and **named by `auth.writeUsers` or `auth.writeGroups`** — being known is not being allowed. Set
+`auth.mode: proxy` in `config.yaml` and put an authenticating reverse proxy in front: tinyAuth,
+Authelia, oauth2-proxy, Traefik ForwardAuth all fit, and none of them is named in the code. The
+default, `auth.mode: off`, identifies nobody and refuses nothing — that is the development mode. See
+[`pkg/auth/README.md`](pkg/auth/README.md).
 
 ### Point it at a working directory
 

@@ -11,4 +11,7 @@
 
 Each entry carries a stable identifier (`BLK-n`); a retired identifier is never reused.
 
-No blocker is currently open.
+No blocker is currently open. BLK-4 (the listen address hardcoded to the loopback interface, which
+made the Docker image unreachable and any reverse-proxy deployment impossible) was fixed with the
+`server.host` field — see `spec.md` §2.1. A retired identifier is never reused, so the next blocker
+recorded here takes `BLK-5`.

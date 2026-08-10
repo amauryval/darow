@@ -6,7 +6,6 @@ import {
     FolderOpen,
     LayoutDashboard,
     LayoutGrid,
-    LogIn,
     MapPinned,
     PanelLeftClose,
     PanelLeftOpen,
@@ -14,6 +13,7 @@ import {
 } from '@lucide/vue'
 import { useServerStatus, type ServerStatus } from './composables/useServerStatus'
 import { useSettings } from './composables/useSettings'
+import SessionMenu from './components/session/SessionMenu.vue'
 import Toast from './components/ui/Toast.vue'
 import Badge from './components/ui/Badge.vue'
 import BaseButton from './components/ui/BaseButton.vue'
@@ -80,17 +80,7 @@ const links = [
                     </BaseButton>
                     <Typography variant="h4" class="ml-1">{{ route.meta.title }}</Typography>
                 </div>
-                <!-- No auth backend yet — placeholder for when the API gains one -->
-                <BaseButton
-                    variant="secondary"
-                    size="sm"
-                    class="gap-1.5"
-                    disabled
-                    title="Authentification bientôt disponible"
-                >
-                    <LogIn :size="14" />
-                    Se connecter
-                </BaseButton>
+                <SessionMenu />
             </header>
 
             <RouterView class="flex min-h-0 flex-1 flex-col" />

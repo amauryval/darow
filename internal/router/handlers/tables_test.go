@@ -278,10 +278,9 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 		{name: "derives a new table", wantStatus: http.StatusCreated},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
-			// The server is never exposed on the Internet (LIM-1), so a raw
-			// storage failure (a DuckDB "Binder Error" here) is still
-			// reported to the caller rather than masked behind a generic
-			// 500 — see response.WriteError.
+			// A raw storage failure (a DuckDB "Binder Error" here) is
+			// still reported to the caller rather than masked behind a
+			// generic 500 — see response.WriteError.
 			name:            "storage failure returns 500 with the underlying detail",
 			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
 			wantStatus:      http.StatusInternalServerError,

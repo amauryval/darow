@@ -24,19 +24,28 @@ description = "Install dependencies and git hooks"
 # picks up web/node_modules/flatted/golang/pkg/flatted — an npm-shipped Go
 # package. It would be tested and vetted, never linked, but the go tool has no
 # exclude flag, so every task below filters the package list explicitly.
+# pkg/auth is a module of its own (it is meant to be imported from outside this
+# repository), so "./..." does not reach into it and every task runs there too.
 [tasks.test]
 description = "Run all Go tests"
-run = "go test $(go list ./... | grep -v /web/)"
+run = """
+go test $(go list ./... | grep -v /web/)
+cd pkg/auth && go test ./...
+"""
 
 [tasks."test-race"]
 description = "Run all Go tests with the race detector"
-run = "go test -race $(go list ./... | grep -v /web/)"
+run = """
+go test -race $(go list ./... | grep -v /web/)
+cd pkg/auth && go test -race ./...
+"""
 
 [tasks.lint]
 description = "Run go vet and gofmt checks"
 run = """
 go vet $(go list ./... | grep -v /web/)
-gofmt -l cmd internal docs
+(cd pkg/auth && go vet ./...)
+gofmt -l cmd internal pkg docs
 """
 
 [tasks.docs]

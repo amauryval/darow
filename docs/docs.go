@@ -288,6 +288,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/session": {
+            "get": {
+                "description": "Whether authentication is in force, who the caller is, whether they may write, and the gateway's sign-in/sign-out URLs. Answers an anonymous request.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Current caller",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/auth.SessionDTO"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/settings": {
             "get": {
                 "produces": [
@@ -2123,6 +2143,38 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "auth.SessionDTO": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "canWrite": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "loginUrl": {
+                    "type": "string"
+                },
+                "logoutUrl": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.collectionDTO": {
             "type": "object",
             "properties": {
