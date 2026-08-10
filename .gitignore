@@ -11,4 +11,5 @@ internal/webui/dist/*
 !internal/webui/dist/index.html
 data/geo.db
 data/sources/*.gpkg
+data/sources/*.parquet
 data/geo.db.wal
