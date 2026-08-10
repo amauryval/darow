@@ -884,9 +884,10 @@ whose file is then streamed to the caller and removed — the escaping of a CSV,
     (`FORMAT GDAL, DRIVER 'GeoJSON'`, `LAYER_NAME` naming the collection after the table) and
     `parquet` (`FORMAT PARQUET`, which DuckDB turns into GeoParquet by itself on a geometry column).
     The format is validated **before** the first byte is written.
--   CSV carries `pkey` plus the schema's columns, geometry excluded (rule 7). The other two carry
-    the geometry, aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other
-    column becoming a property.
+-   CSV carries the schema's columns, geometry excluded (rule 7); `__pkey` is never exported, like
+    everywhere else it is hidden (`storage.IsHiddenColumn`, §4.4). The other two carry the geometry,
+    aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other column
+    becoming a property.
 -   **Output CRS**: `?srid=` pins it exactly as it pins an import's source CRS; without one the
     table goes back out in the CRS it came in (`Metadata.Srid`), and only a table whose source CRS
     was never recorded falls back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
@@ -1394,9 +1395,10 @@ leave this layer.
 
 -   **Carried columns** are whitelisted against the source's real schema (`SchemaService.Schema`)
     and quoted with `QuoteIdentifier`. An empty list means every column. `__pkey` is never projected
-    — `CreateFromQuery` regenerates one — and the geometry column is not offered as a carried column
-    but appended on its own when the source is geo, so a derived geo table stays geo without the
-    caller naming the column.
+    — `CreateFromQuery` regenerates one — but the geometry column carries over like any other:
+    selecting it keeps the derived table geo, an explicit selection that leaves it out derives a
+    scalar table. `isGeo`/`geometryColumn` are read back off the materialized table by
+    `RefreshDerivedMetadata`, never decided here.
 -   **Computed columns** are a free SQL scalar expression under a caller-chosen alias, rendered
     parenthesized and aliased. The expression is deliberately **not** decomposed into an
     operand/operator model: `CASE WHEN`, `COALESCE` and the spatial functions are what a derivation

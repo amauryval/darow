@@ -13,8 +13,8 @@ import (
 )
 
 // sourceMeta is the table every guided-derivation test derives from: three
-// scalar columns plus a geometry one, so both the __pkey and the geometry
-// exclusions are exercised by default.
+// scalar columns plus a geometry one, so the __pkey exclusion and the
+// geometry column's own carrying are both exercised.
 func sourceMeta() storage.Metadata {
 	return storage.Metadata{
 		TableId:        "id-source",
@@ -49,17 +49,22 @@ func Test_DeriveService_DeriveFromTable_AssemblesQuery(t *testing.T) {
 		wantArgs  []any
 	}{
 		{
-			name: "no column selection carries every column but pkey, geometry appended",
+			name: "no column selection carries every column including geometry, but pkey",
 			spec: DeriveSpec{NewTableName: "derived"},
-			// __pkey is never projected (CreateFromQuery regenerates one)
-			// and the geometry column comes last, on its own, so the
-			// derived table stays geo without the caller naming it.
+			// __pkey is never projected (CreateFromQuery regenerates one);
+			// every other column, geometry included, carries over in
+			// schema order.
 			wantQuery: `SELECT "name", "height", "geom" FROM t_source`,
 		},
 		{
-			name:      "explicit column selection keeps the caller's order",
+			name:      "explicit column selection keeps the caller's order, geometry included",
+			spec:      DeriveSpec{NewTableName: "derived", Columns: []string{"geom", "height", "name"}},
+			wantQuery: `SELECT "geom", "height", "name" FROM t_source`,
+		},
+		{
+			name:      "leaving geometry out of an explicit selection derives a scalar table",
 			spec:      DeriveSpec{NewTableName: "derived", Columns: []string{"height", "name"}},
-			wantQuery: `SELECT "height", "name", "geom" FROM t_source`,
+			wantQuery: `SELECT "height", "name" FROM t_source`,
 		},
 		{
 			name: "computed columns are appended, parenthesized and aliased",
@@ -68,7 +73,7 @@ func Test_DeriveService_DeriveFromTable_AssemblesQuery(t *testing.T) {
 				Columns:      []string{"name"},
 				Computed:     []ComputedColumn{{Alias: "surface", Expression: "ST_Area(geom) / 1e6"}},
 			},
-			wantQuery: `SELECT "name", "geom", (ST_Area(geom) / 1e6) AS "surface" FROM t_source`,
+			wantQuery: `SELECT "name", (ST_Area(geom) / 1e6) AS "surface" FROM t_source`,
 		},
 		{
 			name: "conditions become a bound WHERE clause",
@@ -77,7 +82,7 @@ func Test_DeriveService_DeriveFromTable_AssemblesQuery(t *testing.T) {
 				Columns:      []string{"name"},
 				Conditions:   []storage.FilterCondition{{Column: "height", Operator: ">", Value: 10}},
 			},
-			wantQuery: `SELECT "name", "geom" FROM t_source WHERE "height" > TRY_CAST(? AS DOUBLE)`,
+			wantQuery: `SELECT "name" FROM t_source WHERE "height" > TRY_CAST(? AS DOUBLE)`,
 			wantArgs:  []any{10},
 		},
 	}
@@ -150,10 +155,6 @@ func Test_DeriveService_DeriveFromTable_Rejections(t *testing.T) {
 		{
 			name: "unknown column",
 			spec: DeriveSpec{NewTableName: "derived", Columns: []string{"nope"}},
-		},
-		{
-			name: "the geometry column is not carryable on its own",
-			spec: DeriveSpec{NewTableName: "derived", Columns: []string{"geom"}},
 		},
 		{
 			name: "__pkey is not carryable",

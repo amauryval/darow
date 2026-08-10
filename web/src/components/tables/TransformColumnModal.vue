@@ -2,16 +2,22 @@
 import { computed, ref, toRef } from 'vue'
 import type { ColumnSchema } from '../../client/types'
 import { useColumnTransform } from '../../composables/useColumnTransform'
+import { useSavedFilters } from '../../composables/useSavedFilters'
 import { useToast } from '../../composables/useToast'
+import { fromConditions } from '../../utils/filterTree'
 import { isHiddenColumn } from '../../utils/rows'
+import BaseSelect from '../ui/BaseSelect.vue'
 import BaseTextarea from '../ui/BaseTextarea.vue'
 import ColumnPickerList from './ColumnPickerList.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import DocLink from '../ui/DocLink.vue'
 import FilterNodeEditor from '../filters/FilterNodeEditor.vue'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import Typography from '../ui/Typography.vue'
 import TransformPreview from './TransformPreview.vue'
+
+const DUCKDB_FUNCTIONS_URL = 'https://duckdb.org/docs/sql/functions/overview'
 
 // Rewrites column's values in place, on the rows a filter names — the write
 // neither the one-cell-at-a-time edit session nor *Dériver* can express
@@ -56,6 +62,22 @@ const operandColumns = computed(() =>
     props.columns.filter((c) => !isHiddenColumn(c.name) && c.name !== props.geometryColumn)
 )
 
+const { filters: savedFilters } = useSavedFilters(toRef(props, 'tableId'))
+const savedFilterOptions = computed(() => [
+    { value: '', label: 'Reprendre un filtre…' },
+    ...savedFilters.value.map((f) => ({ value: f.filterId, label: f.name }))
+])
+
+// A saved filter is applied by copying its conditions into the draft, not by
+// referencing it — the same rule DeriveFromTableForm applies: a later edit
+// of the filter must not read as changing what rows an already-run transform
+// touched.
+function applySavedFilter(filterId: string) {
+    const filter = savedFilters.value.find((f) => f.filterId === filterId)
+    if (!filter) return
+    conditions.value = fromConditions(filter.conditions, true)
+}
+
 const textarea = ref<InstanceType<typeof BaseTextarea> | null>(null)
 
 function insert(text: string) {
@@ -98,10 +120,23 @@ async function onConfirm() {
     >
         <div class="flex flex-col gap-4">
             <section>
-                <Typography variant="eyebrow">Lignes concernées</Typography>
-                <Typography variant="caption" class="mt-1 block"
-                    >Sans condition, toutes les lignes sont concernées.</Typography
-                >
+                <div class="mb-2 flex items-end justify-between gap-3">
+                    <div>
+                        <Typography variant="eyebrow">Condition</Typography>
+                        <Typography variant="caption" class="mt-1 block"
+                            >Sans condition, toutes les lignes sont concernées.</Typography
+                        >
+                    </div>
+                    <BaseSelect
+                        v-if="savedFilters.length > 0"
+                        model-value=""
+                        size="sm"
+                        class="w-56"
+                        aria-label="Reprendre un filtre enregistré"
+                        :options="savedFilterOptions"
+                        @update:model-value="applySavedFilter($event)"
+                    />
+                </div>
                 <FilterNodeEditor
                     class="mt-2"
                     :table-id="tableId"
@@ -114,9 +149,10 @@ async function onConfirm() {
             </section>
 
             <section class="border-t border-base-300 pt-4">
-                <Typography variant="eyebrow">Nouvelle valeur</Typography>
+                <Typography variant="eyebrow">Valeur</Typography>
                 <Typography variant="caption" class="mt-1 block"
-                    >Expression SQL calculée pour chaque ligne concernée.</Typography
+                    >Expression SQL calculée pour chaque ligne concernée.
+                    <DocLink :href="DUCKDB_FUNCTIONS_URL">Fonctions DuckDB</DocLink></Typography
                 >
                 <div class="mt-2 flex gap-3">
                     <BaseTextarea

@@ -24,8 +24,8 @@ func Test_table_CopyTo(t *testing.T) {
 			name:        "CSV carries the columns and no geometry",
 			format:      storage.ExportCSV,
 			targetCRS:   "OGC:CRS84",
-			wantContent: []string{"pkey,name", "a", "b"},
-			wantAbsent:  []string{"POINT"},
+			wantContent: []string{"name", "a", "b"},
+			wantAbsent:  []string{"POINT", "pkey"},
 		},
 		{
 			name:        "GeoJSON is a FeatureCollection in lon/lat",
@@ -93,7 +93,7 @@ func Test_table_CopyTo_Parquet(t *testing.T) {
 
 			var name, wkt string
 			require.NoError(t, conn.db.QueryRow(
-				`SELECT name, ST_AsText(geometry) FROM read_parquet(?) WHERE pkey = '1'`, dest,
+				`SELECT name, ST_AsText(geometry) FROM read_parquet(?) WHERE name = 'a'`, dest,
 			).Scan(&name, &wkt))
 
 			assert.Equal(t, "a", name)

@@ -9,7 +9,10 @@ import BaseButton from '../ui/BaseButton.vue'
 import BaseCheckbox from '../ui/BaseCheckbox.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseSelect from '../ui/BaseSelect.vue'
+import DocLink from '../ui/DocLink.vue'
 import Typography from '../ui/Typography.vue'
+
+const DUCKDB_FUNCTIONS_URL = 'https://duckdb.org/docs/sql/functions/overview'
 
 // The guided aggregation's body: what to group on, what to aggregate, which
 // rows to include before grouping. It holds no state — the modal owns the
@@ -65,11 +68,20 @@ function applySavedFilter(filterId: string) {
 
 <template>
     <div class="flex flex-col gap-5">
+        <Typography variant="caption" class="block">
+            Regroupement par colonnes et agrégats calculés sur cette table. Le résultat est
+            matérialisé dans une nouvelle table.
+        </Typography>
         <section>
-            <Typography variant="eyebrow">Regrouper par</Typography>
+            <Typography variant="eyebrow">Regroupement</Typography>
             <Typography variant="caption" class="mt-1 block">
                 Une ligne par combinaison de valeurs. Aucune sélection agrège toute la table en une
                 seule ligne.
+                <template v-if="geometryColumn"
+                    >La géométrie n'est jamais un critère de regroupement, mais peut être agrégée
+                    via une expression libre (ex.
+                    <code class="rounded bg-base-200 px-1">ST_Union(geom)</code>).</template
+                >
             </Typography>
             <div class="mt-2 grid max-h-40 grid-cols-2 gap-x-4 gap-y-1 overflow-y-auto">
                 <label v-for="col in groupable" :key="col.name" class="flex items-center gap-2">
@@ -86,11 +98,12 @@ function applySavedFilter(filterId: string) {
         </section>
 
         <section class="border-t border-base-300 pt-4">
-            <Typography variant="eyebrow">Colonnes agrégées</Typography>
+            <Typography variant="eyebrow">Agrégats</Typography>
             <Typography variant="caption" class="mt-1 block">
                 Une expression d'agrégat par groupe — par exemple
                 <code class="rounded bg-base-200 px-1">COUNT(*)</code> ou
                 <code class="rounded bg-base-200 px-1">SUM(height)</code>.
+                <DocLink :href="DUCKDB_FUNCTIONS_URL">Fonctions DuckDB</DocLink>
             </Typography>
             <div
                 v-for="(col, index) in aggregates"
@@ -137,7 +150,7 @@ function applySavedFilter(filterId: string) {
         <section class="border-t border-base-300 pt-4">
             <div class="mb-2 flex items-end justify-between gap-3">
                 <div>
-                    <Typography variant="eyebrow">Lignes incluses</Typography>
+                    <Typography variant="eyebrow">Condition</Typography>
                     <Typography variant="caption" class="mt-1 block"
                         >Sans condition, toutes les lignes sont agrégées.</Typography
                     >

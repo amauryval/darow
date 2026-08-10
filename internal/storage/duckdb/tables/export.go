@@ -58,7 +58,7 @@ func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 		return err
 	}
 
-	selects := []string{`__pkey AS pkey`}
+	var selects []string
 	var args []any
 	for _, col := range columns {
 		if storage.IsHiddenColumn(col.Name) {

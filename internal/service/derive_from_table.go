@@ -92,18 +92,19 @@ func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadat
 	return query, args, nil
 }
 
-// projectionFor builds the SELECT list: the carried columns, then the
-// geometry column when the source is geo, then the computed ones.
+// projectionFor builds the SELECT list: the carried columns, in the
+// caller's order, then the computed ones.
 //
 // __pkey is never projected — CreateFromQuery generates a fresh one around
-// whatever it is given — and the geometry column is not offered as a
-// carried column but appended on its own, so that a derivation of a geo
-// table stays geo without the caller having to know the column's name.
+// whatever it is given. The geometry column carries over like any other:
+// selecting it keeps the derived table geo, leaving it out of an explicit
+// selection derives a scalar table — isGeo/geometryColumn are read back off
+// the materialized table by RefreshDerivedMetadata, not decided here.
 func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec) ([]string, error) {
 	available := make(map[string]bool, len(schema))
 	var carryable []string
 	for _, col := range schema {
-		if storage.IsHiddenColumn(col.Name) || (meta.IsGeo && col.Name == meta.GeometryColumn) {
+		if storage.IsHiddenColumn(col.Name) {
 			continue
 		}
 		available[col.Name] = true
@@ -115,7 +116,7 @@ func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec
 		selected = carryable
 	}
 
-	projection := make([]string, 0, len(selected)+len(spec.Computed)+1)
+	projection := make([]string, 0, len(selected)+len(spec.Computed))
 	taken := make(map[string]bool, len(selected)+len(spec.Computed))
 	for _, name := range selected {
 		if !available[name] {
@@ -127,14 +128,6 @@ func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec
 		taken[name] = true
 
 		quoted, err := storage.QuoteIdentifier(name)
-		if err != nil {
-			return nil, &ValidationError{msg: err.Error()}
-		}
-		projection = append(projection, quoted)
-	}
-
-	if meta.IsGeo && meta.GeometryColumn != "" {
-		quoted, err := storage.QuoteIdentifier(meta.GeometryColumn)
 		if err != nil {
 			return nil, &ValidationError{msg: err.Error()}
 		}

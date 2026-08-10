@@ -182,7 +182,7 @@ const table = useVueTable({
                 size="sm"
                 :icon="GitBranch"
                 @click="showDeriveSql = true"
-                >Dériver par SQL</BaseButton
+                >Créer une nouvelle table</BaseButton
             >
         </div>
 

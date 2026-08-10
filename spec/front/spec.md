@@ -460,6 +460,15 @@ per page (the server's own live cap) until the reported `total` is reached.
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
   whole value. There is **no** add-row modal: a row is created empty, in the grid, by the session
   itself (§8.3).
+- **Every table-producing modal's form opens on one caption**, right above its first section (or,
+  for `DeriveSqlForm`, above its lone textarea): what the mode computes, closed by the same
+  sentence, "Le résultat est matérialisé dans une nouvelle table." — the one structural and wording
+  element the three forms (`DeriveSqlForm`, `DeriveFromTableForm`, `DeriveAggregateForm`) share, so
+  a modal never opens straight into a section header with no sense of what the whole screen is for.
+  Each form's own captions state what the geometry column becomes in that mode where it is not
+  obvious from the controls alone — carried over untouched (`DeriveFromTableForm`), excluded from
+  grouping but aggregable through the free expression field (`DeriveAggregateForm`) — since free SQL
+  needs no such note, nothing constrains it there.
 - **Deriving is two modes, two modals**, in `components/tables/`, split along the same line as their
   server routes (one scoped to a table, one to none): `DeriveTableModal` is the guided mode, opened
   from a table's own `TableHeader` *Actions* menu under **Produire**; `DeriveSqlModal` is the
@@ -503,7 +512,10 @@ per page (the server's own live cap) until the reported `total` is reached.
   transforms, each with its own filter, rather than assembled as cases in one. `ColumnPickerList`
   is the column reference beside the expression field, shared with `SqlSchemaReference`'s expanded
   column list — the target column and the geometry are excluded, the same exclusion
-  `DeriveFromTableForm` applies to what a derivation may carry over. `useColumnTransform` holds the
+  `DeriveFromTableForm` applies to what a derivation may carry over. The condition tree carries the
+  same "reprendre un filtre enregistré" select (`useSavedFilters`, copying the stored filter's
+  conditions into the draft) every other row-scope condition tree in `components/tables/` offers —
+  `DeriveFromTableForm`'s and `DeriveAggregateForm`'s. `useColumnTransform` holds the
   expression and the condition tree, and runs the server preview (`TransformPreview`, the four
   states of §8.1) before the write, invalidating it on every further edit — the confirmation step
   must never count a stale number.

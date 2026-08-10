@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import BaseTextarea from '../ui/BaseTextarea.vue'
+import DocLink from '../ui/DocLink.vue'
 import SqlSchemaReference from './SqlSchemaReference.vue'
 import Typography from '../ui/Typography.vue'
+
+const DUCKDB_SELECT_URL = 'https://duckdb.org/docs/sql/statements/select'
 
 // The free-SQL mode, opened from the catalogue (DeriveSqlModal) rather than
 // one table's page — the caption states its scope (every registered table)
@@ -24,6 +27,7 @@ function insert(text: string) {
         <Typography variant="caption" class="mb-2 block">
             Requête <code class="rounded bg-base-200 px-1">SELECT</code> exécutée sur l'ensemble des
             tables enregistrées. Le résultat est matérialisé dans une nouvelle table.
+            <DocLink :href="DUCKDB_SELECT_URL">Syntaxe SQL DuckDB</DocLink>
         </Typography>
         <div class="flex gap-3">
             <BaseTextarea
