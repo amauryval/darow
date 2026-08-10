@@ -62,10 +62,18 @@ export function viewExtent(bbox: string): Extent | null {
 export function viewBbox(map: Map): [number, number, number, number] | null {
     const size = map.getSize()
     if (!size || size[0] <= 0 || size[1] <= 0) return null
+    return dataBbox(map.getView().calculateExtent(size))
+}
 
+// The same conversion for an extent the engine hands over rather than the
+// whole view — a loading strategy's tile. Cut down to the projection's extent
+// for the reason above: the tiles of the grid's edge cover ground Web Mercator
+// cannot express, and the server would fail the query rather than clamp it.
+// Null when the extent meets the world nowhere.
+export function dataBbox(extent: Extent): [number, number, number, number] | null {
     const world = getProjection(VIEW_PROJECTION)?.getExtent()
     if (!world) return null
-    const visible = getIntersection(map.getView().calculateExtent(size), world)
+    const visible = getIntersection(extent, world)
     if (isEmpty(visible)) return null
 
     const [minX, minY, maxX, maxY] = transformExtent(visible, VIEW_PROJECTION, DATA_PROJECTION)

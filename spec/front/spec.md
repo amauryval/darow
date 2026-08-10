@@ -173,7 +173,10 @@ One module per subject, no module state, no side effect:
   engine has not measured (a zero-sized container is reported as `[0, 0]`, an array, and truthy, so
   a caller trusting it queries a bbox that is a point, reads the empty answer as "there is nothing
   here", and leaves an edit session on a map with no editable geometry at all) and one that meets
-  the world nowhere.
+  the world nowhere. `dataBbox` is that same conversion for an extent the engine hands over rather
+  than the whole view — a loading strategy's tile — and carries the same clamp for the same reason:
+  the tiles of the grid's edge cover ground Web Mercator cannot express, and the server fails such a
+  query rather than clamping it.
 - `filterTree.ts` — the model of the UI's filter tree (`DraftNode`) and its projection to the server
   DSL (`pruneActive`), which prunes inactive nodes and groups that have become empty (`BuildFilter`
   rejects an empty boolean group — `spec.md` §4.5). **Every** manipulation of that tree (activation,
@@ -283,7 +286,7 @@ module level and documents it; that is the exception, not the rule.
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
 | `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
-| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source loading over the XYZ grid the tile endpoint is cut along, the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan | present |
+| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source reading the OGC API - Features items endpoint, one bbox query per tile of the loading grid — the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan, the grid's zoom surviving only as the simplification tolerance. Each bbox is paged and its pages are added to the source as they arrive (§8.8), a load whose generation was ended by a refresh dropping the pages still in flight rather than injecting them into the emptied source | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
 | `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
@@ -620,7 +623,21 @@ This is the product's main screen; it follows fixed rules.
 - Initial framing on the data's extent; reframing on the **filter's** extent when a filter is active,
   back to the table's extent when it no longer is.
 - Data loading on `moveend`, never on every frame, and progressive rendering tile by tile rather than
-  in one final block.
+  in one final block — **and page by page inside a tile**: a tile holding more features than one page
+  draws each page as it lands instead of staying blank until its last one answers. A tile is still
+  only *marked loaded* once whole, so a load cut short is asked again rather than left half-drawn.
+- **A page is over when the server says so, never when it looks short.** The server resolves a
+  requested page size against the operator's limit and answers against the one *it* chose, so a page
+  clamped to a tenth of what was asked for is a full page that reads as the last one from the client
+  — and every feature past it would be dropped with nothing to show for it. `numberMatched` is what
+  says how much there is and the length of the first page is what says how big a page really is;
+  between the two, the remaining offsets are known outright and are fetched several at a time under
+  a bound rather than one round-trip after another.
+- **The map reads the collection through the OGC API - Features items endpoint**, the same route an
+  outside client would use, one bbox query per tile of the loading grid. The grid is the *strategy's*
+  and never the query's: it is what decides which extents are missing and remembers those already
+  loaded, while the zoom it yields survives only as the simplification tolerance — how finely the
+  features come back, not which ones.
 - A loading indicator visible while tiles are in flight; a failed tile does not break the map.
 - `pointer` cursor on queryable features, highlighting of selected features, and selection reversible
   in one click — with no modifier key, to stay usable on a trackpad.
