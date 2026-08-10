@@ -36,6 +36,22 @@ export interface Source {
     layers?: SourceLayer[]
 }
 
+// Matches deletedDTO: what a delete route confirms happened. Id is the
+// deleted object's identifier (a table/source name, a row's pkey); Name is
+// only present when it differs from Id; RowsRemoved only on a row-level
+// delete.
+export interface Deleted {
+    id: string
+    name?: string
+    rowsRemoved?: number
+}
+
+// Matches uploadResultDTO — POST /sources/upload's response, discriminated
+// by loaded rather than probed for a tableId: a multi-layer GeoPackage
+// comes back unloaded, with its source (layers included) for the caller to
+// pick one, anything else loads straight into a new table.
+export type UploadResult = { loaded: true; tableId: string } | { loaded: false; source: Source }
+
 export interface SourceCRS {
     srid: number | null
     authName: string

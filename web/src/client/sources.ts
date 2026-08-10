@@ -1,5 +1,5 @@
 import { del, get, post, postForm } from './http'
-import type { Source, SourceCRS, SourcesPage } from './types'
+import type { Deleted, SourceCRS, SourcesPage, UploadResult } from './types'
 
 export function listSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
     const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : ''
@@ -38,7 +38,7 @@ export function getSourceMetadata(name: string, layer?: string): Promise<SourceC
 // with more than one layer, in which case no layer is auto-selected and the
 // refreshed Source (with its layers) is returned instead, so the caller can
 // load a specific layer via loadSource.
-export function uploadSource(file: File): Promise<{ tableId: string } | Source> {
+export function uploadSource(file: File): Promise<UploadResult> {
     const form = new FormData()
     form.append('file', file)
     return postForm('/sources/upload', form)
@@ -47,6 +47,6 @@ export function uploadSource(file: File): Promise<{ tableId: string } | Source> 
 // Removes the source file from workDir. If it (or one of its layers) was
 // loaded, the associated table(s) are removed too. Explicit replacement is
 // delete then re-upload.
-export function deleteSource(name: string): Promise<void> {
+export function deleteSource(name: string): Promise<Deleted> {
     return del(`/sources/${encodeURIComponent(name)}`)
 }

@@ -1,27 +1,24 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import {
-    addColumn,
-    deleteTable,
-    deriveTable,
-    getSchema,
-    getTable,
-    renameTable
-} from '../client/tables'
+import { addColumn, deleteTable, getSchema, getTable, renameTable } from '../client/tables'
 import type { ColumnSchema, Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
 import { isHiddenColumn } from '../utils/rows'
-import { useToast } from './useToast'
 
 // A table's metadata and schema, reloaded whenever tableId changes (vue-router
 // reuses TableDetailView across :tableId navigations, so this must react to
 // the ref rather than run once in onMounted). Mutating actions (rename,
-// delete, derive, addColumn) do the network call and rethrow on failure —
+// delete, addColumn) do the network call and rethrow on failure —
 // callers decide whether the error becomes a toast or an inline form
-// message, since that varies by call site (règle 8.4).
+// message, since that varies by call site (règle 8.4). loadAll's own failure
+// is different: it is the initial load, so it is exposed as loading/error
+// (§0.18, §8.1) for the view to render a Skeleton/ErrorState instead of a
+// toast over a blank page.
 export function useTableMetadata(tableId: Ref<string>) {
-    const toast = useToast()
     const table = ref<Metadata | null>(null)
     const columns = ref<ColumnSchema[]>([])
+    const loading = ref(false)
+    const loadedOnce = ref(false)
+    const error = ref('')
 
     // Columns actually writable by AddRows/UpdateRow: everything but the
     // server-generated pkey and OGC_FID (GDAL's injected feature-id column,
@@ -46,10 +43,15 @@ export function useTableMetadata(tableId: Ref<string>) {
     }
 
     async function loadAll() {
+        loading.value = true
+        error.value = ''
         try {
             await Promise.all([loadTable(), loadSchema()])
+            loadedOnce.value = true
         } catch (e) {
-            toast.error(errorMessage(e, 'Impossible de charger la table'))
+            error.value = errorMessage(e, 'Impossible de charger la table')
+        } finally {
+            loading.value = false
         }
     }
 
@@ -57,12 +59,8 @@ export function useTableMetadata(tableId: Ref<string>) {
         table.value = await renameTable(tableId.value, name)
     }
 
-    async function remove() {
-        await deleteTable(tableId.value)
-    }
-
-    async function derive(query: string, newTableName: string) {
-        return deriveTable(tableId.value, query, newTableName)
+    function remove() {
+        return deleteTable(tableId.value)
     }
 
     async function addNewColumn(name: string, type: string) {
@@ -77,10 +75,13 @@ export function useTableMetadata(tableId: Ref<string>) {
         columns,
         editableColumns,
         rowColumns,
+        loading,
+        loadedOnce,
+        error,
+        retry: loadAll,
         loadTable,
         rename,
         remove,
-        derive,
         addNewColumn
     }
 }

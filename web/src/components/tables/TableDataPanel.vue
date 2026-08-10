@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
+import type { SortingState } from '@tanstack/vue-table'
 import type { ColumnSchema, Row } from '../../client/types'
 import type { LayerChanges } from '../../composables/useEditLayer'
 import type { useFeatureSelection } from '../../composables/useFeatureSelection'
@@ -30,12 +31,22 @@ const props = defineProps<{
     // it is stated with the others (TableHeader). One instance, so the map and
     // the grid share the single selection they are supposed to (§8.8).
     selection: ReturnType<typeof useFeatureSelection>
+    // The applied filter and the grid's sort are the view's state, carried in
+    // the URL (§9) — read once at creation (initialSort) or controlled
+    // (activeFilterId), the two traps of TODO-F33.
+    activeFilterId: string | null
+    initialSort?: SortingState
 }>()
 // mutated: after any row add/edit/delete, since that changes the table's
 // rowCount — the parent owns table metadata and reloads it.
 // openColumns: the visible-column choice is the view's state (it survives a
 // schema reload), so the toolbar's button only asks for its modal.
-const emit = defineEmits<{ mutated: []; openColumns: [] }>()
+const emit = defineEmits<{
+    mutated: []
+    openColumns: []
+    'update:activeFilterId': [id: string | null]
+    'update:sort': [sort: SortingState]
+}>()
 
 const tableId = toRef(props, 'tableId')
 const columns = toRef(props, 'columns')
@@ -68,8 +79,10 @@ const rowsState = useTableRows(
         dataVersion.value += 1
         emit('mutated')
     },
-    rowLimit
+    rowLimit,
+    props.initialSort
 )
+watch(rowsState.sorting, (sort) => emit('update:sort', sort), { deep: true })
 const rowEdits = useRowEdits(columns, toRef(props, 'rowColumns'))
 const rowGeometry = useRowGeometry(tableId)
 const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
@@ -215,8 +228,10 @@ async function onColumnTransformed() {
             :is-geo="isGeo"
             :editing="editing"
             :focus-panel="focusPanel"
+            :active-filter-id="activeFilterId"
             @update:nodes="filter.conditions.value = $event"
             @update:focus-panel="focusPanel = $event"
+            @update:active-filter-id="emit('update:activeFilterId', $event)"
             @toggle-editing="toggleEditing"
             @open-columns="emit('openColumns')"
         />

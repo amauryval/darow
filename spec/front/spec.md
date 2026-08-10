@@ -269,7 +269,7 @@ module level and documents it; that is the exception, not the rule.
 | `useToast` | application notification queue (shared module state) | present |
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` accepts a `Ref<number>` as well as a plain number — a page size resolved asynchronously (a table's effective row limit, `useTableRows`) reloads from page 1 the moment it changes, the same way a sort change does | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
-| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, rename/delete/derive/add-column actions | present |
+| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
 | `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
@@ -288,12 +288,13 @@ module level and documents it; that is the exception, not the rule.
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
 | `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source reading the OGC API - Features items endpoint, one bbox query per tile of the loading grid — the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan, the grid's zoom surviving only as the simplification tolerance. Each bbox is paged and its pages are added to the source as they arrive (§8.8), a load whose generation was ended by a refresh dropping the pages still in flight rather than injecting them into the emptied source | present |
 | `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
-| `useDeriveTable` | deriving a table from the one being viewed, in both modes: the guided draft (carried columns, computed columns, condition tree) and the two submissions, guided and free-SQL | present |
+| `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery` | present |
+| `useDeriveFromQuery` | the free-SQL derivation: busy state, inline error, submission of a bare query against every registered table. Scoped to no table — opened from the catalogue screen, not one table's page | present |
 | `useColumnTransform` | rewriting one column's values in place, over the rows a filter names: the case list (each a condition tree plus an assignment draft), the default assignment, the row-scope condition tree, the server preview (invalidated by any further edit) and the write itself | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
 | `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value — `useDashboardStats` sweeps the catalogue at `defaultListLimit`, the page size the server itself applies, so it never asks for more than one response can carry — without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
-| `useTableSettings` | one table's settings overrides: load, patch, reset, its own four states (§0.18 — unlike `useTableMetadata`, a settings read can fail and the modal shows that rather than toasting past it). `tableId`-scoped like `useTableMetadata`, but **not** shared module state like `useSettings` — every caller (the modal, `TableDataPanel`'s row limit) gets its own load, since a table's overrides are not a cross-cutting default the way the global row is | present |
+| `useTableSettings` | one table's settings overrides: load, patch, reset, its own four states (§0.18, like `useTableMetadata`'s). `tableId`-scoped like `useTableMetadata`, but **not** shared module state like `useSettings` — every caller (the modal, `TableDataPanel`'s row limit) gets its own load, since a table's overrides are not a cross-cutting default the way the global row is | present |
 | `useTableSettingsOverrides` | the tables that carry a settings override, for the settings screen's own section: a dedicated load (`GET /settings/tables`), its own four states, and a per-table reset. Never the table catalogue filtered client-side — a deployment with a thousand tables must not load them all to find the few that override something | present |
 
 ---
@@ -325,7 +326,6 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
 | `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
-| `Tabs` | daisyUI `tabs`/`tab`/`tab-active` plus the `role="tablist"`/`role="tab"`/`aria-selected` wiring, `v-model` over a caller-supplied `{ value, label }[]`. Generic over the mode's own union so a caller's `v-model` stays typed to its two or three modes rather than widening to a bare string |
 | `StatTile` | a single-number KPI card, on daisyUI's own `stats`/`stat` component — `label`, `value`, optional `hint` and `icon` |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
@@ -352,7 +352,7 @@ single, link-less entry naming the page.
 | Route | View | Role |
 |---|---|---|
 | `/dashboard` | `DashboardView` | landing route (`/` redirects here). Server diagnostics (`GET /diagnostics`, including a disk-quota donut against `maxSizeBytes` when it is set) and data stats aggregated client-side from every page of `GET /tables` — table count, row totals, geo/non-geo split, SRID distribution, top tables by row count |
-| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it |
+| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it — and free-SQL derivation (`DeriveSqlModal`), navigating to the created table on success |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
 | `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
 | `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, one input per field through `components/settings/SettingsField.vue`, saved as a diff-only patch, per-field refusals attached to their own input. A page size is one plain number per family (§back 2.5): what the input holds is what the server serves, so nothing is shown under it. An input's `min`/`max` and a field's unit come from the payload the value was read in (§back 2.5's descriptor), never from `utils/settingsFields.ts` — which carries what the server has no opinion on: the label, the description, the input `step`, the meaning of `0`, and whether the field is per-table. `inputRange` is the one place the server's bounds become an `<input>`'s, an exclusive minimum becoming the first value the step grid allows |
@@ -407,8 +407,10 @@ per page (the server's own live cap) until the reported `total` is reached.
   drops the suggestions rather than offering another column's values, and a failed lookup leaves
   the field plainly typable instead of raising an error over a filter being written.
   **Every filter is persisted, and the catalogue is the single source of truth.** There is no draft
-  state and no opt-out, so `TableFilterBar` holds no parallel tree: it keeps only `activeFilterId`,
-  and *derives* the `DraftNode[]` it emits to the panel from the applied stored filter
+  state and no opt-out, so `TableFilterBar` holds no parallel tree: `activeFilterId` is a controlled
+  prop (`update:activeFilterId`) rather than local state — `TableDetailView` owns it, since the
+  applied filter is part of the workspace's URL state (§9) — and the bar only *derives* the
+  `DraftNode[]` it emits to the panel from the applied stored filter
   (`fromConditions`). Two copies is what previously let editing a pill save a duplicate instead of
   updating the filter it came from — a `DraftNode` carries no link back to its stored filter, so
   nothing else can be relied on to tell an update from a creation. Only one filter applies at a
@@ -456,16 +458,22 @@ per page (the server's own live cap) until the reported `total` is reached.
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
   whole value. There is **no** add-row modal: a row is created empty, in the grid, by the session
   itself (§8.3).
-- **Deriving is two modes in one modal**, in `components/tables/`. `DeriveTableModal` is the shell:
-  the tab pair, the new table's name, the submit, and the one `useDeriveTable` instance both tabs
-  work through. `DeriveFromTableForm` is the guided tab — the column picker, the computed-column
-  rows, and the condition tree, which reuses `FilterNodeEditor` rather than a second editor, plus a
-  "reprendre un filtre enregistré" select that **copies** a stored filter's conditions into the
-  draft (referencing it would suggest the derived table tracks it, and a derived table is a frozen
-  snapshot). `DeriveSqlForm` is the free-SQL tab, whose caption states that the query runs against
-  every registered table: it used to be the only mode, pre-filled with this table's name, which
-  stated a scope the endpoint never had. The geometry column and `__pkey` are absent from the
-  picker — the server carries the first over on its own and regenerates the second.
+- **Deriving is two modes, two modals**, in `components/tables/`, split along the same line as their
+  server routes (one scoped to a table, one to none): `DeriveTableModal` is the guided mode, opened
+  from a table's own `TableHeader` *Actions* menu under **Produire**; `DeriveSqlModal` is the
+  free-SQL mode, opened from `TablesView`'s own header, next to the catalogue it acts on. Each shell
+  holds the new table's name, the submit and its own composable — `useDeriveTable` (guided,
+  `tableId`-scoped) and `useDeriveFromQuery` (free SQL, scoped to no table) — rather than one
+  instance shared by a tab pair, since the two modes no longer share a screen. `DeriveFromTableForm`
+  is the guided mode's form — the column picker, the computed-column rows, and the condition tree,
+  which reuses `FilterNodeEditor` rather than a second editor, plus a "reprendre un filtre
+  enregistré" select that **copies** a stored filter's conditions into the draft (referencing it
+  would suggest the derived table tracks it, and a derived table is a frozen snapshot). The geometry
+  column and `__pkey` are absent from the picker — the server carries the first over on its own and
+  regenerates the second. `DeriveSqlForm` is the free-SQL mode's textarea, whose caption states that
+  the query runs against every registered table: it used to run inside a table's own modal,
+  pre-filled with that table's name, which stated a scope the endpoint never had — it is now a
+  top-level route (back §6.1), and the modal that posts to it opens from no particular table.
 - **Updating a column in place** is a separate act from deriving, in `components/tables/`:
   `TransformColumnModal` is the shell, opened from a pencil button on the column's own header
   (`TableColumnHeaderCell`, rendered by `TableRowsPanel`'s grid — a one-item menu here used to render

@@ -79,6 +79,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
                         size="xs"
                         square
                         aria-label="Fermer"
+                        data-focus-trap-skip-initial
                         @click="requestClose"
                         >✕</BaseButton
                     >
