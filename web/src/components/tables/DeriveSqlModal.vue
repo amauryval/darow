@@ -44,7 +44,7 @@ async function onSubmit() {
 <template>
     <Modal
         title="Dériver une table par SQL"
-        wide
+        xl
         :dirty="dirty"
         @close="emit('close')"
         @submit="onSubmit"
