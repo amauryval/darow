@@ -38,5 +38,5 @@ WORKDIR /app
 COPY --from=build /out/server ./server
 COPY config.yaml ./config.yaml
 COPY --from=build --chown=nonroot:nonroot /out/data ./data
-EXPOSE 8080
+
 ENTRYPOINT ["./server"]

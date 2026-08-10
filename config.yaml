@@ -6,7 +6,7 @@
 # see spec/back/spec.md.
 server:
     host: '0.0.0.0' # interface d'écoute ; 127.0.0.1 pour n'accepter que la loopback
-    port: 8080
+    port: 3000
     readTimeoutSec: 15
     writeTimeoutSec: 30
     idleTimeoutSec: 60
