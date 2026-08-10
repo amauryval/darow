@@ -81,8 +81,12 @@ reordered — code comments describe the code itself and do not refer to these n
     load/derive, plus a unique index on `__pkey`.
 20. **MVT tiles are cached**, with a key including the table's `UpdatedAt` — a write therefore
     invalidates the tiles with no separate invalidation mechanism.
-21. **Every DuckDB write goes through the adapter's single application-level lock.** DuckDB allows
-    only one active writer; unserialized concurrent writes fail.
+21. **Every DuckDB write names the scope it serializes on** (`storage.WriteScope`): the table it
+    concerns, or `GlobalWriteScope` for the settings singleton. The adapter holds one lock per
+    scope, so writes to different tables run at once while writes to the same one queue. DuckDB
+    runs concurrent writer threads under MVCC and optimistic concurrency control; serializing per
+    scope is what keeps a write conflict from ever reaching a caller, so the server carries no
+    retry path (LIM-3).
 22. **A table homogeneous in one geometry family stays homogeneous.** Every write that sets the
     geometry column is checked against `GeoRepository.Types` first: a polygon layer refuses a point,
     and the refusal is a `ValidationError` (400) raised before anything is written. An **empty**
@@ -210,8 +214,9 @@ which takes priority over everything else (§2.6).
 The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
 config-only for the same reason `duckdb.maxSizeBytes` is (§2.2): they sit on `PATCH
 /api/v1/settings`, an unauthenticated route (`limitations.md` LIM-1), and a guard whose own limit is
-edited through the surface it guards is not a guard. `maxBodyBytes` bounds the global request body
-cap (`routes.go`'s `maxBodyBytes` middleware) and `requestTimeoutSec` the `/api/v1` group's request
+edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
+cap (`routes.go`'s `maxBodyBytes` middleware; the upload carries its own, §6.3) and
+`requestTimeoutSec` the same group's request
 timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
 every request" the way the settings table's own fields are (§6.3). `cacheMaxItems` sizes both the
 metadata and the schema `expirable.LRU` (merged from two separate fields, IMP-11); `tileMaxItems`
@@ -364,7 +369,7 @@ graph TD
         TL["TableMaterializer"]
     end
 
-    A["duckdb.Adapter<br/>pool · writeMu · WithTx"]
+    A["duckdb.Adapter<br/>pool · write scopes · WithTx"]
     A -- "Catalog()" --> C
     A -- "Table(meta)" --> TR
     A -- "Materializer()" --> TL
@@ -567,7 +572,12 @@ forwards nothing: each accessor returns the sub-package type that implements the
 sub-packages never import each other — `New` wires the catalogue's `Dropper` and its
 `ExistingTables` reader straight to `duckdb/tables.DropTable` and `tables.ExistingTables(conn)`,
 both function values needing nothing but a transaction or a connection, and the materializer's
-physical-name allowlist to the catalogue. `New` also wires the catalogue's `FileCreator`/
+physical-name allowlist to the catalogue. `New` wires the catalogue two geometry readers rather than one: `GeometryInfo` over the pooled
+connection, and `TxGeometryInfo` over a `tables.NewTxQuerier(tx)` — `createTable` derives its new
+table's geometry through the second, the transaction being the only place that table is visible
+before it commits. Reading it through the pooled connection there reports no geometry, which sends
+`RefreshDerivedMetadata` down its count-only branch and commits a geo table with no bbox. `New` also
+wires the catalogue's `FileCreator`/
 `QueryCreator` to two closures over `tables.NewTxMaterializer` — a tx-scoped `*tables.Materializer`
 built fresh per call, its `Querier`/`TxRunner` backed by the `*sql.Tx` the create transaction
 already opened, so `CreateFromFile`/`CreateFromQuery`'s existing CTAS/index/reproject/cluster
@@ -576,12 +586,27 @@ last link (the materializer's physical-name allowlist) needs an already-built de
 constructions run in that order rather than through a deferred closure.
 
 -   **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
-    creation of the parent directory, then schema migration.
+    creation of the parent directory, then schema migration, then `RefreshMissingBbox` — every geo
+    table left without a bbox has its derived metadata recomputed, `bbox` being derived and never
+    stored truth (rule 9). Best-effort: a failure is logged and the server still opens.
 -   **Readiness**: `Ping` is the connection ping **plus** the assertion that `spatial` is loaded
     (§4.8) — the extension is loaded once at open (rule 3) and every geo route depends on it.
--   **Write serialization**: a single application-level mutex (`writeMu`) covers `Exec`.
-    `BulkInsert`, `Catalog.Remove` and `Catalog.CreateFromFile`/`CreateFromQuery` take it themselves
-    for the whole duration of their transaction, rather than per statement.
+-   **Write serialization**: `Exec` and `WithTx` each name a `storage.WriteScope` and take that
+    scope's lock, handed out by `writeLocks` (`duckdb/write_locks.go`) — one mutex per scope, its
+    entry dropped once nobody holds or awaits it, so the registry stays the size of the writes in
+    flight. `BulkInsert`, `Catalog.Remove` and `Catalog.CreateFromFile`/`CreateFromQuery` hold their
+    scope for the whole duration of their transaction, rather than per statement. Every write
+    concerning a table names `TableWriteScope(tableId)` — its rows, its structure, its catalogue
+    row, its stored filters and its per-table settings alike — so a table's removal excludes the
+    writes to it while an import into another table runs alongside. `Catalog.createTable` generates
+    the tableId before opening its transaction (`Repository.CreateWithId`) precisely so it can name
+    that scope. The writes already running inside a caller-owned transaction name `TxWriteScope`,
+    ignored by the tx-backed `Querier`s that carry them, the transaction holding the real scope
+    itself. Only the settings singleton row uses `GlobalWriteScope`. Reads never take a lock —
+    `Query` and `QueryRow` run concurrently across the pool. Serializing per scope rather than
+    globally is what keeps a transaction conflict off every caller without a retry path (rule 21,
+    LIM-3). Across processes the choice is not the server's: DuckDB holds the database file under
+    an exclusive lock, so one instance at a time serves a given database (LIM-15).
 -   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error invalidates the whole
     instance, not just the query that raised it. Every call that reaches the connection (`Query`,
     `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError` and, on a
@@ -846,22 +871,33 @@ geometry — the query an edit session runs, unbounded in its key space like eve
 read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
 tile's z/x/y.
 
-### 5.6 `ExportService` — export is domain, not transport
+### 5.6 `ExportService` — export is DuckDB's COPY, streamed back
 
-The router only validates the format, sets the headers, and lets the service write directly into the
-response body.
+The router validates the format, sets the headers, and lets the service write into the response
+body. Every format goes through DuckDB's own `COPY` into a temporary directory the service owns,
+whose file is then streamed to the caller and removed — the escaping of a CSV, the shape of a
+`FeatureCollection` and the GeoParquet metadata are the engine's business, never rebuilt here.
 
--   Rows are read **page by page** (`internal/settings.ExportBatchSize`, a constant — not
-    settings-editable, IMP-8), never all in memory.
--   The format is validated **before** the first byte is written: once the streaming has started,
-    the status code can no longer change. `ExportHandler.ExportTable` tracks whether any byte has
-    actually reached the response (`firstByteWriter`): a failure before that point is answered as a
-    normal error response (§6.4); a failure after it aborts the connection
-    (`panic(http.ErrAbortHandler)`) instead of letting the response complete as if the export were
-    whole — a truncated or empty file is never presented as a `200`.
--   CSV: a `pkey` header + the schema's columns (geometry excluded), written before any row is read.
--   GeoJSON: a `FeatureCollection` assembled as a stream; refused on a non-geo table. A NULL
-    geometry produces the JSON literal `null`, never an empty string.
+-   Formats (`storage.ExportFormat`): `csv` (`FORMAT CSV, HEADER`), `geojson`
+    (`FORMAT GDAL, DRIVER 'GeoJSON'`, `LAYER_NAME` naming the collection after the table) and
+    `parquet` (`FORMAT PARQUET`, which DuckDB turns into GeoParquet by itself on a geometry column).
+    The format is validated **before** the first byte is written.
+-   CSV carries `pkey` plus the schema's columns, geometry excluded (rule 7). The other two carry
+    the geometry, aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other
+    column becoming a property.
+-   **Output CRS**: `?srid=` pins it exactly as it pins an import's source CRS; without one the
+    table goes back out in the CRS it came in (`Metadata.Srid`), and only a table whose source CRS
+    was never recorded falls back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
+    A CRS PROJ cannot resolve is refused before any file is written. A table with no geometry
+    reprojects nothing.
+-   The file being complete before its first byte reaches the response, a failure to produce it is
+    still a normal error response (§6.4). `ExportHandler.ExportTable` still tracks whether any byte
+    has reached the response (`firstByteWriter`): only the copy of the finished file to the client
+    can now fail that late, and it aborts the connection (`panic(http.ErrAbortHandler)`) rather than
+    let a truncated download look whole.
+-   The exported file **names its CRS** (`communes_EPSG2154.parquet`): no format states it reliably
+    — GeoParquet's metadata omits it and GeoJSON is read as lon/lat whatever it holds — and the
+    default is the table's own CRS rather than one fixed value.
 
 ### 5.7 `SourceService`
 
@@ -1105,11 +1141,17 @@ timeout are the exception (TODO-17): both are guards, config-only (§2.4), so `N
 restart, not a `PATCH`.
 
 -   **Body cap** (`maxBodyBytes`, `middleware.go`): rejects immediately with `413` if `Content-Length`
-    exceeds `settingsCfg.MaxBodyBytes`, **before** reading a single byte. Necessary because an overrun
+    exceeds the cap, **before** reading a single byte. Necessary because an overrun
     detected mid-stream forces Go to close the connection with unread bytes, which the client sees as
-    an abrupt cut with no HTTP status. The `/sources/upload` route gets a dedicated cap (max source
-    size + 64 KiB of headroom for the multipart framing) — still computed fresh per request, since it
-    depends on `SourceService`, not on a fixed config value.
+    an abrupt cut with no HTTP status. Applied to the `/api/v1` **group**, never at the top of
+    `Setup`: `/sources/upload` is registered outside that group, with its own cap (max source size
+    + 64 KiB of headroom for the multipart framing), computed fresh per request since it depends on
+    `SourceService` rather than on a fixed config value. Nesting the two would apply the **smaller**
+    of them and refuse a source file against a JSON-sized limit — stacked caps never resolve to the
+    more specific one. The same registration keeps `requestTimeout` off the upload, whose body takes
+    longer to read than any normal request's budget, and `UploadSource` clears
+    `http.Server.ReadTimeout` for its own request (`SetReadDeadline`), the read-side mirror of what
+    `ExportTable` does for the write deadline.
 -   **Per-request timeout** (`requestTimeout`, `middleware.go`): applied to the `/api/v1` **group**
     only, building a `middleware.Timeout` around `settingsCfg.RequestTimeoutSec` — `0` leaves every
     request unbounded.
@@ -1387,7 +1429,7 @@ test files build on — sits in `fixtures_test.go`, which tests nothing itself; 
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config`          | loading with/without a file, environment overrides, invalid cases                                                                                                                                                                                                                                                                                                                                                                                             |
 | `storage`         | unit tests of the primitives (`BuildFilter`, identifiers, sorting)                                                                                                                                                                                                                                                                                                                                                                                            |
-| `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` alone (opening, pool, `writeMu`, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
+| `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` and `write_locks.go` alone (opening, pool, per-scope write locks, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
 | `service`         | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it                                                                                   |
 | `router/handlers` | `httptest` + light doubles of the ports declared in `ports.go`                                                                                                                                                                                                                                                                                                                                                                                                |
 | `router`          | route and middleware wiring                                                                                                                                                                                                                                                                                                                                                                                                                                   |

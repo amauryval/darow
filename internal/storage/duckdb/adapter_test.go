@@ -96,7 +96,7 @@ func Test_Adapter_Table_ResolvesCatalogueMetadata(t *testing.T) {
 	assert.True(t, isGeo, "a table materialized from a geo source resolves as geo")
 }
 
-// Every write goes through the adapter's single writeMu, so concurrent
+// Every write goes through the lock of the scope it names, so concurrent
 // multi-row inserts neither interleave nor lose rows.
 func Test_Adapter_ConcurrentBulkInsertsAreSerialized(t *testing.T) {
 	a := setupAdapter(t)
@@ -213,7 +213,7 @@ func Test_Adapter_Diagnostics_ReportsOnDiskSize(t *testing.T) {
 	// pragma_database_size's block counts only reflect blocks flushed to
 	// disk — force that so the assertion doesn't race the engine's own
 	// checkpoint schedule.
-	_, err = a.Exec(context.Background(), "CHECKPOINT")
+	_, err = a.Exec(context.Background(), storage.GlobalWriteScope, "CHECKPOINT")
 	require.NoError(t, err)
 
 	d, err := a.Diagnostics(context.Background())

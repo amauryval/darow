@@ -2,6 +2,7 @@
 import { computed, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { exportTable } from '../client/tables'
+import type { ExportFormat } from '../client/types'
 import { errorMessage } from '../client/http'
 import ColumnsModal from '../components/tables/ColumnsModal.vue'
 import TableDataPanel from '../components/tables/TableDataPanel.vue'
@@ -9,6 +10,7 @@ import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
 import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
+import ExportModal from '../components/tables/ExportModal.vue'
 import TableSettingsModal from '../components/tables/TableSettingsModal.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
 import { useFeatureSelection } from '../composables/useFeatureSelection'
@@ -99,16 +101,15 @@ async function onDeleteTable() {
 }
 
 const exporting = ref(false)
+const showExport = ref(false)
 
-async function onExportTable() {
+// The format and the output CRS are the modal's to choose (§5.6): this only
+// runs the download and reports a failure the way every other action does.
+async function onExport(format: ExportFormat, srid: number | null) {
     if (!table.value) return
     exporting.value = true
     try {
-        await exportTable(
-            table.value.tableId,
-            table.value.isGeo ? 'geojson' : 'csv',
-            table.value.tableName
-        )
+        await exportTable(table.value.tableId, format, srid, table.value.tableName)
     } catch (e) {
         toast.error(errorMessage(e, "Impossible d'exporter la table"))
     } finally {
@@ -151,7 +152,7 @@ async function onColumnAdded(name: string, type: string) {
             @rename="onRename"
             @add-column="openAddColumn"
             @derive="showDerive = true"
-            @export="onExportTable"
+            @export="showExport = true"
             @api-routes="showApiRoutes = true"
             @table-settings="showTableSettings = true"
             @delete="onDeleteTable"
@@ -195,6 +196,14 @@ async function onColumnAdded(name: string, type: string) {
             ref="addColumnModalRef"
             :on-add="onColumnAdded"
             @close="showAddColumn = false"
+        />
+
+        <ExportModal
+            v-if="showExport && table"
+            :table="table"
+            :exporting="exporting"
+            :on-export="onExport"
+            @close="showExport = false"
         />
 
         <ApiRoutesModal

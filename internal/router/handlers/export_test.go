@@ -1,17 +1,20 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"darow/internal/router/validation"
 	"darow/internal/service"
 	"darow/internal/storage"
+	"darow/internal/storage/mocks"
 )
 
 func Test_newExportHandler(t *testing.T) {
@@ -31,40 +34,28 @@ func Test_newExportHandler(t *testing.T) {
 	metadataSvc.AssertExpectations(t)
 }
 
-// fakeExportDeps satisfies ExportService's unexported rowLister,
-// geometryFetcher, and columnLister ports structurally, so ExportTable's
-// streaming path can be exercised without a mocking framework. schemaErr
-// and pageErr let a test fail the stream at a chosen point: schemaErr
-// fails before any byte is written (both formats read the schema/columns
-// first), pageErr fails mid-stream for GeoJSON, which writes its opening
-// brace before fetching the first page.
-type fakeExportDeps struct {
-	schema    []service.ColumnSchema
-	rows      []storage.Row
-	schemaErr error
-	pageErr   error
+// fakeExportTables hands the handler a repository whose CopyTo writes the
+// bytes a case wants served, or fails — the two outcomes the handler has to
+// tell apart.
+type fakeExportTables struct {
+	content string
+	copyErr error
+	t       *testing.T
 }
 
-func (f fakeExportDeps) Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error) {
-	return f.schema, f.schemaErr
-}
-
-func (f fakeExportDeps) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
-	if f.pageErr != nil {
-		return nil, f.pageErr
+func (f fakeExportTables) Table(meta storage.Metadata) (storage.TableRepository, error) {
+	repo := &mocks.TableRepository{}
+	call := repo.On("CopyTo", mock.Anything, mock.Anything)
+	if f.copyErr != nil {
+		call.Return(f.copyErr)
+		return repo, nil
 	}
-	if offset > 0 {
-		return nil, nil
-	}
-	return f.rows, nil
-}
-
-func (f fakeExportDeps) GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error) {
-	geometries := make(map[string]string, len(pkeys))
-	for _, pkey := range pkeys {
-		geometries[pkey] = "null"
-	}
-	return geometries, nil
+	call.Run(func(args mock.Arguments) {
+		req, ok := args.Get(1).(storage.ExportRequest)
+		require.True(f.t, ok)
+		require.NoError(f.t, os.WriteFile(req.DestPath, []byte(f.content), 0o600))
+	}).Return(nil)
+	return repo, nil
 }
 
 func Test_exportHandler_exportTable(t *testing.T) {
@@ -85,8 +76,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			metadataSvc := &mockMetadataAPI{}
-			deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, rows: []storage.Row{{Pkey: "1"}}}
-			exportSvc := service.NewExportService(deps, deps, deps)
+			exportSvc := service.NewExportService(fakeExportTables{content: "pkey\n1\n", t: t})
 			eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 			meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: c.isGeo}
@@ -116,8 +106,7 @@ func Test_exportHandler_exportTable(t *testing.T) {
 // still be reported as a normal, parseable error response.
 func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
-	deps := fakeExportDeps{schemaErr: assert.AnError}
-	exportSvc := service.NewExportService(deps, deps, deps)
+	exportSvc := service.NewExportService(fakeExportTables{copyErr: assert.AnError, t: t})
 	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 	meta := storage.Metadata{TableId: "t1", TableName: "t1"}
@@ -134,13 +123,28 @@ func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 }
 
 // Test_exportHandler_exportTable_failureAfterFirstByte covers BLK-2's other
-// half: once streaming has started, the status can no longer change, so
-// ExportTable must abort the connection (panic(http.ErrAbortHandler))
-// rather than let the response complete as if it were a whole file.
+// half: once bytes are on the wire the status can no longer change, so
+// ExportTable must abort the connection rather than let the response
+// complete as if it were a whole file. Copying the finished file to the
+// client is now the only place that can fail this late.
+type breakingWriter struct {
+	http.ResponseWriter
+	writes int
+}
+
+func (w *breakingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes > 1 {
+		return 0, assert.AnError
+	}
+	return w.ResponseWriter.Write(p)
+}
+
 func Test_exportHandler_exportTable_failureAfterFirstByte(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
-	deps := fakeExportDeps{schema: []service.ColumnSchema{{Name: "id", Type: "INTEGER"}}, pageErr: assert.AnError}
-	exportSvc := service.NewExportService(deps, deps, deps)
+	// Larger than io.Copy's 32KB buffer, so the copy needs more than one
+	// write and the second one can fail.
+	exportSvc := service.NewExportService(fakeExportTables{content: strings.Repeat("x", 64*1024), t: t})
 	eh := &ExportHandler{TableResolver: validation.NewTableResolver(metadataSvc), exportService: exportSvc}
 
 	meta := storage.Metadata{TableId: "t1", TableName: "t1", IsGeo: true}
@@ -150,9 +154,8 @@ func Test_exportHandler_exportTable_failureAfterFirstByte(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
-		eh.ExportTable(rec, req)
+		eh.ExportTable(&breakingWriter{ResponseWriter: rec}, req)
 	})
-	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.NotEmpty(t, rec.Body.String())
 	metadataSvc.AssertExpectations(t)
 }

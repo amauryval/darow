@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,17 +26,20 @@ const spatialExtension = "spatial"
 // exposes the catalogue (Catalog), the physical-table materializer
 // (Materializer) and table resolution (Table), each implemented in a
 // sub-package. It
-// serializes every write through writeMu: DuckDB allows only one active
-// writer per process, though concurrent writes without conflicts and
-// concurrent reads are both safe across the pooled connections opened
-// against db. db is guarded by dbMu so a fatal error can swap it for a
+// serializes writes per storage.WriteScope through writes: DuckDB runs
+// concurrent writer threads under MVCC and optimistic concurrency control,
+// so writes to different tables may run at once, while writes sharing a
+// scope stay serialized — which is what keeps a write conflict from ever
+// reaching a caller and spares the server a retry path. Reads take no lock
+// and run concurrently across the pooled connections opened against db,
+// which is guarded by dbMu so a fatal error can swap it for a
 // freshly opened one (see recoverIfFatal) without racing a concurrent
 // reader — reopenMu serializes that swap itself, so two callers observing
 // the same fatal instance at once reopen it only once.
 type Adapter struct {
 	db            *sql.DB
 	dbMu          sync.RWMutex
-	writeMu       sync.Mutex
+	writes        writeLocks
 	reopenMu      sync.Mutex
 	path          string
 	maxOpenConns  int
@@ -68,8 +72,8 @@ func openDB(path string, maxOpenConns int) (*sql.DB, error) {
 // created if missing — DuckDB itself refuses to open a file in a
 // non-existent directory ("in-memory" paths like ":memory:" have no
 // parent to create, so this is a no-op for them). maxOpenConns bounds the
-// pool DuckDB allows only one active writer per process, but concurrent
-// reads are safe across the pool.
+// pool the concurrent reads are served from; writes are serialized on top
+// of it by the per-scope write locks.
 func New(path string, maxOpenConns int) (*Adapter, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -105,7 +109,10 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	geometryInfo := func(ctx context.Context, physicalName string) (bool, string, error) {
 		return tables.GeometryInfo(ctx, a, physicalName)
 	}
-	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), geometryInfo, fileCreator, queryCreator)
+	geometryInfoTx := func(ctx context.Context, tx *sql.Tx, physicalName string) (bool, string, error) {
+		return tables.GeometryInfo(ctx, tables.NewTxQuerier(tx), physicalName)
+	}
+	a.catalog = catalog.New(a, a, tables.DropTable, tables.ExistingTables(a), geometryInfo, geometryInfoTx, fileCreator, queryCreator)
 	a.materializer = tables.NewMaterializer(a, a, a.catalog)
 
 	// Registered at construction, so deleting a table can never forget the
@@ -115,6 +122,15 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	a.tableSettings = catalog.NewTableSettings(a)
 	a.catalog.Register(a.tableSettings)
 	a.settings = catalog.NewSettings(a)
+
+	// Best-effort: a database whose geo tables were created before their
+	// geometry could be read inside the creating transaction carries no
+	// bbox, and a map has no extent to open on. Repairing it is a derived
+	// recomputation (never stored truth), so a failure is logged and the
+	// server still opens.
+	if err := a.catalog.RefreshMissingBbox(context.Background()); err != nil {
+		slog.Error("refreshing tables left without a bbox", "error", err)
+	}
 	return a, nil
 }
 
@@ -218,10 +234,10 @@ func (a *Adapter) QueryRow(ctx context.Context, query string, args ...any) *sql.
 	return row
 }
 
-// Exec runs a write statement, serialized against every other write.
-func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+// Exec runs a write statement, serialized against every other write
+// sharing its scope.
+func (a *Adapter) Exec(ctx context.Context, scope storage.WriteScope, query string, args ...any) (sql.Result, error) {
+	defer a.writes.acquire(scope)()
 
 	db := a.conn()
 	res, err := db.ExecContext(ctx, query, args...)
@@ -231,14 +247,13 @@ func (a *Adapter) Exec(ctx context.Context, query string, args ...any) (sql.Resu
 	return res, err
 }
 
-// WithTx runs fn inside a transaction held under writeMu for its whole
+// WithTx runs fn inside a transaction holding scope for its whole
 // duration, committing on success and rolling back on
 // any error fn returns. Shared by storage.Catalog (cascade delete) and
 // tables.Open (BulkInsert), the two consumers that need transactional
 // semantics beyond a single Exec.
-func (a *Adapter) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+func (a *Adapter) WithTx(ctx context.Context, scope storage.WriteScope, fn func(tx *sql.Tx) error) error {
+	defer a.writes.acquire(scope)()
 
 	db := a.conn()
 	tx, err := db.BeginTx(ctx, nil)

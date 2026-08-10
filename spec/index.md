@@ -86,7 +86,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 4.4 Go contracts` | the `Catalog`/`TableRepository`/… interfaces               |
 | `### 4.5 Filter construction` | `BuildFilter`, query filtering                             |
 | `### 4.5.1 Stored filters` | `StoredFilter`, `FilterStore`                              |
-| `### 4.6 The DuckDB adapter` | connection, `writeMu`, `WithTx`, accessors                 |
+| `### 4.6 The DuckDB adapter` | connection, per-scope write locks, `WithTx`, accessors     |
 | `### 4.7 Rendering an MVT tile` | tile SQL                                                   |
 | `### 4.8 Reading DuckDB's own catalogue` | introspection (`duckdb_columns`, `duckdb_indexes`, …)     |
 | `### 4.9 The settings repository` | persisting settings                                        |
@@ -107,7 +107,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 5.3 SchemaService — structure, not data` | columns, schema endpoints           |
 | `### 5.4 DeriveService and ImportService` | creating a table transactionally    |
 | `### 5.5 GeoService — tile cache` | tiles, cache keyed on `UpdatedAt`   |
-| `### 5.6 ExportService` | export formats                      |
+| `### 5.6 ExportService` | formats, output CRS, COPY into a temporary file |
 | `### 5.7 SourceService` | `workDir` scanning, sources         |
 | `### 5.8 SettingsService` | runtime settings ownership          |
 | `### 5.8.1 TableSettingsService — per-table overrides` | resolving/validating a table's own overrides |

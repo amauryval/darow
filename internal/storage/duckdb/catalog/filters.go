@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -117,7 +118,7 @@ func (r *Filters) CreateFilter(
 	}
 
 	filterId := uuid.NewString()
-	if _, err := r.conn.Exec(ctx, `
+	if _, err := r.conn.Exec(ctx, storage.TableWriteScope(tableId), `
         INSERT INTO filters (filterId, tableId, name, conditions)
         VALUES (?, ?, ?, ?)
     `, filterId, tableId, name, string(encoded)); err != nil {
@@ -131,6 +132,11 @@ func (r *Filters) CreateFilter(
 func (r *Filters) UpdateFilter(
 	ctx context.Context, filterId string, patch storage.StoredFilterPatch,
 ) (storage.StoredFilter, error) {
+	existing, err := r.GetFilter(ctx, filterId)
+	if err != nil {
+		return storage.StoredFilter{}, err
+	}
+
 	sets := make([]string, 0, 3)
 	args := make([]any, 0, 4)
 
@@ -147,14 +153,14 @@ func (r *Filters) UpdateFilter(
 		args = append(args, string(encoded))
 	}
 	if len(sets) == 0 {
-		return r.GetFilter(ctx, filterId)
+		return existing, nil
 	}
 
 	sets = append(sets, "updatedAt = ?")
 	args = append(args, time.Now(), filterId)
 
 	query := fmt.Sprintf(`UPDATE filters SET %s WHERE filterId = ?`, strings.Join(sets, ", "))
-	if _, err := r.conn.Exec(ctx, query, args...); err != nil {
+	if _, err := r.conn.Exec(ctx, storage.TableWriteScope(existing.TableId), query, args...); err != nil {
 		return storage.StoredFilter{}, err
 	}
 	return r.GetFilter(ctx, filterId)
@@ -163,7 +169,16 @@ func (r *Filters) UpdateFilter(
 // DeleteFilter removes a stored filter. Deleting one that no longer exists is
 // not an error: the caller's intent is already satisfied.
 func (r *Filters) DeleteFilter(ctx context.Context, filterId string) error {
-	_, err := r.conn.Exec(ctx, `DELETE FROM filters WHERE filterId = ?`, filterId)
+	existing, err := r.GetFilter(ctx, filterId)
+	var notFound *storage.NotFoundError
+	if errors.As(err, &notFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	_, err = r.conn.Exec(ctx, storage.TableWriteScope(existing.TableId), `DELETE FROM filters WHERE filterId = ?`, filterId)
 	return err
 }
 

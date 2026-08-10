@@ -2,217 +2,130 @@ package service
 
 import (
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
-	"darow/internal/settings"
 	"darow/internal/storage"
 )
 
 // ExportValidationError marks an Export failure caused by the request
-// itself (an unsupported format, or GeoJSON requested on a non-geo table)
-// rather than a storage failure, so the router can map it to 400 instead
-// of 500.
+// itself (an unsupported format, an unknown CRS, or a geometry format asked
+// of a table that has none) rather than a storage failure, so the router can
+// map it to 400 instead of 500.
 type ExportValidationError struct{ msg string }
 
 func (e *ExportValidationError) Error() string { return e.msg }
 
-// rowLister is what ExportService needs to fetch a table's rows, one
-// bounded page at a time, without a per-page COUNT(*) it has no
-// use for.
-type rowLister interface {
-	ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error)
+// defaultExportCRS is what an export without an explicit CRS is written in
+// — the same lon/lat every other geometry output uses.
+const defaultExportCRS = "OGC:CRS84"
+
+// tableResolverForExport is what ExportService needs to reach the table
+// whose rows DuckDB copies out.
+type tableResolverForExport interface {
+	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
-// geometryFetcher is what ExportService needs to fetch each row's
-// geometry, exported as GeoJSON — the one export-only exception to
-// "never return the geometry column".
-type geometryFetcher interface {
-	GetGeometryGeoJSON(ctx context.Context, meta storage.Metadata, pkeys []string) (map[string]string, error)
-}
-
-// columnLister is what ExportService needs to know a table's column
-// names and order, so the CSV header can be written before any row is
-// fetched instead of being inferred by scanning every row into memory.
-type columnLister interface {
-	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
-}
-
-// ExportService renders a table's rows as CSV or GeoJSON — export is
-// domain logic, not HTTP transport: the router only sets headers and lets
-// Export stream the body directly to the response. Rows are fetched
-// settings.ExportBatchSize at a time, so memory use stays bounded
-// regardless of table size instead of holding every row and the full
-// rendered body at once. Not settings-configurable (IMP-8, TODO-17): it has
-// no observable effect on an export's result, only on how it is produced.
+// ExportService writes a table out in one of storage.ExportFormats. Every
+// format goes through DuckDB's own COPY into a temporary file, which is then
+// streamed to the caller: the escaping of a CSV, the shape of a
+// FeatureCollection and the GeoParquet metadata are the engine's business,
+// and none of them is rebuilt here. The file is complete before its first
+// byte reaches the response, so a failure to produce it is still answerable
+// as a normal error rather than a truncated download.
 type ExportService struct {
-	rows      rowLister
-	geometry  geometryFetcher
-	columns   columnLister
-	batchSize int64
+	tables tableResolverForExport
 }
 
-// NewExportService builds an ExportService reading rows via rows, column
-// order via columns, and, for GeoJSON, geometry via geometry.
-func NewExportService(rows rowLister, geometry geometryFetcher, columns columnLister) *ExportService {
-	return &ExportService{rows: rows, geometry: geometry, columns: columns, batchSize: settings.ExportBatchSize}
+// NewExportService builds an ExportService copying tables out through tables.
+func NewExportService(tables tableResolverForExport) *ExportService {
+	return &ExportService{tables: tables}
 }
 
-// ContentType validates format ("csv" or "geojson") against meta and
-// returns the response's content type, without touching storage. The
-// router must call this — and set the response header on success —
-// before calling Export, since Export streams directly to the response
-// body and can no longer change the status code once it starts writing.
-func (s *ExportService) ContentType(meta storage.Metadata, format string) (string, error) {
+// ContentType validates format against meta and returns the response's
+// content type, without touching storage. The router must call this — and
+// set the response header on success — before calling Export.
+func (s *ExportService) ContentType(meta storage.Metadata, format storage.ExportFormat) (string, error) {
+	if format.IsGeoFormat() && format == storage.ExportGeoJSON && !meta.IsGeo {
+		return "", &ExportValidationError{fmt.Sprintf("table %q has no geometry to export as GeoJSON", meta.TableId)}
+	}
 	switch format {
-	case "csv":
+	case storage.ExportCSV:
 		return "text/csv", nil
-	case "geojson":
-		if !meta.IsGeo {
-			return "", &ExportValidationError{fmt.Sprintf("table %q has no geometry to export as GeoJSON", meta.TableId)}
-		}
+	case storage.ExportGeoJSON:
 		return "application/geo+json", nil
+	case storage.ExportParquet:
+		return "application/vnd.apache.parquet", nil
 	default:
 		return "", &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
 	}
 }
 
-// Export streams every row of meta's table to w in format, fetching rows
-// batchSize at a time rather than loading the whole table into
-// memory. Callers must have already validated format via ContentType.
-func (s *ExportService) Export(ctx context.Context, w io.Writer, meta storage.Metadata, format string) error {
-	switch format {
-	case "csv":
-		return s.exportCSV(ctx, w, meta)
-	case "geojson":
-		return s.exportGeoJSON(ctx, w, meta)
-	default:
-		return &ExportValidationError{fmt.Sprintf("unsupported export format: %q", format)}
+// ExportCRS resolves the CRS an export is written in, in the "AUTH:CODE"
+// form ST_Transform expects. requested is the caller's EPSG code and wins
+// when set; without one the table goes back out in the CRS it came in
+// (meta.Srid), and only a table whose source CRS was never recorded falls
+// back to lon/lat. EPSG:4326 is always named OGC:CRS84 — the axis order of
+// the former would silently swap X and Y.
+func ExportCRS(requested int, meta storage.Metadata) string {
+	srid := requested
+	if srid == 0 {
+		srid = meta.Srid
 	}
+	if srid == 0 || srid == 4326 {
+		return defaultExportCRS
+	}
+	return "EPSG:" + strconv.Itoa(srid)
 }
 
-// forEachPage calls fn with successive pages of meta's table's rows,
-// batchSize rows at a time, until every row has been visited. A page
-// shorter than batchSize is always the last one — GetPkeys never returns
-// more than the limit it was given — so this needs no separate total
-// count to know when to stop.
-func (s *ExportService) forEachPage(ctx context.Context, meta storage.Metadata, fn func([]storage.Row) error) error {
-	var offset int64
-	for {
-		rows, err := s.rows.ListRowsPage(ctx, meta, offset, s.batchSize)
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return nil
-		}
-		if err := fn(rows); err != nil {
-			return err
-		}
-		offset += int64(len(rows))
-		if int64(len(rows)) < s.batchSize {
-			return nil
-		}
+// FileName is what the exported file is called. A file carrying geometry
+// always names its CRS, because no format states it reliably — GeoParquet's
+// metadata omits it and GeoJSON is read as lon/lat whatever it holds — and
+// because the default is the table's own CRS rather than one fixed value.
+func FileName(meta storage.Metadata, format storage.ExportFormat, targetCRS string) string {
+	if !format.IsGeoFormat() || !meta.IsGeo {
+		return fmt.Sprintf("%s.%s", meta.TableName, format.Extension())
 	}
+	crs := strings.ReplaceAll(targetCRS, ":", "")
+	return fmt.Sprintf("%s_%s.%s", meta.TableName, crs, format.Extension())
 }
 
-// exportColumns returns meta's table's column names in schema order,
-// excluding the geometry column and every hidden column (storage.IsHiddenColumn) —
-// rows never carry either.
-func (s *ExportService) exportColumns(ctx context.Context, meta storage.Metadata) ([]string, error) {
-	schema, err := s.columns.Schema(ctx, meta)
-	if err != nil {
-		return nil, err
-	}
-
-	cols := make([]string, 0, len(schema))
-	for _, col := range schema {
-		if col.Name == meta.GeometryColumn || storage.IsHiddenColumn(col.Name) {
-			continue
-		}
-		cols = append(cols, col.Name)
-	}
-	return cols, nil
-}
-
-func (s *ExportService) exportCSV(ctx context.Context, w io.Writer, meta storage.Metadata) error {
-	cols, err := s.exportColumns(ctx, meta)
+// Export writes meta's table to w in format, geometry reprojected to
+// targetCRS. Callers must have already validated format via ContentType.
+func (s *ExportService) Export(ctx context.Context, w io.Writer, meta storage.Metadata, format storage.ExportFormat, targetCRS string) error {
+	repo, err := s.tables.Table(meta)
 	if err != nil {
 		return err
 	}
 
-	writer := csv.NewWriter(w)
-	if err := writer.Write(append([]string{"pkey"}, cols...)); err != nil {
-		return err
-	}
-
-	err = s.forEachPage(ctx, meta, func(rows []storage.Row) error {
-		for _, row := range rows {
-			record := make([]string, 0, len(cols)+1)
-			record = append(record, row.Pkey)
-			for _, col := range cols {
-				record = append(record, fmt.Sprintf("%v", row.Values[col]))
-			}
-			if err := writer.Write(record); err != nil {
-				return err
-			}
-		}
-		writer.Flush()
-		return writer.Error()
-	})
+	dir, err := os.MkdirTemp("", "darow-export-")
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(dir)
 
-	writer.Flush()
-	return writer.Error()
-}
-
-func (s *ExportService) exportGeoJSON(ctx context.Context, w io.Writer, meta storage.Metadata) error {
-	if _, err := io.WriteString(w, `{"type":"FeatureCollection","features":[`); err != nil {
+	// DuckDB creates the file itself; the directory is what we own and what
+	// gets removed, so a failed COPY leaves nothing behind either way.
+	dest := filepath.Join(dir, "export."+format.Extension())
+	if err := repo.CopyTo(ctx, storage.ExportRequest{
+		DestPath:  dest,
+		Format:    format,
+		TargetCRS: targetCRS,
+		LayerName: meta.TableName,
+	}); err != nil {
 		return err
 	}
 
-	first := true
-	err := s.forEachPage(ctx, meta, func(rows []storage.Row) error {
-		pkeys := make([]string, len(rows))
-		for i, row := range rows {
-			pkeys[i] = row.Pkey
-		}
-
-		geometries, err := s.geometry.GetGeometryGeoJSON(ctx, meta, pkeys)
-		if err != nil {
-			return err
-		}
-
-		for _, row := range rows {
-			if !first {
-				if _, err := io.WriteString(w, ","); err != nil {
-					return err
-				}
-			}
-			first = false
-
-			feature, err := json.Marshal(map[string]any{
-				"type":       "Feature",
-				"properties": row.Values,
-				"geometry":   json.RawMessage(geometries[row.Pkey]),
-			})
-			if err != nil {
-				return err
-			}
-			if _, err := w.Write(feature); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	written, err := os.Open(dest)
 	if err != nil {
 		return err
 	}
+	defer written.Close()
 
-	_, err = io.WriteString(w, "]}")
+	_, err = io.Copy(w, written)
 	return err
 }

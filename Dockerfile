@@ -23,16 +23,17 @@ COPY . .
 COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
     && swag init -g cmd/server/main.go -o docs
-RUN CGO_ENABLED=1 go build -o /out/server ./cmd/server
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server ./cmd/server
+RUN mkdir -p /out/data/sources
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -u 1000 darow
+# distroless/cc ships glibc, libstdc++ and ca-certificates (duckdb-go links
+# against libstdc++ via cgo; the spatial extension is fetched over HTTPS at
+# first run) with no shell or package manager — a smaller, narrower runtime
+# than debian-slim. The nonroot tag runs as uid/gid 65532 already.
+FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/server ./server
 COPY config.yaml ./config.yaml
-RUN mkdir -p /app/data/sources && chown -R darow:darow /app
-USER darow
+COPY --from=build --chown=nonroot:nonroot /out/data ./data
 EXPOSE 8080
 ENTRYPOINT ["./server"]

@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_Materializer_ClusterByHilbert(t *testing.T) {
@@ -28,7 +30,7 @@ func Test_Materializer_ClusterByHilbert(t *testing.T) {
 			require.True(t, isGeo)
 
 			if c.allNullGeom {
-				_, err := conn.Exec(ctx, `UPDATE t_points SET geom = NULL`)
+				_, err := conn.Exec(ctx, storage.GlobalWriteScope, `UPDATE t_points SET geom = NULL`)
 				require.NoError(t, err)
 			}
 

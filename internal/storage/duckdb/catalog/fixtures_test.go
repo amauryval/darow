@@ -26,7 +26,7 @@ func openTestDB(t *testing.T, path string) *sql.DB {
 }
 
 // dbQuerier adapts a plain *sql.DB to Querier for tests that don't need
-// writeMu serialization.
+// per-scope write serialization.
 type dbQuerier struct{ db *sql.DB }
 
 func (q dbQuerier) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
@@ -37,7 +37,7 @@ func (q dbQuerier) QueryRow(ctx context.Context, query string, args ...any) *sql
 	return q.db.QueryRowContext(ctx, query, args...)
 }
 
-func (q dbQuerier) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+func (q dbQuerier) Exec(ctx context.Context, _ storage.WriteScope, query string, args ...any) (sql.Result, error) {
 	return q.db.ExecContext(ctx, query, args...)
 }
 
@@ -68,7 +68,7 @@ func dbExistingTables(db *sql.DB) ExistingTables {
 // Create alone does not — the materializer does, and this package's tests
 // never reach it.
 func materialize(t *testing.T, conn dbQuerier, physicalName string) {
-	_, err := conn.Exec(context.Background(), fmt.Sprintf(`CREATE TABLE %s (__pkey TEXT)`, physicalName))
+	_, err := conn.Exec(context.Background(), storage.GlobalWriteScope, fmt.Sprintf(`CREATE TABLE %s (__pkey TEXT)`, physicalName))
 	require.NoError(t, err)
 }
 
@@ -83,11 +83,11 @@ func newTestRepositoryWithConn(t *testing.T) (*Repository, dbQuerier) {
 	return NewRepository(dbQuerier{db}, dbExistingTables(db), dbGeometryInfo(db)), dbQuerier{db}
 }
 
-// dbTxRunner adapts a plain *sql.DB to TxRunner for tests — no writeMu to
+// dbTxRunner adapts a plain *sql.DB to TxRunner for tests — no scope lock to
 // serialize against, since these tests never run concurrent writes.
 type dbTxRunner struct{ db *sql.DB }
 
-func (r dbTxRunner) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (r dbTxRunner) WithTx(ctx context.Context, _ storage.WriteScope, fn func(tx *sql.Tx) error) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -162,35 +162,81 @@ func newTestCatalog(t *testing.T) *Catalog {
 func newTestCatalogWithCreators(t *testing.T, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))
-	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), fileCreator, queryCreator)
+	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), dbGeometryInfoTx(), fileCreator, queryCreator)
 }
 
 // dbGeometryInfo stands in for duckdb/tables.GeometryInfo with raw SQL, so
 // this package's tests never depend on duckdb/tables. A table with no
 // geometry-typed column, or none at all yet, reports no geometry.
-func dbGeometryInfo(db *sql.DB) GeometryInfo {
-	return func(ctx context.Context, physicalName string) (bool, string, error) {
-		rows, err := db.QueryContext(ctx, `
+type ctxQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func geometryInfoOn(ctx context.Context, q ctxQuerier, physicalName string) (bool, string, error) {
+	rows, err := q.QueryContext(ctx, `
             SELECT column_name, data_type FROM duckdb_columns()
             WHERE database_name = current_database() AND schema_name = current_schema()
               AND table_name = ?
         `, physicalName)
-		if err != nil {
+	if err != nil {
+		return false, "", err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
 			return false, "", err
 		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var name, dataType string
-			if err := rows.Scan(&name, &dataType); err != nil {
-				return false, "", err
-			}
-			if dataType == "GEOMETRY" || strings.HasPrefix(dataType, "GEOMETRY(") {
-				return true, name, nil
-			}
+		if dataType == "GEOMETRY" || strings.HasPrefix(dataType, "GEOMETRY(") {
+			return true, name, nil
 		}
-		return false, "", rows.Err()
 	}
+	return false, "", rows.Err()
+}
+
+func dbGeometryInfo(db *sql.DB) GeometryInfo {
+	return func(ctx context.Context, physicalName string) (bool, string, error) {
+		return geometryInfoOn(ctx, db, physicalName)
+	}
+}
+
+// dbGeometryInfoTx reads through the transaction, as duckdb.New's own
+// TxGeometryInfo does — a table a transaction has created is invisible to
+// anything else until it commits.
+func dbGeometryInfoTx() TxGeometryInfo {
+	return func(ctx context.Context, tx *sql.Tx, physicalName string) (bool, string, error) {
+		return geometryInfoOn(ctx, tx, physicalName)
+	}
+}
+
+// geoQueryCreator materializes a physical table carrying the two
+// Paris/Lyon fixture points in EPSG:3857, so a creation exercises the geo
+// branch of RefreshDerivedMetadata rather than the count-only one.
+func geoQueryCreator() QueryCreator {
+	return func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (string, bool, error) {
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+            CREATE TABLE %s AS
+            SELECT uuid()::TEXT AS __pkey,
+                   ST_Transform(ST_Point(2.35, 48.85), 'OGC:CRS84', 'EPSG:3857') AS geom
+            UNION ALL
+            SELECT uuid()::TEXT, ST_Transform(ST_Point(4.83, 45.76), 'OGC:CRS84', 'EPSG:3857')
+        `, physicalName))
+		if err != nil {
+			return "", false, err
+		}
+		return "geom", true, nil
+	}
+}
+
+// newSpatialTestCatalog is newTestCatalogWithCreators with the spatial
+// extension loaded, for the creations whose derived metadata carries a bbox.
+func newSpatialTestCatalog(t *testing.T, queryCreator QueryCreator) *Catalog {
+	db := openTestDB(t, ":memory:")
+	_, err := db.Exec("INSTALL spatial; LOAD spatial;")
+	require.NoError(t, err)
+	require.NoError(t, Migrate(db))
+	return New(dbQuerier{db}, dbTxRunner{db}, dropTable, dbExistingTables(db), dbGeometryInfo(db), dbGeometryInfoTx(), fakeFileCreator(nil), queryCreator)
 }
 
 // newSpatialTestRepository is newTestRepository with the spatial extension
@@ -217,7 +263,7 @@ func newGeoTable(t *testing.T, r *Repository, conn dbQuerier) (tableId string, m
 	meta, err = r.GetMetadata(ctx, tableId)
 	require.NoError(t, err)
 
-	_, err = conn.Exec(ctx, fmt.Sprintf(`
+	_, err = conn.Exec(ctx, storage.GlobalWriteScope, fmt.Sprintf(`
         CREATE TABLE %s AS
         SELECT uuid()::TEXT AS __pkey, name,
                ST_Transform(ST_Point(lon, lat), 'OGC:CRS84', 'EPSG:3857') AS geom

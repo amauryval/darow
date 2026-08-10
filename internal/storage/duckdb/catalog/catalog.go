@@ -7,25 +7,27 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/google/uuid"
+
 	"darow/internal/storage"
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes
 // through. Routing writes through it (rather than a private *sql.DB)
-// keeps every write serialized behind the adapter's single writeMu.
+// keeps every write serialized behind the lock of the scope it names.
 type Querier interface {
 	Query(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRow(ctx context.Context, query string, args ...any) *sql.Row
-	Exec(ctx context.Context, query string, args ...any) (sql.Result, error)
+	Exec(ctx context.Context, scope storage.WriteScope, query string, args ...any) (sql.Result, error)
 }
 
 // TxRunner runs fn inside a single transaction. The DuckDB adapter's
-// implementation holds writeMu for fn's whole duration, so a
-// cascade never interleaves with an unrelated write. Shared verbatim with
-// duckdb/tables (both need only *sql.Tx's Exec side), so *duckdb.Adapter's
-// single WithTx method satisfies both.
+// implementation holds scope for fn's whole duration, so a
+// cascade never interleaves with another write to the table it removes.
+// Shared verbatim with duckdb/tables (both need only *sql.Tx's Exec side),
+// so *duckdb.Adapter's single WithTx method satisfies both.
 type TxRunner interface {
-	WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error
+	WithTx(ctx context.Context, scope storage.WriteScope, fn func(tx *sql.Tx) error) error
 }
 
 // ExistingTables lists the tables that physically exist in the database,
@@ -44,6 +46,13 @@ type ExistingTables func(ctx context.Context) (map[string]bool, error)
 // rather than trust metadata's own isGeo/geometryColumn columns, which can
 // drift from what the physical table actually has (TODO-10).
 type GeometryInfo func(ctx context.Context, physicalName string) (isGeo bool, geometryColumn string, err error)
+
+// TxGeometryInfo answers the same question as GeometryInfo from inside the
+// transaction creating the table: until that transaction commits, the
+// pooled connection GeometryInfo reads through does not see it, and a
+// creation that derived its geometry from there would refresh its metadata
+// as if the table carried none — leaving it without a bbox.
+type TxGeometryInfo func(ctx context.Context, tx *sql.Tx, physicalName string) (isGeo bool, geometryColumn string, err error)
 
 // Repository owns every read and write against the metadata table.
 type Repository struct {
@@ -94,11 +103,12 @@ type Attachment interface {
 // storage.Catalog every service reads and writes the catalogue through.
 type Catalog struct {
 	*Repository
-	tx           TxRunner
-	dropper      Dropper
-	fileCreator  FileCreator
-	queryCreator QueryCreator
-	children     []Attachment
+	tx             TxRunner
+	geometryInfoTx TxGeometryInfo
+	dropper        Dropper
+	fileCreator    FileCreator
+	queryCreator   QueryCreator
+	children       []Attachment
 }
 
 // New builds a Catalog whose metadata repository reads/writes through conn,
@@ -106,13 +116,14 @@ type Catalog struct {
 // whose physical-table drop, materialization, listing and geometry
 // introspection are obtained from dropper, fileCreator, queryCreator,
 // existing and geometryInfo rather than formatted here.
-func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, geometryInfo GeometryInfo, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
+func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, geometryInfo GeometryInfo, geometryInfoTx TxGeometryInfo, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	return &Catalog{
-		Repository:   NewRepository(conn, existing, geometryInfo),
-		tx:           tx,
-		dropper:      dropper,
-		fileCreator:  fileCreator,
-		queryCreator: queryCreator,
+		Repository:     NewRepository(conn, existing, geometryInfo),
+		tx:             tx,
+		geometryInfoTx: geometryInfoTx,
+		dropper:        dropper,
+		fileCreator:    fileCreator,
+		queryCreator:   queryCreator,
 	}
 }
 
@@ -133,7 +144,7 @@ func (c *Catalog) Remove(ctx context.Context, tableId string) error {
 		return err
 	}
 
-	return c.tx.WithTx(ctx, func(tx *sql.Tx) error {
+	return c.tx.WithTx(ctx, storage.TableWriteScope(tableId), func(tx *sql.Tx) error {
 		if err := c.dropper(ctx, tx, meta.PhysicalName); err != nil {
 			return err
 		}
@@ -157,13 +168,11 @@ func (c *Catalog) createTable(
 	ctx context.Context, tableName string,
 	materialize func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error,
 ) (string, error) {
-	var tableId string
-	err := c.tx.WithTx(ctx, func(tx *sql.Tx) error {
-		repo := newTxRepository(tx, c.existing, c.geometryInfo)
+	tableId := uuid.NewString()
+	err := c.tx.WithTx(ctx, storage.TableWriteScope(tableId), func(tx *sql.Tx) error {
+		repo := newTxRepository(tx, c.existing, c.geometryInfoTx)
 
-		var err error
-		tableId, err = repo.Create(ctx, tableName)
-		if err != nil {
+		if err := repo.CreateWithId(ctx, tableId, tableName); err != nil {
 			return err
 		}
 
@@ -201,7 +210,8 @@ func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery st
 	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
 		// isGeo/geometryColumn are read back off the physical table by
 		// GetMetadata once it exists (below, via RefreshDerivedMetadata),
-		// not persisted here — see GeometryInfo.
+		// not persisted here — through TxGeometryInfo, the transaction being
+		// the only place the table is visible before it commits.
 		_, _, err := c.queryCreator(ctx, tx, physicalName, sourceQuery, args...)
 		return err
 	})

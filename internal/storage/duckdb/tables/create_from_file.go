@@ -43,7 +43,7 @@ func (l *Materializer) CreateFromFile(ctx context.Context, physicalName, sourceP
 		args = append(args, layer)
 	}
 
-	if _, err := l.conn.Exec(ctx, fmt.Sprintf(query, physicalName), args...); err != nil {
+	if _, err := l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(query, physicalName), args...); err != nil {
 		return "", false, 0, fmt.Errorf("reading source file: %w", err)
 	}
 
@@ -94,7 +94,7 @@ func (l *Materializer) CreateFromFile(ctx context.Context, physicalName, sourceP
 // if given, wins over the file's own declared CRS, exactly like
 // CreateFromFile's ST_Read path.
 func (l *Materializer) createFromParquet(ctx context.Context, physicalName, sourcePath string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error) {
-	if _, err := l.conn.Exec(ctx, fmt.Sprintf(
+	if _, err := l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(
 		`CREATE TABLE %s AS SELECT uuid()::TEXT AS __pkey, * FROM read_parquet(?)`, physicalName,
 	), sourcePath); err != nil {
 		return "", false, 0, fmt.Errorf("reading source file: %w", err)

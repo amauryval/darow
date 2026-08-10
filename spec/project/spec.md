@@ -90,9 +90,10 @@ Pinned in `mise.toml`: Go 1.26.4, Node 22, `swag` 1.16.6. `./bin` is prepended t
 ## 5. Build and distribution
 
 `Dockerfile` is a three-stage build: Node 22 builds the UI into the embed directory, Go 1.26
-compiles the single binary, and a `debian:bookworm-slim` runtime carries it. The image exposes
-8080 and its entrypoint is the binary. Configuration and the working directory come from outside
-the image.
+compiles the single binary (stripped, `-ldflags="-s -w"`), and a `gcr.io/distroless/cc-debian12:nonroot`
+runtime carries it — glibc, libstdc++ and ca-certificates, no shell or package manager, running as
+the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary.
+Configuration and the working directory come from outside the image.
 
 ## 6. Continuous integration
 

@@ -964,8 +964,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "csv or geojson",
+                        "description": "csv, geojson or parquet",
                         "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "EPSG code the geometry is written in (default lon/lat)",
+                        "name": "srid",
                         "in": "query"
                     }
                 ],

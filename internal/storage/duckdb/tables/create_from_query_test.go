@@ -6,11 +6,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"darow/internal/storage"
 )
 
 func Test_Materializer_ValidateDeriveQuery(t *testing.T) {
 	conn := openRepoTestDB(t)
-	_, err := conn.Exec(context.Background(), `CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
+	_, err := conn.Exec(context.Background(), storage.GlobalWriteScope, `CREATE TABLE t_a1b2c3 (__pkey TEXT, height INTEGER)`)
 	require.NoError(t, err)
 	l := NewMaterializer(conn, conn, fakePhysicalNames{"t_a1b2c3": true})
 

@@ -32,6 +32,10 @@ func (m *TableRepository) AddColumn(ctx context.Context, colName, colType string
 	return m.Called(ctx, colName, colType).Error(0)
 }
 
+func (m *TableRepository) CopyTo(ctx context.Context, req storage.ExportRequest) error {
+	return m.Called(ctx, req).Error(0)
+}
+
 func (m *TableRepository) Count(ctx context.Context) (int64, error) {
 	callArgs := m.Called(ctx)
 	count, _ := callArgs.Get(0).(int64)

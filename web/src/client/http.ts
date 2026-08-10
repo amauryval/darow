@@ -144,7 +144,10 @@ export function postForm<T>(path: string, form: FormData): Promise<T> {
 // getBlob is get's counterpart for a non-JSON response body (tables.ts's
 // exportTable) — a failure still becomes the same ApiError every other
 // call throws, instead of a plain <a href> download the client never sees.
-export async function getBlob(path: string): Promise<Blob> {
+// The file name comes back with the body: the server is what decides it,
+// and for an export it carries the CRS the file is written in (back LIM-16),
+// which rebuilding it here would silently drop.
+export async function getBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
     const res = await fetch(apiUrl(path))
     if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ErrorResponse | null
@@ -152,5 +155,13 @@ export async function getBlob(path: string): Promise<Blob> {
             body ?? { error: 'request_error', message: '', code: res.status, requestId: '' }
         )
     }
-    return res.blob()
+    return { blob: await res.blob(), filename: filenameOf(res.headers.get('Content-Disposition')) }
+}
+
+// filenameOf reads the name out of a Content-Disposition header, null when
+// the header is absent or names nothing.
+function filenameOf(header: string | null): string | null {
+    if (!header) return null
+    const match = /filename="([^"]+)"/.exec(header)
+    return match ? match[1] : null
 }

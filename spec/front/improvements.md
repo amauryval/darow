@@ -19,7 +19,12 @@ Each entry carries a stable identifier (`IMP-Fn`); a retired identifier is never
 | IMP-F10 | Give the pointer-reached geometry a head start: on entering the mode, or on a pan that settles, prefetch the few rows nearest the pointer instead of waiting for the hover that names one (`useEditFeatures.reach`) | A geometry now becomes editable one round-trip after being pointed at, so the vertices appear a beat late and a fast pass over a boundary can outrun its own loads. A small, bounded read-ahead would hide the latency without going back to loading the whole view — what has to be decided is how many rows and on which signal, since a read-ahead that guesses wrong is exactly the cost the pointer-driven session was built to avoid | §8.8 |
 | IMP-F1 | Show what is left to load in paginated lists ("50 of 1,240") now that `total` is known | The user cannot tell a complete list from its first screen | §8.6 |
 | IMP-F2 | Show upload progress | A large file leaves with no feedback at all until it is done | §8.2 |
-| IMP-F3 | Show tile loading | A map pan in WFS mode signals nothing as long as nothing is rendered | §8.8 |
+| IMP-F3 | Show tile loading | A map pan in WFS mode signals nothing until its first page of features lands | §8.8 |
 
 IMP-F11 was decided on 2026-08-07 (taken up) and became [todo.md](todo.md) TODO-F40, alongside the
 server-side reshaping of the same screen (`../back/todo.md` TODO-17).
+
+IMP-F12 was decided on 2026-08-10 (taken up) and is implemented: the map reads the OGC API -
+Features items endpoint, whose `numberMatched` gives the page count outright, so a dense area's
+pages are fetched several at a time (§8.8). It never became a server change — the count the lead
+asked of the tile-features endpoint was already paid, correctly, by the standard route.

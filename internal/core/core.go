@@ -115,7 +115,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer(), sizeGuardSvc)
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
 	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
-	exportSvc := service.NewExportService(rowSvc, geoSvc, schemaSvc)
+	exportSvc := service.NewExportService(storageAdapter)
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
 	diagnosticsSvc := service.NewDiagnosticsService(storageAdapter)
 

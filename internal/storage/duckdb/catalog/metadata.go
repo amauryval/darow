@@ -265,16 +265,62 @@ func (r *Repository) BySource(ctx context.Context) (map[storage.SourceKey]string
 // exists (TODO-10).
 func (r *Repository) Create(ctx context.Context, tableName string) (string, error) {
 	tableId := uuid.NewString()
-	physicalName := "t_" + strings.ReplaceAll(tableId, "-", "")
-
-	_, err := r.conn.Exec(ctx, `
-        INSERT INTO metadata (tableId, physicalName, tableName)
-        VALUES (?, ?, ?)
-    `, tableId, physicalName, tableName)
-	if err != nil {
+	if err := r.CreateWithId(ctx, tableId, tableName); err != nil {
 		return "", err
 	}
 	return tableId, nil
+}
+
+// CreateWithId registers a new logical table under a tableId the caller
+// generated, so a creation can name its write scope before opening the
+// transaction it runs in.
+func (r *Repository) CreateWithId(ctx context.Context, tableId, tableName string) error {
+	physicalName := "t_" + strings.ReplaceAll(tableId, "-", "")
+
+	_, err := r.conn.Exec(ctx, storage.TableWriteScope(tableId), `
+        INSERT INTO metadata (tableId, physicalName, tableName)
+        VALUES (?, ?, ?)
+    `, tableId, physicalName, tableName)
+	return err
+}
+
+// RefreshMissingBbox recomputes the derived metadata of every geo table
+// left without a bbox, repairing a table whose creation could not read its
+// own geometry — without one, a map has no extent to open on.
+func (r *Repository) RefreshMissingBbox(ctx context.Context) error {
+	rows, err := r.conn.Query(ctx, `SELECT tableId FROM metadata WHERE COALESCE(bbox, '') = '' ORDER BY tableId`)
+	if err != nil {
+		return err
+	}
+
+	var tableIds []string
+	for rows.Next() {
+		var tableId string
+		if err := rows.Scan(&tableId); err != nil {
+			rows.Close()
+			return err
+		}
+		tableIds = append(tableIds, tableId)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, tableId := range tableIds {
+		meta, err := r.GetMetadata(ctx, tableId)
+		if err != nil {
+			return err
+		}
+		if !meta.IsGeo {
+			continue
+		}
+		if err := r.RefreshDerivedMetadata(ctx, tableId, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UpdateMetadata patches config fields of a logical table's metadata. Every
@@ -307,7 +353,7 @@ func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch s
 	args = append(args, tableId)
 
 	query := fmt.Sprintf(`UPDATE metadata SET %s WHERE tableId = ?`, strings.Join(sets, ", "))
-	_, err := r.conn.Exec(ctx, query, args...)
+	_, err := r.conn.Exec(ctx, storage.TableWriteScope(tableId), query, args...)
 	return err
 }
 
@@ -362,7 +408,7 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string,
 		}
 	}
 
-	_, err = r.conn.Exec(ctx, `
+	_, err = r.conn.Exec(ctx, storage.TableWriteScope(tableId), `
         UPDATE metadata SET rowCount = ?, bbox = ?, updatedAt = ? WHERE tableId = ?
     `, rowCount, bbox, time.Now(), tableId)
 	return err

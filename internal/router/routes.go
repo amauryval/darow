@@ -71,7 +71,6 @@ func (rt *Router) Setup() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(slogLogger)
 	r.Use(recoverJSON)
-	r.Use(maxBodyBytes(func() int64 { return rt.settingsCfg.MaxBodyBytes }))
 
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
@@ -86,22 +85,32 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
 	r.Route("/api/v1", func(v1 chi.Router) {
-		// requestTimeout is scoped to this Group rather than applied at
-		// the very top of Setup, so it never wraps exportTable below — that
-		// route is registered outside the Group precisely to escape it.
-		// Everything else keeps the same bounded-request budget as before.
+		// An upload is a whole source file, not a JSON payload, and is
+		// registered outside the Group below rather than inside it: stacking
+		// body caps applies the *smaller* of the two, never the more
+		// specific, so a per-route cap nested under the global one is no
+		// override at all. The same registration keeps requestTimeout off it
+		// — a multi-gigabyte body takes longer to read than any normal
+		// request's budget. The extra 64KiB covers multipart framing
+		// (boundary, headers) around the file part, so a file right at the
+		// limit isn't cut off before SourceService.Upload's own oversize
+		// check runs.
+		v1.Group(func(upload chi.Router) {
+			upload.Use(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 }))
+			upload.Post("/sources/upload", rt.sources.UploadSource)
+		})
+
+		// requestTimeout and the global body cap are scoped to this Group
+		// rather than applied at the very top of Setup, so they never wrap
+		// exportTable or the upload above — both are registered outside it
+		// precisely to escape them.
 		v1.Group(func(v1 chi.Router) {
 			v1.Use(requestTimeout(func() int { return rt.settingsCfg.RequestTimeoutSec }))
+			v1.Use(maxBodyBytes(func() int64 { return rt.settingsCfg.MaxBodyBytes }))
 
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
 				sub.Post("/refresh", rt.sources.RefreshSources)
-				// Overrides the global body cap: an upload is a whole source file
-				// (up to sources.maxSizeBytes), not a JSON payload. The extra 64KiB
-				// covers multipart framing (boundary, headers) around the file part
-				// itself, so a file right at the limit isn't cut off by framing
-				// overhead before SourceService.Upload's own oversize check runs.
-				sub.With(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 })).Post("/upload", rt.sources.UploadSource)
 				sub.Post("/{name}/load", rt.sources.LoadSource)
 				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
 				sub.Delete("/{name}", rt.sources.DeleteSource)
