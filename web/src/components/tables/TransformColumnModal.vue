@@ -1,24 +1,26 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { Plus } from '@lucide/vue'
 import type { ColumnSchema } from '../../client/types'
 import { useColumnTransform } from '../../composables/useColumnTransform'
 import { useToast } from '../../composables/useToast'
 import { isHiddenColumn } from '../../utils/rows'
+import BaseTextarea from '../ui/BaseTextarea.vue'
+import ColumnPickerList from './ColumnPickerList.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import FilterNodeEditor from '../filters/FilterNodeEditor.vue'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import Typography from '../ui/Typography.vue'
-import AssignmentEditor from './AssignmentEditor.vue'
-import TransformCaseEditor from './TransformCaseEditor.vue'
 import TransformPreview from './TransformPreview.vue'
 
 // Rewrites column's values in place, on the rows a filter names — the write
 // neither the one-cell-at-a-time edit session nor *Dériver* can express
 // (spec/front/todo.md TODO-F44). Irreversible (§8.3): a preview against the
 // server stands in for the undo the write does not have, and confirms
-// before applying.
+// before applying. The new value is a single free SQL expression rather
+// than a guided arm picker — a per-row CASE WHEN builder was more machinery
+// than the act needed; a value that must vary per condition is written as
+// two transforms, each with its own filter.
 const props = defineProps<{
     tableId: string
     column: ColumnSchema
@@ -29,16 +31,10 @@ const emit = defineEmits<{ close: []; transformed: [{ written: number }] }>()
 
 const toast = useToast()
 const {
-    cases,
-    defaultAssignment,
+    expression,
     conditions,
     conditionsBool,
     incomplete,
-    addCase,
-    removeCase,
-    updateCaseConditions,
-    updateCaseConditionsBool,
-    updateCaseAssignment,
     previewing,
     previewError,
     previewMatched,
@@ -50,7 +46,6 @@ const {
 } = useColumnTransform(
     toRef(props, 'tableId'),
     computed(() => props.column.name),
-    computed(() => props.column.type),
     toRef(props, 'columns')
 )
 
@@ -61,16 +56,16 @@ const operandColumns = computed(() =>
     props.columns.filter((c) => !isHiddenColumn(c.name) && c.name !== props.geometryColumn)
 )
 
+const textarea = ref<InstanceType<typeof BaseTextarea> | null>(null)
+
+function insert(text: string) {
+    textarea.value?.insertAtCursor(text)
+}
+
 // Anything the user has actually put in is worth a confirmation before a
 // stray backdrop click throws it away (§8.3) — the same rule DeriveTableModal
 // applies to its own draft.
-const dirty = computed(
-    () =>
-        cases.value.length > 0 ||
-        conditions.value.length > 0 ||
-        defaultAssignment.value.kind !== 'constant' ||
-        defaultAssignment.value.constant.trim() !== ''
-)
+const dirty = computed(() => conditions.value.length > 0 || expression.value.trim() !== '')
 
 const confirming = ref(false)
 
@@ -96,7 +91,7 @@ async function onConfirm() {
 <template>
     <Modal
         :title="`Mettre à jour « ${column.name} »`"
-        wide
+        xl
         :dirty="dirty"
         @close="emit('close')"
         @submit="onPrimaryAction"
@@ -119,41 +114,24 @@ async function onConfirm() {
             </section>
 
             <section class="border-t border-base-300 pt-4">
-                <Typography variant="eyebrow">Cas</Typography>
+                <Typography variant="eyebrow">Nouvelle valeur</Typography>
                 <Typography variant="caption" class="mt-1 block"
-                    >Le premier cas dont les conditions correspondent s'applique ; sans cas, « Sinon
-                    » s'applique à toutes les lignes concernées.</Typography
+                    >Expression SQL calculée pour chaque ligne concernée.</Typography
                 >
-                <TransformCaseEditor
-                    v-for="c in cases"
-                    :key="c.id"
-                    class="mt-2"
-                    :table-id="tableId"
-                    :target-column="column"
-                    :columns="operandColumns"
-                    :conditions="c.conditions"
-                    :conditions-bool="c.conditionsBool"
-                    :assignment="c.assignment"
-                    @update:conditions="updateCaseConditions(c.id, $event)"
-                    @update:conditions-bool="updateCaseConditionsBool(c.id, $event)"
-                    @update:assignment="updateCaseAssignment(c.id, $event)"
-                    @remove="removeCase(c.id)"
-                />
-                <BaseButton variant="ghost" size="xs" :icon="Plus" class="mt-2" @click="addCase"
-                    >Ajouter un cas</BaseButton
-                >
-            </section>
-
-            <section class="border-t border-base-300 pt-4">
-                <Typography variant="eyebrow">Sinon</Typography>
-                <AssignmentEditor
-                    class="mt-2"
-                    :table-id="tableId"
-                    :target-column="column"
-                    :columns="operandColumns"
-                    :model-value="defaultAssignment"
-                    @update:model-value="defaultAssignment = $event"
-                />
+                <div class="mt-2 flex gap-3">
+                    <BaseTextarea
+                        ref="textarea"
+                        v-model="expression"
+                        :rows="6"
+                        class="flex-1"
+                        aria-label="Expression SQL de la nouvelle valeur"
+                    />
+                    <div
+                        class="h-40 w-48 shrink-0 overflow-y-auto rounded border border-base-300 p-1"
+                    >
+                        <ColumnPickerList :columns="operandColumns" @insert="insert" />
+                    </div>
+                </div>
             </section>
 
             <TransformPreview
@@ -173,7 +151,9 @@ async function onConfirm() {
                 variant="primary"
                 :busy="previewing"
                 :disabled="incomplete || previewing"
-                :title="incomplete ? 'Chaque cas a besoin d\'au moins une condition.' : undefined"
+                :title="
+                    incomplete ? 'Renseignez une expression pour la nouvelle valeur.' : undefined
+                "
                 @click="onPrimaryAction"
             >
                 {{ previewing ? 'Aperçu…' : previewMatched === null ? 'Aperçu' : 'Appliquer' }}

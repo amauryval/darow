@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronRight } from '@lucide/vue'
 import { useSqlSchemaReference } from '../../composables/useSqlSchemaReference'
+import ColumnPickerList from './ColumnPickerList.vue'
 import ListFooter from '../ui/ListFooter.vue'
 import Spinner from '../ui/Spinner.vue'
 import Typography from '../ui/Typography.vue'
@@ -68,17 +69,10 @@ const list = useSqlSchemaReference()
                     </div>
                     <div v-if="list.expanded.value === table.tableId" class="pb-1 pl-6">
                         <Spinner v-if="list.loadingColumns.value === table.tableId" />
-                        <button
-                            v-for="col in list.columnsByTable.value[table.tableId] ?? []"
-                            :key="col.name"
-                            type="button"
-                            class="flex w-full items-center justify-between gap-2 truncate rounded px-1 py-0.5 text-left text-xs hover:bg-base-200"
-                            :title="`${col.name} · ${col.type}`"
-                            @click="emit('insert', col.name)"
-                        >
-                            <span class="truncate">{{ col.name }}</span>
-                            <span class="shrink-0 text-base-content/40">{{ col.type }}</span>
-                        </button>
+                        <ColumnPickerList
+                            :columns="list.columnsByTable.value[table.tableId] ?? []"
+                            @insert="emit('insert', $event)"
+                        />
                     </div>
                 </div>
                 <ListFooter
