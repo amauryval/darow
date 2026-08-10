@@ -45,7 +45,7 @@ func Test_table_CopyTo(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			conn := openRepoTestDB(t)
-			repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+			repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 			require.NoError(t, err)
 
 			dest := filepath.Join(t.TempDir(), "export.out")
@@ -83,7 +83,7 @@ func Test_table_CopyTo_Parquet(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			conn := openRepoTestDB(t)
-			repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+			repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 			require.NoError(t, err)
 
 			dest := filepath.Join(t.TempDir(), "export.parquet")
@@ -108,7 +108,7 @@ func Test_table_CopyTo_Parquet(t *testing.T) {
 // an export in any other CRS is only identified by its file name.
 func Test_table_CopyTo_ParquetGeoMetadataHasNoCRS(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 
 	dest := filepath.Join(t.TempDir(), "export.parquet")
@@ -127,7 +127,7 @@ func Test_table_CopyTo_ParquetGeoMetadataHasNoCRS(t *testing.T) {
 
 func Test_table_CopyTo_RejectsUnknownCRS(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 
 	dest := filepath.Join(t.TempDir(), "export.parquet")
@@ -142,7 +142,7 @@ func Test_table_CopyTo_RejectsUnknownCRS(t *testing.T) {
 
 func Test_table_CopyTo_RejectsUnknownFormat(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 
 	err = repo.CopyTo(context.Background(), storage.ExportRequest{
@@ -155,7 +155,7 @@ func Test_table_CopyTo_RejectsUnknownFormat(t *testing.T) {
 
 func Test_table_CopyTo_NonGeoTable(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 
 	dest := filepath.Join(t.TempDir(), "export.parquet")

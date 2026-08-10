@@ -16,6 +16,7 @@ import TableEditBar from './TableEditBar.vue'
 import TableMapPanel from './TableMapPanel.vue'
 import TableRowsPanel from './TableRowsPanel.vue'
 import TableToolbar from './TableToolbar.vue'
+import TransformColumnModal from './TransformColumnModal.vue'
 
 const props = defineProps<{
     tableId: string
@@ -186,6 +187,24 @@ function onRowClick(row: { original: Row }) {
     if (!props.isGeo || isDraft(row.original.pkey)) return
     selection.toggle(row.original.pkey)
 }
+
+// Opened from the grid's own column header, not from TableHeader: it acts on
+// one column of the table in hand, the same register as GeometryModal below.
+const transformColumn = ref<string | null>(null)
+const transformColumnSchema = computed(
+    () => columns.value.find((c) => c.name === transformColumn.value) ?? null
+)
+
+// The write happens outside useTableRows/useLayerEditing, so it reloads
+// through the exact path their own writes already trigger: bump
+// dataVersion (the map's tiles are cached by URL, and the transform bumped
+// UpdatedAt), reload the current page, and let the parent refresh the
+// table's metadata.
+async function onColumnTransformed() {
+    dataVersion.value += 1
+    await rowsState.retry()
+    emit('mutated')
+}
 </script>
 
 <template>
@@ -250,6 +269,7 @@ function onRowClick(row: { original: Row }) {
                     :row-class="rowClassFor"
                     @geometry="rowGeometry.open"
                     @row-click="onRowClick"
+                    @transform="transformColumn = $event"
                 />
             </div>
 
@@ -288,5 +308,15 @@ function onRowClick(row: { original: Row }) {
         @close="rowGeometry.close"
         @retry="rowGeometry.retry"
         @copy="rowGeometry.copy"
+    />
+
+    <TransformColumnModal
+        v-if="transformColumnSchema"
+        :table-id="tableId"
+        :column="transformColumnSchema"
+        :columns="columns"
+        :geometry-column="geometryColumn"
+        @close="transformColumn = null"
+        @transformed="onColumnTransformed"
     />
 </template>

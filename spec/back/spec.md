@@ -852,10 +852,12 @@ calling `CreateFromFile`.
 
 `DeriveService` applies a cheap fail-fast on the query's shape (a single statement, starting with
 `SELECT`) before ever calling `CreateFromQuery` — **this is not the authoritative check**: the real
-validation is done by DuckDB's parser on the storage side (§8). It serves both derivation modes:
-`DeriveTable` takes the query as given, `DeriveFromTable` assembles one from a `DeriveSpec` (§8.1),
-and both then run the same `materialize` helper. Building a spec's query needs the source table's
-structure, so this is the one service besides the router to hold a port onto `SchemaService`.
+validation is done by DuckDB's parser on the storage side (§8). It serves all three derivation
+modes: `DeriveTable` takes the query as given, `DeriveFromTable` assembles one from a `DeriveSpec`
+(§8.1), `AggregateFromTable` assembles a `GROUP BY` query from the distinct `AggregateSpec` shape
+(§8.2) — all three then run the same `materialize` helper. Building a spec's query needs the source
+table's structure, so this is the one service besides the router to hold a port onto
+`SchemaService`.
 
 ### 5.5 `GeoService` — tile cache
 
@@ -994,6 +996,39 @@ every metadata patch — none of them can push the database further over the lim
 would lock an operator out of the very moves (deleting rows, dropping a table) that shrink it back
 down.
 
+### 5.11 `ColumnService` — in-place column transform
+
+The write `RowService`'s pkey-keyed `Update`/`UpdateMany` cannot express and `DeriveFromTable`
+(§8.1) only reaches by producing a new, frozen table: rewriting one column's values across the rows
+a filter names, on the table in hand. Holds ports onto `tableResolver` (open the table), a schema
+port bundling `Schema` and `Types` (whitelist column references, type-check the result), and
+`metadataRefresher`/`sizeGuard`, the same shape `RowService` holds.
+
+`service.TransformSpec` describes the write structurally: a target `Column`, an ordered `Cases`
+list (each a non-empty `[]FilterCondition` tree plus an `Assignment`), a `Default` assignment for
+every row a case doesn't match, and `Conditions` restricting which rows are touched at all. An
+`Assignment` is a discriminated union — a constant, an ordered concatenation of column
+references/literals (`concat(...)`, not `||`, so one `NULL` part cannot silently blank the whole
+result), a whitelisted arithmetic operation (`+ - * /`, both operands checked numeric against the
+schema before rendering) or a free scalar expression (the same escape hatch `ComputedColumn`, §8.1,
+is, and for the same reason). The whole `Cases`/`Default` list renders as a **single** `CASE WHEN`
+(§8.3) rather than one write per case — two overlapping cases depend on the order they were given
+in, and a per-case write could not express that.
+
+The rendered assignment's result type is probed (§8.3's `ProbeExpressionType`) and compared against
+the target column's declared type (`SchemaService.Types`) by coarse family (numeric/text/
+boolean/datetime): an obvious mismatch is a `ValidationError` before anything is written, a subtler
+bad cast still surfaces from the `UPDATE` itself. `Transform` is a size-growing write in
+`sizeGuard`'s sense (`Check` before, `Grew` after) and calls `RefreshDerived(ctx, tableId, false)` —
+`touchesGeometry` is always false (the geometry column can never be a target), but `UpdatedAt` still
+bumps, since the MVT tile cache is keyed on it (rule 20) and a tile requested with `attrs` embeds
+the very column that just changed. No `InvalidateSchema`: nothing structural changed.
+
+There is no undo and no history (`limitations.md` LIM-17). `PreviewTransform` — a matched-row count
+(`TableRepository.CountFiltered`) plus a bounded before/after sample
+(`RowRepository.PreviewTransform`) — is what stands in for one: it renders and type-checks exactly
+like `Transform` but writes nothing, sharing `ColumnService.prepare`.
+
 ---
 
 ## 6. REST API
@@ -1039,7 +1074,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/tables/{tableId}/schema`                 | columns and types, geometry included                                                                                                         |
 | POST   | `/api/v1/tables/{tableId}/columns`                | adds a column                                                                                                                                |
 | GET    | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search`          |
+| POST   | `/api/v1/tables/{tableId}/columns/{col}/transform` | rewrites `{col}`'s values in place, on the rows a filter names, `{written: <rowCount>}` (§8.3, §5.11)                                       |
+| POST   | `/api/v1/tables/{tableId}/columns/{col}/transform/preview` | how many rows a transform would touch and a bounded before/after sample, writing nothing (§8.3, §5.11)                             |
 | POST   | `/api/v1/tables/{tableId}/derive-from-table`      | creates a new table from `{tableId}` alone, described structurally (columns, computed expressions, row conditions) rather than as SQL (§8.1) |
+| POST   | `/api/v1/tables/{tableId}/aggregate-from-table`   | creates a new table from `{tableId}` alone, grouped and aggregated, described structurally rather than as SQL (§8.2)                        |
 | POST   | `/api/v1/tables/{tableId}/filter`                 | filters by conditions (`BuildFilter`)                                                                                                        |
 | GET    | `/api/v1/tables/{tableId}/filters`                | lists the table's stored filters (§4.5.1), oldest first                                                                                      |
 | POST   | `/api/v1/tables/{tableId}/filters`                | saves a named filter, `201` with the stored filter                                                                                           |
@@ -1304,16 +1342,18 @@ anywhere.
 
 ## 8. Table derivation
 
-Two modes, one materialization path. Both produce a **frozen snapshot**: no synchronization with the
-source, in either direction.
+Three modes, one materialization path. All produce a **frozen snapshot**: no synchronization with
+the source, in either direction.
 
 -   **Free SQL** (`POST /derive`, a top-level route) — the caller supplies the `SELECT`, which may
     read any registered table. It has no source table, hence no `{tableId}` in its path.
--   **Guided** (`POST /tables/{tableId}/derive-from-table`, §8.1) — the caller supplies a structure
-    and the server assembles the SQL; the source is `{tableId}` and nothing else.
+-   **Guided, row-wise** (`POST /tables/{tableId}/derive-from-table`, §8.1) — the caller supplies a
+    structure and the server assembles the SQL; the source is `{tableId}` and nothing else.
+-   **Guided, aggregated** (`POST /tables/{tableId}/aggregate-from-table`, §8.2) — the same idea,
+    grouped: the server assembles a `GROUP BY` query from a distinct spec shape.
 
-The rest of this section describes what both share, since the guided mode's assembled query is
-materialized through the very same `CreateFromQuery`.
+The rest of this section describes what all three share, since every mode's assembled (or
+caller-supplied) query is materialized through the very same `CreateFromQuery`.
 
 **Two-stage validation:**
 
@@ -1347,7 +1387,7 @@ bound (rule 5) instead of interpolating them into the assembled query.
 source table: the columns carried over, the columns computed, the conditions restricting the rows.
 It exists because free SQL says nothing about which table it starts from and requires knowing the
 physical schema — unusable from an interface that has a table in hand. It is **row-wise**: one
-source row produces at most one derived row, so it carries no grouping (`improvements.md` IMP-5).
+source row produces at most one derived row. Grouping is a distinct spec and mode, §8.2.
 
 The SQL is assembled server-side, which is the point: identifier quoting and the filter DSL never
 leave this layer.
@@ -1373,6 +1413,74 @@ malformed spec never reaches the rollback path.
 
 The rest of the sequence (geometry detection, clustering, indexes) is identical to §7, steps 3,
 6, 7.
+
+### 8.2 Guided aggregation
+
+`service.AggregateSpec` (`internal/service/aggregate_from_table.go`) is a `GROUP BY` derivation from
+one source table: a **distinct shape** from `DeriveSpec`, not extra fields on it — the cardinality
+changes (one row per group, not per source row), a geometry column is fused by an aggregate rather
+than carried, and `projectionFor`'s "empty selection means every column, geometry appended on its
+own" default is exactly wrong under `GROUP BY`, where an unaggregated column is a query error, not a
+safe default. `groupProjectionFor` (the `AggregateSpec` counterpart of `projectionFor`) therefore
+carries no such default: an empty `GroupBy` means "aggregate the whole table into one row," a real
+and valid case, never "nothing was specified."
+
+-   **Grouped columns** (`GroupBy`) are whitelisted against the source's real schema
+    (`SchemaService.Schema`, excluding the geometry column and every hidden column) and quoted with
+    `QuoteIdentifier`, carried into the result and into the assembled `GROUP BY` clause unchanged. A
+    column named twice is rejected.
+-   **Aggregate columns** (`Aggregates`) are a free SQL aggregate expression under a caller-chosen
+    alias (`COUNT(*)`, `SUM(height)`, `ST_Union(geom)`), rendered parenthesized and aliased — the
+    same escape hatch `ComputedColumn` is, and for the same reason: no operand/operator form reaches
+    an arbitrary DuckDB aggregate. An alias colliding with a grouped column or with another
+    aggregate is rejected rather than left to DuckDB's silent `<alias>_1` rename. Bounded by
+    `maxAggregateExpressions` (50), the aggregation counterpart of `maxComputedColumns`.
+-   **Conditions** are the same `[]FilterCondition` tree a read filter posts, built by the same
+    `whereFor` `DeriveFromTable` uses — a `WHERE`, applied **before** grouping. There is no
+    `HAVING` — filtering on an aggregated value needs a second pass (`/derive-from-table` or
+    `/filter` on the result), `limitations.md` LIM-18.
+-   A spec with neither a grouped column nor an aggregate is rejected: nothing to select.
+
+The assembled `SELECT <projection> FROM <physicalName> [WHERE <where>] [GROUP BY <grouped
+columns>]` goes through the exact same tail as the row-wise mode: `DeriveService.materialize`, hence
+the same DuckDB AST validation (rule 4), the same `__pkey` wrapping (a `GROUP BY`'s output columns
+are ordinary columns once the subquery closes, so `SELECT * FROM (<grouped query>) __derive_source`
+is well-defined), and the same post-materialization `isGeo`/geometry-column detection
+(`findGeometryColumn`/`soleGeometryColumn`, reading the physical table's actual column types) — a
+group with no geometry-producing aggregate is plain scalar (`isGeo=false`) and one with e.g.
+`ST_Union(geom) AS geom` is geo (`isGeo=true`, indexed and clustered like any other geo derivation),
+with no special-casing needed at any layer for either case.
+
+### 8.3 In-place column transform
+
+`POST /tables/{tableId}/columns/{col}/transform` (§6.1, §5.11) rewrites a column **in place** —
+unlike every mode above, it is not a materialization: it is a single `UPDATE` on the physical table
+already registered as `{tableId}`, through one new `storage.RowRepository` method, `Transform`,
+taking the rendered `SET` expression, the outer `WHERE` and their args, run through the adapter's
+`Exec` under the table's write scope (rule 21) — atomic on its own (rule 6), never a per-row loop.
+
+**The same gate, extracted.** `duckdb/tables`' AST validator (the two-stage validation above) is a
+package-level function, `validateDeriveQuery(ctx, conn, names, query)`, called both by the
+materializer (a `/derive` query) and here: the rendered assignment is wrapped as
+`SELECT (<assignment>) FROM <physical>` and walked exactly like a derived query, immediately before
+either probing it or executing the `UPDATE` — never a second, weaker validator for the write path.
+This is why an `UPDATE`'s `SET` expression can carry a scalar subquery (the free-expression arm's
+reach is exactly a free `SELECT`'s) without ever reaching `read_csv`/`read_text`/a table function
+(rule 4) or a table outside the registered allowlist. `tables.Open` takes the same
+`physicalNamesReader` `NewMaterializer` does (`duckdb.New` wires both from `a.catalog`), so
+`RowRepository`'s implementation holds the same dependency the materializer does.
+
+**Probing a type without writing.** `ProbeExpressionType` (on `RowRepository`) wraps a candidate
+expression the same way, validates it, then reads its result type via `queryColumns`/`DESCRIBE` —
+the same "describe without materializing" primitive `CreateFromQuery` uses for `__pkey` detection —
+without executing anything. `ColumnService` (§5.11) uses it both to type-check an assignment before
+writing and, unchanged, for `PreviewTransform`.
+
+**Preview instead of undo.** There is no transaction log and no rollback for a column transform
+(`limitations.md` LIM-17): `POST .../transform/preview` runs the identical render-and-validate path
+and reports a matched-row count (`TableRepository.CountFiltered`, a `BuildFilter` clause without
+materializing rows) and a bounded before/after sample (`RowRepository.PreviewTransform`, one
+read-only `SELECT __pkey, <col> AS before, (<assignment>) AS after ... LIMIT n`), writing nothing.
 
 ---
 

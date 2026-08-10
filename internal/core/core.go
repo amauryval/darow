@@ -48,6 +48,7 @@ type Services struct {
 	Settings      *service.SettingsService
 	TableSettings *service.TableSettingsService
 	Diagnostics   *service.DiagnosticsService
+	Column        *service.ColumnService
 
 	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
 	// storage connection; Services built via NewServices alone (e.g. in
@@ -111,6 +112,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	schemaSvc := service.NewSchemaService(storageAdapter, schemaCache)
 	metadataSvc := service.NewMetadataService(storageAdapter.Catalog(), metadataCache, tableRemoved)
 	rowSvc := service.NewRowService(storageAdapter, metadataSvc, schemaSvc, sizeGuardSvc)
+	columnSvc := service.NewColumnService(storageAdapter, metadataSvc, schemaSvc, sizeGuardSvc)
 	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc, sizeGuardSvc)
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer(), sizeGuardSvc)
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
@@ -157,6 +159,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 		Settings:      settingsSvc,
 		TableSettings: tableSettingsSvc,
 		Diagnostics:   diagnosticsSvc,
+		Column:        columnSvc,
 	}, nil
 }
 

@@ -46,7 +46,7 @@ func NewRouter(
 	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64,
 ) *Router {
 	return &Router{
-		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Settings, svcs.TableSettings),
+		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
 		rows:          handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings, svcs.TableSettings),
 		geo:           handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
 		features:      handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
@@ -129,6 +129,7 @@ func (rt *Router) Setup() http.Handler {
 					sub.Get("/schema", rt.tables.GetSchema)
 					sub.Post("/columns", rt.tables.AddColumn)
 					sub.Post("/derive-from-table", rt.tables.DeriveFromTable)
+					sub.Post("/aggregate-from-table", rt.tables.AggregateFromTable)
 					sub.Post("/filter", rt.tables.FilterRows)
 
 					sub.Route("/settings", func(sub chi.Router) {
@@ -143,7 +144,11 @@ func (rt *Router) Setup() http.Handler {
 						sub.Patch("/{filterId}", rt.filters.UpdateFilter)
 						sub.Delete("/{filterId}", rt.filters.DeleteFilter)
 					})
-					sub.Get("/columns/{col}/distinct", rt.tables.GetDistinctValues)
+					sub.Route("/columns", func(sub chi.Router) {
+						sub.Get("/{col}/distinct", rt.tables.GetDistinctValues)
+						sub.Post("/{col}/transform", rt.tables.TransformColumn)
+						sub.Post("/{col}/transform/preview", rt.tables.PreviewColumnTransform)
+					})
 
 					sub.Route("/rows", func(sub chi.Router) {
 						sub.Get("/", rt.rows.ListRows)

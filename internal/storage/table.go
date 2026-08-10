@@ -9,6 +9,14 @@ type RowUpdate struct {
 	Values map[string]any
 }
 
+// TransformSample is one row's current and would-be value for a column
+// transform preview, computed without writing anything.
+type TransformSample struct {
+	Pkey   string `json:"pkey"`
+	Before any    `json:"before"`
+	After  any    `json:"after"`
+}
+
 // RowQuery narrows a RowRepository.Filtered call: Filter/Args must already
 // be a BuildFilter clause.
 type RowQuery struct {
@@ -62,6 +70,9 @@ type TableRepository interface {
 	// DuckDB's own COPY.
 	CopyTo(ctx context.Context, req ExportRequest) error
 	Count(ctx context.Context) (int64, error)
+	// CountFiltered returns the number of rows matching where/args — a
+	// BuildFilter clause — for a column transform's preview.
+	CountFiltered(ctx context.Context, where string, args []any) (int64, error)
 	Rows() RowRepository
 	// Geo returns this table's GeoRepository and true when the table is
 	// geospatial. The returned repository is only meaningful when ok.
@@ -103,6 +114,20 @@ type RowRepository interface {
 	UpdateMany(ctx context.Context, updates []RowUpdate) error
 	// Delete removes the given rows. An empty pkeys is a no-op.
 	Delete(ctx context.Context, pkeys []string) error
+	// ProbeExpressionType reports the DuckDB type expression would produce
+	// over this table, without writing or materializing anything —
+	// validated through the same gate a /derive query passes. args binds
+	// expression's own placeholders, if it has any.
+	ProbeExpressionType(ctx context.Context, expression string, args ...any) (string, error)
+	// Transform sets column to setExpr (its own bound args in setArgs) on
+	// the rows matching where (its args in whereArgs), as a single UPDATE.
+	// Returns the number of rows written.
+	Transform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any) (int64, error)
+	// PreviewTransform reports, for up to limit rows matching
+	// where/whereArgs, column's current value and what setExpr/setArgs
+	// would write — a column transform's preview, computed without
+	// writing anything.
+	PreviewTransform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any, limit int) ([]TransformSample, error)
 }
 
 // GeoRepository exposes geospatial operations on a single resolved geo

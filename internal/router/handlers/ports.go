@@ -44,6 +44,13 @@ type schemaAPI interface {
 type deriveAPI interface {
 	DeriveTable(ctx context.Context, query, newTableName string) (string, error)
 	DeriveFromTable(ctx context.Context, meta storage.Metadata, spec service.DeriveSpec) (string, error)
+	AggregateFromTable(ctx context.Context, meta storage.Metadata, spec service.AggregateSpec) (string, error)
+}
+
+// columnAPI is everything the router calls on *service.ColumnService.
+type columnAPI interface {
+	Transform(ctx context.Context, meta storage.Metadata, spec service.TransformSpec) (int64, error)
+	PreviewTransform(ctx context.Context, meta storage.Metadata, spec service.TransformSpec) (int64, []storage.TransformSample, error)
 }
 
 // geoAPI is everything the router calls on *service.GeoService.
@@ -111,6 +118,7 @@ var (
 	_ rowAPI           = (*service.RowService)(nil)
 	_ schemaAPI        = (*service.SchemaService)(nil)
 	_ deriveAPI        = (*service.DeriveService)(nil)
+	_ columnAPI        = (*service.ColumnService)(nil)
 	_ geoAPI           = (*service.GeoService)(nil)
 	_ sourceAPI        = (*service.SourceService)(nil)
 	_ filterAPI        = (*service.FilterService)(nil)

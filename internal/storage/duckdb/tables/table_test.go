@@ -12,14 +12,14 @@ import (
 
 func Test_Open_RejectsInvalidPhysicalName(t *testing.T) {
 	conn := openRepoTestDB(t)
-	_, err := Open(conn, conn, storage.Metadata{PhysicalName: "not valid; DROP TABLE x"})
+	_, err := Open(conn, conn, nil, storage.Metadata{PhysicalName: "not valid; DROP TABLE x"})
 	assert.Error(t, err)
 }
 func Test_TableRepository_SchemaAndTypes(t *testing.T) {
 	conn := openRepoTestDB(t)
 	meta := newScalarTestTable(t, conn)
 
-	repo, err := Open(conn, conn, meta)
+	repo, err := Open(conn, conn, nil, meta)
 	require.NoError(t, err)
 
 	schema, err := repo.Schema(context.Background())
@@ -37,7 +37,7 @@ func Test_TableRepository_SchemaAndTypes(t *testing.T) {
 func Test_TableRepository_AddColumnAndCount(t *testing.T) {
 	conn := openRepoTestDB(t)
 	meta := newScalarTestTable(t, conn)
-	repo, err := Open(conn, conn, meta)
+	repo, err := Open(conn, conn, nil, meta)
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -58,7 +58,7 @@ func Test_TableRepository_AddColumnAndCount(t *testing.T) {
 func Test_TableRepository_AddColumn_RejectsDisallowedType(t *testing.T) {
 	conn := openRepoTestDB(t)
 	meta := newScalarTestTable(t, conn)
-	repo, err := Open(conn, conn, meta)
+	repo, err := Open(conn, conn, nil, meta)
 	require.NoError(t, err)
 
 	err = repo.AddColumn(context.Background(), "geom2", "GEOMETRY")
@@ -70,7 +70,7 @@ func Test_TableRepository_AddColumn_RejectsDisallowedType(t *testing.T) {
 func Test_TableRepository_AddColumn_AcceptsParameterizedType(t *testing.T) {
 	conn := openRepoTestDB(t)
 	meta := newScalarTestTable(t, conn)
-	repo, err := Open(conn, conn, meta)
+	repo, err := Open(conn, conn, nil, meta)
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -84,12 +84,12 @@ func Test_TableRepository_AddColumn_AcceptsParameterizedType(t *testing.T) {
 func Test_TableRepository_Geo_ReportsIsGeo(t *testing.T) {
 	conn := openRepoTestDB(t)
 
-	scalarRepo, err := Open(conn, conn, newScalarTestTable(t, conn))
+	scalarRepo, err := Open(conn, conn, nil, newScalarTestTable(t, conn))
 	require.NoError(t, err)
 	_, ok := scalarRepo.Geo()
 	assert.False(t, ok)
 
-	geoRepo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	geoRepo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	_, ok = geoRepo.Geo()
 	assert.True(t, ok)

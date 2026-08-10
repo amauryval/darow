@@ -10,7 +10,10 @@ import type {
     RowsPage,
     RowValue,
     SchemaResponse,
-    TablesPage
+    TablesPage,
+    TransformPreview,
+    TransformResult,
+    TransformSpec
 } from './types'
 
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
@@ -179,4 +182,25 @@ export function getDistinctValues(
     if (opts.limit !== undefined) params.set('limit', String(opts.limit))
     const query = params.size > 0 ? `?${params}` : ''
     return get(`/tables/${tableId}/columns/${encodeURIComponent(col)}/distinct${query}`)
+}
+
+// Rewrites col's values in place, on the rows spec.conditions names —
+// irreversible (§8.3), which is why previewColumnTransform below shares the
+// same spec and exists to be called first.
+export function transformColumn(
+    tableId: string,
+    col: string,
+    spec: TransformSpec
+): Promise<TransformResult> {
+    return post(`/tables/${tableId}/columns/${encodeURIComponent(col)}/transform`, spec)
+}
+
+// How many rows spec would touch and a bounded before/after sample, writing
+// nothing — what stands in for an undo a column transform does not have.
+export function previewColumnTransform(
+    tableId: string,
+    col: string,
+    spec: TransformSpec
+): Promise<TransformPreview> {
+    return post(`/tables/${tableId}/columns/${encodeURIComponent(col)}/transform/preview`, spec)
 }

@@ -139,6 +139,117 @@ func (d deriveSpecDTO) toSpec() service.DeriveSpec {
 	}
 }
 
+// aggregateColumnDTO is one aggregate column: a free SQL aggregate
+// expression under a caller-chosen name.
+type aggregateColumnDTO struct {
+	Alias      string `json:"alias"`
+	Expression string `json:"expression"`
+}
+
+// aggregateSpecDTO is the body of POST /tables/{tableId}/aggregate-from-table:
+// a GROUP BY derivation described structurally, the aggregation counterpart
+// of deriveSpecDTO.
+type aggregateSpecDTO struct {
+	NewTableName string                    `json:"newTableName"`
+	GroupBy      []string                  `json:"groupBy"`
+	Aggregates   []aggregateColumnDTO      `json:"aggregates"`
+	Conditions   []storage.FilterCondition `json:"conditions"`
+}
+
+func (d aggregateSpecDTO) toSpec() service.AggregateSpec {
+	aggregates := make([]service.AggregateColumn, 0, len(d.Aggregates))
+	for _, col := range d.Aggregates {
+		aggregates = append(aggregates, service.AggregateColumn{Alias: col.Alias, Expression: col.Expression})
+	}
+	return service.AggregateSpec{
+		NewTableName: d.NewTableName,
+		GroupBy:      d.GroupBy,
+		Aggregates:   aggregates,
+		Conditions:   d.Conditions,
+	}
+}
+
+// operandDTO is one value inside a concatenation or an arithmetic
+// operation: exactly one of Column/Literal is set, selected by Kind.
+type operandDTO struct {
+	Kind    service.OperandKind `json:"kind"`
+	Column  string              `json:"column,omitempty"`
+	Literal any                 `json:"literal,omitempty"`
+}
+
+func (d operandDTO) toOperand() service.Operand {
+	return service.Operand{Kind: d.Kind, Column: d.Column, Literal: d.Literal}
+}
+
+// arithmeticOpDTO is a whitelisted binary operation over two operands.
+type arithmeticOpDTO struct {
+	Left     operandDTO `json:"left"`
+	Right    operandDTO `json:"right"`
+	Operator string     `json:"operator"`
+}
+
+// assignmentDTO is what a column transform's case (or its default) writes:
+// exactly one of Constant/Concat/Arithmetic/Expression is meaningful,
+// selected by Kind.
+type assignmentDTO struct {
+	Kind       service.AssignmentKind `json:"kind"`
+	Constant   any                    `json:"constant,omitempty"`
+	Concat     []operandDTO           `json:"concat,omitempty"`
+	Arithmetic *arithmeticOpDTO       `json:"arithmetic,omitempty"`
+	Expression string                 `json:"expression,omitempty"`
+}
+
+func (d assignmentDTO) toAssignment() service.Assignment {
+	concat := make([]service.Operand, 0, len(d.Concat))
+	for _, op := range d.Concat {
+		concat = append(concat, op.toOperand())
+	}
+	var arithmetic *service.ArithmeticOp
+	if d.Arithmetic != nil {
+		arithmetic = &service.ArithmeticOp{
+			Left:     d.Arithmetic.Left.toOperand(),
+			Right:    d.Arithmetic.Right.toOperand(),
+			Operator: d.Arithmetic.Operator,
+		}
+	}
+	return service.Assignment{
+		Kind:       d.Kind,
+		Constant:   d.Constant,
+		Concat:     concat,
+		Arithmetic: arithmetic,
+		Expression: d.Expression,
+	}
+}
+
+// transformCaseDTO is one arm of a column transform's CASE WHEN: the rows
+// it applies to and the value they receive.
+type transformCaseDTO struct {
+	Conditions []storage.FilterCondition `json:"conditions"`
+	Assignment assignmentDTO             `json:"assignment"`
+}
+
+// transformSpecDTO is the body of POST /tables/{tableId}/columns/{col}/transform
+// and its preview counterpart: an in-place column transform described
+// structurally, the same shape deriveSpecDTO gives a guided derivation.
+type transformSpecDTO struct {
+	Cases      []transformCaseDTO        `json:"cases"`
+	Default    assignmentDTO             `json:"default"`
+	Conditions []storage.FilterCondition `json:"conditions"`
+}
+
+func (d transformSpecDTO) toSpec(column string) service.TransformSpec {
+	cases := make([]service.TransformCase, 0, len(d.Cases))
+	for _, c := range d.Cases {
+		cases = append(cases, service.TransformCase{Conditions: c.Conditions, Assignment: c.Assignment.toAssignment()})
+	}
+	return service.TransformSpec{
+		Column:     column,
+		Cases:      cases,
+		Default:    d.Default.toAssignment(),
+		Conditions: d.Conditions,
+	}
+}
+
 // deletedDTO confirms a delete write happened and names what it removed —
 // the id of the deleted object, its name when it has one distinct from the
 // id, and a row count for a row-level delete.

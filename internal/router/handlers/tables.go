@@ -23,12 +23,13 @@ type TablesHandler struct {
 	schemaService   schemaAPI
 	deriveService   deriveAPI
 	rowService      rowAPI
+	columnService   columnAPI
 	settings        settingsAPI
 	tableSettings   tableSettingsAPI
 }
 
 // NewTablesHandler builds a TablesHandler from the service ports it needs.
-func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, settings settingsAPI, tableSettings tableSettingsAPI) *TablesHandler {
+func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc deriveAPI, rowSvc rowAPI, columnSvc columnAPI, settings settingsAPI, tableSettings tableSettingsAPI) *TablesHandler {
 	return &TablesHandler{
 		TableResolver:   validation.NewTableResolver(metadataSvc),
 		ColumnValidator: validation.NewColumnValidator(schemaSvc),
@@ -36,6 +37,7 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 		schemaService:   schemaSvc,
 		deriveService:   deriveSvc,
 		rowService:      rowSvc,
+		columnService:   columnSvc,
 		settings:        settings,
 		tableSettings:   tableSettings,
 	}
@@ -307,6 +309,43 @@ func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Reques
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
+// AggregateFromTable handles POST /tables/{tableId}/aggregate-from-table:
+// a GROUP BY guided derivation, whose source is the resolved table and
+// nothing else. The caller sends a structure — grouped columns, aggregate
+// expressions, row conditions — and the SQL is assembled server-side,
+// exactly like DeriveFromTable's row-wise mode.
+//
+// @Summary Derive a table from this table's grouped columns and aggregate expressions
+// @Tags tables
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Source table ID"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/aggregate-from-table [post]
+func (th *TablesHandler) AggregateFromTable(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	var body aggregateSpecDTO
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	tableId, err := th.deriveService.AggregateFromTable(req.Context(), meta, body.toSpec())
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+
+	w.Header().Set("Location", "/tables/"+tableId)
+	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
+}
+
 // FilterRows handles POST /tables/{tableId}/filter, built exclusively on
 // storage.BuildFilter — the whitelist of columns it validates
 // each condition against comes from the table's real schema.
@@ -409,4 +448,83 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values, "limit": limit, "offset": offset})
+}
+
+// TransformColumn handles POST /tables/{tableId}/columns/{col}/transform:
+// an in-place rewrite of col's values, on the table in hand, over the rows
+// its conditions name — the write /derive-from-table cannot express, since
+// a guided derivation always produces a new, frozen table. There is no
+// undo: PreviewColumnTransform is what stands in for one.
+//
+// @Summary Transform a column's values in place
+// @Tags tables
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Param col path string true "Column name"
+// @Success 200 {object} map[string]int64
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 507 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/columns/{col}/transform [post]
+func (th *TablesHandler) TransformColumn(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+	col := chi.URLParam(req, "col")
+	if err := th.ValidateColumns(req.Context(), meta, []string{col}); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	var body transformSpecDTO
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	written, err := th.columnService.Transform(req.Context(), meta, body.toSpec(col))
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]int64{"written": written})
+}
+
+// PreviewColumnTransform handles POST /tables/{tableId}/columns/{col}/transform/preview:
+// how many rows a column transform would touch and a bounded sample of
+// their current and would-be values, writing nothing.
+//
+// @Summary Preview a column transform
+// @Tags tables
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Param col path string true "Column name"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/columns/{col}/transform/preview [post]
+func (th *TablesHandler) PreviewColumnTransform(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+	col := chi.URLParam(req, "col")
+	if err := th.ValidateColumns(req.Context(), meta, []string{col}); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	var body transformSpecDTO
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	matched, sample, err := th.columnService.PreviewTransform(req.Context(), meta, body.toSpec(col))
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{"matched": matched, "sample": sample})
 }

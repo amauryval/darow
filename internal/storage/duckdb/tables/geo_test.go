@@ -13,7 +13,7 @@ import (
 
 func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -41,7 +41,7 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 // verbatim.
 func Test_GeoRepository_Tile_LayerNamedAfterTableId(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -55,7 +55,7 @@ func Test_GeoRepository_Tile_LayerNamedAfterTableId(t *testing.T) {
 
 func Test_GeoRepository_ValidateGeometries(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -72,7 +72,7 @@ func Test_GeoRepository_ValidateGeometries(t *testing.T) {
 
 func Test_GeoRepository_ValidateGeometries_Empty(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -153,7 +153,7 @@ func Test_GeoRepository_TileSimplification(t *testing.T) {
 	}
 
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newDensePolygonTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newDensePolygonTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -173,7 +173,7 @@ func Test_GeoRepository_TileSimplification(t *testing.T) {
 }
 func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -197,7 +197,7 @@ func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 // leaving them at full DOUBLE resolution.
 func Test_GeoRepository_GeoJSONByPkey_CoordinateDecimals(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -218,7 +218,7 @@ func Test_GeoRepository_GeoJSONByPkey_CoordinateDecimals(t *testing.T) {
 // needs.
 func Test_GeoRepository_WKTByPkey(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -242,7 +242,7 @@ func Test_GeoRepository_WKTByPkey(t *testing.T) {
 // leaving them at full DOUBLE resolution.
 func Test_GeoRepository_WKTByPkey_CoordinateDecimals(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -260,7 +260,7 @@ func Test_GeoRepository_WKTByPkey_CoordinateDecimals(t *testing.T) {
 
 func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -283,7 +283,7 @@ func Test_GeoRepository_FeaturesAndFeaturesInTile(t *testing.T) {
 }
 func Test_GeoRepository_CountFeatures(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -301,7 +301,7 @@ func Test_GeoRepository_CountFeatures(t *testing.T) {
 // pages of a bbox holding both points cover both, in order.
 func Test_GeoRepository_PkeysInBboxPagination(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, ok := repo.Geo()
 	require.True(t, ok)
@@ -325,7 +325,7 @@ func Test_GeoRepository_PkeysInBboxPagination(t *testing.T) {
 // itself left out.
 func Test_GeoRepository_Features_NearBuffer(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -353,7 +353,7 @@ func Test_GeoRepository_Features_NearBuffer(t *testing.T) {
 
 func Test_GeoRepository_FeaturesByBbox(t *testing.T) {
 	conn := openRepoTestDB(t)
-	repo, err := Open(conn, conn, newGeoTestTable(t, conn))
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 	ctx := context.Background()
@@ -376,7 +376,7 @@ func Test_GeoRepository_FeaturesGeometryOnlyTable(t *testing.T) {
 	_, err = conn.db.Exec(`INSERT INTO t_bare VALUES ('1', ST_GeomFromText('POINT(100000 100000)'))`)
 	require.NoError(t, err)
 
-	repo, err := Open(conn, conn, storage.Metadata{TableId: "id-bare", PhysicalName: "t_bare", IsGeo: true, GeometryColumn: "geom"})
+	repo, err := Open(conn, conn, nil, storage.Metadata{TableId: "id-bare", PhysicalName: "t_bare", IsGeo: true, GeometryColumn: "geom"})
 	require.NoError(t, err)
 	geo, _ := repo.Geo()
 

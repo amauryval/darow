@@ -14,22 +14,25 @@ import (
 // table implements storage.TableRepository for a single
 // resolved data table.
 type table struct {
-	conn Querier
-	tx   TxRunner
-	ref  tableRef
+	conn  Querier
+	tx    TxRunner
+	names physicalNamesReader
+	ref   tableRef
 }
 
 var _ storage.TableRepository = (*table)(nil)
 
 // Open resolves meta into a storage.TableRepository backed by conn
-// (reads and single-statement writes) and tx (multi-row writes) — the
-// single validation point every operation on the table then relies on.
-func Open(conn Querier, tx TxRunner, meta storage.Metadata) (storage.TableRepository, error) {
+// (reads and single-statement writes), tx (multi-row writes) and names (a
+// column transform's expression allowlist, the same dependency
+// NewMaterializer takes) — the single validation point every operation on
+// the table then relies on.
+func Open(conn Querier, tx TxRunner, names physicalNamesReader, meta storage.Metadata) (storage.TableRepository, error) {
 	ref, err := resolve(meta)
 	if err != nil {
 		return nil, err
 	}
-	return &table{conn: conn, tx: tx, ref: ref}, nil
+	return &table{conn: conn, tx: tx, names: names, ref: ref}, nil
 }
 
 // Schema lists every column of the underlying table, geometry column
@@ -83,9 +86,22 @@ func (t *table) Count(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+// CountFiltered returns the number of rows matching where/args — a
+// BuildFilter clause, like Filtered's — without materializing the rows
+// themselves, for a column transform's preview.
+func (t *table) CountFiltered(ctx context.Context, where string, args []any) (int64, error) {
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, t.ref.PhysicalName)
+	if where != "" {
+		query += " WHERE " + where
+	}
+	var count int64
+	err := t.conn.QueryRow(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
 // Rows returns this table's RowRepository.
 func (t *table) Rows() storage.RowRepository {
-	return &tableRows{conn: t.conn, tx: t.tx, ref: t.ref}
+	return &tableRows{conn: t.conn, tx: t.tx, names: t.names, ref: t.ref}
 }
 
 // Geo returns this table's GeoRepository and whether the table is

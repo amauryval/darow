@@ -255,3 +255,66 @@ export interface TableSettingsOverridesPage {
 // ExportFormat mirrors storage.ExportFormat: csv carries no geometry, the
 // other two do and are the only ones an output CRS applies to (back §5.6).
 export type ExportFormat = 'csv' | 'geojson' | 'parquet'
+
+// Matches service.Operand: a reference to another column of the same row, or
+// a literal, inside a concatenation or an arithmetic operation. Exactly one
+// of column/literal is meaningful, selected by kind.
+export interface Operand {
+    kind: 'column' | 'literal'
+    column?: string
+    literal?: RowValue
+}
+
+// Matches service.ArithmeticOp: a whitelisted binary operation ('+' '-' '*'
+// '/') over two operands the server checks numeric against the schema.
+export interface ArithmeticOp {
+    left: Operand
+    right: Operand
+    operator: string
+}
+
+export type AssignmentKind = 'constant' | 'concat' | 'arithmetic' | 'expression'
+
+// Matches service.Assignment: what a column transform's case (or its
+// default) writes. Exactly one field is meaningful, selected by kind; the
+// server renders it, no SQL is ever assembled here.
+export interface Assignment {
+    kind: AssignmentKind
+    constant?: RowValue
+    concat?: Operand[]
+    arithmetic?: ArithmeticOp
+    expression?: string
+}
+
+// Matches service.TransformCase: one arm of a column transform's CASE WHEN —
+// the rows it applies to (never empty) and the value they receive.
+export interface TransformCase {
+    conditions: FilterCondition[]
+    assignment: Assignment
+}
+
+// Matches service.TransformSpec, the body of the transform and its preview
+// route: an in-place column rewrite described structurally, over the rows
+// conditions names (all rows when empty).
+export interface TransformSpec {
+    cases: TransformCase[]
+    default: Assignment
+    conditions?: FilterCondition[]
+}
+
+export interface TransformResult {
+    written: number
+}
+
+// Matches storage.TransformSample: one row's current and would-be value for
+// a column transform preview, computed without writing anything.
+export interface TransformSample {
+    pkey: string
+    before: RowValue
+    after: RowValue
+}
+
+export interface TransformPreview {
+    matched: number
+    sample: TransformSample[]
+}

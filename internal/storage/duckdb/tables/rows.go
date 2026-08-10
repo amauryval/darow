@@ -14,9 +14,10 @@ import (
 // tableRows implements storage.RowRepository for a single resolved
 // data table.
 type tableRows struct {
-	conn Querier
-	tx   TxRunner
-	ref  tableRef
+	conn  Querier
+	tx    TxRunner
+	names physicalNamesReader
+	ref   tableRef
 }
 
 var _ storage.RowRepository = (*tableRows)(nil)
