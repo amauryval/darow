@@ -35,7 +35,7 @@ RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 FROM alpine:latest
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
-RUN mkdir -p /out/data
-RUN mkdir -p /out/data/sources
+RUN mkdir -p /data
+RUN mkdir -p /data/sources
 
 ENTRYPOINT ["./server.run"]
