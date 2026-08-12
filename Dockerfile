@@ -18,6 +18,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
+RUN mkdir -p /out/data/sources
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
     && swag init -g cmd/server/main.go -o docs
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
@@ -26,5 +27,6 @@ RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
+COPY --from=build /out/data /data
 RUN chmod +x ./server.run && mkdir -p /data/sources
 ENTRYPOINT ["./server.run"]
