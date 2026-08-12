@@ -38,4 +38,4 @@ COPY --from=build /out/server.run ./server.run
 RUN mkdir -p /data
 RUN mkdir -p /data/sources
 
-ENTRYPOINT ["./server.run"]
+ENTRYPOINT ["/server.run"]
