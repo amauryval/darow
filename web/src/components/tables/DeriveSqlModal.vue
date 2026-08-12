@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useDeriveFromQuery } from '../../composables/useDeriveFromQuery'
 import { useToast } from '../../composables/useToast'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 import Modal from '../ui/Modal.vue'
 import DeriveSqlForm from './DeriveSqlForm.vue'
 import BaseButton from '../ui/BaseButton.vue'
@@ -15,6 +16,7 @@ const emit = defineEmits<{ close: []; derived: [{ tableId: string }] }>()
 
 const toast = useToast()
 const { isLoading, error, submit } = useDeriveFromQuery()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 const name = ref('')
 const query = ref('')
@@ -71,7 +73,8 @@ async function onSubmit() {
             <BaseButton
                 variant="primary"
                 :busy="isLoading"
-                :disabled="!canSubmit"
+                :disabled="!canSubmit || writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @click="onSubmit"
             >
                 {{ isLoading ? 'Création…' : 'Créer' }}

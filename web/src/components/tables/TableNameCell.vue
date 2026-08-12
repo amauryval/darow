@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { Pencil } from '@lucide/vue'
 import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // Presentational: the write and its error belong to whoever holds the row
 // list, since a patched row after a rename is that owner's state (§0.5,
@@ -16,6 +17,8 @@ const props = defineProps<{
     error?: string
 }>()
 const emit = defineEmits<{ rename: [tableId: string, name: string] }>()
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 const editing = ref(false)
 const nameInput = ref('')
@@ -83,6 +86,8 @@ watch(
             :icon="Pencil"
             icon-only
             aria-label="Renommer la table"
+            :disabled="writeDisabled"
+            :title="writeDisabled ? writeGuardReason : undefined"
             class="opacity-0 group-hover:opacity-100"
             @click.stop="startRename"
         />

@@ -5,6 +5,7 @@ import { errorMessage } from '../client/http'
 import { useSources } from '../composables/useSources'
 import { useToast } from '../composables/useToast'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
+import { useWriteGuard } from '../composables/useWriteGuard'
 import { parseSorting, stringifySorting } from '../utils/sort'
 import { queryString } from '../utils/routeQuery'
 import { RefreshCw, UploadCloud } from '@lucide/vue'
@@ -25,6 +26,7 @@ const sourcesState = useSources(
     queryString(route.query.sort) ? parseSorting(queryString(route.query.sort)) : undefined
 )
 const { sources, total, loading, loadedOnce, sorting, refresh, uploading, upload } = sourcesState
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // The URL carries the screen state (§9): a refresh or a shared link keeps
 // the chosen sort.
@@ -84,7 +86,8 @@ async function handleUpload(file: File) {
                     size="sm"
                     :icon="UploadCloud"
                     :busy="uploading"
-                    :disabled="uploading"
+                    :disabled="uploading || writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="uploadOpen = true"
                 >
                     Importer un fichier

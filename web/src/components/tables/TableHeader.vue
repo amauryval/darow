@@ -23,6 +23,7 @@ import MenuDropdown from '../ui/MenuDropdown.vue'
 import MenuItem from '../ui/MenuItem.vue'
 import MenuTitle from '../ui/MenuTitle.vue'
 import Typography from '../ui/Typography.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // What the table *is* — its name, its nature, its counters — and what can be
 // done to the table as an object. Nothing here acts on what is displayed:
@@ -55,6 +56,8 @@ const emit = defineEmits<{
     tableSettings: []
     delete: []
 }>()
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 const nameInput = ref(props.table.tableName)
 
@@ -155,6 +158,8 @@ function submitRename() {
                 <MenuTitle>Structure</MenuTitle>
                 <MenuItem
                     :icon="Pencil"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -165,6 +170,8 @@ function submitRename() {
                 >
                 <MenuItem
                     :icon="Plus"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -177,6 +184,8 @@ function submitRename() {
                 <MenuTitle>Produire</MenuTitle>
                 <MenuItem
                     :icon="GitBranch"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -187,6 +196,8 @@ function submitRename() {
                 >
                 <MenuItem
                     :icon="Sigma"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -214,6 +225,8 @@ function submitRename() {
                 <MenuTitle>Réglages</MenuTitle>
                 <MenuItem
                     :icon="Settings2"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -227,6 +240,8 @@ function submitRename() {
                 <MenuItem
                     :icon="Trash2"
                     danger
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                     @click="
                         () => {
                             close()

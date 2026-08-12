@@ -4,6 +4,7 @@ import SourcesView from './views/SourcesView.vue'
 import TablesView from './views/TablesView.vue'
 import TableDetailView from './views/TableDetailView.vue'
 import SettingsView from './views/SettingsView.vue'
+import AuthCallbackView from './views/AuthCallbackView.vue'
 
 declare module 'vue-router' {
     interface RouteMeta {
@@ -40,6 +41,12 @@ export const router = createRouter({
             name: 'settings',
             component: SettingsView,
             meta: { title: 'Paramètres' }
+        },
+        {
+            path: '/auth/callback',
+            name: 'auth-callback',
+            component: AuthCallbackView,
+            meta: { title: 'Connexion' }
         }
     ]
 })

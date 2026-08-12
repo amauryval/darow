@@ -6,6 +6,7 @@ import type { SourceRow } from '../../utils/sourceRows'
 import ConfirmButton from '../ui/ConfirmButton.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 const props = defineProps<{
     row: SourceRow
@@ -34,6 +35,8 @@ const emit = defineEmits<{
 // value is rejected, so the confirm button stays disabled until the input can
 // be one. A source with no geometry has nothing to state: it is confirmed as
 // it is, and the detection is what says which of the two this is.
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+
 const epsgValid = computed(() => /^[1-9]\d*$/.test(props.epsg.trim()))
 const confirmable = computed(
     () => !props.detecting && (props.epsgApplies === false || epsgValid.value)
@@ -66,7 +69,8 @@ const deleteMessage = computed(() =>
                 variant="primary"
                 size="xs"
                 :busy="loadingRow"
-                :disabled="!confirmable || loadingRow"
+                :disabled="!confirmable || loadingRow || writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @click="emit('confirmLoad')"
             >
                 {{ loadingRow ? 'Chargement…' : 'Confirmer' }}
@@ -92,6 +96,8 @@ const deleteMessage = computed(() =>
                 v-if="row.layerCount === undefined"
                 variant="secondary"
                 size="xs"
+                :disabled="writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @click="emit('startLoad')"
                 >Charger</BaseButton
             >
@@ -101,6 +107,8 @@ const deleteMessage = computed(() =>
                 :icon="Trash2"
                 :message="deleteMessage"
                 :busy="deleting"
+                :disabled="writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @confirm="emit('remove')"
             />
         </template>

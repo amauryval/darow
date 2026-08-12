@@ -42,15 +42,13 @@ line naming the caller inside the write guard) was **not** implemented — accep
 `limitations.md` LIM-22 rather than built, the guard's own denial warnings being judged enough for
 now. A retired identifier is never reused, so the next chantier recorded here takes `TODO-28`.
 
-**Order of work.** Nothing is open here today. TODO-27 having shipped unblocks its two dependants,
-neither of which may start before this file's state is read fresh: front
-[`../front/todo.md`](../front/todo.md) TODO-F39 (the OIDC client, the bearer token, the session) and
-TODO-F40 (the account popup and the disabled write controls), and project
-[`../project/todo.md`](../project/todo.md) TODO-P2 (the second Go module leaving `mise.toml` — partly
-done in this same change, since the dead `pkg/auth` commands would otherwise fail outright — the
-image's environment and the `README` remain). TODO-P2's `run-dev`/`authdemo` tag is why a bare
-`mise run run-dev` cannot yet start against `config.yaml`'s `enabled: false` default: `goauth.New`
-refuses demo mode outright without that build tag, by design (§2.7).
+**Order of work.** Nothing is open here today. TODO-27 having shipped unblocks its dependant in
+front [`../front/todo.md`](../front/todo.md) TODO-F39 (the OIDC client, the bearer token, the
+session) and TODO-F40 (the account popup and the disabled write controls). Project
+[`../project/todo.md`](../project/todo.md) TODO-P2 (the second Go module leaving `mise.toml`, the
+`run-dev`/`authdemo` build tag, the image's environment, the `README`) has since shipped too: a bare
+`mise run run-dev` now carries `-tags authdemo` itself, which is what lets `goauth.New` accept demo
+mode against `config.yaml`'s `enabled: false` default (§2.7).
 
 | #       | Chantier | Current effect | Reference |
 | ------- | -------- | -------------- | --------- |

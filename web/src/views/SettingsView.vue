@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useSettings } from '../composables/useSettings'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
+import { useWriteGuard } from '../composables/useWriteGuard'
 import { SETTINGS_FIELD_GROUPS, type SettingsFieldKey } from '../utils/settingsFields'
 import type { Settings, SettingsPatch } from '../client/types'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
@@ -15,6 +16,7 @@ import ErrorState from '../components/ui/ErrorState.vue'
 useDocumentTitle(computed(() => 'Paramètres'))
 
 const { current, loading, loadedOnce, error, retry, saving, fieldErrors, save } = useSettings()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // Every field's own input value, kept as a string so an in-progress edit is
 // never coerced to a number mid-keystroke. Re-seeded from `current` on
@@ -113,7 +115,7 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :field="field"
                                 :bounds="savedValues?.[field.key]"
                                 :error="errors[field.key]"
-                                :disabled="saving"
+                                :disabled="saving || writeDisabled"
                             />
                         </div>
                     </section>
@@ -137,7 +139,7 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                                 :field="field"
                                 :bounds="savedValues?.[field.key]"
                                 :error="errors[field.key]"
-                                :disabled="saving"
+                                :disabled="saving || writeDisabled"
                             />
                         </div>
                     </details>
@@ -158,7 +160,8 @@ const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)
                     type="submit"
                     variant="primary"
                     :busy="saving"
-                    :disabled="!isDirty || saving"
+                    :disabled="!isDirty || saving || writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
                 >
                     {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
                 </BaseButton>

@@ -57,7 +57,6 @@ carries the previous name; renaming it is out of scope for the repository itself
 |---|---|
 | `cmd/server` | the single entrypoint; the built binary's import graph |
 | `internal/` | all server code — see [../back/spec.md](../back/spec.md) §9 |
-| `pkg/auth/` | the forward-auth package: **its own Go module** (`darow/pkg/auth`, its own `go.mod`, `go.sum` and `README.md`), standard library only, so another application can import it — the root module reaches it by a `replace` directive, and every Go task runs a second time inside it |
 | `web/` | the Vue 3 admin UI sources — see [../front/spec.md](../front/spec.md) |
 | `internal/webui/dist/` | the UI production build, embedded by `go:embed`; a tracked placeholder until built |
 | `docs/` | generated Swagger only (`docs.go`, `swagger.json`, `swagger.yaml`) |
@@ -69,6 +68,10 @@ carries the previous name; renaming it is out of scope for the repository itself
 | `.github/workflows/ci.yml` | continuous integration |
 | `.claude/` | agent instructions, skills and reviewers |
 | `README.md` | the repository's entry point: what the product does, how to run it, how to contribute |
+
+The root module carries `github.com/amauryval/goauth` (and through it `go-oidc` and
+`golang.org/x/oauth2`), `web/` carries `oidc-client-ts` — the first third-party dependencies either
+side takes for authentication.
 
 ## 3. Toolchain
 
@@ -85,17 +88,23 @@ Pinned in `mise.toml`: Go 1.26.4, Node 22, `swag` 1.16.6. `./bin` is prepended t
 | `ui-install` / `ui-build` / `ui-dev` | UI dependencies / production build into `internal/webui/dist` / Vite dev server |
 | `ui-lint` / `ui-test` | eslint / vitest on the UI |
 | `build` | the server binary, after regenerating docs and UI |
-| `run-dev` | runs the server against `config.yaml`, after regenerating docs and UI |
+| `run-dev` | runs the server against `config.yaml`, after regenerating docs and UI, built with `-tags authdemo` |
 
-`ui-dev` and `run-dev` are the developer's to launch, never an agent's.
+`ui-dev` and `run-dev` are the developer's to launch, never an agent's. The `authdemo` build tag is
+`run-dev`'s alone: it is what lets `goauth` run in demo mode at all (`../back/spec.md` §2.7), and
+neither `build` nor the `Dockerfile` ever carries it.
 
 ## 5. Build and distribution
 
 `Dockerfile` is a three-stage build: Node 22 builds the UI into the embed directory, Go 1.26
 compiles the single binary (stripped, `-ldflags="-s -w"`), and a `gcr.io/distroless/cc-debian12:nonroot`
 runtime carries it — glibc, libstdc++ and ca-certificates, no shell or package manager, running as
-the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary.
-Configuration and the working directory come from outside the image.
+the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary. The Go
+stage never carries the `authdemo` build tag, so a container that forgets `AUTH_PROVIDER`,
+`AUTH_ISSUER` and `AUTH_AUDIENCE` fails at startup rather than opening to everyone; those three, plus
+`AUTH_ADMIN_ROLE`/`AUTH_GUEST_ROLE` when the provider's own role names differ, are passed in from
+outside the image, like the configuration and the working directory already are, and carry no
+default.
 
 ## 6. Continuous integration
 

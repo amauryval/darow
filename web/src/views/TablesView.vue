@@ -14,6 +14,7 @@ import type { Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
 import { usePaginatedList } from '../composables/usePaginatedList'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
+import { useWriteGuard } from '../composables/useWriteGuard'
 import { parseSorting, stringifySorting } from '../utils/sort'
 import { queryString } from '../utils/routeQuery'
 import Badge from '../components/ui/Badge.vue'
@@ -30,6 +31,8 @@ const router = useRouter()
 const route = useRoute()
 
 useDocumentTitle(computed(() => 'Tables'))
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // The list's own page size — deliberately independent of the operator's
 // defaultListLimit setting, a REST API page size rather than a UI choice; see
@@ -181,6 +184,8 @@ const table = useVueTable({
                 variant="secondary"
                 size="sm"
                 :icon="GitBranch"
+                :disabled="writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @click="showDeriveSql = true"
                 >Créer une nouvelle table</BaseButton
             >

@@ -5,6 +5,7 @@ import BaseButton from '../ui/BaseButton.vue'
 import MenuDropdown from '../ui/MenuDropdown.vue'
 import MenuItem from '../ui/MenuItem.vue'
 import Typography from '../ui/Typography.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 defineProps<{
     filters: SavedFilter[]
@@ -19,6 +20,8 @@ const emit = defineEmits<{
     remove: [filter: SavedFilter]
     retry: []
 }>()
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 </script>
 
 <template>
@@ -82,8 +85,11 @@ const emit = defineEmits<{
                             square
                             :icon="Pencil"
                             icon-only
+                            :disabled="writeDisabled"
                             aria-label="Modifier ce filtre enregistré"
-                            title="Modifier ce filtre enregistré"
+                            :title="
+                                writeDisabled ? writeGuardReason : 'Modifier ce filtre enregistré'
+                            "
                             @click="
                                 () => {
                                     close()
@@ -97,9 +103,12 @@ const emit = defineEmits<{
                             square
                             :icon="Trash2"
                             icon-only
+                            :disabled="writeDisabled"
                             class="text-base-content/40 hover:text-error"
                             aria-label="Supprimer ce filtre enregistré"
-                            title="Supprimer ce filtre enregistré"
+                            :title="
+                                writeDisabled ? writeGuardReason : 'Supprimer ce filtre enregistré'
+                            "
                             @click="emit('remove', filter)"
                         />
                     </template>

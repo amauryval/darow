@@ -92,6 +92,10 @@ reordered.
     defect, not a user one (§8.2).
 20. **Everything done with a mouse is done with a keyboard.** A clickable target is a `<button>` or
     an `<a>`, never a `<div>`/`<tr>` with an `@click`; every control has an accessible name (§8.7).
+21. **A control that performs a write carries the session's verdict, and a new one is not done
+    until it does.** A view or a domain component reads `useWriteGuard` and passes its `disabled`/
+    `reason` down as the plain props `BaseButton`/`ConfirmButton` already take — never read by a
+    `components/ui/` primitive itself (§0.5).
 
 ---
 
@@ -137,14 +141,27 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `session.ts`,
+  `AuthConfig`/`AuthSession` are the **only** DTOs here that are not camelCase: they mirror goauth's
+  own serialization verbatim (`issuer_url`, `client_id`, `scopes`, `logged_in`, `authorized`,
+  `roles`, `user`), and `AuthSession.user`'s fields (`Provider`/`ID`/`Roles`) are bare Go struct
+  field names with no JSON tags at all — renaming any of these keys into house camelCase is a silent
+  runtime `undefined`, which reads as "nobody is logged in" rather than a type error.
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `auth.ts`,
   `settings.ts`, `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
   return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
   contract is described on its own side, and an unreachable function here is code that rots without
   anyone noticing. Nothing is exported that only its own module uses. URLs built for a
   non-`fetch` use (export, tile template) go through `apiUrl` and are therefore subject to `baseUrl`
-  like the rest.
+  like the rest. `auth.ts` — `getAuthConfig`/`getAuthSession` over `GET /auth/config` and
+  `GET /auth/session`, both through `http.ts` like every other call (rule 0.1 has no exception for
+  authentication) — replaces the old gateway-era `session.ts`.
+- `http.ts` also carries the bearer token every request attaches: a module-level `authToken` set and
+  cleared by `useAuth` (`setAuthToken`), merged into every request's headers (`get`/`post`/`patch`/
+  `del`/`postForm`/`getBlob`) alongside any header the call already sets — `postForm`'s FormData
+  keeps its browser-set multipart `Content-Type`. A `401` on any call fires an `onUnauthorized`
+  callback (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual
+  `ApiError` — never an import of the auth composable into the transport.
 
 The endpoint contracts (pagination, sorting, filter DSL, formats) are described on the server side —
 `spec.md` §6. This document does not restate them.
@@ -269,7 +286,9 @@ module level and documents it; that is the exception, not the rule.
 | `useToast` | application notification queue (shared module state) | present |
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` accepts a `Ref<number>` as well as a plain number — a page size resolved asynchronously (a table's effective row limit, `useTableRows`) reloads from page 1 the moment it changes, the same way a sort change does | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
-| `useSession` | who is calling and what they may do, from `GET /api/v1/session` (back `spec.md` §6.7): whether authentication is in force at all, the display name, `canWrite`, and `signIn`/`signOut`, which leave the application for the gateway's own pages through a full navigation — the session is a cookie this application never sees, so acquiring one means coming back through the gateway. Shared module state like `useToast`'s, read once per page load: nothing the application does can change who is calling. A failed probe is treated as authentication off, so a server that did not answer leaves the UI usable rather than locked on a failed request | present |
+| `useAuth` | the OIDC lifecycle and its shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): the session read from `GET /auth/session`, cached a few tens of seconds and keyed by the current token so a re-render never refetches it; the display name from the **ID token**'s own profile (`user.profile.name`, then `preferred_username`, then `email` — the access token carries no name at all); `signIn`/`signOut` (`signOut` reads the user before clearing it, passing its `id_token` as `id_token_hint` to `signoutRedirect`, or the provider shows an account picker instead of logging anyone out); the OIDC event wiring (`addUserLoaded` refreshes the session, `addAccessTokenExpired`/`addSilentRenewError` drop it and warn through `useToast`); a `BroadcastChannel` every tab listens on to drop its user on a logout elsewhere; and the `http.ts` `onUnauthorized` registration that drops the token and asks for a re-check on any `401`. Built on `auth/oidc.ts`'s non-reactive `UserManager` | present |
+| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
+| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
 | `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
@@ -323,7 +342,7 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
-| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
+| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen. `disabled`/`title`, the same plain contract as `BaseButton`'s, are what a caller passes `useWriteGuard`'s verdict through (rule 21) — this component stays domain-free and never reads the guard itself |
 | `Badge` | status pill, **semantic** tones (neutral, primary, success, warning, error) — never colour names. `warning` is the amber a pending write is shown in everywhere, including the edit bar's count of touched geometries |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
@@ -334,7 +353,20 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
 rich cells (source actions, EPSG input, row actions, editable cell) are of this kind — that is what
-replaces the `h()` trees.
+replaces the `h()` trees. Domain components (`components/tables/`, `components/sources/`,
+`components/map/`, `components/settings/`, and the filter bar) are also where `useWriteGuard` is
+read directly, next to the write button it gates (rule 21) — the one exception to "mute": a
+composable read, never a network call or a router import.
+
+**`components/session/SessionMenu.vue` — the navbar's account control.** Fed by `useSession`. Three
+states: `enabled` false (demo mode) renders nothing at all — there is no account, and an empty
+affordance would suggest one exists; signed out renders a *Se connecter* `BaseButton` that calls
+`signIn()`; signed in keeps the `MenuDropdown` shell (`MenuTitle` with the display name, `MenuItem`
+*Se déconnecter*) and adds a `Badge` stating the role — `tone="primary"` *Administrateur* for
+`admin`, `tone="warning"` *Invité — lecture seule* for `guest`, `tone="warning"` *Aucun rôle —
+lecture seule* for `none`. The badge is the one thing the menu could not say before: a signed-in
+`guest` gets nothing an anonymous visitor does not already have, and without it the screen would
+read as broken to them rather than merely read-only.
 
 **`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
 `ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
@@ -619,6 +651,12 @@ height jump.
 An error that prevents the action in progress **never** goes out as a toast alone: it stays in front
 of the user, where they have to act. A message is short, in French, in the active voice, and says
 what to do ("Nom de table déjà utilisé." rather than "erreur 409").
+
+A write control disabled by `useWriteGuard` (rule 21) states its reason in its `title`, worded once:
+*Connexion requise pour modifier les données* when nobody is signed in, *Votre compte n'a pas les
+droits d'édition* for a signed-in user who is not an administrator (`guest` included). Disabling is
+additive, not a substitute for the `401`/`403` handling the request itself already has: a token can
+expire mid-screen, and the server stays the only authority.
 
 ### 8.5 Forms
 
@@ -959,6 +997,23 @@ This is the product's main screen; it follows fixed rules.
 - **Pagination.** Since sorting and filtering are server-side, any change to either invalidates the
   pages already loaded: we start again from page 1, keeping the displayed rows until the new page
   arrives (no empty flicker).
+- **Boot order.** `main.ts` builds the OIDC manager (`auth/oidc.ts`'s `initOidc`) and runs the boot
+  recovery (`restoreBrowserSession`) **before** `createApp(...).mount(...)`: the first frame already
+  knows whether anyone is signed in, so no control flickers from enabled to disabled. A failed
+  `GET /auth/config` leaves the app usable with no login control rather than blocking the mount.
+  `router.ts` carries one extra route, `/auth/callback` → `views/AuthCallbackView.vue`, whose job is
+  the code exchange and nothing else — there is deliberately **no route guard** anywhere in this
+  app: every screen reads regardless of role, so guarding a route would lock a user out of a page
+  the API serves them anyway (the verdict gates controls, `useWriteGuard`, not navigation).
+- **The bearer token has one owner.** `http.ts`'s module-level `authToken`, set and cleared
+  exclusively by `useAuth` — on session load, on logout, on expiry (rule 0.12). No other module
+  reads or writes it.
+- **Per-tab storage.** `auth/oidc.ts`'s `UserManager` keeps both its user store (the tokens) and its
+  state store (the PKCE verifier across the redirect) on `sessionStorage` — a token never touches
+  `localStorage`. Two non-secret `localStorage` flags carry the cross-tab, cross-reload signal
+  instead: `darow.auth.signed-in` ("someone is signed in on this browser", read by the boot
+  recovery) and, in `sessionStorage`, `darow.auth.silent-attempted` (this tab already tried a silent
+  sign-in, so a user granted no role does not redirect forever).
 
 ---
 
@@ -987,6 +1042,7 @@ type-checks, and the human looks.
 web/
   src/
     client/           HTTP transport + one module per endpoint family + types.ts
+    auth/             oidc.ts — the UserManager and its storage/broadcast plumbing, non-reactive
     utils/            pure functions (tile grid, filter tree, types, sorting)
     composables/      one composable per subject (§4)
     components/
@@ -1001,8 +1057,10 @@ web/
       SourcesView.vue / SourcesView/    sub-views and panels
       TableDetailView.vue / TableDetailView/
       SettingsView.vue
-    router.ts         one route per view
+      AuthCallbackView.vue             the OIDC redirect's landing page
+    router.ts         one route per view, plus /auth/callback
     App.vue           shell: navigation, server status, toasts
+    main.ts           builds the OIDC manager and runs boot recovery before mount (§9)
     style.css         Tailwind + daisyUI
 ```
 

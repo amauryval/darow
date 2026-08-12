@@ -7,9 +7,11 @@ import BaseButton from '../ui/BaseButton.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import ErrorState from '../ui/ErrorState.vue'
 import Typography from '../ui/Typography.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 const { tables, loading, loadedOnce, error, retry, resettingTableId, resetTable } =
     useTableSettingsOverrides()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // The overridden fields of one table, labelled and valued — what the row
 // actually shows, since "this table overrides something" alone answers
@@ -64,7 +66,8 @@ function overriddenFields(table: TableSettings) {
                         variant="ghost"
                         size="xs"
                         :busy="resettingTableId === table.tableId"
-                        :disabled="resettingTableId !== null"
+                        :disabled="resettingTableId !== null || writeDisabled"
+                        :title="writeDisabled ? writeGuardReason : undefined"
                         @click="resetTable(table.tableId)"
                     >
                         Réinitialiser

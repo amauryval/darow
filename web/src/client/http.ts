@@ -18,6 +18,31 @@ export function configureApiClient(options: { baseUrl?: string }): void {
     baseUrl = options.baseUrl?.replace(/\/+$/, '') ?? ''
 }
 
+// The bearer token every request attaches, and the single setter that owns
+// it (composables/useAuth.ts) — set once the session loads, cleared on
+// logout and on expiry. http.ts never reads the auth composable itself: it
+// only ever sees a string or null here.
+let authToken: string | null = null
+
+export function setAuthToken(token: string | null): void {
+    authToken = token
+}
+
+// A 401 on any call means the token this module is holding is no longer
+// good — expired, revoked, or never valid. http.ts cannot decide what to do
+// about that (drop it, ask for a silent re-check, warn the user): it only
+// notifies whoever registered a handler. Never an import of the auth
+// composable here, which would pull Vue reactivity into the transport layer.
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+    onUnauthorized = handler
+}
+
+function authHeaders(): HeadersInit {
+    return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
+
 export function apiUrl(path: string): string {
     return `${baseUrl}${API_BASE}${path}`
 }
@@ -89,6 +114,9 @@ export function errorMessage(e: unknown, fallback: string): string {
 }
 
 async function handle<T>(res: Response): Promise<T> {
+    if (res.status === 401) {
+        onUnauthorized?.()
+    }
     if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ErrorResponse | null
         throw new ApiError(
@@ -108,7 +136,7 @@ async function handle<T>(res: Response): Promise<T> {
 // next pan has already superseded — and, with AbortSignal.timeout, stops a
 // request that never answers from leaving a screen busy for ever.
 export function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-    return fetch(apiUrl(path), { signal }).then((res) => handle<T>(res))
+    return fetch(apiUrl(path), { headers: authHeaders(), signal }).then((res) => handle<T>(res))
 }
 
 // getRoot is get's counterpart for the handful of routes outside
@@ -120,7 +148,10 @@ export function getRoot<T>(path: string): Promise<T> {
 export function post<T>(path: string, body?: unknown): Promise<T> {
     return fetch(apiUrl(path), {
         method: 'POST',
-        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+        headers: {
+            ...authHeaders(),
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+        },
         body: body === undefined ? undefined : JSON.stringify(body)
     }).then((res) => handle<T>(res))
 }
@@ -128,19 +159,23 @@ export function post<T>(path: string, body?: unknown): Promise<T> {
 export function patch<T>(path: string, body: unknown): Promise<T> {
     return fetch(apiUrl(path), {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     }).then((res) => handle<T>(res))
 }
 
 export function del<T>(path: string): Promise<T> {
-    return fetch(apiUrl(path), { method: 'DELETE' }).then((res) => handle<T>(res))
+    return fetch(apiUrl(path), { method: 'DELETE', headers: authHeaders() }).then((res) =>
+        handle<T>(res)
+    )
 }
 
 // No Content-Type header here — the browser sets the multipart boundary
 // itself from the FormData body.
 export function postForm<T>(path: string, form: FormData): Promise<T> {
-    return fetch(apiUrl(path), { method: 'POST', body: form }).then((res) => handle<T>(res))
+    return fetch(apiUrl(path), { method: 'POST', headers: authHeaders(), body: form }).then((res) =>
+        handle<T>(res)
+    )
 }
 
 // getBlob is get's counterpart for a non-JSON response body (tables.ts's
@@ -150,7 +185,10 @@ export function postForm<T>(path: string, form: FormData): Promise<T> {
 // and for an export it carries the CRS the file is written in (back LIM-16),
 // which rebuilding it here would silently drop.
 export async function getBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
-    const res = await fetch(apiUrl(path))
+    const res = await fetch(apiUrl(path), { headers: authHeaders() })
+    if (res.status === 401) {
+        onUnauthorized?.()
+    }
     if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ErrorResponse | null
         throw new ApiError(

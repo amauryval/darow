@@ -17,7 +17,7 @@ jobs:
               run: |
                   git fetch --tags
                   if ! git tag --points-at HEAD | grep -q .; then
-                    echo "❌ No tag on current commit, aborting."
+                    echo "No tag on current commit, aborting."
                     exit 1
                   fi
 

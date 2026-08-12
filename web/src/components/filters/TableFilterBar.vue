@@ -11,6 +11,7 @@ import FilterEditorModal from './FilterEditorModal.vue'
 import ActiveFilterPill from './ActiveFilterPill.vue'
 import SavedFilterMenu from './SavedFilterMenu.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // activeFilterId is owned by the view (TableDetailView, §9 — the URL carries
 // the applied filter) and controlled here through the usual prop/emit pair,
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 
 const toast = useToast()
 const saved = useSavedFilters(toRef(props, 'tableId'))
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // Only one filter applies at a time: a second one would silently AND with the
 // first, which the toolbar cannot show.
@@ -126,7 +128,13 @@ async function onRemove(filter: SavedFilter) {
 
 <template>
     <div class="flex min-w-0 flex-wrap items-center gap-2">
-        <BaseButton variant="primary" size="sm" :icon="Filter" @click="openCreate"
+        <BaseButton
+            variant="primary"
+            size="sm"
+            :icon="Filter"
+            :disabled="writeDisabled"
+            :title="writeDisabled ? writeGuardReason : undefined"
+            @click="openCreate"
             >Filtrer</BaseButton
         >
 

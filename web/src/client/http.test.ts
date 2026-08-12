@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiUrl, ApiError, configureApiClient, del, get, getRoot, post } from './http'
+import {
+    apiUrl,
+    ApiError,
+    configureApiClient,
+    del,
+    get,
+    getRoot,
+    post,
+    setAuthToken,
+    setUnauthorizedHandler
+} from './http'
 
 function jsonResponse(body: unknown, status: number): Response {
     return new Response(JSON.stringify(body), {
@@ -11,6 +21,8 @@ function jsonResponse(body: unknown, status: number): Response {
 describe('http client', () => {
     afterEach(() => {
         configureApiClient({})
+        setAuthToken(null)
+        setUnauthorizedHandler(null)
     })
 
     it('resolves with undefined on a 200 response with an empty body', async () => {
@@ -91,5 +103,52 @@ describe('http client', () => {
 
     it('prefixes every request with /api/v1', () => {
         expect(apiUrl('/tables/t1')).toBe('/api/v1/tables/t1')
+    })
+
+    it('attaches the bearer token to a request once one is set', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tableId: 't1' }, 200))
+        vi.stubGlobal('fetch', fetchMock)
+        setAuthToken('token-1')
+
+        await get('/tables/t1')
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/v1/tables/t1',
+            expect.objectContaining({ headers: { Authorization: 'Bearer token-1' } })
+        )
+    })
+
+    it('sends no Authorization header when no token is set', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tableId: 't1' }, 200))
+        vi.stubGlobal('fetch', fetchMock)
+
+        await get('/tables/t1')
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/v1/tables/t1',
+            expect.objectContaining({ headers: {} })
+        )
+    })
+
+    it('calls the registered handler on a 401, and still throws the ApiError', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue(
+                jsonResponse(
+                    {
+                        error: 'unauthorized',
+                        message: 'no token',
+                        code: 401,
+                        requestId: 'req-2'
+                    },
+                    401
+                )
+            )
+        )
+        const handler = vi.fn()
+        setUnauthorizedHandler(handler)
+
+        await expect(get('/tables/t1')).rejects.toBeInstanceOf(ApiError)
+        expect(handler).toHaveBeenCalledOnce()
     })
 })

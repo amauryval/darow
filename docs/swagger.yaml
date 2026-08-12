@@ -1,26 +1,5 @@
 basePath: /
 definitions:
-    auth.SessionDTO:
-        properties:
-            authenticated:
-                type: boolean
-            canWrite:
-                type: boolean
-            enabled:
-                type: boolean
-            groups:
-                items:
-                    type: string
-                type: array
-            loginUrl:
-                type: string
-            logoutUrl:
-                type: string
-            name:
-                type: string
-            userId:
-                type: string
-        type: object
     handlers.collectionDTO:
         properties:
             crs:
@@ -481,21 +460,6 @@ paths:
             summary: Declared OGC API - Features conformance classes
             tags:
                 - features
-    /api/v1/session:
-        get:
-            description:
-                Whether authentication is in force, who the caller is, whether they may write, and
-                the gateway's sign-in/sign-out URLs. Answers an anonymous request.
-            produces:
-                - application/json
-            responses:
-                '200':
-                    description: OK
-                    schema:
-                        $ref: '#/definitions/auth.SessionDTO'
-            summary: Current caller
-            tags:
-                - auth
     /api/v1/settings:
         get:
             produces:

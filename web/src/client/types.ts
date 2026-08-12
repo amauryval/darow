@@ -354,18 +354,34 @@ export interface TransformPreview {
     sample: TransformSample[]
 }
 
-// Matches handlers.SessionDTO: what the server knows about the caller of
-// the current request. `enabled` false means the server runs with
-// authentication off — nobody is identified and everybody may write, so a
-// client hides the whole notion. `loginUrl`/`logoutUrl` are the gateway's
-// own pages: the server never hosts a sign-in screen (back spec.md §6.7).
-export interface Session {
-    enabled: boolean
-    authenticated: boolean
-    userId?: string
-    name?: string
-    groups: string[]
-    canWrite: boolean
-    loginUrl?: string
-    logoutUrl?: string
+// Matches goauth's own config and session DTOs (GET /auth/config, GET
+// /auth/session) — the only two DTOs in this client that are NOT camelCase.
+// goauth serializes its own field names with no translation layer, and
+// AuthSession.user is a bare Go struct with no JSON tags at all, so its
+// fields keep their exported Go casing (Provider/ID/Roles). Renaming any of
+// these keys into house camelCase style is a silent runtime `undefined` —
+// the field simply never populates, which reads as "nobody is logged in"
+// rather than as a type error, since nothing here catches the mismatch at
+// compile time.
+
+// All three empty strings means demo mode: no provider is configured, so
+// there is no login control to show at all (auth/oidc.ts skips building a
+// UserManager entirely).
+export interface AuthConfig {
+    issuer_url: string
+    client_id: string
+    scopes: string
+}
+
+export interface AuthUser {
+    Provider: string
+    ID: string
+    Roles: string[]
+}
+
+export interface AuthSession {
+    logged_in: boolean
+    authorized: boolean
+    roles?: string[]
+    user?: AuthUser
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Pencil } from '@lucide/vue'
 import BaseButton from '../ui/BaseButton.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // A grid column's header, name plus its one action — a single button, not a
 // menu (§0.2: the modal itself is owned by TableDataPanel, this only reports
@@ -12,6 +13,8 @@ import BaseButton from '../ui/BaseButton.vue'
 // opening this modal must not toggle it.
 defineProps<{ name: string }>()
 const emit = defineEmits<{ transform: [] }>()
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 </script>
 
 <template>
@@ -23,8 +26,9 @@ const emit = defineEmits<{ transform: [] }>()
                 :icon="Pencil"
                 size="xs"
                 variant="ghost"
+                :disabled="writeDisabled"
                 :aria-label="`Mettre à jour la colonne ${name}`"
-                :title="`Mettre à jour la colonne ${name}`"
+                :title="writeDisabled ? writeGuardReason : `Mettre à jour la colonne ${name}`"
                 @click="emit('transform')"
             />
         </span>
