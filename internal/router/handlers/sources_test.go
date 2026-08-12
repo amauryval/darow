@@ -117,12 +117,6 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 		wantLoaded bool
 	}{
 		{
-			name:       "single-layer upload loads immediately",
-			sources:    []service.Source{{Name: "a.geojson"}},
-			wantStatus: http.StatusCreated,
-			wantLoaded: true,
-		},
-		{
 			name:       "multi-layer upload is returned unresolved",
 			sources:    []service.Source{{Name: "a.geojson", Layers: []service.SourceLayer{{Name: "l1"}, {Name: "l2"}}}},
 			wantStatus: http.StatusCreated,
@@ -138,12 +132,6 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 			sources:    []service.Source{{Name: "a.geojson"}},
 			refreshErr: assert.AnError,
 			wantStatus: http.StatusInternalServerError,
-		},
-		{
-			name:       "load failure maps to its service error",
-			sources:    []service.Source{{Name: "a.geojson"}},
-			loadErr:    &service.ValidationError{},
-			wantStatus: http.StatusBadRequest,
 		},
 	}
 

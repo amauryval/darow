@@ -4,32 +4,41 @@ import { FileUp, UploadCloud } from '@lucide/vue'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import Typography from '../ui/Typography.vue'
+import { formatSize } from '../../utils/sourceRows'
+import { MAX_UPLOAD_BYTES, validateUploadSize } from '../../utils/uploadValidation'
 
 // Stated before the attempt, not only in an error response (§8.5). Static
 // text matching the server's default config.yaml (sources.maxSizeBytes /
 // sources.allowedExtensions) — there is no endpoint exposing the running
 // deployment's actual values, so a custom config drifts from this hint.
 const ACCEPTED_EXTENSIONS = ['.geojson', '.shp', '.csv', '.gpkg', '.parquet']
-const MAX_UPLOAD_LABEL = '100 Mo'
+const MAX_UPLOAD_LABEL = formatSize(MAX_UPLOAD_BYTES)
 
 defineProps<{ uploading?: boolean }>()
 const emit = defineEmits<{ close: []; upload: [file: File] }>()
 
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const error = ref<string | null>(null)
+
+function handleFile(file: File) {
+    const message = validateUploadSize(file)
+    error.value = message
+    if (!message) emit('upload', file)
+}
 
 function onFileSelected(event: Event) {
     const file = event.target instanceof HTMLInputElement ? event.target.files?.[0] : undefined
-    // Cleared before emitting: picking the same file twice in a row emits no
+    // Cleared before handling: picking the same file twice in a row emits no
     // change event otherwise.
     if (fileInput.value) fileInput.value.value = ''
-    if (file) emit('upload', file)
+    if (file) handleFile(file)
 }
 
 function onDrop(event: DragEvent) {
     dragging.value = false
     const file = event.dataTransfer?.files?.[0]
-    if (file) emit('upload', file)
+    if (file) handleFile(file)
 }
 </script>
 
@@ -65,6 +74,7 @@ function onDrop(event: DragEvent) {
             <Typography variant="caption"
                 >{{ ACCEPTED_EXTENSIONS.join(', ') }} — {{ MAX_UPLOAD_LABEL }} maximum</Typography
             >
+            <Typography v-if="error" variant="caption" class="text-error">{{ error }}</Typography>
         </div>
     </Modal>
 </template>

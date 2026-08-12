@@ -108,13 +108,9 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field
 // "file"). Not part of spec/back/spec.md's original endpoint table (section 6.1
-// only lists refresh/load) — added as an explicit extension. Writes the
-// file into workDir via SourceService.Upload, then immediately loads it
-// into a table exactly like POST /sources/{name}/load would, so the
-// caller gets a queryable table back in one round trip. An optional
-// ?srid= pins the source CRS explicitly for that auto-load; a
-// multi-layer upload stays unresolved regardless — srid is supplied
-// per-layer on the follow-up Load call instead.
+// only lists refresh/load TODO REMOVE IT) — added as an explicit extension. Writes the
+// file into workDir via SourceService.Upload
+// multi-layer upload stays unresolved regardless
 //
 // @Summary Upload a file and load it into a new table
 // @Tags sources
@@ -126,12 +122,6 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
 func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
-	srid, err := parseSrid(req)
-	if err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
-		return
-	}
-
 	// http.Server.ReadTimeout is a hard deadline on reading the whole
 	// request, body included: a source file of any size takes longer than
 	// any value sized for a normal request, and would be cut off mid-body
@@ -172,19 +162,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: false, Source: uploaded})
 		return
 	}
-
-	layer := ""
-	if uploaded != nil && len(uploaded.Layers) == 1 {
-		layer = uploaded.Layers[0].Name
-	}
-	tableId, err := sh.sourceService.Load(req.Context(), savedName, layer, srid)
-	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
-		return
-	}
-
-	w.Header().Set("Location", "/tables/"+tableId)
-	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, TableId: tableId})
+		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, Source: uploaded})
 }
 
 // LoadSource handles POST /sources/{name}/load. name is validated against

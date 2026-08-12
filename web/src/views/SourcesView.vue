@@ -45,10 +45,8 @@ async function handleUpload(file: File) {
         const result = await upload(file)
         uploadOpen.value = false
         if (result) {
-            toast.success(`${file.name} chargé.`)
-            router.push(`/tables/${result.tableId}`)
-        } else {
-            toast.success(`${file.name} ajouté — choisissez une couche à charger.`)
+            toast.success(`${file.name} chargé — choisissez une couche à charger.`)
+            refresh()
         }
     } catch (e) {
         toast.error(errorMessage(e, `Impossible de charger ${file.name}`))
@@ -63,7 +61,8 @@ async function handleUpload(file: File) {
         <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div class="flex flex-col gap-1">
                 <Typography variant="body-sm"
-                    >Fichiers détectés dans le répertoire de travail du serveur.</Typography
+                    >Fichiers détectés dans le répertoire de travail du serveur. Si la table est
+                    chargée, le fichier ne pourra pas être supprimé pour le moment.</Typography
                 >
                 <div v-if="loadedOnce" class="flex items-center gap-2">
                     <Badge tone="neutral">{{ total }} fichier{{ total > 1 ? 's' : '' }}</Badge>
