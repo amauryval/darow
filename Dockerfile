@@ -26,8 +26,7 @@ RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
 # No -tags authdemo: goauth then refuses demo mode outright, so a deployment
 # that forgets AUTH_PROVIDER/AUTH_ISSUER/AUTH_AUDIENCE fails at startup
 # instead of silently authorizing every visitor as an administrator.
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server ./cmd/server
-RUN mkdir -p /out/data/sources
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 
 # distroless/cc ships glibc, libstdc++ and ca-certificates (duckdb-go links
 # against libstdc++ via cgo; the spatial extension is fetched over HTTPS at
@@ -35,6 +34,8 @@ RUN mkdir -p /out/data/sources
 # than debian-slim. The nonroot tag runs as uid/gid 65532 already.
 FROM alpine:latest
 WORKDIR /app
-COPY --from=build /out/server ./server
+COPY --from=build /out/server.run ./server.run
+RUN mkdir -p /out/data
+RUN mkdir -p /out/data/sources
 
-ENTRYPOINT ["./server"]
+ENTRYPOINT ["./server.run"]
