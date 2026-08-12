@@ -3,6 +3,7 @@ import { getAuthSession } from '../client/auth'
 import { errorMessage, setAuthToken, setUnauthorizedHandler } from '../client/http'
 import type { AuthSession } from '../client/types'
 import {
+    appPath,
     clearSignedIn,
     currentAccessToken,
     currentProfile,
@@ -103,7 +104,7 @@ export function useAuth() {
 
     async function signIn() {
         try {
-            await oidcManager().signinRedirect({ state: window.location.pathname })
+            await oidcManager().signinRedirect({ state: appPath(window.location.pathname) })
         } catch (err) {
             toast.error(errorMessage(err, 'Impossible de démarrer la connexion'))
         }
@@ -112,24 +113,18 @@ export function useAuth() {
     async function signOut() {
         clearSignedIn()
         logoutChannel?.postMessage(Date.now())
+        forgetSession()
 
         if (!isOidcEnabled()) {
-            forgetSession()
             return
         }
 
         try {
-            // Read before clearing: signoutRedirect needs the id_token as
-            // id_token_hint, and clearing the stored user first is exactly
-            // what throws that hint away, leaving the provider unable to
-            // tell which session to end and showing an account picker.
             const user = await oidcManager().getUser()
-            forgetSession()
             await oidcManager().removeUser()
             await oidcManager().signoutRedirect({ id_token_hint: user?.id_token })
         } catch (err) {
-            forgetSession()
-            toast.error(errorMessage(err, 'Impossible de terminer la déconnexion'))
+            window.location.assign('/')
         }
     }
 

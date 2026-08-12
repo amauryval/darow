@@ -8,6 +8,16 @@ import { getAuthConfig } from '../client/auth'
 // register (and redirect to) a path the server never serves the app under.
 export const OIDC_CALLBACK_PATH = `${import.meta.env.BASE_URL}auth/callback`.replace(/\/+/g, '/')
 
+// The counterpart to OIDC_CALLBACK_PATH: strips Vite's base off a raw
+// window.location.pathname so it can be stored as OIDC state and later
+// handed to vue-router. The router prepends the base itself on any
+// navigation (createWebHistory('/ui/')), so a path that still carries it
+// would get it twice — the exact bug this fixes (/ui/ui/dashboard).
+export const appPath = (pathname: string): string => {
+    const base = import.meta.env.BASE_URL
+    return pathname.startsWith(base) ? `/${pathname.slice(base.length)}` : pathname
+}
+
 let manager: UserManager | null = null
 
 // Built once, at boot, from GET /auth/config — through client/auth.ts like
@@ -109,7 +119,7 @@ export const restoreBrowserSession = async (): Promise<void> => {
         return
     }
 
-    await trySilentSignin(window.location.pathname + window.location.search)
+    await trySilentSignin(appPath(window.location.pathname) + window.location.search)
 }
 
 export const oidcManager = (): UserManager => {

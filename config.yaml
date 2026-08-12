@@ -34,4 +34,7 @@ settings:
 # enabled: false is demo mode: it authorizes every visitor as an
 # administrator and checks no token at all
 auth:
-    enabled: false
+    enabled: true
+    provider: 'pocketid'
+    issuer: 'https://auth.amyve.fr'
+    audience: '57d1fde3-55ab-4d01-8208-d2bb0b97dc9f'

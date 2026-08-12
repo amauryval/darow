@@ -89,3 +89,8 @@ run = "go build -o bin/server ./cmd/server"
 description = "Run the server against config.yaml"
 depends = ["docs", "ui-build"]
 run = "go run -tags authdemo ./cmd/server"
+
+[tasks."run-dev-prod"]
+description = "Run the server against config.yaml"
+depends = ["docs", "ui-build"]
+run = "go run ./cmd/server"

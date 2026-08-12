@@ -33,7 +33,6 @@ const roleBadge = computed<{ tone: 'primary' | 'warning'; label: string } | null
         @click="signIn"
     >
         <LogIn :size="14" />
-        Se connecter
     </BaseButton>
 
     <MenuDropdown
