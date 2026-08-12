@@ -28,5 +28,4 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
 COPY --from=build /out/data /data
-RUN chmod +x ./server.run && mkdir -p /data/sources
 ENTRYPOINT ["./server.run"]
