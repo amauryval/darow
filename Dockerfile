@@ -23,7 +23,7 @@ RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 
 # Stage 3: final image (glibc compatible)
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
 RUN chmod +x ./server.run && mkdir -p /data/sources
