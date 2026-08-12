@@ -3,14 +3,17 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/amauryval/goauth/provider"
+
 	"darow/internal/settings"
-	"darow/pkg/auth"
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
@@ -31,21 +34,26 @@ type Config struct {
 	DuckDB   DuckDBConfig   `yaml:"duckdb"`
 	Sources  SourcesConfig  `yaml:"sources"`
 	Settings SettingsConfig `yaml:"settings"`
-	Auth     auth.Config    `yaml:"auth"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
 // ServerConfig holds HTTP server settings: the listen host and port,
 // per-connection timeouts, and how long a graceful shutdown waits for
 // in-flight requests before giving up. Host is the interface the listener
 // binds to — the default accepts connections from anywhere, which is what a
-// containerized process behind a reverse proxy needs.
+// containerized process behind a reverse proxy needs. TrustedProxies (§2.1)
+// names the upstream a request's Forwarded/X-Forwarded-* headers are
+// believed from — cleared off any request that did not come from one of
+// them, so FeaturesHandler never builds an OGC link off a client-controlled
+// host (§6.2, §6.3).
 type ServerConfig struct {
-	Host               string `yaml:"host"`
-	Port               int    `yaml:"port"`
-	ReadTimeoutSec     int    `yaml:"readTimeoutSec"`
-	WriteTimeoutSec    int    `yaml:"writeTimeoutSec"`
-	IdleTimeoutSec     int    `yaml:"idleTimeoutSec"`
-	ShutdownTimeoutSec int    `yaml:"shutdownTimeoutSec"`
+	Host               string   `yaml:"host"`
+	Port               int      `yaml:"port"`
+	ReadTimeoutSec     int      `yaml:"readTimeoutSec"`
+	WriteTimeoutSec    int      `yaml:"writeTimeoutSec"`
+	IdleTimeoutSec     int      `yaml:"idleTimeoutSec"`
+	ShutdownTimeoutSec int      `yaml:"shutdownTimeoutSec"`
+	TrustedProxies     []string `yaml:"trustedProxies"`
 }
 
 // DuckDBConfig holds the DuckDB database file path and connection pool
@@ -80,6 +88,87 @@ type SettingsConfig struct {
 	TileMaxItems      int   `yaml:"tileMaxItems"`
 }
 
+// AuthConfig gathers the settings goauth.NewSettings needs to verify OIDC
+// bearer tokens and decide the two application roles (§2.7). Its type is
+// declared here, not by the module: goauth names its settings but never
+// reads them off the environment itself — that is this package's business,
+// through the module's own env-variable constants (applyEnvOverrides)
+// rather than the literals they hold, so a rename inside the module cannot
+// silently stop being read here. Enabled is this field's own name, the
+// module's own Settings.Demo() inverted: false (the zero value, and the
+// default) is demo mode — nothing verified, every visitor an administrator
+// — true demands a real provider. A provider, issuer or audience declared
+// while disabled is a contradiction the module itself refuses at New;
+// validate (below) reports the same refusal earlier, collected with every
+// other configuration violation instead of surfacing alone at bootstrap.
+// Config-only like §2.4's guards, for the same reason: it never reaches the
+// settings table and never appears on PATCH /api/v1/settings.
+type AuthConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Issuer    string `yaml:"issuer"`
+	Audience  string `yaml:"audience"`
+	AdminRole string `yaml:"adminRole"`
+	GuestRole string `yaml:"guestRole"`
+}
+
+// validate collects everything wrong with the auth block. Disabled is the
+// only way to run with no provider declared, and it is a contradiction to
+// declare both; enabled, a provider, an issuer and an audience are all
+// required — an OIDC verifier discovering nothing to verify against would
+// silently authorize nobody, which reads as broken rather than closed.
+func (c AuthConfig) validate() []error {
+	if !c.Enabled {
+		var configured []string
+		if c.Provider != "" {
+			configured = append(configured, "auth.provider")
+		}
+		if c.Issuer != "" {
+			configured = append(configured, "auth.issuer")
+		}
+		if c.Audience != "" {
+			configured = append(configured, "auth.audience")
+		}
+		if len(configured) > 0 {
+			return []error{fmt.Errorf("auth.enabled is false but %s is also set: set auth.enabled or unset it", strings.Join(configured, " and "))}
+		}
+		return nil
+	}
+
+	var errs []error
+	if _, err := provider.Parse(c.Provider); err != nil {
+		errs = append(errs, fmt.Errorf("auth.provider: %w", err))
+	}
+	if c.Issuer == "" {
+		errs = append(errs, errors.New("auth.issuer must not be empty when auth.enabled is set"))
+	}
+	if c.Audience == "" {
+		errs = append(errs, errors.New("auth.audience must not be empty when auth.enabled is set"))
+	}
+	return errs
+}
+
+// ParseTrustedProxies turns each entry — a bare IP address or a CIDR block
+// — into the prefix a peer address is matched against. Exported so
+// internal/router can build the Forwarded-header stripping middleware
+// (§6.3) from the same parsing this package already validated at Load.
+func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			prefixes = append(prefixes, prefix)
+			continue
+		}
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%q is neither an IP address nor a CIDR block", entry)
+		}
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
+}
+
 func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
@@ -102,7 +191,7 @@ func defaultConfig() Config {
 			CacheMaxItems:     settings.CacheMaxItems,
 			TileMaxItems:      settings.TileMaxItems,
 		},
-		Auth: auth.DefaultConfig(),
+		Auth: AuthConfig{}, // Enabled: false — demo mode, the zero value
 	}
 }
 
@@ -152,6 +241,7 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.Server.WriteTimeoutSec, envPrefix+"SERVER_WRITE_TIMEOUT_SEC"))
 	check(envInt(&cfg.Server.IdleTimeoutSec, envPrefix+"SERVER_IDLE_TIMEOUT_SEC"))
 	check(envInt(&cfg.Server.ShutdownTimeoutSec, envPrefix+"SERVER_SHUTDOWN_TIMEOUT_SEC"))
+	envStringSlice(&cfg.Server.TrustedProxies, envPrefix+"SERVER_TRUSTED_PROXIES")
 
 	envString(&cfg.DuckDB.Path, envPrefix+"DUCKDB_PATH")
 	check(envInt(&cfg.DuckDB.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
@@ -166,15 +256,28 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.Settings.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
 	check(envInt(&cfg.Settings.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
 
-	envString(&cfg.Auth.Mode, envPrefix+"AUTH_MODE")
-	envStringSlice(&cfg.Auth.TrustedProxies, envPrefix+"AUTH_TRUSTED_PROXIES")
-	envString(&cfg.Auth.UserHeader, envPrefix+"AUTH_USER_HEADER")
-	envString(&cfg.Auth.NameHeader, envPrefix+"AUTH_NAME_HEADER")
-	envString(&cfg.Auth.GroupsHeader, envPrefix+"AUTH_GROUPS_HEADER")
-	envStringSlice(&cfg.Auth.WriteUsers, envPrefix+"AUTH_WRITE_USERS")
-	envStringSlice(&cfg.Auth.WriteGroups, envPrefix+"AUTH_WRITE_GROUPS")
-	envString(&cfg.Auth.LoginURL, envPrefix+"AUTH_LOGIN_URL")
-	envString(&cfg.Auth.LogoutURL, envPrefix+"AUTH_LOGOUT_URL")
+	// The auth block's environment variables are goauth's own constants,
+	// read by name rather than by the literal they currently hold: the
+	// module names them, and a literal copied here would silently stop
+	// being read the day it renames one. They break the GEOAPI_ prefix
+	// every other override carries for that same reason — it is the
+	// module's contract, not a choice left to this package (§2.7).
+	// AUTH_DEMO is the module's name for it; cfg.Auth.Enabled is this
+	// package's own, its inverse — so the value read is negated on the way
+	// in.
+	if v, ok := os.LookupEnv(goauth.DemoEnv); ok {
+		demo, err := strconv.ParseBool(v)
+		if err != nil {
+			check(fmt.Errorf("%s: %w", goauth.DemoEnv, err))
+		} else {
+			cfg.Auth.Enabled = !demo
+		}
+	}
+	envString(&cfg.Auth.Provider, goauth.ProviderEnv)
+	envString(&cfg.Auth.Issuer, goauth.IssuerEnv)
+	envString(&cfg.Auth.Audience, goauth.AudienceEnv)
+	envString(&cfg.Auth.AdminRole, goauth.AdminRoleEnv)
+	envString(&cfg.Auth.GuestRole, goauth.GuestRoleEnv)
 
 	return errors.Join(errs...)
 }
@@ -235,6 +338,9 @@ func (cfg Config) validate() error {
 	check(cfg.Server.WriteTimeoutSec >= 0, "server.writeTimeoutSec must not be negative")
 	check(cfg.Server.IdleTimeoutSec >= 0, "server.idleTimeoutSec must not be negative")
 	check(cfg.Server.ShutdownTimeoutSec >= 0, "server.shutdownTimeoutSec must not be negative")
+	if _, err := ParseTrustedProxies(cfg.Server.TrustedProxies); err != nil {
+		errs = append(errs, fmt.Errorf("server.trustedProxies: %w", err))
+	}
 
 	check(cfg.DuckDB.Path != "", "duckdb.path must not be empty")
 	check(cfg.DuckDB.MaxOpenConns > 0, "duckdb.maxOpenConns must be positive")
@@ -258,7 +364,7 @@ func (cfg Config) validate() error {
 	check(cfg.Settings.TileMaxItems > 0 && cfg.Settings.TileMaxItems <= settings.CacheMaxItemsCeiling,
 		fmt.Sprintf("settings.tileMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
 
-	errs = append(errs, cfg.Auth.Validate()...)
+	errs = append(errs, cfg.Auth.validate()...)
 
 	return errors.Join(errs...)
 }

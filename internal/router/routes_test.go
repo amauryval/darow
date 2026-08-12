@@ -12,16 +12,19 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	goauth "github.com/amauryval/goauth"
+
 	"darow/internal/config"
 	"darow/internal/core"
+	"darow/internal/guards"
 	"darow/internal/router/response"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
-	"darow/pkg/auth"
 )
 
 type routerDeps struct {
@@ -75,22 +78,37 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 	}
 }
 
+// newRouter builds a Router on fakeVerifier (fixtures_test.go), the same
+// guard composition cmd/server wires in production (goauth.NewWithVerifier
+// through internal/guards) but without a real identity provider: a request
+// carrying no Authorization header is anonymous, and fakeTokenAdmin/
+// fakeTokenGuest/fakeTokenNoRole drive the write guard's four outcomes
+// (§6.7). There is no "authentication off" mode any more — every write
+// always demands an admin-role token (TODO-27).
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
-	return d.newAuthenticatedRouter(ready, auth.DefaultConfig())
-}
+	// fakeVerifier is never nil, so NewWithVerifier's one error case
+	// (a nil verifier) cannot occur here.
+	authApp, _ := goauth.NewWithVerifier(fakeVerifier{}, nil)
+	g := guards.New(authApp)
+	mountAuth := func(r chi.Router) { authApp.RegisterRoutes(r) }
 
-func (d routerDeps) newAuthenticatedRouter(ready func(context.Context) error, authCfg auth.Config) *Router {
-	authenticator, err := auth.New(authCfg, response.WriteError)
-	if err != nil {
-		panic(err)
-	}
-	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, authenticator)
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, nil, g, mountAuth)
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, bytes.NewReader(nil))
 	if contentLength > 0 {
 		req.ContentLength = contentLength
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func doAuthenticatedRequest(handler http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewReader(nil))
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -126,6 +144,7 @@ func Test_Router_Setup(t *testing.T) {
 		method            string
 		path              string
 		contentLength     int64
+		headers           map[string]string
 		wantStatus        int
 		wantErrorContains string
 	}{
@@ -168,7 +187,9 @@ func Test_Router_Setup(t *testing.T) {
 			// The upload carries its own, larger cap and is registered
 			// outside the group applying the global one: nested, the
 			// smaller of the two would apply and a source file would be
-			// refused against a JSON-sized limit.
+			// refused against a JSON-sized limit. It still needs an admin
+			// token to reach that far: the write guard sits right behind
+			// the upload's own body cap (§6.7).
 			name:     "the upload escapes the global body cap",
 			settings: defaultTestSettings(),
 			settingsCfg: func() config.SettingsConfig {
@@ -176,14 +197,17 @@ func Test_Router_Setup(t *testing.T) {
 				c.MaxBodyBytes = 10
 				return c
 			}(),
-			method:        http.MethodPost,
-			path:          "/api/v1/sources/upload",
-			contentLength: 1024 * 1024,
-			wantStatus:    http.StatusBadRequest,
+			method:            http.MethodPost,
+			path:              "/api/v1/sources/upload",
+			contentLength:     1024 * 1024,
+			headers:           bearerHeader(fakeTokenAdmin),
+			wantStatus:        http.StatusBadRequest,
+			wantErrorContains: "",
 		},
 		{
 			// Its own cap still applies: past sources.maxSizeBytes the
-			// upload is refused like any oversized body.
+			// upload is refused like any oversized body, before the write
+			// guard is ever reached.
 			name:     "the upload is still capped by its own limit",
 			settings: defaultTestSettings(),
 			settingsCfg: func() config.SettingsConfig {
@@ -279,7 +303,15 @@ func Test_Router_Setup(t *testing.T) {
 			deps := setupRouterDeps(t, c.settings, settingsCfg)
 			handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
-			rec := doRequest(handler, c.method, c.path, c.contentLength)
+			req := httptest.NewRequest(c.method, c.path, bytes.NewReader(nil))
+			if c.contentLength > 0 {
+				req.ContentLength = c.contentLength
+			}
+			for name, value := range c.headers {
+				req.Header.Set(name, value)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantErrorContains != "" {
@@ -320,30 +352,9 @@ func Test_Router_Setup(t *testing.T) {
 	})
 }
 
-// proxyAuthConfig authenticates through the headers of a proxy at the
-// address httptest.NewRequest gives every request it builds, and lets the
-// "editors" group write.
-func proxyAuthConfig() auth.Config {
-	cfg := auth.DefaultConfig()
-	cfg.Mode = auth.ModeProxy
-	cfg.TrustedProxies = []string{"192.0.2.1/32"}
-	cfg.WriteGroups = []string{"editors"}
-	return cfg
-}
-
-func doAuthenticatedRequest(handler http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewReader(nil))
-	for name, value := range headers {
-		req.Header.Set(name, value)
-	}
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	return rec
-}
-
-// writeRoutes is every route that changes state, the inventory the
-// authorization guard is checked against: a route added without a thought
-// for it fails here rather than shipping open.
+// writeRoutes is every route that changes state, the inventory the write
+// guard is checked against: a route added without a thought for it fails
+// here rather than shipping open.
 func writeRoutes() [][2]string {
 	return [][2]string{
 		{http.MethodPost, "/api/v1/sources/upload"},
@@ -370,8 +381,9 @@ func writeRoutes() [][2]string {
 }
 
 // readRoutes is a route of every read family, including the ones shaped as
-// a POST and the ops routes an orchestrator's probe reaches with no
-// credentials at all.
+// a POST, the auth module's own routes (anonymous by contract, §6.7), and
+// the ops routes an orchestrator's probe reaches with no credentials at
+// all.
 func readRoutes() [][2]string {
 	return [][2]string{
 		{http.MethodGet, "/healthz"},
@@ -394,16 +406,17 @@ func readRoutes() [][2]string {
 		{http.MethodPost, "/api/v1/tables/id-1/bbox"},
 		{http.MethodPost, "/api/v1/tables/id-1/neighbours"},
 		{http.MethodGet, "/api/v1/tables/id-1/export"},
-		{http.MethodGet, "/api/v1/session"},
+		{http.MethodGet, "/api/v1/auth/config"},
+		{http.MethodGet, "/api/v1/auth/session"},
 		{http.MethodGet, "/api/v1/settings"},
 		{http.MethodGet, "/api/v1/ogc/"},
 	}
 }
 
 func Test_Router_Setup_Authorization(t *testing.T) {
-	t.Run("refuses every write route to an anonymous caller", func(t *testing.T) {
+	t.Run("refuses every write route to an anonymous caller with 401", func(t *testing.T) {
 		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
-		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
 		for _, route := range writeRoutes() {
 			t.Run(route[0]+" "+route[1], func(t *testing.T) {
@@ -417,11 +430,43 @@ func Test_Router_Setup_Authorization(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses every write route to a caller holding no application role with 403", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
+
+		for _, route := range writeRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doAuthenticatedRequest(handler, route[0], route[1], bearerHeader(fakeTokenNoRole))
+
+				assert.Equal(t, http.StatusForbidden, rec.Code)
+				var body response.ErrorResponse
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+				assert.Equal(t, "forbidden", body.Error)
+			})
+		}
+	})
+
+	t.Run("refuses every write route to a guest with 403 — guest stands where an anonymous caller stands", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
+
+		for _, route := range writeRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doAuthenticatedRequest(handler, route[0], route[1], bearerHeader(fakeTokenGuest))
+
+				assert.Equal(t, http.StatusForbidden, rec.Code)
+				var body response.ErrorResponse
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+				assert.Equal(t, "forbidden", body.Error)
+			})
+		}
+	})
+
 	t.Run("leaves every read route open to an anonymous caller", func(t *testing.T) {
 		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
 		deps.storage.On("GetMetadata", mock.Anything, mock.Anything).Return(storage.Metadata{}, errors.New("not wired")).Maybe()
 		deps.storage.On("ListTables", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("not wired")).Maybe()
-		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
 		for _, route := range readRoutes() {
 			t.Run(route[0]+" "+route[1], func(t *testing.T) {
@@ -433,47 +478,14 @@ func Test_Router_Setup_Authorization(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses a write to a caller outside the authorized groups", func(t *testing.T) {
-		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
-		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
-
-		rec := doAuthenticatedRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", map[string]string{
-			"Remote-User":   "alice",
-			"Remote-Groups": "viewers",
-		})
-
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		var body response.ErrorResponse
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-		assert.Equal(t, "forbidden", body.Error)
-	})
-
-	t.Run("lets an authorized caller reach the handler", func(t *testing.T) {
+	t.Run("lets an admin caller reach the handler", func(t *testing.T) {
 		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
 		deps.storage.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", TableName: "widgets"}, nil)
 		deps.storage.On("Remove", mock.Anything, "id-1").Return(nil)
-		handler := deps.newAuthenticatedRouter(func(context.Context) error { return nil }, proxyAuthConfig()).Setup()
-
-		rec := doAuthenticatedRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", map[string]string{
-			"Remote-User":   "alice",
-			"Remote-Groups": "viewers,editors",
-		})
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-	})
-
-	t.Run("leaves every write route open when authentication is off", func(t *testing.T) {
-		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
-		deps.storage.On("GetMetadata", mock.Anything, mock.Anything).Return(storage.Metadata{}, errors.New("not wired")).Maybe()
 		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
-		for _, route := range writeRoutes() {
-			t.Run(route[0]+" "+route[1], func(t *testing.T) {
-				rec := doRequest(handler, route[0], route[1], 0)
+		rec := doAuthenticatedRequest(handler, http.MethodDelete, "/api/v1/tables/id-1", bearerHeader(fakeTokenAdmin))
 
-				assert.NotEqual(t, http.StatusUnauthorized, rec.Code)
-				assert.NotEqual(t, http.StatusForbidden, rec.Code)
-			})
-		}
+		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 }

@@ -29,9 +29,12 @@ settings:
     tileMaxItems: 5000
 
 # Public reads, authorized writes. Every field and the full explanation are in
-# config.example.yaml; see also pkg/auth/README.md.
+# config.example.yaml.
+#
+# enabled: false is demo mode: it authorizes every visitor as an
+# administrator and checks no token at all — refused outright unless this
+# binary is built with -tags authdemo, which is what makes it safe as this
+# file's checked-in default (mise run run-dev is expected to carry that
+# tag; project/todo.md TODO-P2).
 auth:
-    mode: 'off'
-    # trustedProxies: ['10.0.0.0/8'] # required in proxy mode: the gateway's IP or CIDR
-    # writeUsers: ['alice'] # ids allowed to write
-    # writeGroups: ['editors'] # groups allowed to write — one of the two lists is required in proxy mode
+    enabled: false

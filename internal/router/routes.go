@@ -12,28 +12,35 @@ import (
 	_ "darow/docs"
 	"darow/internal/config"
 	"darow/internal/core"
+	"darow/internal/guards"
 	"darow/internal/router/handlers"
-	"darow/pkg/auth"
 )
+
+// MountAuth mounts an authentication module's own routes (config, session)
+// on the router it is given. cmd/server builds it by closing over
+// goauth.Auth.RegisterRoutes, so this package never imports the module.
+type MountAuth func(chi.Router)
 
 // Router wires the HTTP layer to the service layer. Each family of
 // endpoints (tables, rows, geo, sources, export, ops, settings) is served
 // by its own handler struct, holding only the service ports it actually
 // needs — never the concrete service types.
 type Router struct {
-	tables        *handlers.TablesHandler
-	rows          *handlers.RowsHandler
-	geo           *handlers.GeoHandler
-	features      *handlers.FeaturesHandler
-	sources       *handlers.SourcesHandler
-	filters       *handlers.FiltersHandler
-	export        *handlers.ExportHandler
-	ops           *handlers.OpsHandler
-	settings      *handlers.SettingsHandler
-	tableSettings *handlers.TableSettingsHandler
-	settingsCfg   config.SettingsConfig
-	auth          *auth.Authenticator
-	uiAssets      fs.FS
+	tables         *handlers.TablesHandler
+	rows           *handlers.RowsHandler
+	geo            *handlers.GeoHandler
+	features       *handlers.FeaturesHandler
+	sources        *handlers.SourcesHandler
+	filters        *handlers.FiltersHandler
+	export         *handlers.ExportHandler
+	ops            *handlers.OpsHandler
+	settings       *handlers.SettingsHandler
+	tableSettings  *handlers.TableSettingsHandler
+	settingsCfg    config.SettingsConfig
+	trustedProxies []string
+	guards         guards.Guards
+	mountAuth      MountAuth
+	uiAssets       fs.FS
 }
 
 // NewRouter builds a Router serving every service in svcs — every row/list
@@ -43,25 +50,31 @@ type Router struct {
 // from settingsCfg (TODO-17 — a memory/availability guard, restart-only).
 // uiAssets is the admin UI's built static files, served under /ui. ready
 // backs /readyz — it should ping the underlying storage connection.
-// authenticator guards every state-changing route; reads stay public.
+// trustedProxies (§2.1) decides whose Forwarded/X-Forwarded-* headers
+// FeaturesHandler's OGC links may trust. g.AdminScope() guards every
+// state-changing route; reads stay public (§6.7). mountAuth publishes the
+// authentication module's own read routes, above every write group.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
-	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, authenticator *auth.Authenticator,
+	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, trustedProxies []string,
+	g guards.Guards, mountAuth MountAuth,
 ) *Router {
 	return &Router{
-		tables:        handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
-		rows:          handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings, svcs.TableSettings),
-		geo:           handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
-		features:      handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
-		sources:       handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
-		filters:       handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
-		export:        handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:           handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
-		settings:      handlers.NewSettingsHandler(svcs.Settings),
-		tableSettings: handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
-		settingsCfg:   settingsCfg,
-		auth:          authenticator,
-		uiAssets:      uiAssets,
+		tables:         handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
+		rows:           handlers.NewRowsHandler(svcs.Metadata, svcs.Schema, svcs.Row, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		geo:            handlers.NewGeoHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		features:       handlers.NewFeaturesHandler(svcs.Metadata, svcs.Schema, svcs.Geo, svcs.Settings, svcs.TableSettings),
+		sources:        handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
+		filters:        handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
+		export:         handlers.NewExportHandler(svcs.Metadata, svcs.Export),
+		ops:            handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
+		settings:       handlers.NewSettingsHandler(svcs.Settings),
+		tableSettings:  handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
+		settingsCfg:    settingsCfg,
+		trustedProxies: trustedProxies,
+		guards:         g,
+		mountAuth:      mountAuth,
+		uiAssets:       uiAssets,
 	}
 }
 
@@ -73,7 +86,7 @@ func (rt *Router) Setup() http.Handler {
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	r.Use(middleware.RequestID)
-	r.Use(rt.auth.Authenticate)
+	r.Use(stripUntrustedForwarded(rt.trustedProxies))
 	r.Use(slogLogger)
 	r.Use(recoverJSON)
 
@@ -102,7 +115,7 @@ func (rt *Router) Setup() http.Handler {
 		// check runs.
 		v1.Group(func(upload chi.Router) {
 			upload.Use(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 }))
-			upload.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+			upload.Use(rt.guards.AdminScope())
 			upload.Post("/sources/upload", rt.sources.UploadSource)
 		})
 
@@ -114,20 +127,26 @@ func (rt *Router) Setup() http.Handler {
 			v1.Use(requestTimeout(func() int { return rt.settingsCfg.RequestTimeoutSec }))
 			v1.Use(maxBodyBytes(func() int64 { return rt.settingsCfg.MaxBodyBytes }))
 
+			// The authentication module's own routes, above every write
+			// group so both answer an anonymous caller: one tells the
+			// browser which provider to sign in against, the other what
+			// its token is worth.
+			rt.mountAuth(v1)
+
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
 				sub.Post("/refresh", rt.sources.RefreshSources)
 				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
 
 				sub.Group(func(w chi.Router) {
-					w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+					w.Use(rt.guards.AdminScope())
 					w.Post("/{name}/load", rt.sources.LoadSource)
 					w.Delete("/{name}", rt.sources.DeleteSource)
 				})
 			})
 
 			v1.Group(func(w chi.Router) {
-				w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+				w.Use(rt.guards.AdminScope())
 				w.Post("/derive", rt.tables.DeriveTable)
 			})
 
@@ -140,7 +159,7 @@ func (rt *Router) Setup() http.Handler {
 					sub.Post("/filter", rt.tables.FilterRows)
 
 					sub.Group(func(w chi.Router) {
-						w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+						w.Use(rt.guards.AdminScope())
 						w.Patch("/", rt.tables.RenameTable)
 						w.Delete("/", rt.tables.DeleteTable)
 						w.Post("/derive-from-table", rt.tables.DeriveFromTable)
@@ -151,7 +170,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Get("/", rt.tableSettings.GetTableSettings)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Use(rt.guards.AdminScope())
 							w.Patch("/", rt.tableSettings.UpdateTableSettings)
 							w.Delete("/", rt.tableSettings.DeleteTableSettings)
 						})
@@ -161,7 +180,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Get("/", rt.filters.ListFilters)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Use(rt.guards.AdminScope())
 							w.Post("/", rt.filters.CreateFilter)
 							w.Patch("/{filterId}", rt.filters.UpdateFilter)
 							w.Delete("/{filterId}", rt.filters.DeleteFilter)
@@ -172,7 +191,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/{col}/transform/preview", rt.tables.PreviewColumnTransform)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Use(rt.guards.AdminScope())
 							w.Post("/", rt.tables.AddColumn)
 							w.Post("/{col}/transform", rt.tables.TransformColumn)
 						})
@@ -183,7 +202,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/batch", rt.rows.GetRowsByPkey)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+							w.Use(rt.guards.AdminScope())
 							w.Post("/", rt.rows.AddRows)
 							w.Patch("/", rt.rows.UpdateRows)
 						})
@@ -193,7 +212,7 @@ func (rt *Router) Setup() http.Handler {
 							sub.Get("/geometry", rt.rows.GetRowGeometry)
 
 							sub.Group(func(w chi.Router) {
-								w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+								w.Use(rt.guards.AdminScope())
 								w.Patch("/", rt.rows.UpdateRow)
 								w.Delete("/", rt.rows.DeleteRow)
 							})
@@ -209,16 +228,12 @@ func (rt *Router) Setup() http.Handler {
 				})
 			})
 
-			// The endpoint is the auth package's own (path excepted, which
-			// is ours): it answers with the caller that package resolved.
-			v1.Get("/session", rt.auth.ServeSession)
-
 			v1.Route("/settings", func(sub chi.Router) {
 				sub.Get("/", rt.settings.GetSettings)
 				sub.Get("/tables", rt.tableSettings.ListOverriddenTables)
 
 				sub.Group(func(w chi.Router) {
-					w.Use(rt.auth.Authenticated, rt.auth.CanWrite)
+					w.Use(rt.guards.AdminScope())
 					w.Patch("/", rt.settings.UpdateSettings)
 				})
 			})

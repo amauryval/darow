@@ -23,12 +23,14 @@ import (
 	"syscall"
 	"time"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/go-chi/chi/v5"
+
 	"darow/internal/config"
 	"darow/internal/core"
+	"darow/internal/guards"
 	"darow/internal/router"
-	"darow/internal/router/response"
 	"darow/internal/webui"
-	"darow/pkg/auth"
 )
 
 func main() {
@@ -58,12 +60,24 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	authenticator, err := auth.New(cfg.Auth, response.WriteError)
+	// New contacts the issuer for its key set here, so a startup failure is
+	// a provider problem (an unreachable or mistyped issuer), never a
+	// caller's (§2.7). cfg.Auth.Enabled false is demo mode (goauth's own
+	// Settings.Demo, inverted): it skips that discovery entirely and is
+	// refused outright unless this binary was built with -tags authdemo.
+	authApp, err := goauth.New(
+		context.Background(),
+		goauth.NewSettings(!cfg.Auth.Enabled, cfg.Auth.Provider, cfg.Auth.Issuer, cfg.Auth.Audience, cfg.Auth.AdminRole, cfg.Auth.GuestRole),
+		slog.Default(),
+	)
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
 
-	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes, authenticator)
+	g := guards.New(authApp)
+	mountAuth := func(r chi.Router) { authApp.RegisterRoutes(r) }
+
+	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes, cfg.Server.TrustedProxies, g, mountAuth)
 
 	srv := &http.Server{
 		Addr:         net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),

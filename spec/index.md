@@ -34,9 +34,9 @@ place an audit's findings are written — never a `spec.md`.
 
 | Package / path            | Sections                                                    |
 | ------------------------- | ----------------------------------------------------------- |
-| `cmd/server`              | back §1, §9                                                 |
-| `pkg/auth`                | back §2.7, §6.7 (its own module)                            |
-| `internal/config`         | back §2                                                     |
+| `cmd/server`              | back §1, §6.7                                               |
+| `internal/config`         | back §2, §2.7                                               |
+| `internal/guards`         | back §1, §6.7                                               |
 | `internal/settings`       | back §2.4, §2.5                                             |
 | `internal/core`           | back §1                                                     |
 | `internal/observer`       | back §1                                                     |
@@ -75,7 +75,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 2.5 Runtime-editable settings` | settings editable through the API/UI               |
 | `### 2.5.1 Per-table overrides` | a table's own departure from a global setting        |
 | `### 2.6 Command-line flags` | `--workdir` and friends                              |
-| `### 2.7 auth` | the auth block: modes, trusted upstream, who may write, why it is config-only |
+| `### 2.7 auth` | the auth block: demo vs. a real provider, the two application roles, why it is config-only |
 
 ### Storage layer (`internal/storage`, `internal/storage/duckdb`)
 

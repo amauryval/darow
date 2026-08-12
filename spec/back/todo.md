@@ -22,7 +22,7 @@ search and stays true. What stays out is **code itself**: no snippet, no full si
 Write the instruction, not the patch — the code is written later, against the code as it is then.
 
 
-No chantier is currently open. TODO-19 through TODO-26 — protecting the API — all shipped in one
+TODO-19 through TODO-26 — protecting the API — all shipped in one
 pass: `auth` (its own `README.md`), the `auth` configuration block, the trusted upstream and
 the header stripping, the caller in the context and in the log line, the read/write split enforced by
 the `Authenticated`/`CanWrite` pair and its route inventory in `routes_test.go`, and the
@@ -30,5 +30,27 @@ the `Authenticated`/`CanWrite` pair and its route inventory in `routes_test.go`,
 `Cache-Control`) closed without a change: reads being public, `public` stays correct, and §6.5 now
 says why and when it would stop being. TODO-14 (guided aggregation, front counterpart [`../front/todo.md`](../front/todo.md)
 TODO-F37) and TODO-18 (in-place column transform, front counterpart TODO-F44) were both taken up and
-shipped — see `spec.md` §5.11, §8.2, §8.3. A retired identifier is never reused, so the next chantier
-recorded here takes `TODO-27`.
+shipped — see `spec.md` §5.11, §8.2, §8.3. TODO-27 — replacing that whole forward-auth model with
+`github.com/amauryval/goauth` — shipped too: `pkg/auth` is gone, `internal/config.AuthConfig`
+declares the block itself (§2.7), `internal/guards` maps the module's two roles to `AdminScope`/
+`GuestScope`, and `cmd/server` is now the only package importing the module (§1, §6.7). Two points
+worth recording since they depart from the chantier as originally written: the config field is named
+`enabled` rather than `demo` and its sense is **inverted** — `enabled: true` is a real provider,
+`enabled: false` (the default) is demo mode — the module's own `AUTH_DEMO` environment variable is
+read and negated on the way into it (`applyEnvOverrides`); and step 6's accountability logging (a
+line naming the caller inside the write guard) was **not** implemented — accepted and recorded as
+`limitations.md` LIM-22 rather than built, the guard's own denial warnings being judged enough for
+now. A retired identifier is never reused, so the next chantier recorded here takes `TODO-28`.
+
+**Order of work.** Nothing is open here today. TODO-27 having shipped unblocks its two dependants,
+neither of which may start before this file's state is read fresh: front
+[`../front/todo.md`](../front/todo.md) TODO-F39 (the OIDC client, the bearer token, the session) and
+TODO-F40 (the account popup and the disabled write controls), and project
+[`../project/todo.md`](../project/todo.md) TODO-P2 (the second Go module leaving `mise.toml` — partly
+done in this same change, since the dead `pkg/auth` commands would otherwise fail outright — the
+image's environment and the `README` remain). TODO-P2's `run-dev`/`authdemo` tag is why a bare
+`mise run run-dev` cannot yet start against `config.yaml`'s `enabled: false` default: `goauth.New`
+refuses demo mode outright without that build tag, by design (§2.7).
+
+| #       | Chantier | Current effect | Reference |
+| ------- | -------- | -------------- | --------- |

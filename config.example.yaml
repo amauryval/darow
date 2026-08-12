@@ -13,11 +13,15 @@
 
 server:
     host: '0.0.0.0' # listen interface; 127.0.0.1 to accept loopback connections only
-    port: 3000
+    port: 8080
     readTimeoutSec: 15
     writeTimeoutSec: 30
     idleTimeoutSec: 60
     shutdownTimeoutSec: 10 # how long in-flight requests are given on shutdown
+    trustedProxies:
+        [] # the reverse proxy's IP or CIDR, e.g. ['10.0.0.0/8']; Forwarded/X-Forwarded-* are
+        # trusted only from these peers and stripped otherwise, so FeaturesHandler never builds an OGC
+        # link off a client-controlled host (spec/back/spec.md §2.1, §6.2, §6.3)
 
 duckdb:
     path: './data/geo.db' # the parent directory is created if missing
@@ -40,57 +44,44 @@ settings:
 
 # Public reads, authorized writes (spec/back/spec.md §2.7, §6.7).
 #
-# Two questions, answered separately — being known is not being allowed:
+# Every read stays open to everyone: listings, rows, tiles, exports, the OGC
+# collections, /healthz, /readyz, /diagnostics, /swagger and the admin UI.
+# Every write — creating, editing or deleting a table, a row, a column, a
+# stored filter, a source, or changing the settings — requires a caller
+# holding a verified bearer token whose application role is admin (else 401
+# with no token, 403 otherwise). guest stands exactly where an anonymous
+# caller stands: it reads everything, which everyone already may, and
+# writes nothing.
 #
-#   1. AUTHENTICATION — who is calling?
-#      mode: off    nobody is identified, nothing is refused. The default, and
-#                   the mode a development run uses.
-#      mode: proxy  an authenticating reverse proxy (tinyAuth, Authelia,
-#                   oauth2-proxy, Traefik ForwardAuth, Caddy forward_auth…) puts
-#                   the caller in the headers below. They are read ONLY when the
-#                   request comes from trustedProxies, and stripped otherwise —
-#                   a header is client-controlled, so without a trusted upstream
-#                   anyone authenticates as anyone. No provider is named
-#                   anywhere: changing gateway is a config edit, not a code one.
+# Tokens are verified by this server itself, against the OIDC provider named
+# below — github.com/amauryval/goauth, the module backing this block; see
+# its own SETUP.md for standing up a provider. Two mutually exclusive
+# shapes:
 #
-#   2. AUTHORIZATION — may this caller do this?
-#      Every read is open to everyone, authenticated or not: listings, rows,
-#      tiles, exports, the OGC collections, /healthz, /readyz, /diagnostics,
-#      /swagger and the admin UI.
-#      Every write — creating, editing or deleting a table, a row, a column, a
-#      stored filter, a source, or changing the settings — requires a caller who
-#      is BOTH authenticated (else 401 unauthorized) AND named by writeUsers or
-#      writeGroups (else 403 forbidden). Being known is never being allowed: in
-#      proxy mode one of the two lists must name somebody, or startup fails.
+#   enabled: false   demo mode (the default): every visitor is authorized as
+#                    an administrator, no provider involved, no token
+#                    checked at all. For local development only, and
+#                    refused outright unless this binary was built with
+#                    -tags authdemo (mise run run-dev does). Fatal at
+#                    startup beside a declared provider/issuer/audience.
+#   enabled: true    provider, issuer and audience are all required. The
+#                    server discovers the provider's key set at startup —
+#                    an unreachable or mistyped issuer is a fatal startup
+#                    error, not a runtime one.
 #
-#      WHERE THE IDENTITIES COME FROM. Not from here — this server stores no
-#      user and no password. The gateway owns the accounts (its own user list,
-#      an OIDC provider, an LDAP directory) and puts the result in userHeader
-#      and groupsHeader. This file only names, among those callers, the ones
-#      allowed to write:
+# adminRole/guestRole are the PROVIDER's own role names, mapped to this
+# application's admin/guest — empty falls back to "admin"/"guest".
 #
-#        writeUsers  matched against userHeader   — the caller's own id
-#        writeGroups matched against groupsHeader — any group they belong to
-#
-#      Use writeGroups when the gateway knows groups (OIDC groups claim, LDAP),
-#      writeUsers when it does not — tinyauth's local accounts, for instance,
-#      send no groups at all. A caller passing either list may write.
-#      The names are the installation's own; nothing here is compiled in.
-#
-#      WHAT THE ADMIN UI SEES. GET /api/v1/session answers any caller with
-#      what this block decided about them — enabled, authenticated, the id and
-#      groups, canWrite, and the two URLs below. There is no sign-in screen in
-#      the application: the gateway owns it, so loginUrl/logoutUrl are the only
-#      way the UI can offer a link to it.
-#
-# See pkg/auth/README.md.
+# The auth block's own environment variables break the GEOAPI_ prefix every
+# other override here carries: they are goauth's own (AUTH_DEMO,
+# AUTH_PROVIDER, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_ADMIN_ROLE,
+# AUTH_GUEST_ROLE), read as the module's contract rather than this file's —
+# AUTH_DEMO is the module's name and sense, the opposite of enabled below,
+# and is negated on the way in.
 auth:
-    mode: 'off'
-    trustedProxies: [] # required in proxy mode: the gateway's IP or CIDR, e.g. ['10.0.0.0/8']
-    userHeader: 'Remote-User' # the caller's identity; empty value = anonymous
-    nameHeader: 'Remote-Name' # display name, optional
-    groupsHeader: 'Remote-Groups' # comma-separated
-    writeUsers: [] # ids allowed to write, e.g. ['alice', 'bob']
-    writeGroups: [] # groups allowed to write, e.g. ['editors'] — one of the two lists is required in proxy mode
-    loginUrl: '' # the gateway's sign-in page, e.g. 'https://auth.example.com/login?redirect_uri=https://darow.example.com/ui/'
-    logoutUrl: '' # the gateway's sign-out page — both are served by GET /api/v1/session for the admin UI to link to
+    enabled: false
+    provider: '' # 'zitadel' or 'pocketid' — required when enabled is true
+    issuer: '' # the identity provider's base URL, e.g. 'https://issuer.example.com' — required when enabled is true
+    audience: '' # this application's client id at the provider — required when enabled is true
+    adminRole: '' # the provider's name for the admin role; empty falls back to "admin"
+    guestRole: '' # the provider's name for the guest role; empty falls back to "guest"

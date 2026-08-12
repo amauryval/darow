@@ -3,14 +3,66 @@ package router
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"darow/internal/config"
 	"darow/internal/router/response"
 )
+
+// forwardedHeaders are the hints only a trusted upstream may set. They are
+// cleared off any request that did not come from server.trustedProxies
+// (§2.1), so FeaturesHandler's OGC links (§6.2) never take a direct
+// caller's word for the host they should point at. TODO-27 narrowed this
+// middleware's purpose: trustedProxies no longer feeds an identity, only
+// link integrity, since authentication is now the auth module's own bearer
+// tokens rather than a header a gateway vouched for.
+var forwardedHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
+
+// stripUntrustedForwarded clears forwardedHeaders off any request whose
+// peer address does not fall inside trusted. Applied globally, ahead of
+// every route: reads and writes alike build OGC links off these headers.
+func stripUntrustedForwarded(trustedProxies []string) func(http.Handler) http.Handler {
+	// config.Load already rejected an unparseable entry at startup (§2.1),
+	// so the error here can only mean NewRouter was handed a config that
+	// bypassed that validation — nothing left to strip is the safe default.
+	trusted, _ := config.ParseTrustedProxies(trustedProxies)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if !trustsPeer(trusted, req.RemoteAddr) {
+				for _, name := range forwardedHeaders {
+					req.Header.Del(name)
+				}
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+func trustsPeer(trusted []netip.Prefix, remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap().WithZone("")
+
+	for _, prefix := range trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
 
 // maxBodyBytes caps the request body so a handler that decodes it into
 // memory (json.Decode, ParseMultipartForm) can never be driven to exhaust
