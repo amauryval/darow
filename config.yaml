@@ -32,9 +32,6 @@ settings:
 # config.example.yaml.
 #
 # enabled: false is demo mode: it authorizes every visitor as an
-# administrator and checks no token at all — refused outright unless this
-# binary is built with -tags authdemo, which is what makes it safe as this
-# file's checked-in default (mise run run-dev is expected to carry that
-# tag; project/todo.md TODO-P2).
+# administrator and checks no token at all
 auth:
     enabled: false
