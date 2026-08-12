@@ -26,4 +26,5 @@ RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 FROM gcr.io/distroless/cc-debian12:latest
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
+COPY --from=build /out/data /data
 ENTRYPOINT ["./server.run"]
