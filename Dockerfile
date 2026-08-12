@@ -33,10 +33,8 @@ RUN mkdir -p /out/data/sources
 # against libstdc++ via cgo; the spatial extension is fetched over HTTPS at
 # first run) with no shell or package manager — a smaller, narrower runtime
 # than debian-slim. The nonroot tag runs as uid/gid 65532 already.
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM alpine:latest
 WORKDIR /app
 COPY --from=build /out/server ./server
-COPY config.yaml ./config.yaml
-COPY --from=build --chown=nonroot:nonroot /out/data ./data
 
 ENTRYPOINT ["./server"]
