@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -17,8 +18,7 @@ import (
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
-// GEOAPI_SERVER_PORT overrides server.port, GEOAPI_SOURCES_WORKDIR
-// overrides sources.workDir, and so on — one variable per YAML field.
+// GEOAPI_SERVER_PORT overrides server.port, and so on — one variable per YAML field.
 const envPrefix = "GEOAPI_"
 
 // Config holds the parameters needed to initialize the server itself, plus
@@ -54,6 +54,15 @@ type ServerConfig struct {
 	IdleTimeoutSec     int      `yaml:"idleTimeoutSec"`
 	ShutdownTimeoutSec int      `yaml:"shutdownTimeoutSec"`
 	TrustedProxies     []string `yaml:"trustedProxies"`
+	WorkDir            string   `yaml:"workDir"`
+}
+
+func (c ServerConfig) DbFilePath() string {
+	return filepath.Join(c.WorkDir, "darow.db")
+}
+
+func (c ServerConfig) SourcesPath() string {
+	return filepath.Join(c.WorkDir, "sources")
 }
 
 // DuckDBConfig holds the DuckDB database file path and connection pool
@@ -63,14 +72,12 @@ type ServerConfig struct {
 // on-disk size (0 disables it), an operator decision about the disk the
 // process runs on — unlike the settings table, never editable at runtime.
 type DuckDBConfig struct {
-	Path         string `yaml:"path"`
-	MaxOpenConns int    `yaml:"maxOpenConns"`
-	MaxSizeBytes int64  `yaml:"maxSizeBytes"`
+	MaxOpenConns int   `yaml:"maxOpenConns"`
+	MaxSizeBytes int64 `yaml:"maxSizeBytes"`
 }
 
 // SourcesConfig holds settings for scanning and loading files from workDir.
 type SourcesConfig struct {
-	WorkDir           string   `yaml:"workDir"`
 	MaxSizeBytes      int64    `yaml:"maxSizeBytes"`
 	AllowedExtensions []string `yaml:"allowedExtensions"`
 }
@@ -178,10 +185,10 @@ func defaultConfig() Config {
 			WriteTimeoutSec:    30,
 			IdleTimeoutSec:     60,
 			ShutdownTimeoutSec: 10,
+			WorkDir:            "./data",
 		},
-		DuckDB: DuckDBConfig{Path: "./data/geo.db", MaxOpenConns: 4, MaxSizeBytes: 0},
+		DuckDB: DuckDBConfig{MaxOpenConns: 4, MaxSizeBytes: 0},
 		Sources: SourcesConfig{
-			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
 			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg", ".parquet"},
 		},
@@ -242,12 +249,11 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&cfg.Server.IdleTimeoutSec, envPrefix+"SERVER_IDLE_TIMEOUT_SEC"))
 	check(envInt(&cfg.Server.ShutdownTimeoutSec, envPrefix+"SERVER_SHUTDOWN_TIMEOUT_SEC"))
 	envStringSlice(&cfg.Server.TrustedProxies, envPrefix+"SERVER_TRUSTED_PROXIES")
+	envString(&cfg.Server.WorkDir, envPrefix+"WORKDIR")
 
-	envString(&cfg.DuckDB.Path, envPrefix+"DUCKDB_PATH")
 	check(envInt(&cfg.DuckDB.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
 	check(envInt64(&cfg.DuckDB.MaxSizeBytes, envPrefix+"DUCKDB_MAX_SIZE_BYTES"))
 
-	envString(&cfg.Sources.WorkDir, envPrefix+"SOURCES_WORKDIR")
 	check(envInt64(&cfg.Sources.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
 	envStringSlice(&cfg.Sources.AllowedExtensions, envPrefix+"SOURCES_ALLOWED_EXTENSIONS")
 
@@ -341,12 +347,11 @@ func (cfg Config) validate() error {
 	if _, err := ParseTrustedProxies(cfg.Server.TrustedProxies); err != nil {
 		errs = append(errs, fmt.Errorf("server.trustedProxies: %w", err))
 	}
+	check(cfg.Server.WorkDir != "", "server.workDir must not be empty")
 
-	check(cfg.DuckDB.Path != "", "duckdb.path must not be empty")
 	check(cfg.DuckDB.MaxOpenConns > 0, "duckdb.maxOpenConns must be positive")
 	check(cfg.DuckDB.MaxSizeBytes >= 0, "duckdb.maxSizeBytes must not be negative")
 
-	check(cfg.Sources.WorkDir != "", "sources.workDir must not be empty")
 	check(cfg.Sources.MaxSizeBytes > 0, "sources.maxSizeBytes must be positive")
 	check(len(cfg.Sources.AllowedExtensions) > 0, "sources.allowedExtensions must not be empty")
 	for _, ext := range cfg.Sources.AllowedExtensions {

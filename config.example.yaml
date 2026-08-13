@@ -22,14 +22,13 @@ server:
         [] # the reverse proxy's IP or CIDR, e.g. ['10.0.0.0/8']; Forwarded/X-Forwarded-* are
         # trusted only from these peers and stripped otherwise, so FeaturesHandler never builds an OGC
         # link off a client-controlled host (spec/back/spec.md §2.1, §6.2, §6.3)
+    workDir: ./data
 
 duckdb:
-    path: './data/geo.db' # the parent directory is created if missing
     maxOpenConns: 4
     maxSizeBytes: 0 # hard cap on the database's on-disk size, in bytes; 0 = unlimited
 
 sources:
-    workDir: './data/sources' # overridden by the --workdir flag
     maxSizeBytes: 104857600 # 100 MiB — largest source file that can be uploaded
     allowedExtensions: ['.geojson', '.shp', '.csv', '.gpkg', '.parquet'] # each starts with a dot
 

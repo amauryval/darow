@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,26 +39,25 @@ func defaultTestSettingsConfig() config.SettingsConfig {
 
 func Test_Setup(t *testing.T) {
 	cases := []struct {
-		name       string
-		duckdbPath string
-		wantErr    bool
+		name    string
+		workDir string
+		wantErr bool
 	}{
 		{
-			name:       "wires services and scans workDir",
-			duckdbPath: ":memory:",
+			name:    "wires services and scans workDir",
+			workDir: filepath.Join(t.TempDir(), "data"),
 		},
 		{
-			name:       "invalid duckdb path fails",
-			duckdbPath: "/tmp/\x00invalid/db",
-			wantErr:    true,
+			name:    "invalid duckdb path fails",
+			workDir: "/data",
+			wantErr: true,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := config.Config{
-				DuckDB:   config.DuckDBConfig{Path: c.duckdbPath},
-				Sources:  config.SourcesConfig{WorkDir: t.TempDir()},
+				Server:   config.ServerConfig{WorkDir: c.workDir},
 				Settings: defaultTestSettingsConfig(),
 			}
 
@@ -93,8 +93,7 @@ func Test_Services_Close(t *testing.T) {
 			var svcs *Services
 			if c.bootstrap {
 				cfg := config.Config{
-					DuckDB:   config.DuckDBConfig{Path: ":memory:"},
-					Sources:  config.SourcesConfig{WorkDir: t.TempDir()},
+					Server:   config.ServerConfig{WorkDir: t.TempDir()},
 					Settings: defaultTestSettingsConfig(),
 				}
 				var err error
@@ -105,7 +104,7 @@ func Test_Services_Close(t *testing.T) {
 				m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
 				m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 				var err error
-				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}, m)
+				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{}, Settings: defaultTestSettingsConfig()}, m)
 				require.NoError(t, err)
 			}
 
@@ -128,8 +127,7 @@ func Test_Services_Ping(t *testing.T) {
 			var svcs *Services
 			if c.bootstrap {
 				cfg := config.Config{
-					DuckDB:   config.DuckDBConfig{Path: ":memory:"},
-					Sources:  config.SourcesConfig{WorkDir: t.TempDir()},
+					Server:   config.ServerConfig{WorkDir: t.TempDir()},
 					Settings: defaultTestSettingsConfig(),
 				}
 				var err error
@@ -141,7 +139,7 @@ func Test_Services_Ping(t *testing.T) {
 				m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
 				m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
 				var err error
-				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}, m)
+				svcs, err = NewServices(config.Config{Sources: config.SourcesConfig{}, Settings: defaultTestSettingsConfig()}, m)
 				require.NoError(t, err)
 			}
 
@@ -154,7 +152,10 @@ func Test_NewServices(t *testing.T) {
 	m := &mocks.Adapter{}
 	m.On("GetSettings", mock.Anything).Return(defaultTestSettings(), nil)
 	m.On("ListOverriddenTables", mock.Anything).Return([]storage.TableSettings{}, nil)
-	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}
+	cfg := config.Config{
+		Server:   config.ServerConfig{WorkDir: t.TempDir()},
+		Settings: defaultTestSettingsConfig(),
+	}
 
 	svcs, err := NewServices(cfg, m)
 
@@ -174,7 +175,9 @@ func Test_NewServices(t *testing.T) {
 func Test_NewServices_SettingsLoadFailurePropagates(t *testing.T) {
 	m := &mocks.Adapter{}
 	m.On("GetSettings", mock.Anything).Return(storage.Settings{}, errors.New("boom"))
-	cfg := config.Config{Sources: config.SourcesConfig{WorkDir: t.TempDir()}, Settings: defaultTestSettingsConfig()}
+	cfg := config.Config{
+		Server:   config.ServerConfig{WorkDir: t.TempDir()},
+		Settings: defaultTestSettingsConfig()}
 
 	svcs, err := NewServices(cfg, m)
 

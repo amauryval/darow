@@ -62,7 +62,8 @@ type tableImporter interface {
 // so two concurrent Load calls for the same source can't both pass the
 // "not loaded yet" check before either has actually imported it.
 type SourceService struct {
-	cfg          config.SourcesConfig
+	serverCfg    config.ServerConfig
+	sourcesCfg   config.SourcesConfig
 	tableService tableImporter
 
 	mu      sync.Mutex
@@ -71,21 +72,21 @@ type SourceService struct {
 
 // NewSourceService builds a SourceService scanning cfg.WorkDir and
 // importing through tableService.
-func NewSourceService(cfg config.SourcesConfig, tableService tableImporter) *SourceService {
-	return &SourceService{cfg: cfg, tableService: tableService}
+func NewSourceService(serverCfg config.ServerConfig, sourcesCfg config.SourcesConfig, tableService tableImporter) *SourceService {
+	return &SourceService{serverCfg: serverCfg, sourcesCfg: sourcesCfg, tableService: tableService}
 }
 
 // MaxUploadBytes returns the largest file Upload will accept, used by the
 // router to size the request body limit on /sources/upload.
 func (s *SourceService) MaxUploadBytes() int64 {
-	return s.cfg.MaxSizeBytes
+	return s.sourcesCfg.MaxSizeBytes
 }
 
 // Refresh rescans workDir and replaces the in-memory cache. Files beyond
 // MaxSizeBytes or with a non-whitelisted extension are silently excluded,
 // not reported as an error.
 func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
-	entries, err := os.ReadDir(s.cfg.WorkDir)
+	entries, err := os.ReadDir(s.serverCfg.SourcesPath())
 	if err != nil {
 		return nil, NewDisplayError("unable to scan the sources directory", err)
 	}
@@ -101,14 +102,14 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 			continue
 		}
 		ext := filepath.Ext(entry.Name())
-		if !slices.Contains(s.cfg.AllowedExtensions, ext) {
+		if !slices.Contains(s.sourcesCfg.AllowedExtensions, ext) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if info.Size() > s.cfg.MaxSizeBytes {
+		if info.Size() > s.sourcesCfg.MaxSizeBytes {
 			continue
 		}
 
@@ -138,7 +139,7 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 // layers can't be read (e.g. corrupt), it is still listed as a source, just
 // without layer info, rather than failing the whole Refresh.
 func (s *SourceService) listLoadedLayers(ctx context.Context, name string, loaded map[string]string) []SourceLayer {
-	path := filepath.Join(s.cfg.WorkDir, name)
+	path := filepath.Join(s.serverCfg.SourcesPath(), name)
 	layerNames, err := s.tableService.ListLayers(ctx, path)
 	if err != nil {
 		return nil
@@ -241,11 +242,11 @@ func cloneSources(sources []Source) []Source {
 func (s *SourceService) Upload(filename string, content io.Reader) (string, error) {
 	filename = filepath.Base(filename)
 	ext := filepath.Ext(filename)
-	if !slices.Contains(s.cfg.AllowedExtensions, ext) {
+	if !slices.Contains(s.sourcesCfg.AllowedExtensions, ext) {
 		return "", fmt.Errorf("extension not allowed: %q", ext)
 	}
 
-	path := filepath.Join(s.cfg.WorkDir, filename)
+	path := filepath.Join(s.serverCfg.SourcesPath(), filename)
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
@@ -255,14 +256,14 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 	}
 	defer out.Close()
 
-	written, err := io.Copy(out, io.LimitReader(content, s.cfg.MaxSizeBytes+1))
+	written, err := io.Copy(out, io.LimitReader(content, s.sourcesCfg.MaxSizeBytes+1))
 	if err != nil {
 		os.Remove(path)
 		return "", NewDisplayError(fmt.Sprintf("unable to write file %q", filename), err)
 	}
-	if written > s.cfg.MaxSizeBytes {
+	if written > s.sourcesCfg.MaxSizeBytes {
 		os.Remove(path)
-		return "", fmt.Errorf("file exceeds maxSizeBytes (%d bytes)", s.cfg.MaxSizeBytes)
+		return "", fmt.Errorf("file exceeds maxSizeBytes (%d bytes)", s.sourcesCfg.MaxSizeBytes)
 	}
 	return filename, nil
 }
@@ -299,7 +300,7 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 		if found.Loaded {
 			return "", &ConflictError{fmt.Sprintf("source %q already loaded (table %s)", name, found.TableId)}
 		}
-		path := filepath.Join(s.cfg.WorkDir, found.Name)
+		path := filepath.Join(s.serverCfg.SourcesPath(), found.Name)
 		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "", srid)
 		if err != nil {
 			return "", err
@@ -326,7 +327,7 @@ func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) 
 		return "", &ConflictError{fmt.Sprintf("layer %q of source %q already loaded (table %s)", layer, name, foundLayer.TableId)}
 	}
 
-	path := filepath.Join(s.cfg.WorkDir, found.Name)
+	path := filepath.Join(s.serverCfg.SourcesPath(), found.Name)
 	tableName := found.Name + layerSeparator + layer
 	tableId, err := s.tableService.ImportFromFile(ctx, tableName, path, found.Ext, layer, srid)
 	if err != nil {
@@ -394,7 +395,7 @@ func (s *SourceService) sourcePath(name, layer string) (string, error) {
 		}
 	}
 
-	return filepath.Join(s.cfg.WorkDir, name), nil
+	return filepath.Join(s.serverCfg.SourcesPath(), name), nil
 }
 
 // DetectCRS reports the authority/code of a source's declared CRS (0 if

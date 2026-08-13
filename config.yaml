@@ -11,6 +11,7 @@ server:
     writeTimeoutSec: 30
     idleTimeoutSec: 60
     shutdownTimeoutSec: 10
+    workDir: ./data
 
 duckdb:
     path: './data/geo.db'

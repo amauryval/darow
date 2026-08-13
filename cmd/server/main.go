@@ -46,7 +46,7 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	if workDirFlag != "" {
-		cfg.Sources.WorkDir = workDirFlag
+		cfg.Server.WorkDir = workDirFlag
 	}
 
 	svcs, err := core.Setup(cfg)

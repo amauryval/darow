@@ -33,14 +33,13 @@ func Test_Load(t *testing.T) {
 			name:        "file absent falls back to defaults",
 			useNoFile:   true,
 			wantPort:    8080,
-			wantWorkDir: "./data/sources",
+			wantWorkDir: "./data",
 		},
 		{
 			name: "file present overrides defaults",
 			content: `
 server:
   port: 9090
-sources:
   workDir: "/tmp/custom"
 `,
 			wantPort:    9090,
@@ -72,7 +71,7 @@ server: [this is not
 			}
 			require.NoError(t, err)
 			assert.Equal(t, c.wantPort, cfg.Server.Port)
-			assert.Equal(t, c.wantWorkDir, cfg.Sources.WorkDir)
+			assert.Equal(t, c.wantWorkDir, cfg.Server.WorkDir)
 		})
 	}
 }
@@ -99,14 +98,14 @@ func Test_Load_DuckDBMaxSizeBytesEnvOverride(t *testing.T) {
 func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	path := writeConfigFile(t, "server:\n  port: 9090\n")
 	t.Setenv("GEOAPI_SERVER_PORT", "7070")
-	t.Setenv("GEOAPI_SOURCES_WORKDIR", "/env/sources")
+	t.Setenv("GEOAPI_WORKDIR", "/env")
 	t.Setenv("GEOAPI_SOURCES_ALLOWED_EXTENSIONS", ".csv,.geojson")
 
 	cfg, err := Load(path)
 
 	require.NoError(t, err)
 	assert.Equal(t, 7070, cfg.Server.Port)
-	assert.Equal(t, "/env/sources", cfg.Sources.WorkDir)
+	assert.Equal(t, "/env/sources", cfg.Server.SourcesPath())
 	assert.Equal(t, []string{".csv", ".geojson"}, cfg.Sources.AllowedExtensions)
 }
 
@@ -126,7 +125,7 @@ func Test_Load_RejectsInvalidValues(t *testing.T) {
 	}{
 		{"port out of range", "server:\n  port: 70000\n"},
 		{"negative timeout", "server:\n  readTimeoutSec: -1\n"},
-		{"empty workDir", "sources:\n  workDir: \"\"\n"},
+		{"empty workDir", "server:\n  workDir: \"\"\n"},
 		{"zero maxSizeBytes", "sources:\n  maxSizeBytes: 0\n"},
 		{"negative duckdb maxSizeBytes", "duckdb:\n  maxSizeBytes: -1\n"},
 		{"extension missing leading dot", "sources:\n  allowedExtensions: [\"geojson\"]\n"},
