@@ -4,19 +4,8 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ce75e77f-a46f-411d-a2f5-53b9c3b541fe" name="Changes" comment="extraction!">
+    <list default="true" id="ce75e77f-a46f-411d-a2f5-53b9c3b541fe" name="Changes" comment="dockerfile clean : test it">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/server/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/server/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.example.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config.example.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/config/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/config.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/config/config_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/config_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/core/core.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/core/core.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/core/core_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/core/core_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/router/routes_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/router/routes_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/service/import_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/service/import_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/service/source.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/service/source.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/service/source_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/service/source_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -55,61 +44,61 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.252424977328269" />
-      <entry key="MS500" value="2.547454271246994" />
-      <entry key="S2" value="5.479533491229402" />
-      <entry key="S5" value="7.243170190288642" />
-      <entry key="S10" value="8.04851456062583" />
-      <entry key="S30" value="8.665507396325406" />
-      <entry key="S60" value="8.856652133396818" />
-      <entry key="M2" value="9.211673041707515" />
-      <entry key="M5" value="13.073833605083587" />
-      <entry key="M10" value="25.065920756897356" />
-      <entry key="M15" value="38.484368844720834" />
-      <entry key="M30" value="74.03751859535846" />
-      <entry key="H1" value="138.96413035396816" />
-      <entry key="H2" value="287.9639227004798" />
-      <entry key="H4" value="514.6422216529913" />
-      <entry key="D1" value="936.9555257515306" />
-      <entry key="W1" value="1047.9974590120569" />
+      <entry key="MS100" value="1.218369348478583" />
+      <entry key="MS500" value="3.5219087467966066" />
+      <entry key="S2" value="8.886044514715913" />
+      <entry key="S5" value="12.353181182056797" />
+      <entry key="S10" value="14.274832944985384" />
+      <entry key="S30" value="23.405389622567746" />
+      <entry key="S60" value="38.61717645342188" />
+      <entry key="M2" value="76.98238210047505" />
+      <entry key="M5" value="213.68707434411962" />
+      <entry key="M10" value="381.30178290393735" />
+      <entry key="M15" value="485.748158879589" />
+      <entry key="M30" value="650.247967518375" />
+      <entry key="H1" value="800.3056361857549" />
+      <entry key="H2" value="995.6012030247125" />
+      <entry key="H4" value="1251.8704661539416" />
+      <entry key="D1" value="1721.343098428287" />
+      <entry key="W1" value="1845.5725215295479" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
-      <entry key="MS500" value="4.0105204636996194E-142" />
-      <entry key="S2" value="4.475073618185471E-36" />
-      <entry key="S5" value="7.249700638911766E-15" />
-      <entry key="S10" value="8.514517390264564E-8" />
-      <entry key="S30" value="0.004399331437796892" />
-      <entry key="S60" value="0.06633318361427677" />
-      <entry key="M2" value="0.25996080229381074" />
-      <entry key="M5" value="0.6890569760579264" />
-      <entry key="M10" value="1.3700470536430656" />
-      <entry key="M15" value="2.246138314669036" />
-      <entry key="M30" value="5.131609797611871" />
-      <entry key="H1" value="11.40935733606179" />
-      <entry key="H2" value="26.751688484574267" />
-      <entry key="H4" value="50.32863426752791" />
-      <entry key="D1" value="94.3377910206136" />
-      <entry key="W1" value="105.91449782794808" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="1.5180676689941395E-254" />
+      <entry key="S5" value="2.9683591918089732E-102" />
+      <entry key="S10" value="1.722892681454356E-51" />
+      <entry key="S30" value="1.1988165925960902E-17" />
+      <entry key="S60" value="3.462692075214643E-9" />
+      <entry key="M2" value="5.939493130908889E-5" />
+      <entry key="M5" value="0.02408750069613377" />
+      <entry key="M10" value="0.25615555958436137" />
+      <entry key="M15" value="0.734427107569113" />
+      <entry key="M30" value="2.934335222217364" />
+      <entry key="H1" value="8.627584723407521" />
+      <entry key="H2" value="23.262973385456704" />
+      <entry key="H4" value="46.93233457530557" />
+      <entry key="D1" value="93.24564087310954" />
+      <entry key="W1" value="105.73845474315645" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.115246550083558" />
-      <entry key="MS500" value="2.489502335751955" />
-      <entry key="S2" value="5.447280003145131" />
-      <entry key="S5" value="7.2256784494805455" />
-      <entry key="S10" value="8.038699832782838" />
-      <entry key="S30" value="8.666100079460527" />
-      <entry key="S60" value="8.919163082434714" />
-      <entry key="M2" value="9.466230274008252" />
-      <entry key="M5" value="13.754288158863488" />
-      <entry key="M10" value="26.423966206524693" />
-      <entry key="M15" value="40.71650448225969" />
-      <entry key="M30" value="79.15340778607178" />
-      <entry key="H1" value="150.35676398254373" />
-      <entry key="H2" value="314.69670093853915" />
-      <entry key="H4" value="564.9533078648199" />
-      <entry key="D1" value="1031.2878546459815" />
-      <entry key="W1" value="1153.9110805928035" />
+      <entry key="MS100" value="1.0831222224791244" />
+      <entry key="MS500" value="3.437931064663991" />
+      <entry key="S2" value="8.769563129730216" />
+      <entry key="S5" value="12.272188612462203" />
+      <entry key="S10" value="14.225301891956752" />
+      <entry key="S30" value="23.383564467112823" />
+      <entry key="S60" value="38.60308446371721" />
+      <entry key="M2" value="76.97165027952825" />
+      <entry key="M5" value="213.70132081722207" />
+      <entry key="M10" value="381.5477863592499" />
+      <entry key="M15" value="486.47149677444867" />
+      <entry key="M30" value="653.1691929160428" />
+      <entry key="H1" value="808.918233942047" />
+      <entry key="H2" value="1018.8464816093366" />
+      <entry key="H4" value="1298.7857900239799" />
+      <entry key="D1" value="1814.5832294871598" />
+      <entry key="W1" value="1951.310085557665" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -121,56 +110,56 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "DefaultGoTemplateProperty": "Go File",
-    "Go Build.go build darow/cmd/server.executor": "Run",
-    "Go Test.Test_AttrProjection_NoAttrs_ExcludesGeometryWhenGeo in darow/internal/storage/duckdb/sqlqueries.executor": "Run",
-    "Go Test.Test_ImportService_LoadedSourceNames in darow/internal/service.executor": "Run",
-    "Go Test.Test_Load in darow/internal/config.executor": "Run",
-    "Go Test.Test_Load/file_present_overrides_defaults in darow/internal/config.executor": "Run",
-    "Go Test.Test_Load_RejectsInvalidValues in darow/internal/config.executor": "Run",
-    "Go Test.Test_Load_RejectsInvalidValues/empty_workDir in darow/internal/config.executor": "Debug",
-    "Go Test.Test_Setup in darow/internal/core.executor": "Run",
-    "Go Test.Test_SourceService_Load_ImportsUnloadedSource in darow/internal/service.executor": "Run",
-    "Go Test.Test_SourceService_Refresh in darow/internal/service.executor": "Run",
-    "Go Test.Test_SourceService_Upload in darow/internal/service.executor": "Run",
-    "Go Test.Test_SourceService_Upload/writes_file_and_sanitizes_traversal in darow/internal/service.executor": "Run",
-    "Go Test.config_test.go.executor": "Run",
-    "Go Test.core_test.go.executor": "Run",
-    "Go Test.go test config.executor": "Run",
-    "Go Test.go test core.executor": "Run",
-    "Go Test.go test internal.executor": "Run",
-    "Go Test.go test service.executor": "Run",
-    "Go Test.go test sqlqueries.executor": "Run",
-    "Go Test.source_test.go.executor": "Run",
-    "Mise Toml Task.Run run-dev.executor": "Run",
-    "Mise Toml Task.Run test.executor": "Run",
-    "Mise Toml Task.Run ui-dev.executor": "Run",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.GoLinterPluginOnboardingV2": "true",
-    "RunOnceActivity.GoLinterPluginStorageMigration": "true",
-    "RunOnceActivity.GoOptimizationToolWindowEnableInLayout.v333333": "true",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.go.analysis.ui.options.defaults": "true",
-    "RunOnceActivity.go.formatter.settings.were.checked": "true",
-    "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "copilot.chat.legacySessionMetadata.migrated": "true",
-    "go.sdk.automatically.set": "true",
-    "last_opened_file_path": "/home/amauryvalorge.guest",
-    "node.js.detected.package.eslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "prettierjs.PrettierConfiguration.Package": "/home/amauryvalorge.guest/gogeoserver/web/node_modules/prettier",
-    "to.speed.mode.migration.done": "true",
-    "ts.external.directory.path": "/home/amauryvalorge.guest/gogeoserver/web/node_modules/typescript/lib"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;DefaultGoTemplateProperty&quot;: &quot;Go File&quot;,
+    &quot;Go Build.go build darow/cmd/server.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_AttrProjection_NoAttrs_ExcludesGeometryWhenGeo in darow/internal/storage/duckdb/sqlqueries.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_ImportService_LoadedSourceNames in darow/internal/service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_Load in darow/internal/config.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_Load/file_present_overrides_defaults in darow/internal/config.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_Load_RejectsInvalidValues in darow/internal/config.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_Load_RejectsInvalidValues/empty_workDir in darow/internal/config.executor&quot;: &quot;Debug&quot;,
+    &quot;Go Test.Test_Setup in darow/internal/core.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_SourceService_Load_ImportsUnloadedSource in darow/internal/service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_SourceService_Refresh in darow/internal/service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_SourceService_Upload in darow/internal/service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.Test_SourceService_Upload/writes_file_and_sanitizes_traversal in darow/internal/service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.config_test.go.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.core_test.go.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.go test config.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.go test core.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.go test internal.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.go test service.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.go test sqlqueries.executor&quot;: &quot;Run&quot;,
+    &quot;Go Test.source_test.go.executor&quot;: &quot;Run&quot;,
+    &quot;Mise Toml Task.Run run-dev.executor&quot;: &quot;Run&quot;,
+    &quot;Mise Toml Task.Run test.executor&quot;: &quot;Run&quot;,
+    &quot;Mise Toml Task.Run ui-dev.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.GoLinterPluginOnboardingV2&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.GoLinterPluginStorageMigration&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.GoOptimizationToolWindowEnableInLayout.v333333&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.analysis.ui.options.defaults&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.formatter.settings.were.checked&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.go.modules.go.list.on.any.changes.was.set&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;copilot.chat.legacySessionMetadata.migrated&quot;: &quot;true&quot;,
+    &quot;go.sdk.automatically.set&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/amauryvalorge.guest&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;prettierjs.PrettierConfiguration.Package&quot;: &quot;/home/amauryvalorge.guest/gogeoserver/web/node_modules/prettier&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;ts.external.directory.path&quot;: &quot;/home/amauryvalorge.guest/gogeoserver/web/node_modules/typescript/lib&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/internal/storage/duckdb/sqlqueries" />
@@ -184,7 +173,7 @@
       <recent name="$PROJECT_DIR$/internal/storage/duckdb/domain" />
     </key>
   </component>
-  <component name="RunManager" selected="Go Test.Test_SourceService_Load_ImportsUnloadedSource in darow/internal/service">
+  <component name="RunManager" selected="Go Test.config_test.go">
     <configuration name="go build darow/cmd/server" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
       <module name="gogeoserver" />
       <working_directory value="$PROJECT_DIR$" />
@@ -203,61 +192,13 @@
       <auto_managed_config_id value="$PROJECT_DIR$/cmd/server" />
       <method v="2" />
     </configuration>
-    <configuration name="Test_ImportService_LoadedSourceNames in darow/internal/service" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
+    <configuration name="config_test.go" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
       <module name="gogeoserver" />
-      <working_directory value="$PROJECT_DIR$/internal/service" />
+      <working_directory value="$PROJECT_DIR$/internal/config" />
       <root_directory value="$PROJECT_DIR$" />
-      <kind value="PACKAGE" />
-      <package value="darow/internal/service" />
+      <kind value="FILE" />
       <directory value="$PROJECT_DIR$" />
-      <filePath value="$PROJECT_DIR$" />
-      <framework value="gotest" />
-      <pattern value="^\QTest_ImportService_LoadedSourceNames\E$" />
-      <method v="2" />
-    </configuration>
-    <configuration name="Test_SourceService_Load_ImportsUnloadedSource in darow/internal/service" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
-      <module name="gogeoserver" />
-      <working_directory value="$PROJECT_DIR$/internal/service" />
-      <root_directory value="$PROJECT_DIR$" />
-      <kind value="PACKAGE" />
-      <package value="darow/internal/service" />
-      <directory value="$PROJECT_DIR$" />
-      <filePath value="$PROJECT_DIR$" />
-      <framework value="gotest" />
-      <pattern value="^\QTest_SourceService_Load_ImportsUnloadedSource\E$" />
-      <method v="2" />
-    </configuration>
-    <configuration name="Test_SourceService_Upload/writes_file_and_sanitizes_traversal in darow/internal/service" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
-      <module name="gogeoserver" />
-      <working_directory value="$PROJECT_DIR$/internal/service" />
-      <root_directory value="$PROJECT_DIR$" />
-      <kind value="PACKAGE" />
-      <package value="darow/internal/service" />
-      <directory value="$PROJECT_DIR$" />
-      <filePath value="$PROJECT_DIR$" />
-      <framework value="gotest" />
-      <pattern value="^\QTest_SourceService_Upload\E$/^\Qwrites_file_and_sanitizes_traversal\E$" />
-      <method v="2" />
-    </configuration>
-    <configuration name="go test internal" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
-      <module name="gogeoserver" />
-      <working_directory value="$PROJECT_DIR$/internal" />
-      <root_directory value="$PROJECT_DIR$" />
-      <kind value="DIRECTORY" />
-      <package value="darow/internal" />
-      <directory value="$PROJECT_DIR$/internal" />
-      <filePath value="$PROJECT_DIR$" />
-      <framework value="gotest" />
-      <method v="2" />
-    </configuration>
-    <configuration name="go test sqlqueries" type="GoTestRunConfiguration" factoryName="Go Test" temporary="true" nameIsGenerated="true">
-      <module name="gogeoserver" />
-      <working_directory value="$PROJECT_DIR$/internal/storage/duckdb/sqlqueries" />
-      <root_directory value="$PROJECT_DIR$" />
-      <kind value="DIRECTORY" />
-      <package value="darow/internal/storage/duckdb/sqlqueries" />
-      <directory value="$PROJECT_DIR$/internal/storage/duckdb/sqlqueries" />
-      <filePath value="$PROJECT_DIR$" />
+      <filePath value="$PROJECT_DIR$/internal/config/config_test.go" />
       <framework value="gotest" />
       <method v="2" />
     </configuration>
@@ -291,11 +232,11 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Go Test.config_test.go" />
         <item itemvalue="Mise Toml Task.Run ui-dev" />
         <item itemvalue="Mise Toml Task.Run test" />
         <item itemvalue="Mise Toml Task.Run run-dev" />
         <item itemvalue="Go Test.source_test.go" />
-        <item itemvalue="Go Test.go test sqlqueries" />
       </list>
     </recent_temporary>
   </component>
@@ -336,7 +277,10 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="extraction!" />
-    <option name="LAST_COMMIT_MESSAGE" value="extraction!" />
+    <MESSAGE value="first clean" />
+    <MESSAGE value="simplifiy" />
+    <MESSAGE value="dockerfile clean : test it" />
+    <option name="LAST_COMMIT_MESSAGE" value="dockerfile clean : test it" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
