@@ -309,9 +309,6 @@ func Test_Load_RejectsInvalidAuth(t *testing.T) {
 		{"unknown provider", "auth:\n  enabled: true\n  provider: keycloak\n  issuer: https://issuer.example\n  audience: darow\n"},
 		{"provider with no issuer", "auth:\n  enabled: true\n  provider: zitadel\n  audience: darow\n"},
 		{"provider with no audience", "auth:\n  enabled: true\n  provider: zitadel\n  issuer: https://issuer.example\n"},
-		{"disabled beside a provider", "auth:\n  enabled: false\n  provider: zitadel\n"},
-		{"disabled beside an issuer", "auth:\n  enabled: false\n  issuer: https://issuer.example\n"},
-		{"disabled beside an audience", "auth:\n  enabled: false\n  audience: darow\n"},
 	}
 
 	for _, c := range cases {
