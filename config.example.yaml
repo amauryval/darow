@@ -13,7 +13,7 @@
 
 server:
     host: '0.0.0.0' # listen interface; 127.0.0.1 to accept loopback connections only
-    port: 8080
+    port: 3000
     readTimeoutSec: 15
     writeTimeoutSec: 30
     idleTimeoutSec: 60
@@ -22,14 +22,13 @@ server:
         [] # the reverse proxy's IP or CIDR, e.g. ['10.0.0.0/8']; Forwarded/X-Forwarded-* are
         # trusted only from these peers and stripped otherwise, so FeaturesHandler never builds an OGC
         # link off a client-controlled host (spec/back/spec.md §2.1, §6.2, §6.3)
+    workDir: ./data
 
 duckdb:
-    path: './data/geo.db' # the parent directory is created if missing
     maxOpenConns: 4
     maxSizeBytes: 0 # hard cap on the database's on-disk size, in bytes; 0 = unlimited
 
 sources:
-    workDir: './data/sources' # overridden by the --workdir flag
     maxSizeBytes: 104857600 # 100 MiB — largest source file that can be uploaded
     allowedExtensions: ['.geojson', '.shp', '.csv', '.gpkg', '.parquet'] # each starts with a dot
 
@@ -80,8 +79,8 @@ settings:
 # and is negated on the way in.
 auth:
     enabled: false
-    provider: '' # 'zitadel' or 'pocketid' — required when enabled is true
-    issuer: '' # the identity provider's base URL, e.g. 'https://issuer.example.com' — required when enabled is true
-    audience: '' # this application's client id at the provider — required when enabled is true
-    adminRole: '' # the provider's name for the admin role; empty falls back to "admin"
-    guestRole: '' # the provider's name for the guest role; empty falls back to "guest"
+    # provider: '' # 'zitadel' or 'pocketid' — required when enabled is true
+    # issuer: '' # the identity provider's base URL, e.g. 'https://issuer.example.com' — required when enabled is true
+    # audience: '' # this application's client id at the provider — required when enabled is true
+    # adminRole: '' # the provider's name for the admin role; empty falls back to "admin"
+    # guestRole: '' # the provider's name for the guest role; empty falls back to "guest"

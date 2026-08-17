@@ -86,11 +86,11 @@ run = "go build -o bin/server ./cmd/server"
 # or provider contacted. The developer's own build tag, never carried by
 # `mise run build` or the Dockerfile.
 [tasks."run-dev"]
-description = "Run the server with no config.yaml"
+description = "Run the server with no auth"
 depends = ["docs", "ui-build"]
-run = "go run ./cmd/server"
+run = "go run -tags authdemo ./cmd/server -config ./config.example.yaml"
 
 [tasks."run-dev-prod"]
 description = "Run the server against config.yaml"
 depends = ["docs", "ui-build"]
-run = "go run ./cmd/server config.yaml"
+run = "go run ./cmd/server -config config.yaml"

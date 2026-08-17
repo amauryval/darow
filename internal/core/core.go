@@ -116,7 +116,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	deriveSvc := service.NewDeriveService(metadataSvc, schemaSvc, sizeGuardSvc)
 	importSvc := service.NewImportService(metadataSvc, storageAdapter.Materializer(), sizeGuardSvc)
 	geoSvc := service.NewGeoService(storageAdapter, tileCache)
-	sourceSvc := service.NewSourceService(cfg.Sources, importSvc)
+	sourceSvc := service.NewSourceService(cfg.Server, cfg.Sources, importSvc)
 	exportSvc := service.NewExportService(storageAdapter)
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
 	diagnosticsSvc := service.NewDiagnosticsService(storageAdapter)
@@ -168,7 +168,7 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 // scans workDir for sources. The caller must defer svcs.Close() to release
 // the storage connection, including on a crash or shutdown signal.
 func Setup(cfg config.Config) (*Services, error) {
-	adapter, err := duckdb.New(cfg.DuckDB.Path, cfg.DuckDB.MaxOpenConns)
+	adapter, err := duckdb.New(cfg.Server.DbFilePath(), cfg.DuckDB.MaxOpenConns)
 	if err != nil {
 		return nil, fmt.Errorf("duckdb: %w", err)
 	}
@@ -176,7 +176,7 @@ func Setup(cfg config.Config) (*Services, error) {
 	// SourceService.Refresh (called below) reads workDir with os.ReadDir,
 	// which errors on a missing directory — bootstrap it on first run
 	// rather than requiring the operator to create it by hand.
-	if err := os.MkdirAll(cfg.Sources.WorkDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Server.SourcesPath(), 0o755); err != nil {
 		adapter.Close()
 		return nil, fmt.Errorf("sources workDir: %w", err)
 	}

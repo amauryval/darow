@@ -64,7 +64,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 	m.On("Diagnostics", mock.Anything).Return(storage.Diagnostics{}, nil).Maybe()
 
 	cfg := config.Config{
-		Sources:  config.SourcesConfig{WorkDir: t.TempDir(), MaxSizeBytes: 50 * 1024 * 1024},
+		Sources:  config.SourcesConfig{MaxSizeBytes: 50 * 1024 * 1024},
 		Settings: settingsCfg,
 	}
 	svcs, err := core.NewServices(cfg, m)

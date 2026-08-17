@@ -14,3 +14,4 @@ data/sources/*.gpkg
 data/sources/*.parquet
 data/geo.db.wal
 config.yaml
+data/darow.db

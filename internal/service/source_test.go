@@ -17,8 +17,17 @@ import (
 )
 
 func writeFixture(t *testing.T, dir, name string, size int) {
-	path := filepath.Join(dir, name)
+	srcDir := filepath.Join(dir, "sources")
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	path := filepath.Join(dir, "sources", name)
 	require.NoError(t, os.WriteFile(path, make([]byte, size), 0o644))
+}
+
+func writeUnloadedDataFixture(t *testing.T, dir, name string, size int) string {
+	path := filepath.Join(dir, "sources", name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, make([]byte, size), 0o644))
+	return path
 }
 
 func Test_SourceService_Refresh(t *testing.T) {
@@ -30,11 +39,12 @@ func Test_SourceService_Refresh(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      150,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      150,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	sources, err := svc.Refresh(context.Background())
 
@@ -52,11 +62,12 @@ func Test_SourceService_Refresh_MarksLoadedSources(t *testing.T) {
 		{SourceName: "buildings.geojson"}: "id-1",
 	}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	sources, err := svc.Refresh(context.Background())
 
@@ -78,7 +89,9 @@ func Test_SourceService_Load(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			tableSvc, _ := setupImportService(t)
-			svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+			svc := NewSourceService(
+				config.ServerConfig{WorkDir: t.TempDir()},
+				config.SourcesConfig{}, tableSvc)
 
 			_, err := svc.Load(context.Background(), c.requestedName, "", 0)
 
@@ -95,6 +108,7 @@ func Test_SourceService_Upload(t *testing.T) {
 		name         string
 		filename     string
 		content      string
+		notExisting  bool
 		preexisting  bool
 		maxSize      int64
 		wantErr      bool
@@ -103,14 +117,14 @@ func Test_SourceService_Upload(t *testing.T) {
 	}{
 		{
 			name:      "writes file and sanitizes traversal",
-			filename:  "../../etc/evil.geojson",
+			filename:  "../inputData/tutu.geojson",
 			content:   `{"type":"FeatureCollection","features":[]}`,
 			maxSize:   1000,
-			wantSaved: "evil.geojson",
+			wantSaved: "tutu.geojson",
 		},
 		{
 			name:     "rejects disallowed extension",
-			filename: "malware.exe",
+			filename: "lala.exe",
 			content:  "x",
 			maxSize:  1000,
 			wantErr:  true,
@@ -139,13 +153,15 @@ func Test_SourceService_Upload(t *testing.T) {
 			if c.preexisting {
 				writeFixture(t, dir, "buildings.geojson", 10)
 			}
-
+			serverConfig := config.ServerConfig{WorkDir: dir}
+			require.NoError(t, os.MkdirAll(serverConfig.SourcesPath(), 0755))
 			tableSvc, _ := setupImportService(t)
-			svc := NewSourceService(config.SourcesConfig{
-				WorkDir:           dir,
-				MaxSizeBytes:      c.maxSize,
-				AllowedExtensions: []string{".geojson"},
-			}, tableSvc)
+			svc := NewSourceService(
+				serverConfig,
+				config.SourcesConfig{
+					MaxSizeBytes:      c.maxSize,
+					AllowedExtensions: []string{".geojson"},
+				}, tableSvc)
 
 			saved, err := svc.Upload(c.filename, strings.NewReader(c.content))
 
@@ -160,7 +176,7 @@ func Test_SourceService_Upload(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, c.wantSaved, saved)
 
-			data, err := os.ReadFile(filepath.Join(dir, saved))
+			data, err := os.ReadFile(filepath.Join(serverConfig.SourcesPath(), saved))
 			require.NoError(t, err)
 			assert.Equal(t, c.content, string(data))
 		})
@@ -176,11 +192,12 @@ func Test_SourceService_Load_RejectsAlreadyLoaded(t *testing.T) {
 		{SourceName: "buildings.geojson"}: "id-1",
 	}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -195,17 +212,19 @@ func Test_SourceService_Load_ImportsUnloadedSource(t *testing.T) {
 
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
-
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	serverConfig := config.ServerConfig{WorkDir: dir}
+	require.NoError(t, os.MkdirAll(serverConfig.SourcesPath(), 0755))
+	svc := NewSourceService(
+		serverConfig,
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "buildings.geojson"), "", 0).Return("id-new", nil).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "sources", "buildings.geojson"), "", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 
@@ -223,16 +242,17 @@ func Test_SourceService_Load_RejectsSecondLoadWithoutRefresh(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "buildings.geojson"), "", 0).Return("id-new", nil).Once()
+	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", filepath.Join(dir, "sources", "buildings.geojson"), "", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "buildings.geojson", "", 0)
 	require.NoError(t, err)
@@ -252,11 +272,12 @@ func Test_SourceService_List_Paginates(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -297,11 +318,12 @@ func Test_SourceService_List_ReturnsIndependentCopy(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -348,13 +370,14 @@ func Test_SourceService_UnmarkLoaded(t *testing.T) {
 				{SourceName: "buildings.geojson"}:                         "id-1",
 				{SourceName: "regions.gpkg", SourceLayer: "departements"}: "id-2",
 			}, nil).Once()
-			m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"departements"}, nil).Once()
+			m.On("ListLayers", mock.Anything, filepath.Join(dir, "sources", "regions.gpkg")).Return([]string{"departements"}, nil).Once()
 
-			svc := NewSourceService(config.SourcesConfig{
-				WorkDir:           dir,
-				MaxSizeBytes:      1000,
-				AllowedExtensions: []string{".geojson", ".gpkg"},
-			}, tableSvc)
+			svc := NewSourceService(
+				config.ServerConfig{WorkDir: dir},
+				config.SourcesConfig{
+					MaxSizeBytes:      1000,
+					AllowedExtensions: []string{".geojson", ".gpkg"},
+				}, tableSvc)
 
 			_, err := svc.Refresh(context.Background())
 			require.NoError(t, err)
@@ -384,11 +407,12 @@ func Test_SourceService_Load_RejectsLayerForNonGpkg(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -405,13 +429,14 @@ func Test_SourceService_Refresh_PopulatesGpkgLayers(t *testing.T) {
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
 		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
-	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+	m.On("ListLayers", mock.Anything, filepath.Join(dir, "sources", "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".gpkg"},
+		}, tableSvc)
 
 	sources, err := svc.Refresh(context.Background())
 
@@ -430,18 +455,19 @@ func Test_SourceService_Load_GpkgLayer(t *testing.T) {
 
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
-	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+	m.On("ListLayers", mock.Anything, filepath.Join(dir, "sources", "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".gpkg"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("CreateFromFile", mock.Anything, "regions.gpkg::communes", "regions.gpkg", filepath.Join(dir, "regions.gpkg"), "communes", 0).Return("id-new", nil).Once()
+	m.On("CreateFromFile", mock.Anything, "regions.gpkg::communes", "regions.gpkg", filepath.Join(dir, "sources", "regions.gpkg"), "communes", 0).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "regions.gpkg", "communes", 0)
 
@@ -455,13 +481,14 @@ func Test_SourceService_Load_GpkgRequiresLayer(t *testing.T) {
 
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
-	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes"}, nil).Once()
+	m.On("ListLayers", mock.Anything, filepath.Join(dir, "sources", "regions.gpkg")).Return([]string{"communes"}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".gpkg"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -477,16 +504,17 @@ func Test_SourceService_Load_ForwardsSridOverride(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("CreateFromFile", mock.Anything, "lambert.geojson", "lambert.geojson", filepath.Join(dir, "lambert.geojson"), "", 2154).Return("id-new", nil).Once()
+	m.On("CreateFromFile", mock.Anything, "lambert.geojson", "lambert.geojson", filepath.Join(dir, "sources", "lambert.geojson"), "", 2154).Return("id-new", nil).Once()
 
 	tableId, err := svc.Load(context.Background(), "lambert.geojson", "", 2154)
 
@@ -501,16 +529,17 @@ func Test_SourceService_DetectCRS(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
-	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "lambert.geojson"), "").Return("EPSG", 2154, nil).Once()
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "sources", "lambert.geojson"), "").Return("EPSG", 2154, nil).Once()
 
 	authName, authCode, err := svc.DetectCRS(context.Background(), "lambert.geojson", "")
 
@@ -541,17 +570,18 @@ func Test_SourceService_SourceHasGeometry(t *testing.T) {
 			tableSvc, m := setupImportService(t)
 			m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-			svc := NewSourceService(config.SourcesConfig{
-				WorkDir:           dir,
-				MaxSizeBytes:      1000,
-				AllowedExtensions: []string{c.extension},
-			}, tableSvc)
+			svc := NewSourceService(
+				config.ServerConfig{WorkDir: dir},
+				config.SourcesConfig{
+					MaxSizeBytes:      1000,
+					AllowedExtensions: []string{c.extension},
+				}, tableSvc)
 
 			_, err := svc.Refresh(context.Background())
 			require.NoError(t, err)
 
 			if c.wantStorage {
-				m.On("SourceHasGeometry", mock.Anything, filepath.Join(dir, c.file), "").Return(c.hasGeometry, nil).Once()
+				m.On("SourceHasGeometry", mock.Anything, filepath.Join(dir, "sources", c.file), "").Return(c.hasGeometry, nil).Once()
 			}
 
 			got, err := svc.SourceHasGeometry(context.Background(), c.file, "")
@@ -574,11 +604,12 @@ func Test_SourceService_DetectCRS_SkipsNonIntrospectableFormat(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".parquet"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".parquet"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -597,17 +628,18 @@ func Test_SourceService_DetectCRS_WrapsStorageFailureInDisplayError(t *testing.T
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
 
 	cause := errors.New("duckdb: connection reset")
-	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "lambert.geojson"), "").Return("", 0, cause).Once()
+	m.On("DetectCRS", mock.Anything, filepath.Join(dir, "sources", "lambert.geojson"), "").Return("", 0, cause).Once()
 
 	_, _, err = svc.DetectCRS(context.Background(), "lambert.geojson", "")
 
@@ -618,7 +650,9 @@ func Test_SourceService_DetectCRS_WrapsStorageFailureInDisplayError(t *testing.T
 
 func Test_SourceService_DetectCRS_RejectsUnknownSource(t *testing.T) {
 	tableSvc, _ := setupImportService(t)
-	svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: t.TempDir()},
+		config.SourcesConfig{}, tableSvc)
 
 	_, _, err := svc.DetectCRS(context.Background(), "../../etc/passwd", "")
 
@@ -637,11 +671,12 @@ func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 		{SourceName: "buildings.geojson"}: "id-1",
 	}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -652,7 +687,7 @@ func Test_SourceService_Delete_RemovesFileAndCascadesToTable(t *testing.T) {
 	err = svc.Delete(context.Background(), "buildings.geojson")
 
 	require.NoError(t, err)
-	_, statErr := os.Stat(filepath.Join(dir, "buildings.geojson"))
+	_, statErr := os.Stat(filepath.Join(dir, "sources", "buildings.geojson"))
 	assert.NoError(t, statErr)
 	unchanged, total, err := svc.List(nil, 0, 10)
 	require.NoError(t, err)
@@ -667,11 +702,12 @@ func Test_SourceService_Delete_UnloadedSourceSkipsTableRemoval(t *testing.T) {
 	tableSvc, m := setupImportService(t)
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{}, nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".geojson"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".geojson"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
@@ -683,7 +719,9 @@ func Test_SourceService_Delete_UnloadedSourceSkipsTableRemoval(t *testing.T) {
 
 func Test_SourceService_Delete_RejectsUnknownSource(t *testing.T) {
 	tableSvc, _ := setupImportService(t)
-	svc := NewSourceService(config.SourcesConfig{WorkDir: t.TempDir()}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: t.TempDir()},
+		config.SourcesConfig{}, tableSvc)
 
 	err := svc.Delete(context.Background(), "unknown.geojson")
 
@@ -702,15 +740,16 @@ func Test_SourceService_Delete_ConcurrentWithList_NoRace(t *testing.T) {
 	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
 		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
 	}, nil).Once()
-	m.On("ListLayers", mock.Anything, filepath.Join(dir, "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
+	m.On("ListLayers", mock.Anything, filepath.Join(dir, "sources", "regions.gpkg")).Return([]string{"communes", "departements"}, nil).Once()
 	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1", SourceName: "regions.gpkg", SourceLayer: "communes"}, nil).Once()
 	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
 
-	svc := NewSourceService(config.SourcesConfig{
-		WorkDir:           dir,
-		MaxSizeBytes:      1000,
-		AllowedExtensions: []string{".gpkg"},
-	}, tableSvc)
+	svc := NewSourceService(
+		config.ServerConfig{WorkDir: dir},
+		config.SourcesConfig{
+			MaxSizeBytes:      1000,
+			AllowedExtensions: []string{".gpkg"},
+		}, tableSvc)
 
 	_, err := svc.Refresh(context.Background())
 	require.NoError(t, err)
