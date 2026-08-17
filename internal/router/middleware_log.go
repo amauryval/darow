@@ -8,13 +8,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// slogLogger logs every request as a single structured line — method,
-// path, status, duration, and the request ID middleware.RequestID generated
-// — instead of chi's plain-text default logger. It sits above the write
-// guard (§6.3), so it never sees the caller a guarded request resolved:
-// that line is logged from inside the guard itself, the one place able to
-// read it (§6.7, cmd/server), tying a destructive write to whoever asked
-// for it. A public read carries no such line — there is no caller to name.
+// slogLogger logs every request as a single structured line — method, path,
+// status, duration and the request ID — instead of chi's plain-text default.
+// It sits above the write guard, so a destructive write's caller is logged
+// from inside the guard instead, the only place able to read it.
 func slogLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()

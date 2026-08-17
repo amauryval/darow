@@ -19,9 +19,8 @@ import (
 )
 
 // storageAdapter is everything Services needs from the storage layer: the
-// three aggregates it hands to the services, plus the table resolution
-// every per-table service goes through. Declared here, the consumer, so
-// tests can satisfy it with a mock.
+// aggregates it hands to the services, plus the table resolution every
+// per-table service goes through.
 type storageAdapter interface {
 	Catalog() storage.Catalog
 	Materializer() storage.TableMaterializer
@@ -50,15 +49,14 @@ type Services struct {
 	Diagnostics   *service.DiagnosticsService
 	Column        *service.ColumnService
 
-	// closeStorage/pingStorage are set only by Bootstrap, which owns a real
-	// storage connection; Services built via NewServices alone (e.g. in
-	// tests, against a mock) have no connection to close or ping.
+	// closeStorage/pingStorage are set only by Setup, which owns a real
+	// connection; NewServices alone has none to close or ping.
 	closeStorage func() error
 	pingStorage  func(ctx context.Context) error
 }
 
-// Close releases the underlying storage connection, if any. Safe to call on
-// a Services that never opened one (NewServices without Bootstrap).
+// Close releases the underlying storage connection, if any. Safe to call on a
+// Services that never opened one.
 func (s *Services) Close() error {
 	if s.closeStorage == nil {
 		return nil
@@ -66,9 +64,8 @@ func (s *Services) Close() error {
 	return s.closeStorage()
 }
 
-// Ping checks that the underlying storage connection is alive, for use by a
-// readiness probe. Safe to call on a Services that never opened one
-// (NewServices without Bootstrap).
+// Ping checks that the underlying storage connection is alive, for a readiness
+// probe. Safe to call on a Services that never opened one.
 func (s *Services) Ping(ctx context.Context) error {
 	if s.pingStorage == nil {
 		return nil
@@ -76,13 +73,9 @@ func (s *Services) Ping(ctx context.Context) error {
 	return s.pingStorage(ctx)
 }
 
-// NewServices constructs every service. It loads the settings row once
-// (a startup failure exactly as an invalid config.yaml is) and sizes the
-// metadata/schema/tile LRU caches from cfg.Settings (TODO-17 — a size is a
-// memory guard, restart-only) and their shared TTL, for metadata/schema,
-// from the settings row (an operator retunes that live); the tile cache
-// carries no TTL at all (IMP-10 — its key already carries the table's
-// UpdatedAt, so a time-based expiry would invalidate nothing).
+// NewServices constructs every service. It loads the settings row once, sizes
+// the LRU caches from cfg.Settings (TODO-17) and takes the metadata/schema TTL
+// from the settings row; the tile cache carries no TTL at all (IMP-10).
 func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, error) {
 	settingsChanged := &observer.Observer[storage.Settings]{}
 	settingsSvc := service.NewSettingsService(storageAdapter.Settings(), settingsChanged)
@@ -96,16 +89,15 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 		return nil, fmt.Errorf("table settings: %w", err)
 	}
 
-	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
-	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Settings.CacheMaxItems, nil, time.Duration(current.CacheTTLSec)*time.Second)
+	cacheTTL := time.Duration(current.CacheTTLSec) * time.Second
+	metadataCache := expirable.NewLRU[string, storage.Metadata](cfg.Settings.CacheMaxItems, nil, cacheTTL)
+	schemaCache := expirable.NewLRU[string, []service.ColumnSchema](cfg.Settings.CacheMaxItems, nil, cacheTTL)
 	tileCache := expirable.NewLRU[string, []byte](cfg.Settings.TileMaxItems, nil, 0)
 
 	tableRemoved := &observer.Observer[storage.Metadata]{}
 
-	// sizeGuardTTL bounds how stale the cached database size enforcing
-	// cfg.DuckDB.MaxSizeBytes may be between the writes that invalidate it
-	// (SizeGuardService.Grew) — a backstop, not the primary invalidation
-	// path.
+	// sizeGuardTTL is the backstop bounding how stale the cached database size
+	// may be between the writes that invalidate it.
 	const sizeGuardTTL = 5 * time.Second
 	sizeGuardSvc := service.NewSizeGuardService(storageAdapter, cfg.DuckDB.MaxSizeBytes, sizeGuardTTL)
 
@@ -121,29 +113,21 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	filterSvc := service.NewFilterService(storageAdapter.Filters(), schemaSvc)
 	diagnosticsSvc := service.NewDiagnosticsService(storageAdapter)
 
-	// Who reacts to a table's removal, stated in one place: dropping a
-	// table changes its structure as surely as AddColumn does, and leaves a
-	// deleted table's source reported as loaded until told otherwise.
-	tableRemoved.On(func(meta storage.Metadata) { schemaSvc.InvalidateSchema(meta.TableId) })
-	tableRemoved.On(func(meta storage.Metadata) { tableSettingsSvc.InvalidateOverride(meta.TableId) })
-	tableRemoved.On(sourceSvc.UnmarkLoaded)
+	// Who reacts to a table's removal, stated in one place.
+	tableRemoved.On(func(meta storage.Metadata) {
+		schemaSvc.InvalidateSchema(meta.TableId)
+		tableSettingsSvc.InvalidateOverride(meta.TableId)
+		sourceSvc.UnmarkLoaded(meta)
+	})
 
 	// Who reacts to a settings update, stated in one place: the metadata and
-	// schema caches bake their size and TTL into expirable.NewLRU at
-	// construction, so a changed cache.cacheTTLSec takes effect by rebuilding
-	// the cache rather than by mutating a field — their size stays
-	// cfg.Settings.CacheMaxItems, fixed for the process's life (TODO-17), so
-	// only the TTL half of the callback ever actually differs from the
-	// cache's current one. The tile cache needs no callback at all: neither
-	// its size (cfg.Settings.TileMaxItems) nor its TTL (always 0) is
-	// settings-editable any more. Every other setting (row/list limits,
-	// geometry bounds...) is read live off settingsSvc.Current() wherever
-	// it's needed, and needs no callback here either.
+	// schema caches bake their TTL in at construction, so a changed
+	// cacheTTLSec takes effect by rebuilding them. Every other setting is read
+	// live off settingsSvc.Current().
 	settingsChanged.On(func(s storage.Settings) {
-		metadataSvc.ResetCache(cfg.Settings.CacheMaxItems, time.Duration(s.CacheTTLSec)*time.Second)
-	})
-	settingsChanged.On(func(s storage.Settings) {
-		schemaSvc.ResetCache(cfg.Settings.CacheMaxItems, time.Duration(s.CacheTTLSec)*time.Second)
+		ttl := time.Duration(s.CacheTTLSec) * time.Second
+		metadataSvc.ResetCache(cfg.Settings.CacheMaxItems, ttl)
+		schemaSvc.ResetCache(cfg.Settings.CacheMaxItems, ttl)
 	})
 
 	return &Services{
@@ -173,9 +157,8 @@ func Setup(cfg config.Config) (*Services, error) {
 		return nil, fmt.Errorf("duckdb: %w", err)
 	}
 
-	// SourceService.Refresh (called below) reads workDir with os.ReadDir,
-	// which errors on a missing directory — bootstrap it on first run
-	// rather than requiring the operator to create it by hand.
+	// Refresh below errors on a missing directory: create it on first run
+	// rather than requiring the operator to.
 	if err := os.MkdirAll(cfg.Server.SourcesPath(), 0o755); err != nil {
 		adapter.Close()
 		return nil, fmt.Errorf("sources workDir: %w", err)

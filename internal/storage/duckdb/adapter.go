@@ -17,25 +17,18 @@ import (
 	"darow/internal/storage/duckdb/tables"
 )
 
-// spatialExtension is the DuckDB extension every geo route depends on,
-// loaded once when the connection opens and asserted by the readiness
-// probe.
+// spatialExtension is the DuckDB extension every geo route depends on, loaded
+// once when the connection opens and asserted by the readiness probe.
 const spatialExtension = "spatial"
 
 // Adapter is the DuckDB storage engine: it owns the connection pool and
-// exposes the catalogue (Catalog), the physical-table materializer
-// (Materializer) and table resolution (Table), each implemented in a
-// sub-package. It
-// serializes writes per storage.WriteScope through writes: DuckDB runs
-// concurrent writer threads under MVCC and optimistic concurrency control,
-// so writes to different tables may run at once, while writes sharing a
-// scope stay serialized — which is what keeps a write conflict from ever
-// reaching a caller and spares the server a retry path. Reads take no lock
-// and run concurrently across the pooled connections opened against db,
-// which is guarded by dbMu so a fatal error can swap it for a
-// freshly opened one (see recoverIfFatal) without racing a concurrent
-// reader — reopenMu serializes that swap itself, so two callers observing
-// the same fatal instance at once reopen it only once.
+// exposes the catalogue, the materializer and table resolution, each
+// implemented in a sub-package.
+//
+// Writes are serialized per storage.WriteScope, so a write conflict never
+// reaches a caller and the server needs no retry path; reads take no lock. db
+// is guarded by dbMu so recoverIfFatal can swap it without racing a reader,
+// and by reopenMu so two callers reopen the same dead instance only once.
 type Adapter struct {
 	db            *sql.DB
 	dbMu          sync.RWMutex
@@ -51,8 +44,8 @@ type Adapter struct {
 }
 
 // openDB opens a fresh DuckDB connection pool at path with the spatial
-// extension loaded, shared by New and recoverIfFatal so a reopened
-// connection is set up identically to the first one.
+// extension loaded, so that a reopened connection is set up identically to the
+// first one.
 func openDB(path string, maxOpenConns int) (*sql.DB, error) {
 	db, err := sql.Open("duckdb", path)
 	if err != nil {
@@ -67,13 +60,9 @@ func openDB(path string, maxOpenConns int) (*sql.DB, error) {
 	return db, nil
 }
 
-// New opens the DuckDB database at path, loads the spatial extension, and
-// ensures the metadata schema exists. The parent directory of path is
-// created if missing — DuckDB itself refuses to open a file in a
-// non-existent directory ("in-memory" paths like ":memory:" have no
-// parent to create, so this is a no-op for them). maxOpenConns bounds the
-// pool the concurrent reads are served from; writes are serialized on top
-// of it by the per-scope write locks.
+// New opens the DuckDB database at path, loads the spatial extension and
+// ensures the metadata schema exists. The parent directory is created if
+// missing, since DuckDB refuses to open a file in a non-existent one.
 func New(path string, maxOpenConns int) (*Adapter, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -91,14 +80,9 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 		return nil, err
 	}
 
-	// The catalogue takes its links to duckdb/tables directly: dropping and
-	// listing the physical tables need a transaction and a connection,
-	// nothing the materializer holds. fileCreator/queryCreator close over
-	// a.catalog for the same reason ExistingTables does — they only run
-	// after New returns, by which point a.catalog is set. Only the
-	// materializer depends on a built catalogue (a derived query's
-	// physical-name allowlist), so the two constructions simply run in
-	// that order.
+	// The catalogue takes its links to duckdb/tables directly, and the
+	// creators close over a.catalog: they only run once New has returned. Only
+	// the materializer needs a built catalogue, hence the construction order.
 	a := &Adapter{db: db, path: path, maxOpenConns: maxOpenConns}
 	fileCreator := func(ctx context.Context, tx *sql.Tx, physicalName, sourcePath, layer string, sridOverride int) (string, bool, int, error) {
 		return tables.NewTxMaterializer(tx, a.catalog).CreateFromFile(ctx, physicalName, sourcePath, layer, sridOverride)
@@ -123,11 +107,9 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	a.catalog.Register(a.tableSettings)
 	a.settings = catalog.NewSettings(a)
 
-	// Best-effort: a database whose geo tables were created before their
-	// geometry could be read inside the creating transaction carries no
-	// bbox, and a map has no extent to open on. Repairing it is a derived
-	// recomputation (never stored truth), so a failure is logged and the
-	// server still opens.
+	// Best-effort: a geo table left without a bbox gives a map no extent to
+	// open on. Repairing it recomputes derived data, never stored truth, so a
+	// failure is logged and the server still opens.
 	if err := a.catalog.RefreshMissingBbox(context.Background()); err != nil {
 		slog.Error("refreshing tables left without a bbox", "error", err)
 	}
@@ -142,16 +124,13 @@ func (a *Adapter) conn() *sql.DB {
 	return a.db
 }
 
-// recoverIfFatal reopens the connection pool when err reports that DuckDB's
-// instance has been invalidated (an INTERNAL or FATAL error) — otherwise
-// db keeps handing out connections onto a dead instance for the rest of
-// the process's life (BLK-2), and every later request fails until the
-// binary is restarted by hand. failed is the pool the caller observed the
-// error on: reopenMu serializes this against concurrent callers hitting the
-// same fatal instance, and comparing against failed lets whichever caller
-// arrives second recognise the pool has already been replaced and skip
-// reopening it again. A failure to reopen is left for the next caller to
-// retry — this is best-effort recovery, not a guarantee.
+// recoverIfFatal reopens the connection pool when err reports DuckDB's
+// instance invalidated, which would otherwise leave every later request
+// failing until the binary is restarted by hand.
+//
+// failed is the pool the caller observed the error on: comparing against it
+// lets a second caller see the pool has already been replaced. A failure to
+// reopen is left for the next caller — this is best effort, not a guarantee.
 func (a *Adapter) recoverIfFatal(err error, failed *sql.DB) {
 	if !isFatalDuckDBError(err) {
 		return
@@ -176,9 +155,9 @@ func (a *Adapter) recoverIfFatal(err error, failed *sql.DB) {
 	failed.Close()
 }
 
-// isFatalDuckDBError reports whether err is a DuckDB INTERNAL or FATAL
-// error — the two error types DuckDB itself documents as leaving the whole
-// instance invalidated rather than just the query that raised them.
+// isFatalDuckDBError reports whether err is a DuckDB INTERNAL or FATAL error —
+// the two DuckDB documents as invalidating the whole instance rather than just
+// the query that raised them.
 func isFatalDuckDBError(err error) bool {
 	var duckErr *duckdbgo.Error
 	if !errors.As(err, &duckErr) {
@@ -193,8 +172,7 @@ func (a *Adapter) Close() error {
 }
 
 // Ping checks that the underlying DuckDB connection is alive and that the
-// spatial extension is loaded, for use by a readiness probe — every geo
-// route depends on an extension loaded once at open.
+// spatial extension every geo route depends on is loaded.
 func (a *Adapter) Ping(ctx context.Context) error {
 	db := a.conn()
 	if err := db.PingContext(ctx); err != nil {
@@ -247,11 +225,8 @@ func (a *Adapter) Exec(ctx context.Context, scope storage.WriteScope, query stri
 	return res, err
 }
 
-// WithTx runs fn inside a transaction holding scope for its whole
-// duration, committing on success and rolling back on
-// any error fn returns. Shared by storage.Catalog (cascade delete) and
-// tables.Open (BulkInsert), the two consumers that need transactional
-// semantics beyond a single Exec.
+// WithTx runs fn inside a transaction holding scope for its whole duration,
+// committing on success and rolling back on any error fn returns.
 func (a *Adapter) WithTx(ctx context.Context, scope storage.WriteScope, fn func(tx *sql.Tx) error) error {
 	defer a.writes.acquire(scope)()
 
@@ -276,9 +251,7 @@ func (a *Adapter) WithTx(ctx context.Context, scope storage.WriteScope, fn func(
 }
 
 // Catalog returns the catalogue aggregate — metadata, the physical-name
-// allowlist and the delete cascade. The concrete *catalog.Catalog stays
-// reachable here (Register attaches a catalogue-attached repository at
-// construction), but it is handed to callers as storage.Catalog so they can
+// allowlist and the delete cascade — as a storage.Catalog, so its callers can
 // be exercised against storage/mocks.
 func (a *Adapter) Catalog() storage.Catalog {
 	return a.catalog
@@ -290,9 +263,8 @@ func (a *Adapter) Filters() storage.FilterStore {
 	return a.filters
 }
 
-// Materializer returns the physical-table materializer — source
-// introspection and the materialization of a table from a file or a
-// derived query.
+// Materializer returns the physical-table materializer: source introspection,
+// and materializing a table from a file or a derived query.
 func (a *Adapter) Materializer() storage.TableMaterializer {
 	return a.materializer
 }

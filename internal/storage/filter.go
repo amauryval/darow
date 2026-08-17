@@ -35,16 +35,13 @@ var castableTypes = []string{
 // nothing but digits and separators follows its base name.
 var typeParameters = regexp.MustCompile(`^\(\s*\d+\s*(,\s*\d+\s*)*\)$`)
 
-// FilterCondition is a single node of a validated predicate tree for
-// GetRowsWithFilter. A node is either a leaf (Column/Operator/Value) or a
-// boolean group (Bool set to "AND"/"OR", with Conditions as its children) —
-// never both. Column must be whitelisted against Columns(tableId) and
-// Operator against a fixed whitelist before BuildFilter accepts it; Value is
-// always bound as a query parameter, never interpolated. Not negates whatever
-// the node produces, leaf or group alike.
+// FilterCondition is a single node of a validated predicate tree: either a
+// leaf (Column/Operator/Value) or a boolean group (Bool over Conditions),
+// never both. Not negates whatever the node produces.
 //
-// Value keeps no omitempty: a stored filter must round-trip `qty = 0` and
-// `flag = false` without losing its value.
+// BuildFilter whitelists Column against the table's real columns and Operator
+// against a fixed list; Value is always bound, never interpolated. It keeps no
+// omitempty, so that a stored filter round-trips `qty = 0`.
 type FilterCondition struct {
 	Column     string            `json:"column,omitempty"`
 	Operator   string            `json:"operator,omitempty"`
@@ -54,10 +51,9 @@ type FilterCondition struct {
 	Conditions []FilterCondition `json:"conditions,omitempty"`
 }
 
-// BuildFilter validates every condition (recursively, for boolean groups)
-// against columns and the operator whitelists, then builds a SQL clause
-// joined with AND at the root. It is the only path allowed into
-// GetRowsWithFilter.
+// BuildFilter validates every condition, recursively, against columns and the
+// operator whitelists, then builds a SQL clause joined with AND at the root.
+// It is the only allowed path to a client-driven WHERE.
 func BuildFilter(conditions []FilterCondition, columns []ColumnInfo) (filter string, args []any, err error) {
 	if len(conditions) == 0 {
 		return "", nil, nil
@@ -114,9 +110,8 @@ func buildInnerClause(cond FilterCondition, columns []ColumnInfo) (clause string
 		return "(" + strings.Join(clauses, " "+cond.Bool+" ") + ")", args, nil
 	}
 
-	// cond.Column being whitelisted against columns — the table's real,
-	// existing columns — is what makes this safe, not its charset:
-	// QuoteIdentifier only escapes it for interpolation.
+	// Whitelisting cond.Column against the table's real columns is what makes
+	// this safe, not its charset: QuoteIdentifier only escapes it.
 	index := slices.IndexFunc(columns, func(col ColumnInfo) bool { return col.Name == cond.Column })
 	if index == -1 {
 		return "", nil, fmt.Errorf("unknown column: %q", cond.Column)
@@ -134,10 +129,8 @@ func buildInnerClause(cond FilterCondition, columns []ColumnInfo) (clause string
 	}
 
 	// A value that cannot be read as the column's type must narrow the result
-	// to nothing, never abort the query: DuckDB raises a Conversion Error on a
-	// plain parameter comparison ("abc" against an INTEGER column) and a
-	// Binder Error on LIKE against a non-text column. TRY_CAST yields NULL
-	// instead, so the predicate is simply never satisfied.
+	// to nothing, never abort the query as a plain comparison would: TRY_CAST
+	// yields NULL, so the predicate is simply never satisfied.
 	if slices.Contains(textOperators, cond.Operator) {
 		return fmt.Sprintf("CAST(%s AS VARCHAR) %s TRY_CAST(? AS VARCHAR)", quotedCol, cond.Operator), []any{cond.Value}, nil
 	}

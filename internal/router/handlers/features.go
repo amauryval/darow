@@ -52,10 +52,9 @@ var ogcConformsTo = []string{
 	"http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
 }
 
-// itemsQueryParams is the whitelist GetItems accepts: Core's bbox/limit/offset
-// plus the filter/simplify/precision extensions and the f media-type selector.
-// Core requires any other parameter to be refused rather than ignored, so that
-// a client never believes a filter applied when it did not.
+// itemsQueryParams is the whitelist GetItems accepts. Core requires any other
+// parameter to be refused rather than ignored, so a client never believes a
+// filter applied when it did not.
 var itemsQueryParams = map[string]bool{
 	"bbox":      true,
 	"limit":     true,
@@ -308,11 +307,8 @@ func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Requ
 }
 
 // featuresPaginationParams reads offset/limit query params, resolved through
-// the features limits — a bbox is optional, so it can't be relied on alone to
-// bound how many features a request materializes. An unparseable or
-// out-of-range value is an error, never a silent fallback to the default:
-// Core requires a 400 there, and a client that mistyped a limit must not
-// receive a page it did not ask for.
+// the features limits. An unparseable or out-of-range value is an error,
+// never a silent fallback: Core requires a 400 there.
 func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request, resolved service.TableSettingsResolved) (offset, limit int64, err error) {
 	offset = 0
 	if raw := req.URL.Query().Get("offset"); raw != "" {

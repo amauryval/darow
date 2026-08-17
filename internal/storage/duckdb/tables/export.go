@@ -28,18 +28,15 @@ func copyOptions(req storage.ExportRequest) (string, error) {
 }
 
 // CopyTo writes the whole table to req.DestPath in req.Format, through
-// DuckDB's own COPY — the escaping of a CSV, the shape of a
-// FeatureCollection and the GeoParquet metadata are the engine's business,
-// never rebuilt here.
+// DuckDB's own COPY, so the engine owns the format's own escaping and shape.
 //
 // The geometry column is reprojected from the stored EPSG:3857 to
-// req.TargetCRS, and aliased to "geometry" for the GDAL driver, which reads
-// the Feature's geometry off that name and turns every other column into a
-// property. CSV carries no geometry at all (rule 7).
+// req.TargetCRS and aliased to "geometry" for the GDAL driver, which reads a
+// Feature's geometry off that name. CSV carries no geometry at all (rule 7).
 //
 // The statement writes a file and no database state; it names the table's
-// write scope only because every Exec names one, the effect being that an
-// export and a write to the same table do not overlap.
+// write scope only because every Exec does, so an export and a write to the
+// same table simply do not overlap.
 func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	options, err := copyOptions(req)
 	if err != nil {

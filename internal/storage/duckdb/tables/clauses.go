@@ -26,10 +26,9 @@ func pkeysToArgs(pkeys []string) []any {
 	return args
 }
 
-// pkeyInClause returns the "__pkey IN (?, ?, ...)" fragment repeated across
-// every pkey-scoped operation (ByPkey, Update, Delete, GeoJSONByPkey), plus
-// its bound args. An empty pkeys returns "FALSE" instead of "IN ()" — a SQL
-// syntax error in DuckDB — so every caller gets a safe no-op for free.
+// pkeyInClause returns the "__pkey IN (?, ?, ...)" fragment plus its bound
+// args. An empty pkeys returns "FALSE" instead of "IN ()", a SQL syntax
+// error in DuckDB, so every caller gets a safe no-op for free.
 func pkeyInClause(pkeys []string) (clause string, args []any) {
 	if len(pkeys) == 0 {
 		return "FALSE", nil
@@ -72,10 +71,9 @@ func featureAttrProjection(ref tableRef, attrs []string) (string, error) {
 	return attrProjection(ref, attrs)
 }
 
-// orderByClause builds an ORDER BY clause from sort, quoting each column via
-// storage.QuoteIdentifier (dynamic per-table schema, unlike the
-// catalogue's fixed allowlist), with __pkey always appended last as a
-// deterministic tiebreaker.
+// orderByClause builds an ORDER BY clause from sort, quoting each column
+// (dynamic per-table schema, unlike the catalogue's fixed allowlist), with
+// __pkey always appended last as a deterministic tiebreaker.
 func orderByClause(sort []storage.SortField) (string, error) {
 	clauses := make([]string, 0, len(sort)+1)
 	for _, f := range sort {

@@ -18,8 +18,7 @@ type RowsPage struct {
 }
 
 // convertValue converts a driver-scanned value to a native JSON type
-// according to colType: dates and timestamps become ISO 8601
-// strings rather than a reproduction of the driver's Go type.
+// according to colType: dates and timestamps become ISO 8601 strings.
 func convertValue(colType string, value any) any {
 	t, ok := value.(time.Time)
 	if !ok {
@@ -40,27 +39,32 @@ type metadataRefresher interface {
 	RefreshDerived(ctx context.Context, tableId string, touchesGeometry bool) error
 }
 
-// tableResolver is what RowService/SchemaService/GeoService need from
-// storage: resolve an already-fetched Metadata into a TableRepository once
-// per request, validating its identifiers at construction, rather than
-// passing Metadata to each individual storage call.
+// tableResolver is what the services need from storage: resolve an
+// already-fetched Metadata into a TableRepository once per request, rather
+// than passing Metadata to each individual storage call.
 type tableResolver interface {
 	Table(meta storage.Metadata) (storage.TableRepository, error)
 }
 
+// openTable resolves meta into its repository, wrapping a failure in the
+// message the client sees.
+func openTable(resolver tableResolver, meta storage.Metadata) (storage.TableRepository, error) {
+	repo, err := resolver.Table(meta)
+	if err != nil {
+		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+	}
+	return repo, nil
+}
+
 // columnTyper is what RowService needs from SchemaService: the cached
-// column-name-to-type map, so converting a row's values never
-// issues one DESCRIBE per column.
+// column-name-to-type map used to convert a row's values.
 type columnTyper interface {
 	Types(ctx context.Context, meta storage.Metadata) (map[string]string, error)
 }
 
-// RowService provides row CRUD on top of the storage layer, converting
-// values to native JSON types and excluding the geometry
-// column from reads. Every method takes the caller's
-// already-resolved storage.Metadata rather than a tableId, so it
-// never re-fetches metadata the router's tableMiddleware already read
-// once for the request.
+// RowService provides row CRUD on top of the storage layer, converting values
+// to native JSON types and excluding the geometry column from reads. Every
+// method takes the caller's already-resolved Metadata, never a tableId.
 type RowService struct {
 	storage   tableResolver
 	metadata  metadataRefresher
@@ -68,9 +72,9 @@ type RowService struct {
 	sizeGuard sizeGuard
 }
 
-// NewRowService builds a RowService backed by storage, using metadata to
-// refresh derived fields after a write, schema to resolve column types from
-// its cache, and guard to enforce duckdb.maxSizeBytes on row inserts.
+// NewRowService builds a RowService backed by storage, refreshing derived
+// fields via metadata, resolving column types via schema and enforcing
+// duckdb.maxSizeBytes through guard.
 func NewRowService(storage tableResolver, metadata metadataRefresher, schema columnTyper, guard sizeGuard) *RowService {
 	return &RowService{storage: storage, metadata: metadata, schema: schema, sizeGuard: guard}
 }
@@ -83,8 +87,8 @@ func convertRow(types map[string]string, row storage.Row) storage.Row {
 	return converted
 }
 
-// convertRows resolves meta's column types once rather than once
-// per row, then converts every row's values to native JSON types.
+// convertRows resolves meta's column types once, then converts every row's
+// values to native JSON types.
 func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, rows []storage.Row) ([]storage.Row, error) {
 	if len(rows) == 0 {
 		return nil, nil
@@ -103,12 +107,11 @@ func (s *RowService) convertRows(ctx context.Context, meta storage.Metadata, row
 }
 
 // ListRows returns a page of rows ordered by sort, or deterministically by
-// pkey when empty, with values converted to native JSON types
-// and the geometry column always excluded.
+// pkey when empty, geometry column excluded.
 func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort []storage.SortField, offset, limit int64) (*RowsPage, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 
 	rows, err := repo.Rows().Page(ctx, sort, offset, limit)
@@ -129,15 +132,13 @@ func (s *RowService) ListRows(ctx context.Context, meta storage.Metadata, sort [
 	return &RowsPage{Rows: rows, Total: total, Limit: limit, Offset: offset}, nil
 }
 
-// ListRowsPage returns up to limit rows starting at offset, without the
-// total row count ListRows computes for UI pagination — used by export's
-// page-by-page streaming, which only needs to know whether a page
-// came back short (the last page) and has no use for a running total that
-// would otherwise mean one extra COUNT(*) per page.
+// ListRowsPage returns up to limit rows starting at offset, without the total
+// count ListRows computes — export's streaming only needs to know whether a
+// page came back short, and would pay one COUNT(*) per page for it.
 func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, offset, limit int64) ([]storage.Row, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 
 	rows, err := repo.Rows().Page(ctx, nil, offset, limit)
@@ -147,13 +148,12 @@ func (s *RowService) ListRowsPage(ctx context.Context, meta storage.Metadata, of
 	return s.convertRows(ctx, meta, rows)
 }
 
-// GetRowsByPkey fetches full rows for the given primary keys (order not
-// guaranteed to match pkeys), with values converted to native JSON types
-// and the geometry column excluded.
+// GetRowsByPkey fetches full rows for the given primary keys, in no
+// guaranteed order and with the geometry column excluded.
 func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, pkeys []string) ([]storage.Row, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	rows, err := repo.Rows().ByPkey(ctx, pkeys)
 	if err != nil {
@@ -164,9 +164,9 @@ func (s *RowService) GetRowsByPkey(ctx context.Context, meta storage.Metadata, p
 
 // GetRow fetches a single row by pkey, or nil if it does not exist.
 func (s *RowService) GetRow(ctx context.Context, meta storage.Metadata, pkey string) (*storage.Row, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	rows, err := repo.Rows().ByPkey(ctx, []string{pkey})
 	if err != nil {
@@ -183,13 +183,12 @@ func (s *RowService) GetRow(ctx context.Context, meta storage.Metadata, pkey str
 	return &converted[0], nil
 }
 
-// ListRowsWithFilter returns rows matching filter, produced exclusively by
-// storage.BuildFilter, with values converted to native JSON
-// types.
+// ListRowsWithFilter returns rows matching filter, which storage.BuildFilter
+// is the only allowed producer of.
 func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metadata, filter string, args []any, limit int) ([]storage.Row, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	rows, err := repo.Rows().Filtered(ctx, storage.RowQuery{Filter: filter, Args: args}, limit)
 	if err != nil {
@@ -198,14 +197,13 @@ func (s *RowService) ListRowsWithFilter(ctx context.Context, meta storage.Metada
 	return s.convertRows(ctx, meta, rows)
 }
 
-// GetDistinctValues returns a page of up to limit of column's distinct
-// values, skipping offset matches first, converted to native
-// JSON types the same way row reads are. A non-empty search narrows the
-// page to the values containing it, case-insensitively.
+// GetDistinctValues returns a page of up to limit of column's distinct values,
+// skipping offset matches first. A non-empty search narrows the page to the
+// values containing it, case-insensitively.
 func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadata, column, search string, offset, limit int) ([]any, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	values, err := repo.Rows().Distinct(ctx, column, search, offset, limit)
 	if err != nil {
@@ -224,9 +222,9 @@ func (s *RowService) GetDistinctValues(ctx context.Context, meta storage.Metadat
 	return converted, nil
 }
 
-// RowWriteResult reports what a row write produced: the row's primary key
-// and, when the write set the geometry, the geometry the server actually
-// stored, as GeoJSON — what a map redraws, instead of the draft it sent.
+// RowWriteResult reports what a row write produced: the row's primary key and,
+// when the write set the geometry, the GeoJSON the server actually stored —
+// what a map redraws, instead of the draft it sent.
 type RowWriteResult struct {
 	Pkey     string
 	Geometry string
@@ -256,10 +254,9 @@ func geometryValue(value any, crs string) (storage.GeometryValue, error) {
 	}
 }
 
-// prepareWrite turns the raw values of a written row into what the
-// repository expects, replacing the geometry column's value by a typed
-// storage.GeometryValue carrying its encoding and its CRS. The caller's map
-// is left untouched.
+// prepareWrite turns a written row's raw values into what the repository
+// expects, replacing the geometry column's value by a typed GeometryValue.
+// The caller's map is left untouched.
 func prepareWrite(meta storage.Metadata, values map[string]any, crs string) (map[string]any, bool, error) {
 	raw, touchesGeometry := values[meta.GeometryColumn]
 	if !touchesGeometry || meta.GeometryColumn == "" {
@@ -279,14 +276,12 @@ func prepareWrite(meta storage.Metadata, values map[string]any, crs string) (map
 	return prepared, true, nil
 }
 
-// storedGeometry reads back the geometry a write just stored, as GeoJSON.
-// This is a named exception to never returning the geometry column: the
-// client that drew it needs what the server kept, reprojected, to redraw
-// it.
+// storedGeometry reads back the geometry a write just stored, as GeoJSON — a
+// named exception to never returning the geometry column.
 func (s *RowService) storedGeometry(ctx context.Context, meta storage.Metadata, pkey string) (string, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return "", NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return "", err
 	}
 	geo, ok := repo.Geo()
 	if !ok {
@@ -300,13 +295,9 @@ func (s *RowService) storedGeometry(ctx context.Context, meta storage.Metadata, 
 	return geometries[pkey], nil
 }
 
-// UpdateRow updates every column in updates for the given pkeys in a
-// single storage call, so a multi-column update is atomic: either every
-// column changes or none does. crs names the CRS a written geometry is
-// expressed in. Writing the geometry column triggers RefreshDerived, which
-// recomputes bbox and bumps UpdatedAt — the signal that invalidates
-// GeoService's tile cache and MetadataService's cache. Updating only scalar
-// fields triggers neither.
+// UpdateRow updates every column in updates for the given pkeys in a single,
+// atomic storage call. Writing the geometry column recomputes bbox and bumps
+// UpdatedAt, which invalidates the caches; a scalar update triggers neither.
 func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys []string, updates map[string]any, crs string) (RowWriteResult, error) {
 	prepared, touchesGeometry, err := prepareWrite(meta, updates, crs)
 	if err != nil {
@@ -316,9 +307,9 @@ func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys
 		return RowWriteResult{}, err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return RowWriteResult{}, err
 	}
 	if err := repo.Rows().Update(ctx, pkeys, prepared); err != nil {
 		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
@@ -341,20 +332,16 @@ func (s *RowService) UpdateRow(ctx context.Context, meta storage.Metadata, pkeys
 	return RowWriteResult{Pkey: pkeys[0], Geometry: geometry}, nil
 }
 
-// RowUpdate is one row's share of a multi-row write, as the caller states
-// it: the row, and the raw values it receives.
+// RowUpdate is one row's share of a multi-row write: the row, and the raw
+// values it receives.
 type RowUpdate struct {
 	Pkey   string
 	Values map[string]any
 }
 
 // UpdateRows applies its own values to each row in a single transaction and
-// refreshes derived metadata once. This is what a topological edit writes
-// through: moving a shared boundary changes the edited row and every
-// neighbour carrying the same vertex, and half of that landing is a
-// corrupted boundary, not a partial success. crs names the CRS the written
-// geometries are expressed in; the stored geometry of every row that set
-// one comes back in the result.
+// refreshes derived metadata once — a topological edit moves a boundary
+// shared by several rows, and half of it landing is a corrupted boundary.
 func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, updates []RowUpdate, crs string) ([]RowWriteResult, error) {
 	if len(updates) == 0 {
 		return nil, nil
@@ -376,9 +363,9 @@ func (s *RowService) UpdateRows(ctx context.Context, meta storage.Metadata, upda
 		return nil, err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	if err := repo.Rows().UpdateMany(ctx, prepared); err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to update rows of table %q", meta.TableId), err)
@@ -425,9 +412,9 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 		return RowWriteResult{}, err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return RowWriteResult{}, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return RowWriteResult{}, err
 	}
 	pkey, err := repo.Rows().Insert(ctx, prepared)
 	if err != nil {
@@ -448,9 +435,7 @@ func (s *RowService) InsertRow(ctx context.Context, meta storage.Metadata, value
 }
 
 // BulkInsertRows inserts every row in a single transaction and refreshes
-// derived metadata, recomputing bbox only if at least
-// one row sets the geometry column. crs names the CRS the written
-// geometries are expressed in.
+// derived metadata, recomputing bbox only if a row sets the geometry column.
 func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, rows []map[string]any, crs string) ([]string, error) {
 	if err := s.sizeGuard.Check(ctx); err != nil {
 		return nil, err
@@ -470,9 +455,9 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, 
 		return nil, err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	pkeys, err := repo.Rows().InsertMany(ctx, prepared)
 	if err != nil {
@@ -485,13 +470,13 @@ func (s *RowService) BulkInsertRows(ctx context.Context, meta storage.Metadata, 
 	return pkeys, nil
 }
 
-// RemoveRows deletes the given rows and refreshes derived metadata.
-// A removed geo row can always have sat on the bbox's boundary,
-// so bbox is recomputed whenever the table is geo.
+// RemoveRows deletes the given rows and refreshes derived metadata. A removed
+// row may have sat on the bbox's boundary, so a geo table always recomputes
+// it.
 func (s *RowService) RemoveRows(ctx context.Context, meta storage.Metadata, pkeys []string) error {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return err
 	}
 	if err := repo.Rows().Delete(ctx, pkeys); err != nil {
 		return NewDisplayError(fmt.Sprintf("unable to delete rows of table %q", meta.TableId), err)

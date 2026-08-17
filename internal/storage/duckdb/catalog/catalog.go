@@ -1,6 +1,6 @@
-// Package catalog implements the DuckDB-backed catalogue: the metadata
-// table describing every logical table, isolated from the data-table
-// access layer in duckdb/tables.
+// Package catalog implements the DuckDB-backed catalogue: the metadata table
+// describing every logical table, isolated from the data-table access layer in
+// duckdb/tables.
 package catalog
 
 import (
@@ -13,45 +13,33 @@ import (
 )
 
 // Querier is the subset of *duckdb.Adapter the catalogue reads and writes
-// through. Routing writes through it (rather than a private *sql.DB)
-// keeps every write serialized behind the lock of the scope it names.
+// through, so that every write stays serialized behind its scope's lock.
 type Querier interface {
 	Query(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRow(ctx context.Context, query string, args ...any) *sql.Row
 	Exec(ctx context.Context, scope storage.WriteScope, query string, args ...any) (sql.Result, error)
 }
 
-// TxRunner runs fn inside a single transaction. The DuckDB adapter's
-// implementation holds scope for fn's whole duration, so a
-// cascade never interleaves with another write to the table it removes.
-// Shared verbatim with duckdb/tables (both need only *sql.Tx's Exec side),
-// so *duckdb.Adapter's single WithTx method satisfies both.
+// TxRunner runs fn inside a single transaction, holding scope for its whole
+// duration so a cascade never interleaves with another write to the table it
+// removes.
 type TxRunner interface {
 	WithTx(ctx context.Context, scope storage.WriteScope, fn func(tx *sql.Tx) error) error
 }
 
-// ExistingTables lists the tables that physically exist in the database,
-// as duckdb/tables reads them from DuckDB's own catalogue. Declared
-// locally, narrowed to the one call this package needs, rather than
-// importing duckdb/tables — which itself depends on this package's
-// PhysicalNames for /derive validation, so the dependency runs the other
-// way. A function type, not an interface: there is a single call, and a
-// caller with nothing but a connection has nothing to name a type after.
+// ExistingTables lists the tables that physically exist in the database. It is
+// declared locally, as a function type, because duckdb/tables already depends
+// on this package: the dependency runs the other way.
 type ExistingTables func(ctx context.Context) (map[string]bool, error)
 
 // GeometryInfo reports a physical table's actual isGeo/geometryColumn, read
-// from DuckDB's own catalogue as duckdb/tables.GeometryInfo does. Declared
-// locally for the same reason ExistingTables is: this package never imports
-// duckdb/tables. Repository.GetMetadata/List call it to derive the pair
-// rather than trust metadata's own isGeo/geometryColumn columns, which can
-// drift from what the physical table actually has (TODO-10).
+// from DuckDB's own catalogue. The metadata table's own columns are never
+// trusted for it: they can drift from the physical table (TODO-10).
 type GeometryInfo func(ctx context.Context, physicalName string) (isGeo bool, geometryColumn string, err error)
 
-// TxGeometryInfo answers the same question as GeometryInfo from inside the
-// transaction creating the table: until that transaction commits, the
-// pooled connection GeometryInfo reads through does not see it, and a
-// creation that derived its geometry from there would refresh its metadata
-// as if the table carried none — leaving it without a bbox.
+// TxGeometryInfo answers GeometryInfo's question from inside the transaction
+// creating the table, which a pooled connection cannot see until it commits —
+// leaving the new table without a bbox.
 type TxGeometryInfo func(ctx context.Context, tx *sql.Tx, physicalName string) (isGeo bool, geometryColumn string, err error)
 
 // Repository owns every read and write against the metadata table.
@@ -61,46 +49,35 @@ type Repository struct {
 	geometryInfo GeometryInfo
 }
 
-// NewRepository creates a Repository backed by conn, checking a metadata
-// row's physical table against existing and deriving its geometry info
-// through geometryInfo.
+// NewRepository creates a Repository backed by conn, checking a row's physical
+// table against existing and deriving its geometry through geometryInfo.
 func NewRepository(conn Querier, existing ExistingTables, geometryInfo GeometryInfo) *Repository {
 	return &Repository{conn: conn, existing: existing, geometryInfo: geometryInfo}
 }
 
-// Dropper drops a physical table within the *sql.Tx a delete cascade runs
-// in, as duckdb/tables.DropTable does. Declared locally, narrowed to the
-// one call Remove needs, rather than importing duckdb/tables — which itself
-// depends on this package's PhysicalNames for /derive validation, so the
-// dependency runs the other way. A function type, not an interface, so the
-// adapter passes the drop itself rather than something wrapping it.
+// Dropper drops a physical table within the *sql.Tx a delete cascade runs in.
+// It is declared locally for the same reason ExistingTables is.
 type Dropper func(ctx context.Context, tx *sql.Tx, physicalName string) error
 
-// FileCreator materializes physicalName from a source file within the
-// *sql.Tx a table's creation runs in, as duckdb/tables.NewTxMaterializer's
-// CreateFromFile does. Declared locally for the same reason Dropper is: this
-// package never imports duckdb/tables.
+// FileCreator materializes physicalName from a source file within the *sql.Tx
+// a table's creation runs in, declared locally like Dropper.
 type FileCreator func(ctx context.Context, tx *sql.Tx, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error)
 
 // QueryCreator materializes physicalName from a derived query within the
-// *sql.Tx a table's creation runs in, as duckdb/tables.NewTxMaterializer's
-// CreateFromQuery does.
+// *sql.Tx a table's creation runs in.
 type QueryCreator func(ctx context.Context, tx *sql.Tx, physicalName, sourceQuery string, args ...any) (geometryColumn string, isGeo bool, err error)
 
-// Attachment is implemented by any repository catalogue-attached to a
-// logical table's tableId (a settings or stored-filters repository), so the
-// create and delete transactions reach it without knowing its shape. Both
+// Attachment is implemented by any repository attached to a logical table, so
+// the create and delete transactions reach it without knowing its shape. Both
 // halves run within the transaction they belong to.
 type Attachment interface {
 	DeleteAttached(ctx context.Context, tx *sql.Tx, tableId string) error
 	CreateAttached(ctx context.Context, tx *sql.Tx, tableId string) error
 }
 
-// Catalog is the catalogue aggregate: the metadata repository plus the
-// registry of any repository rattached to tableId. Register attaches a
-// repository to the cascade once, at its construction — deleting a table
-// then never risks forgetting one of its dependents. It is the
-// storage.Catalog every service reads and writes the catalogue through.
+// Catalog is the catalogue aggregate — the metadata repository plus the
+// registry of every attached repository — and the storage.Catalog the services
+// read and write through. Register attaches one, once, at its construction.
 type Catalog struct {
 	*Repository
 	tx             TxRunner
@@ -111,11 +88,9 @@ type Catalog struct {
 	children       []Attachment
 }
 
-// New builds a Catalog whose metadata repository reads/writes through conn,
-// whose cascading deletes and transactional creates run through tx, and
-// whose physical-table drop, materialization, listing and geometry
-// introspection are obtained from dropper, fileCreator, queryCreator,
-// existing and geometryInfo rather than formatted here.
+// New builds a Catalog reading and writing through conn, running its cascading
+// deletes and transactional creates through tx, and reaching every
+// physical-table operation through the functions it is given.
 func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, geometryInfo GeometryInfo, geometryInfoTx TxGeometryInfo, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	return &Catalog{
 		Repository:     NewRepository(conn, existing, geometryInfo),
@@ -127,17 +102,16 @@ func New(conn Querier, tx TxRunner, dropper Dropper, existing ExistingTables, ge
 	}
 }
 
-// Register rattaches a to the cascade: Remove calls its DeleteAttached
-// before removing the metadata row itself, and CreateFromFile/CreateFromQuery
-// call its CreateAttached once the new table is fully materialized.
+// Register attaches a to the cascade: Remove calls its DeleteAttached before
+// removing the metadata row, and a create calls its CreateAttached once the
+// new table is materialized.
 func (c *Catalog) Register(a Attachment) {
 	c.children = append(c.children, a)
 }
 
 // Remove drops tableId's physical table, cascades to every registered
-// attachment, and deletes its metadata row, all inside one transaction — a
-// partial deletion (physical table gone but metadata row surviving, or
-// only some dependents deleted) can never be observed.
+// attachment and deletes its metadata row, all in one transaction: a partial
+// deletion can never be observed.
 func (c *Catalog) Remove(ctx context.Context, tableId string) error {
 	meta, err := c.GetMetadata(ctx, tableId)
 	if err != nil {
@@ -158,12 +132,9 @@ func (c *Catalog) Remove(ctx context.Context, tableId string) error {
 	})
 }
 
-// createTable registers tableName, materializes it via materialize, refreshes
-// its derived metadata and cascades to every registered attachment, all
-// inside one transaction — a failure at any step leaves neither a metadata
-// row nor a physical table behind. Shared by CreateFromFile and
-// CreateFromQuery, which differ only in how they materialize the physical
-// table and patch its resolved metadata.
+// createTable registers tableName, materializes it, refreshes its derived
+// metadata and cascades to every attachment, all in one transaction: a failure
+// at any step leaves neither a metadata row nor a physical table behind.
 func (c *Catalog) createTable(
 	ctx context.Context, tableName string,
 	materialize func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error,
@@ -203,24 +174,19 @@ func (c *Catalog) createTable(
 }
 
 // CreateFromQuery registers tableName and materializes it from sourceQuery,
-// both inside one transaction: a failure at any step — the metadata insert,
-// the materialization, or the derived-metadata refresh — leaves nothing
-// behind, rolled back together.
+// both inside one transaction.
 func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {
 	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
 		// isGeo/geometryColumn are read back off the physical table by
-		// GetMetadata once it exists (below, via RefreshDerivedMetadata),
-		// not persisted here — through TxGeometryInfo, the transaction being
-		// the only place the table is visible before it commits.
+		// RefreshDerivedMetadata below, never persisted here.
 		_, _, err := c.queryCreator(ctx, tx, physicalName, sourceQuery, args...)
 		return err
 	})
 }
 
 // CreateFromFile registers tableName and materializes it from a source file,
-// both inside one transaction, exactly as CreateFromQuery does. sourceName
-// and layer are recorded as the table's source (§3.2) regardless of whether
-// the source carries geometry.
+// both inside one transaction. sourceName and layer are recorded as the
+// table's source whether or not it carries geometry.
 func (c *Catalog) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {
 	return c.createTable(ctx, tableName, func(ctx context.Context, tx *sql.Tx, repo *Repository, tableId, physicalName string) error {
 		_, isGeo, srid, err := c.fileCreator(ctx, tx, physicalName, sourcePath, layer, sridOverride)

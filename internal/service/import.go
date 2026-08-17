@@ -9,9 +9,8 @@ import (
 	"darow/internal/storage"
 )
 
-// metadataImporter is what ImportService needs from MetadataService:
-// register and transactionally materialize a new table from a source file,
-// plus LoadedSourceNames/GetMetadata/RemoveTable to support SourceService.
+// metadataImporter is what ImportService needs from MetadataService to
+// materialize a table from a source file and to support SourceService.
 type metadataImporter interface {
 	CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (tableId string, err error)
 	LoadedSourceNames(ctx context.Context) (map[string]string, error)
@@ -27,18 +26,17 @@ type fileMaterializer interface {
 	SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error)
 }
 
-// ImportService registers new tables from source files found in workDir
-// (SourceService's job to locate and validate the path). It is
-// SourceService's tableImporter dependency (see source.go).
+// ImportService registers new tables from source files found in workDir,
+// whose path SourceService locates and validates.
 type ImportService struct {
 	metadata  metadataImporter
 	storage   fileMaterializer
 	sizeGuard sizeGuard
 }
 
-// NewImportService builds an ImportService registering new tables via
-// metadata, materializing them via storage, and enforcing
-// duckdb.maxSizeBytes on every import through guard.
+// NewImportService builds an ImportService registering tables via metadata,
+// materializing them via storage and enforcing duckdb.maxSizeBytes through
+// guard.
 func NewImportService(metadata metadataImporter, storage fileMaterializer, guard sizeGuard) *ImportService {
 	return &ImportService{metadata: metadata, storage: storage, sizeGuard: guard}
 }
@@ -59,23 +57,16 @@ func (s *ImportService) ListLayers(ctx context.Context, path string) ([]string, 
 	return layers, nil
 }
 
-// ImportFromFile registers a new table from a source file and materializes
-// it, both inside a single transaction: it resolves the geometry column and
-// SRID and persists them alongside the source it was loaded from. layer
-// selects one layer of a multi-layer source (e.g. GeoPackage); pass ""
-// otherwise. srid pins the source CRS explicitly; pass 0 to detect it from
-// the file.
+// ImportFromFile registers and materializes a table from a source file in a
+// single transaction, persisting its geometry column and SRID. An empty layer
+// means a single-layer source, a zero srid means detect it from the file.
 func (s *ImportService) ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error) {
 	if err := s.sizeGuard.Check(ctx); err != nil {
 		return "", err
 	}
 
-	// sourceName is independent of tableName, which PATCH /tables/{id} may
-	// rename freely — LoadedSourceNames keys on it instead, so renaming a
-	// table doesn't detach it from its source. name is the bare file name
-	// for a single-layer source, but the composite "file::layer" tableName
-	// for a multi-layer one — sourceName strips the layer suffix back off
-	// in that case.
+	// sourceName is independent of the renamable tableName, so that
+	// LoadedSourceNames survives a rename.
 	sourceName := name
 	if layer != "" {
 		sourceName = strings.TrimSuffix(name, layerSeparator+layer)
@@ -104,10 +95,8 @@ func (s *ImportService) SourceHasGeometry(ctx context.Context, path, layer strin
 	return s.storage.SourceHasGeometry(ctx, path, layer)
 }
 
-// RemoveTable deletes tableId's metadata and physical table, used by
-// SourceService.Delete to cascade a source file's removal to any table(s)
-// loaded from it. SourceService only ever has the bare tableId at hand, so
-// this resolves the Metadata RemoveTable's removed observer needs.
+// RemoveTable deletes tableId's metadata and physical table, resolving the
+// Metadata from the bare tableId SourceService.Delete has at hand.
 func (s *ImportService) RemoveTable(ctx context.Context, tableId string) error {
 	meta, err := s.metadata.GetMetadata(ctx, tableId)
 	if err != nil {

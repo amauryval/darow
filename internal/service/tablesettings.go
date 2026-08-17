@@ -10,10 +10,8 @@ import (
 )
 
 // TableSettingsResolved is the effective value of every per-table-overridable
-// field, for the table Resolve was called with: the
-// two-level chain (global row, table override) already collapsed into what a
-// handler applies. DefaultRowLimit and DefaultFeaturesLimit are a
-// settings.Limit, the shape a handler calls Resolve/Resolve64 on.
+// field: the global row and the table's override already collapsed into what a
+// handler applies.
 type TableSettingsResolved struct {
 	DefaultRowLimit      settings.Limit
 	DefaultFeaturesLimit settings.Limit
@@ -24,10 +22,8 @@ type TableSettingsResolved struct {
 }
 
 // TableSettingsService is the single owner of every table's settings
-// overrides: every handler reads the resolved value of a table through
-// Resolve rather than fetching its own, exactly as SettingsService is for
-// the global row. Overrides are held in memory (only the tables that carry
-// one) and refreshed by Load at startup and by every write.
+// overrides, which handlers read through Resolve. They are held in memory,
+// only for the tables carrying one, and refreshed by Load and by every write.
 type TableSettingsService struct {
 	store       storage.TableSettingsStore
 	settingsSvc *SettingsService
@@ -43,9 +39,7 @@ func NewTableSettingsService(store storage.TableSettingsStore, settingsSvc *Sett
 }
 
 // Load reads every table's overrides once and populates the in-memory map
-// Resolve/GetOverride serve. Called once by core.Setup before any request is
-// served — a failure here is a startup failure, exactly as SettingsService's
-// Load is.
+// Resolve serves, before any request is. A failure here is a startup failure.
 func (s *TableSettingsService) Load(ctx context.Context) error {
 	overridden, err := s.store.ListOverriddenTables(ctx)
 	if err != nil {
@@ -75,8 +69,7 @@ func (s *TableSettingsService) GetOverride(tableId string) storage.TableSettings
 }
 
 // Resolve collapses tableId's overrides onto the current global settings,
-// field by field, through internal/settings' Resolve* functions — the one
-// place that chain is written.
+// field by field — the one place that chain is written.
 func (s *TableSettingsService) Resolve(tableId string) TableSettingsResolved {
 	global := s.settingsSvc.Current()
 	override := s.GetOverride(tableId)
@@ -91,11 +84,8 @@ func (s *TableSettingsService) Resolve(tableId string) TableSettingsResolved {
 	}
 }
 
-// resolvedSettings turns override into the storage.Settings shape
-// internal/settings.Validate checks bounds against, so a per-table override
-// is validated against the very same bounds the global value respects — an
-// unset override leaving the global value in place, so what is checked is
-// always the number the table would actually serve.
+// resolvedSettings turns override into the shape settings.Validate checks, so
+// what is validated is always the number the table would actually serve.
 func (s *TableSettingsService) resolvedSettings(global storage.Settings, override storage.TableSettings) storage.Settings {
 	resolved := global
 	if override.DefaultRowLimit != nil {
@@ -161,9 +151,8 @@ func (s *TableSettingsService) ListOverridden(ctx context.Context) ([]storage.Ta
 	return overridden, nil
 }
 
-// InvalidateOverride drops tableId's in-memory entry, without touching the
-// store — called when tableId's table itself is removed, whose cascade
-// delete has already dropped the row underneath.
+// InvalidateOverride drops tableId's in-memory entry when its table is
+// removed: the cascade delete has already dropped the row underneath.
 func (s *TableSettingsService) InvalidateOverride(tableId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,10 +171,8 @@ func (s *TableSettingsService) setOverride(tableId string, o storage.TableSettin
 	}
 }
 
-// applyTableSettingsPatch applies patch's non-nil fields onto current,
-// following the TableSettingsPatch tri-state, without touching the store —
-// the shape UpdateOverride validates before persisting anything, mirroring
-// mergeSettings for the global row.
+// applyTableSettingsPatch applies patch's non-nil fields onto current, without
+// touching the store — what UpdateOverride validates before persisting.
 func applyTableSettingsPatch(current storage.TableSettings, patch storage.TableSettingsPatch) storage.TableSettings {
 	merged := current
 	if patch.DefaultRowLimit != nil {

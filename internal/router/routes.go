@@ -21,10 +21,9 @@ import (
 // goauth.Auth.RegisterRoutes, so this package never imports the module.
 type MountAuth func(chi.Router)
 
-// Router wires the HTTP layer to the service layer. Each family of
-// endpoints (tables, rows, geo, sources, export, ops, settings) is served
-// by its own handler struct, holding only the service ports it actually
-// needs — never the concrete service types.
+// Router wires the HTTP layer to the service layer. Each family of endpoints
+// is served by its own handler struct, holding only the service ports it
+// actually needs.
 type Router struct {
 	tables         *handlers.TablesHandler
 	rows           *handlers.RowsHandler
@@ -43,17 +42,15 @@ type Router struct {
 	uiAssets       fs.FS
 }
 
-// NewRouter builds a Router serving every service in svcs — every row/list
-// limit and geometry bound is read live off svcs.Settings.Current() by the
-// handlers, so an update through PATCH /settings takes effect on the next
-// request; the body cap and the request timeout are fixed at Setup instead,
-// from settingsCfg (TODO-17 — a memory/availability guard, restart-only).
-// uiAssets is the admin UI's built static files, served under /ui. ready
-// backs /readyz — it should ping the underlying storage connection.
-// trustedProxies (§2.1) decides whose Forwarded/X-Forwarded-* headers
-// FeaturesHandler's OGC links may trust. g.AdminScope() guards every
-// state-changing route; reads stay public (§6.7). mountAuth publishes the
-// authentication module's own read routes, above every write group.
+// NewRouter builds a Router serving every service in svcs. Every row/list
+// limit and geometry bound is read live off svcs.Settings.Current(), so a
+// PATCH /settings takes effect on the next request; the body cap and request
+// timeout are fixed at Setup instead, from settingsCfg (TODO-17).
+//
+// uiAssets is the admin UI's built static files, served under /ui; ready
+// backs /readyz; trustedProxies decides whose Forwarded headers the OGC
+// links may trust; g.AdminScope() guards every state-changing route, reads
+// staying public; mountAuth publishes the auth module's own read routes.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
 	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, trustedProxies []string,
@@ -103,34 +100,26 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
 	r.Route("/api/v1", func(v1 chi.Router) {
-		// An upload is a whole source file, not a JSON payload, and is
-		// registered outside the Group below rather than inside it: stacking
-		// body caps applies the *smaller* of the two, never the more
-		// specific, so a per-route cap nested under the global one is no
-		// override at all. The same registration keeps requestTimeout off it
-		// — a multi-gigabyte body takes longer to read than any normal
-		// request's budget. The extra 64KiB covers multipart framing
-		// (boundary, headers) around the file part, so a file right at the
-		// limit isn't cut off before SourceService.Upload's own oversize
-		// check runs.
+		// An upload is registered outside the Group below, escaping both the
+		// global body cap (stacking always applies the smaller of two caps,
+		// never the more specific) and requestTimeout, since a large body
+		// takes longer to read than any normal budget. The extra 64KiB
+		// covers multipart framing around the file part.
 		v1.Group(func(upload chi.Router) {
 			upload.Use(maxBodyBytes(func() int64 { return rt.sources.MaxUploadBytes() + 64*1024 }))
 			upload.Use(rt.guards.AdminScope())
 			upload.Post("/sources/upload", rt.sources.UploadSource)
 		})
 
-		// requestTimeout and the global body cap are scoped to this Group
-		// rather than applied at the very top of Setup, so they never wrap
-		// exportTable or the upload above — both are registered outside it
-		// precisely to escape them.
+		// requestTimeout and the global body cap are scoped to this Group,
+		// not applied at the top of Setup, so exportTable and the upload
+		// above — registered outside it — escape them.
 		v1.Group(func(v1 chi.Router) {
 			v1.Use(requestTimeout(func() int { return rt.settingsCfg.RequestTimeoutSec }))
 			v1.Use(maxBodyBytes(func() int64 { return rt.settingsCfg.MaxBodyBytes }))
 
 			// The authentication module's own routes, above every write
-			// group so both answer an anonymous caller: one tells the
-			// browser which provider to sign in against, the other what
-			// its token is worth.
+			// group so both answer an anonymous caller.
 			rt.mountAuth(v1)
 
 			v1.Route("/sources", func(sub chi.Router) {
@@ -254,10 +243,9 @@ func (rt *Router) Setup() http.Handler {
 			})
 		})
 
-		// ExportTable streams a table in bounded batches and can
-		// legitimately run past any normal request's time budget on a large
-		// table — requestTimeout would otherwise cancel it mid-stream,
-		// truncating an already-200'd response.
+		// ExportTable streams a table in bounded batches and can legitimately
+		// run past any normal budget: requestTimeout would otherwise cancel it
+		// mid-stream, truncating an already-200'd response.
 		v1.Get("/tables/{tableId}/export", rt.export.ExportTable)
 	})
 

@@ -8,10 +8,8 @@ import (
 )
 
 // scanInto is the single row-scanning loop shared by scanRows and
-// scanFeatureRows: it reads every row of rows into a slice of raw values
-// and lets assign shape the result, since a storage.Row and a
-// storage.GeoFeature differ only in which reserved columns they pull out
-// of Values.
+// scanFeatureRows, reading every row into raw values and letting assign shape
+// the result.
 func scanInto[T any](rows *sql.Rows, assign func(cols []string, values []any) T) ([]T, error) {
 	cols, err := rows.Columns()
 	if err != nil {

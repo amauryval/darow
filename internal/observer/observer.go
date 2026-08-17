@@ -3,15 +3,11 @@
 // has been committed, and it touches neither the database nor the disk.
 package observer
 
-// Observer fans an observed item out to the callbacks registered on it.
-// Generic over the observed type, so it carries no domain vocabulary — one
-// Observer[storage.Metadata] reports a table's removal, one
-// Observer[storage.Settings] reports a settings update, each wired
-// independently by core.NewServices.
+// Observer fans an observed item out to the callbacks registered on it,
+// generic over the observed type so that it carries no domain vocabulary.
 //
-// Registration is not safe for concurrent use, and deliberately so: every
-// callback is registered while the services are wired, none once requests are
-// in flight, exactly as duckdb/catalog.Catalog.Register already works.
+// Registration is deliberately not safe for concurrent use: every callback is
+// registered while the services are wired, none once requests are in flight.
 type Observer[T any] struct {
 	listeners []func(T)
 }
@@ -21,12 +17,8 @@ func (o *Observer[T]) On(fn func(T)) {
 	o.listeners = append(o.listeners, fn)
 }
 
-// Notify calls every registered callback with item.
-//
-// It returns nothing. The event it reports is already committed by the time
-// this runs, so a callback has nothing left to veto, and reporting a failed
-// cache eviction as the operation's error would answer 5xx for a write that
-// in fact succeeded.
+// Notify calls every registered callback with item. It returns nothing: the
+// event is already committed, so a callback has nothing left to veto.
 func (o *Observer[T]) Notify(item T) {
 	for _, fn := range o.listeners {
 		fn(item)

@@ -1,6 +1,6 @@
-// Package main starts the Darow server: it loads configuration, bootstraps
-// the storage and service layers via core.Bootstrap, wires the router, and
-// listens, shutting down gracefully on SIGINT/SIGTERM.
+// Package main starts the Darow server: it loads configuration, bootstraps the
+// storage and service layers via core.Setup, wires the router and listens,
+// shutting down gracefully on SIGINT/SIGTERM.
 //
 // @title Darow
 // @description Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources, tables, rows, tuiles MVT, dérivation.
@@ -60,11 +60,9 @@ func main() {
 		log.Fatalf("web ui assets: %v", err)
 	}
 
-	// New contacts the issuer for its key set here, so a startup failure is
-	// a provider problem (an unreachable or mistyped issuer), never a
-	// caller's (§2.7). cfg.Auth.Enabled false is demo mode (goauth's own
-	// Settings.Demo, inverted): it skips that discovery entirely and is
-	// refused outright unless this binary was built with -tags authdemo.
+	// New contacts the issuer for its key set here, so a failure is a provider
+	// problem, never a caller's. A disabled cfg.Auth is demo mode: it skips
+	// discovery, and needs the authdemo build tag.
 	authApp, err := goauth.New(
 		context.Background(),
 		goauth.NewSettings(!cfg.Auth.Enabled, cfg.Auth.Provider, cfg.Auth.Issuer, cfg.Auth.Audience, cfg.Auth.AdminRole, cfg.Auth.GuestRole),

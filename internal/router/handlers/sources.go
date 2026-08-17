@@ -162,7 +162,7 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: false, Source: uploaded})
 		return
 	}
-		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, Source: uploaded})
+	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, Source: uploaded})
 }
 
 // LoadSource handles POST /sources/{name}/load. name is validated against

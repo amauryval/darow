@@ -1,7 +1,6 @@
-// Package tables implements DuckDB access to the physical tables
-// (t_<uuid>) the catalogue references: their resolution from a Metadata,
-// their rows, their geometry, and their creation/drop — as opposed to the
-// catalogue itself (duckdb/catalog), which holds the logical tables.
+// Package tables implements DuckDB access to the physical tables (t_<uuid>)
+// the catalogue references: their resolution from a Metadata, their rows,
+// their geometry and their creation/drop.
 package tables
 
 import (
@@ -22,11 +21,9 @@ type table struct {
 
 var _ storage.TableRepository = (*table)(nil)
 
-// Open resolves meta into a storage.TableRepository backed by conn
-// (reads and single-statement writes), tx (multi-row writes) and names (a
-// column transform's expression allowlist, the same dependency
-// NewMaterializer takes) — the single validation point every operation on
-// the table then relies on.
+// Open resolves meta into a storage.TableRepository backed by conn, tx and
+// names — the single validation point every operation on the table then
+// relies on.
 func Open(conn Querier, tx TxRunner, names physicalNamesReader, meta storage.Metadata) (storage.TableRepository, error) {
 	ref, err := resolve(meta)
 	if err != nil {

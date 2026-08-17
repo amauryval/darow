@@ -8,8 +8,7 @@ import (
 
 // writeLocks hands out one mutex per storage.WriteScope, so writes to
 // different tables run in parallel while writes to the same one stay
-// serialized. A scope's entry is dropped once nobody holds or awaits it,
-// which keeps the registry the size of the writes actually in flight.
+// serialized. A scope's entry is dropped once nobody awaits it.
 type writeLocks struct {
 	mu      sync.Mutex
 	entries map[storage.WriteScope]*writeLockEntry

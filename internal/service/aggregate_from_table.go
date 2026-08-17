@@ -8,23 +8,14 @@ import (
 	"darow/internal/storage"
 )
 
-// AggregateColumn is one column a guided aggregation computes: a free SQL
-// aggregate expression (`COUNT(*)`, `SUM(height)`, `ST_Union(geom)`) under a
-// caller-chosen alias — the same escape hatch ComputedColumn is, and for the
-// same reason: no operand/operator form reaches an arbitrary aggregate
-// function.
-type AggregateColumn struct {
-	Alias      string
-	Expression string
-}
+// AggregateColumn is one column a guided aggregation computes: an aggregate
+// expression (`COUNT(*)`, `SUM(height)`, `ST_Union(geom)`) under a
+// caller-chosen alias.
+type AggregateColumn = ComputedColumn
 
-// AggregateSpec is a GROUP BY derivation from one source table: the columns
-// grouped on, the aggregate expressions computed per group, and the rows to
-// include before grouping. It is a distinct shape from DeriveSpec rather
-// than extra fields on it — the cardinality changes (one row per group, not
-// per source row) and an empty GroupBy means "aggregate the whole table
-// into one row," never "select every column," which would be invalid SQL
-// under GROUP BY.
+// AggregateSpec is a GROUP BY derivation from one source table. It is a
+// distinct shape from DeriveSpec because the cardinality changes and an empty
+// GroupBy aggregates the whole table into a single row.
 type AggregateSpec struct {
 	NewTableName string
 	// GroupBy is the columns grouped on, carried into the result as-is.
@@ -37,17 +28,9 @@ type AggregateSpec struct {
 	Conditions []storage.FilterCondition
 }
 
-// maxAggregateExpressions bounds a single aggregation's aggregate columns,
-// so a malformed client cannot assemble an unbounded projection — the same
-// role maxComputedColumns plays for a guided derivation.
-const maxAggregateExpressions = 50
-
 // AggregateFromTable materializes a new table from meta, grouped and
-// aggregated according to spec. The assembled query is materialized through
-// the same path as a row-wise guided derivation, and therefore through the
-// same DuckDB AST validation and __pkey generation (§8): a GROUP BY's
-// output columns are ordinary columns once the subquery closes, so nothing
-// downstream of the query itself needs to know this is an aggregation.
+// aggregated according to spec. It goes through the same path as a row-wise
+// guided derivation: a group's output columns are ordinary columns.
 func (s *DeriveService) AggregateFromTable(ctx context.Context, meta storage.Metadata, spec AggregateSpec) (string, error) {
 	query, args, err := s.buildAggregateQuery(ctx, meta, spec)
 	if err != nil {
@@ -90,9 +73,7 @@ func (s *DeriveService) buildAggregateQuery(ctx context.Context, meta storage.Me
 
 // groupProjectionFor builds the SELECT list and the GROUP BY list: the
 // grouped columns, quoted and whitelisted, then the aggregate expressions.
-// Unlike projectionFor, an empty GroupBy carries no "every column" default
-// — under GROUP BY an unaggregated column is a query error, not a safe
-// default, so the caller states exactly what it wants grouped.
+// Unlike projectionFor, an empty GroupBy carries no "every column" default.
 func groupProjectionFor(meta storage.Metadata, schema []ColumnSchema, spec AggregateSpec) (projection, groupBy []string, err error) {
 	available := make(map[string]bool, len(schema))
 	for _, col := range schema {
@@ -122,7 +103,7 @@ func groupProjectionFor(meta storage.Metadata, schema []ColumnSchema, spec Aggre
 		groupBy = append(groupBy, quoted)
 	}
 
-	aggregates, err := aggregateProjection(spec.Aggregates, taken)
+	aggregates, err := computedProjection(spec.Aggregates, taken)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -132,41 +113,4 @@ func groupProjectionFor(meta storage.Metadata, schema []ColumnSchema, spec Aggre
 		return nil, nil, &ValidationError{msg: "an aggregation needs at least one grouped column or aggregate"}
 	}
 	return projection, groupBy, nil
-}
-
-// aggregateProjection renders the aggregate columns, rejecting an alias
-// that collides with a grouped column or with another aggregate — the same
-// trap computedProjection avoids for the row-wise mode.
-func aggregateProjection(aggregates []AggregateColumn, taken map[string]bool) ([]string, error) {
-	if len(aggregates) > maxAggregateExpressions {
-		return nil, &ValidationError{msg: fmt.Sprintf("at most %d aggregate columns per aggregation", maxAggregateExpressions)}
-	}
-
-	rendered := make([]string, 0, len(aggregates))
-	for _, col := range aggregates {
-		alias := strings.TrimSpace(col.Alias)
-		expression := strings.TrimSpace(col.Expression)
-		if alias == "" {
-			return nil, &ValidationError{msg: "an aggregate column needs a name"}
-		}
-		if expression == "" {
-			return nil, &ValidationError{msg: fmt.Sprintf("aggregate column %q has no expression", alias)}
-		}
-		// The whole query is checked for this too, but caught here it
-		// names the field the user has to fix.
-		if strings.Contains(expression, ";") {
-			return nil, &ValidationError{msg: fmt.Sprintf("the expression of aggregate column %q must be a single expression", alias)}
-		}
-		if taken[alias] {
-			return nil, &ValidationError{msg: fmt.Sprintf("column %q is defined twice", alias)}
-		}
-		taken[alias] = true
-
-		quoted, err := storage.QuoteIdentifier(alias)
-		if err != nil {
-			return nil, &ValidationError{msg: err.Error()}
-		}
-		rendered = append(rendered, fmt.Sprintf("(%s) AS %s", expression, quoted))
-	}
-	return rendered, nil
 }

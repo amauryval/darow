@@ -43,10 +43,9 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 	}
 }
 
-// listPaginationParams reads offset/limit query params, same shape as
-// RowsHandler.paginationParams but resolved through the list limits —
-// tables/sources are metadata records, not data rows, so they get their own,
-// smaller limits.
+// listPaginationParams reads offset/limit query params, resolved through the
+// list limits: tables/sources are metadata records, not data rows, and get
+// their own smaller limits.
 func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
@@ -58,9 +57,8 @@ func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit 
 }
 
 // distinctValuesPaginationParams reads offset/limit query params, resolved
-// through the row limits — a column's distinct values are per-row content,
-// not a metadata record, so they share RowsHandler's limits rather than
-// listPaginationParams's smaller ones.
+// through the row limits: a column's distinct values are per-row content, so
+// they share RowsHandler's limits rather than listPaginationParams's.
 func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, tableId string) (offset, limit int64) {
 	offset = 0
 	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
@@ -239,10 +237,9 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
 }
 
-// DeriveTable handles POST /derive. DeriveTable rejects anything that
-// isn't a SELECT. Its query reads every registered table — it has no
-// notion of a source table — unlike /tables/{tableId}/derive-from-table
-// below, the single-source mode.
+// DeriveTable handles POST /derive, rejecting anything that is not a SELECT.
+// Its query reads every registered table, unlike the single-source
+// derive-from-table below.
 //
 // @Summary Derive a table from a SELECT query
 // @Tags tables
@@ -272,11 +269,10 @@ func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// DeriveFromTable handles POST /tables/{tableId}/derive-from-table: the
-// guided derivation, whose source is the resolved table and nothing else.
-// The caller sends a structure — columns, computed expressions, row
-// conditions — and the SQL is assembled server-side, so identifier quoting
-// and the filter DSL never leave this side.
+// DeriveFromTable handles POST /tables/{tableId}/derive-from-table, the
+// guided derivation whose source is the resolved table alone. The SQL is
+// assembled server-side, so identifier quoting and the filter DSL never
+// leave this side.
 //
 // @Summary Derive a table from this table's columns, expressions and conditions
 // @Tags tables
@@ -309,11 +305,9 @@ func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Reques
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// AggregateFromTable handles POST /tables/{tableId}/aggregate-from-table:
-// a GROUP BY guided derivation, whose source is the resolved table and
-// nothing else. The caller sends a structure — grouped columns, aggregate
-// expressions, row conditions — and the SQL is assembled server-side,
-// exactly like DeriveFromTable's row-wise mode.
+// AggregateFromTable handles POST /tables/{tableId}/aggregate-from-table, a
+// GROUP BY guided derivation whose source is the resolved table alone,
+// assembled server-side exactly like DeriveFromTable's row-wise mode.
 //
 // @Summary Derive a table from this table's grouped columns and aggregate expressions
 // @Tags tables
@@ -347,8 +341,8 @@ func (th *TablesHandler) AggregateFromTable(w http.ResponseWriter, req *http.Req
 }
 
 // FilterRows handles POST /tables/{tableId}/filter, built exclusively on
-// storage.BuildFilter — the whitelist of columns it validates
-// each condition against comes from the table's real schema.
+// storage.BuildFilter, whose column whitelist comes from the table's real
+// schema.
 //
 // @Summary Filter rows by column conditions
 // @Tags tables
@@ -389,10 +383,9 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// An omitted or non-positive limit falls back to the row limits' default
-	// — same as GET /rows's paginationParams — instead of the JSON zero value
-	// silently producing LIMIT 0, and is capped by their maximum either way,
-	// so a client can't force the whole table into memory.
+	// An omitted or non-positive limit falls back to the row limits' default,
+	// same as GET /rows, instead of the JSON zero value silently producing
+	// LIMIT 0, and is capped either way.
 	limit := th.tableSettings.Resolve(meta.TableId).DefaultRowLimit.Resolve(body.Limit)
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
@@ -408,14 +401,11 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusOK, map[string]any{"rows": out})
 }
 
-// GetDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct.
-// col is validated against the table's real, non-geometry columns — never
-// surface geometry through a generic column-name path. Paginated like
-// ListRows: a high-cardinality column (an identifier, a date) never
-// returns unbounded values in one response. The optional search narrows
-// the page to the values containing it, so a value-suggestion caller can
-// ask for the first few matches of what is being typed rather than page
-// through everything.
+// GetDistinctValues handles GET /tables/{tableId}/columns/{col}/distinct. col
+// is validated against the table's real, non-geometry columns. Paginated
+// like ListRows, so a high-cardinality column never returns unbounded
+// values; the optional search narrows the page to a value-suggestion
+// caller's prefix.
 //
 // @Summary List a column's distinct values
 // @Tags tables
@@ -450,11 +440,10 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values, "limit": limit, "offset": offset})
 }
 
-// TransformColumn handles POST /tables/{tableId}/columns/{col}/transform:
-// an in-place rewrite of col's values, on the table in hand, over the rows
-// its conditions name — the write /derive-from-table cannot express, since
-// a guided derivation always produces a new, frozen table. There is no
-// undo: PreviewColumnTransform is what stands in for one.
+// TransformColumn handles POST /tables/{tableId}/columns/{col}/transform: an
+// in-place rewrite of col's values over the rows its conditions name — the
+// write /derive-from-table cannot express. There is no undo:
+// PreviewColumnTransform stands in for one.
 //
 // @Summary Transform a column's values in place
 // @Tags tables

@@ -164,7 +164,7 @@ func Test_DeriveService_AggregateFromTable_RejectsTooManyAggregates(t *testing.T
 	t.Cleanup(func() { repo.AssertExpectations(t) })
 	expectSourceSchema(m, repo)
 
-	aggregates := make([]AggregateColumn, maxAggregateExpressions+1)
+	aggregates := make([]AggregateColumn, maxComputedColumns+1)
 	for i := range aggregates {
 		aggregates[i] = AggregateColumn{Alias: string(rune('a' + i)), Expression: "COUNT(*)"}
 	}

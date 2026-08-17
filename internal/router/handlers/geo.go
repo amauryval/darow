@@ -56,10 +56,9 @@ func parseTileCoords(req *http.Request) (z, x, y int, err error) {
 // the tile matrix set the whole tile grid is built on (§4.7).
 const maxTileZoom = 24
 
-// validateTileCoords rejects a z/x/y outside the WebMercatorQuad tile
-// matrix — a negative or over-deep zoom, or an x/y beyond the 2^z tiles
-// that zoom holds — before it reaches tileEnvelope, which trusts its
-// integers to already be in range.
+// validateTileCoords rejects a z/x/y outside the WebMercatorQuad tile matrix
+// before it reaches tileEnvelope, which trusts its integers to already be in
+// range.
 func validateTileCoords(z, x, y int) error {
 	if z < 0 || z > maxTileZoom {
 		return fmt.Errorf("zoom %d outside WebMercatorQuad (0-%d)", z, maxTileZoom)
@@ -130,12 +129,9 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Complements GeoService's application cache: spares even
-	// the round trip for a client/CDN that already has the tile. The ETag
-	// is derived from UpdatedAt, so it changes as soon as the next
-	// write lands; max-age stays short since nothing invalidates a CDN's
-	// copy in between. The filter clause/args are folded in too, since they
-	// change a tile's content for the same table version.
+	// Complements GeoService's application cache, sparing even the round trip
+	// for a client/CDN that already has the tile. The ETag is derived from
+	// UpdatedAt, so it changes as soon as the next write lands.
 	etag := tileETag(meta, z, x, y, attrs, q)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", resolved.TileCacheMaxAgeSec))
@@ -154,14 +150,10 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 	w.Write(mvt)
 }
 
-// GetTileFeatures handles GET /tables/{tableId}/tiles/{z}/{x}/{y}/features —
-// the same z/x/y tile grid as GetTile's MVT output, but as a GeoJSON
-// FeatureCollection. Lets a map client chunk its GeoJSON/OGC-Features
-// loading by tile without computing tile-to-bbox math itself: the server
-// derives the envelope from z/x/y (ST_TileEnvelope), so tile boundaries
-// always match the MVT layer's. This is a convenience alongside the OGC
-// API - Features "items" endpoint, not part of it — GetItems' bbox/limit/
-// offset contract is unchanged.
+// GetTileFeatures handles GET /tables/{tableId}/tiles/{z}/{x}/{y}/features,
+// the same z/x/y grid as GetTile's MVT output but as a GeoJSON
+// FeatureCollection, so tile boundaries always match the MVT layer's. This is
+// a convenience alongside OGC API - Features' "items", not part of it.
 //
 // @Summary Get features intersecting an MVT-style tile, as GeoJSON
 // @Tags geo
@@ -231,14 +223,9 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), itemsLinks(req, int64(offset), int64(limit), len(features) == limit)))
 }
 
-// tileETag derives an ETag for a tile from its table's UpdatedAt: any write
-// that touches the table's rows bumps UpdatedAt, which changes
-// the ETag for every tile of that table. attrs and q.Filter/q.Args are
-// folded in too, since they change the tile's content for the same table
-// version. The material is hashed rather than interpolated
-// directly: q.Args comes from a client-supplied "?filter=" and could
-// contain a double quote, which would otherwise produce a malformed
-// ETag header (RFC 9110 §8.8.3).
+// tileETag derives an ETag from the table's UpdatedAt, attrs and q, hashed
+// rather than interpolated directly: q.Args comes from a client-supplied
+// "?filter=" and could otherwise produce a malformed ETag header.
 func tileETag(meta storage.Metadata, z, x, y int, attrs []string, q storage.GeoQuery) string {
 	sorted := slices.Clone(attrs)
 	slices.Sort(sorted)
@@ -248,9 +235,8 @@ func tileETag(meta storage.Metadata, z, x, y int, attrs []string, q storage.GeoQ
 	return fmt.Sprintf(`"%x"`, sum.Sum64())
 }
 
-// GetGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed
-// on demand, never cached — a geometry column can mix types, and
-// this isn't a stored metadata field.
+// GetGeometryTypes handles GET /tables/{tableId}/geometry-types. Computed on
+// demand, never cached: a geometry column can mix types.
 //
 // @Summary List distinct geometry types present in a table
 // @Tags geo
@@ -360,8 +346,8 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 
 // FilterByBbox handles POST /tables/{tableId}/bbox. bbox is lon/lat in
 // OGC:CRS84, the same CRS Metadata.Bbox is reported in. Paginated like
-// ListRows: a world-spanning bbox on a large table never
-// materializes every intersecting pkey in one response.
+// ListRows, so a world-spanning bbox never materializes every intersecting
+// pkey in one response.
 //
 // @Summary Filter row pkeys by bounding box
 // @Description bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)

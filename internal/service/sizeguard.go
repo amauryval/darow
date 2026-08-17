@@ -9,33 +9,22 @@ import (
 	"darow/internal/storage"
 )
 
-// QuotaExceededError marks a write refused because the database is at or
-// over its configured size limit (duckdb.maxSizeBytes) — the storage layer
-// raised nothing, the write was never attempted.
+// QuotaExceededError marks a write refused because the database is at or over
+// duckdb.maxSizeBytes: the write was never attempted.
 type QuotaExceededError struct{ msg string }
 
 func (e *QuotaExceededError) Error() string { return e.msg }
 
-// sizeGuard is what a data-growing write (a row insert, a source import, a
-// table derivation) checks before writing and reports to afterwards.
-// Declared here, the implementer, since RowService/ImportService/
-// DeriveService each need only this narrow slice of SizeGuardService.
+// sizeGuard is what a data-growing write checks before writing and reports to
+// afterwards.
 type sizeGuard interface {
 	Check(ctx context.Context) error
 	Grew()
 }
 
-// SizeGuardService enforces duckdb.maxSizeBytes: a hard cap on the
-// database's on-disk size, config-only and never exposed through
-// PATCH /settings — an operator decision about the disk the process runs
-// on, not a per-request tuning knob.
-//
-// The size is read live only occasionally: Grew, called after every
-// data-growing write completes, invalidates the cached value so the next
-// Check re-reads it; ttl is a backstop for the rare case a stale cache
-// outlives its last invalidation. Between those, Check answers off the
-// cache — the cap is enforced with at most one write's worth of drift,
-// never with a pragma_database_size query on every single write.
+// SizeGuardService enforces duckdb.maxSizeBytes, a config-only hard cap on
+// the database's on-disk size. Check answers off a cached size, which Grew
+// invalidates after every write and ttl expires as a backstop.
 type SizeGuardService struct {
 	reader     storage.DiagnosticsReader
 	limitBytes int64
@@ -47,8 +36,7 @@ type SizeGuardService struct {
 }
 
 // NewSizeGuardService builds a SizeGuardService reading the database's size
-// through reader. limitBytes <= 0 disables the guard entirely (Check always
-// succeeds) — duckdb.maxSizeBytes' zero value.
+// through reader. A limitBytes <= 0 disables the guard entirely.
 func NewSizeGuardService(reader storage.DiagnosticsReader, limitBytes int64, ttl time.Duration) *SizeGuardService {
 	return &SizeGuardService{reader: reader, limitBytes: limitBytes, ttl: ttl}
 }

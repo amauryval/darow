@@ -43,12 +43,9 @@ type ArithmeticOp struct {
 	Operator string
 }
 
-// Assignment is what a column transform's case (or its default) writes:
-// a constant, an ordered concatenation of columns/literals, an arithmetic
-// operation, or a free scalar expression — the same escape hatch
-// ComputedColumn is, and for the same reason (COALESCE, the string
-// functions and the spatial functions are what a transform is wanted for).
-// Exactly one field is meaningful, selected by Kind.
+// Assignment is what a column transform's case (or its default) writes: a
+// constant, a concatenation, an arithmetic operation or a free scalar
+// expression. Exactly one field is meaningful, selected by Kind.
 type Assignment struct {
 	Kind       AssignmentKind
 	Constant   any
@@ -58,8 +55,7 @@ type Assignment struct {
 }
 
 // TransformCase is one arm of a column transform's CASE WHEN: the rows it
-// applies to (never empty — an empty condition is indistinguishable from
-// Default) and the value they receive.
+// applies to (never empty) and the value they receive.
 type TransformCase struct {
 	Conditions []storage.FilterCondition
 	Assignment Assignment
@@ -67,9 +63,7 @@ type TransformCase struct {
 
 // TransformSpec describes an in-place column transform: Column receives
 // Default's value, or the first matching Case's, restricted to the rows
-// matching Conditions. The cases are evaluated in order, as a single
-// CASE WHEN, so two overlapping cases depend on the order they were given
-// in rather than the order they happened to be written.
+// matching Conditions. Overlapping cases are resolved in order.
 type TransformSpec struct {
 	Column     string
 	Cases      []TransformCase
@@ -78,8 +72,7 @@ type TransformSpec struct {
 }
 
 // maxTransformCases bounds a single transform's case list, so a malformed
-// client cannot assemble an unbounded CASE WHEN — the same role
-// maxComputedColumns plays for a guided derivation.
+// client cannot assemble an unbounded CASE WHEN.
 const maxTransformCases = 50
 
 // maxExpressionLength bounds the free-expression arm of an assignment.
@@ -89,18 +82,17 @@ const maxExpressionLength = 2000
 // against.
 var arithmeticOperators = []string{"+", "-", "*", "/"}
 
-// schemaReaderTyper is what ColumnService needs from SchemaService: its
-// structure, to whitelist the column references an assignment makes, and
-// its types, to check an assignment's probed result type against the
-// target column's declared type before writing.
+// schemaReaderTyper is what ColumnService needs from SchemaService: the
+// structure whitelisting an assignment's column references, and the types its
+// probed result is checked against.
 type schemaReaderTyper interface {
 	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 	Types(ctx context.Context, meta storage.Metadata) (map[string]string, error)
 }
 
-// ColumnService transforms a column's values in place, over the rows a
-// filter names — the write /derive-from-table cannot express, since a
-// guided derivation always produces a new, frozen table (spec.md §8.1).
+// ColumnService transforms a column's values in place, over the rows a filter
+// names — the write /derive-from-table cannot express, since a guided
+// derivation always produces a new, frozen table.
 type ColumnService struct {
 	storage   tableResolver
 	metadata  metadataRefresher
@@ -108,16 +100,15 @@ type ColumnService struct {
 	sizeGuard sizeGuard
 }
 
-// NewColumnService builds a ColumnService backed by storage, using metadata
-// to refresh derived fields after a write, schema to resolve column
-// structure and types, and guard to enforce duckdb.maxSizeBytes.
+// NewColumnService builds a ColumnService backed by storage, refreshing
+// derived fields via metadata, resolving columns via schema and enforcing
+// duckdb.maxSizeBytes through guard.
 func NewColumnService(storage tableResolver, metadata metadataRefresher, schema schemaReaderTyper, guard sizeGuard) *ColumnService {
 	return &ColumnService{storage: storage, metadata: metadata, schema: schema, sizeGuard: guard}
 }
 
 // targetableColumns is meta's schema keyed by name, excluding the geometry
-// column and every hidden column (storage.IsHiddenColumn) — neither is
-// ever a transform's target or an assignment's operand.
+// and hidden columns: neither is a transform target or an operand.
 func targetableColumns(meta storage.Metadata, schema []ColumnSchema) map[string]ColumnSchema {
 	cols := make(map[string]ColumnSchema, len(schema))
 	for _, c := range schema {
@@ -130,10 +121,8 @@ func targetableColumns(meta storage.Metadata, schema []ColumnSchema) map[string]
 }
 
 // typeFamily groups a DuckDB declared type into the coarse family a
-// transform's type-preempt check compares: an obvious mismatch (writing
-// text into a numeric column) is refused as a 400 before the write; a
-// subtler bad cast still surfaces from the UPDATE itself, as it does
-// everywhere else in the codebase.
+// transform's type check compares, so that an obvious mismatch is a 400
+// before the write rather than an error out of the UPDATE.
 func typeFamily(declaredType string) string {
 	base, _, _ := strings.Cut(strings.ToUpper(strings.TrimSpace(declaredType)), "(")
 	switch base {
@@ -152,9 +141,8 @@ func typeFamily(declaredType string) string {
 	}
 }
 
-// requireNumericOperand refuses a non-numeric arithmetic operand
-// structurally — a column whose declared type isn't numeric, or a literal
-// whose JSON-decoded Go type isn't — before it ever reaches DuckDB.
+// requireNumericOperand refuses a non-numeric arithmetic operand before it
+// ever reaches DuckDB.
 func requireNumericOperand(op Operand, columns map[string]ColumnSchema) error {
 	switch op.Kind {
 	case OperandColumn:
@@ -199,10 +187,8 @@ func renderOperand(op Operand, columns map[string]ColumnSchema) (string, []any, 
 }
 
 // renderAssignment renders a into a bound SQL fragment, dispatching on its
-// Kind. The free-expression arm is trimmed and rejected if it contains
-// `;` or exceeds maxExpressionLength — the whole rendered transform is
-// checked by DuckDB's own parser regardless, but caught here it names the
-// field to fix.
+// Kind. The free-expression arm is bounded and refuses `;`, so a malformed
+// one names the field to fix rather than failing in the parser.
 func renderAssignment(a Assignment, columns map[string]ColumnSchema) (string, []any, error) {
 	switch a.Kind {
 	case AssignmentConstant:
@@ -266,98 +252,101 @@ func renderAssignment(a Assignment, columns map[string]ColumnSchema) (string, []
 	}
 }
 
-// renderTransform assembles spec into the rendered SET expression (a single
-// CASE WHEN when spec has cases, the bare default assignment otherwise) and
-// the outer WHERE, with their args in exact left-to-right occurrence order:
-// each case's WHEN args then its THEN args, in case order, then the
-// default's THEN args — database/sql binds positionally, so a misordering
-// here silently writes the right value into the wrong rows.
-func renderTransform(meta storage.Metadata, schema []ColumnSchema, spec TransformSpec) (setExpr string, setArgs []any, where string, whereArgs []any, err error) {
-	if len(spec.Cases) > maxTransformCases {
-		err = &ValidationError{msg: fmt.Sprintf("at most %d cases per transform", maxTransformCases)}
-		return
-	}
-
-	columns := targetableColumns(meta, schema)
-	if _, ok := columns[spec.Column]; !ok {
-		err = &ValidationError{msg: fmt.Sprintf("unknown or unwritable column %q", spec.Column)}
-		return
-	}
-
-	if len(spec.Cases) == 0 {
-		setExpr, setArgs, err = renderAssignment(spec.Default, columns)
-		if err != nil {
-			return
-		}
-	} else {
-		var sb strings.Builder
-		sb.WriteString("CASE")
-		for i, c := range spec.Cases {
-			if len(c.Conditions) == 0 {
-				err = &ValidationError{msg: fmt.Sprintf("case %d has no conditions — use the default assignment for the rest", i)}
-				return
-			}
-			var condSQL, assignSQL string
-			var condArgs, assignArgs []any
-			condSQL, condArgs, err = whereFor(meta, schema, c.Conditions)
-			if err != nil {
-				return
-			}
-			assignSQL, assignArgs, err = renderAssignment(c.Assignment, columns)
-			if err != nil {
-				return
-			}
-			sb.WriteString(fmt.Sprintf(" WHEN %s THEN %s", condSQL, assignSQL))
-			setArgs = append(setArgs, condArgs...)
-			setArgs = append(setArgs, assignArgs...)
-		}
-
-		var defaultSQL string
-		var defaultArgs []any
-		defaultSQL, defaultArgs, err = renderAssignment(spec.Default, columns)
-		if err != nil {
-			return
-		}
-		sb.WriteString(fmt.Sprintf(" ELSE %s END", defaultSQL))
-		setArgs = append(setArgs, defaultArgs...)
-		setExpr = sb.String()
-	}
-
-	where, whereArgs, err = whereFor(meta, schema, spec.Conditions)
-	return
-}
-
-// preparedTransform is a transform's rendered SQL, its target table's
-// repository, and the type-checked target column — what Transform and
-// PreviewTransform share before diverging into a write and a read.
-type preparedTransform struct {
-	repo      storage.TableRepository
+// renderedTransform is a transform's SET expression and outer WHERE, with
+// their args in left-to-right occurrence order: database/sql binds
+// positionally, so a misordering writes the right value into the wrong rows.
+type renderedTransform struct {
 	setExpr   string
 	setArgs   []any
 	where     string
 	whereArgs []any
 }
 
+// renderSet renders spec's assignments into a single CASE WHEN, or into the
+// bare default assignment when spec has no case.
+func renderSet(meta storage.Metadata, schema []ColumnSchema, spec TransformSpec, columns map[string]ColumnSchema) (string, []any, error) {
+	if len(spec.Cases) == 0 {
+		return renderAssignment(spec.Default, columns)
+	}
+
+	var sb strings.Builder
+	var args []any
+	sb.WriteString("CASE")
+	for i, c := range spec.Cases {
+		if len(c.Conditions) == 0 {
+			return "", nil, &ValidationError{msg: fmt.Sprintf("case %d has no conditions — use the default assignment for the rest", i)}
+		}
+		condSQL, condArgs, err := whereFor(meta, schema, c.Conditions)
+		if err != nil {
+			return "", nil, err
+		}
+		assignSQL, assignArgs, err := renderAssignment(c.Assignment, columns)
+		if err != nil {
+			return "", nil, err
+		}
+		fmt.Fprintf(&sb, " WHEN %s THEN %s", condSQL, assignSQL)
+		args = append(args, condArgs...)
+		args = append(args, assignArgs...)
+	}
+
+	defaultSQL, defaultArgs, err := renderAssignment(spec.Default, columns)
+	if err != nil {
+		return "", nil, err
+	}
+	fmt.Fprintf(&sb, " ELSE %s END", defaultSQL)
+	return sb.String(), append(args, defaultArgs...), nil
+}
+
+// renderTransform assembles spec into its SET expression and outer WHERE,
+// after checking that its target column is writable.
+func renderTransform(meta storage.Metadata, schema []ColumnSchema, spec TransformSpec) (renderedTransform, error) {
+	if len(spec.Cases) > maxTransformCases {
+		return renderedTransform{}, &ValidationError{msg: fmt.Sprintf("at most %d cases per transform", maxTransformCases)}
+	}
+
+	columns := targetableColumns(meta, schema)
+	if _, ok := columns[spec.Column]; !ok {
+		return renderedTransform{}, &ValidationError{msg: fmt.Sprintf("unknown or unwritable column %q", spec.Column)}
+	}
+
+	setExpr, setArgs, err := renderSet(meta, schema, spec, columns)
+	if err != nil {
+		return renderedTransform{}, err
+	}
+
+	where, whereArgs, err := whereFor(meta, schema, spec.Conditions)
+	if err != nil {
+		return renderedTransform{}, err
+	}
+	return renderedTransform{setExpr: setExpr, setArgs: setArgs, where: where, whereArgs: whereArgs}, nil
+}
+
+// preparedTransform is a rendered transform bound to its target table's
+// repository — what Transform and PreviewTransform share before diverging.
+type preparedTransform struct {
+	renderedTransform
+	repo storage.TableRepository
+}
+
 // prepare renders spec and checks its result type against the target
-// column's declared type, without writing or reading any row — the gate
-// both Transform and PreviewTransform pass before diverging.
+// column's declared type, without writing or reading any row.
 func (s *ColumnService) prepare(ctx context.Context, meta storage.Metadata, spec TransformSpec) (preparedTransform, error) {
 	schema, err := s.schema.Schema(ctx, meta)
 	if err != nil {
 		return preparedTransform{}, err
 	}
 
-	setExpr, setArgs, where, whereArgs, err := renderTransform(meta, schema, spec)
+	rendered, err := renderTransform(meta, schema, spec)
 	if err != nil {
 		return preparedTransform{}, err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return preparedTransform{}, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return preparedTransform{}, err
 	}
 
-	resultType, err := repo.Rows().ProbeExpressionType(ctx, setExpr, setArgs...)
+	resultType, err := repo.Rows().ProbeExpressionType(ctx, rendered.setExpr, rendered.setArgs...)
 	if err != nil {
 		return preparedTransform{}, err
 	}
@@ -371,15 +360,12 @@ func (s *ColumnService) prepare(ctx context.Context, meta storage.Metadata, spec
 		return preparedTransform{}, &ValidationError{msg: fmt.Sprintf("transform produces %s but column %q is %s", resultType, spec.Column, declared)}
 	}
 
-	return preparedTransform{repo: repo, setExpr: setExpr, setArgs: setArgs, where: where, whereArgs: whereArgs}, nil
+	return preparedTransform{renderedTransform: rendered, repo: repo}, nil
 }
 
-// Transform writes spec's assignment into meta's table, as a single UPDATE.
-// UpdatedAt is bumped through RefreshDerived (touchesGeometry false, since
-// the geometry column can never be a target) — rowCount does not move but
-// the MVT tile cache is keyed on UpdatedAt, so skipping it would serve
-// stale attribute tiles. There is no undo (limitations.md LIM-17):
-// PreviewTransform is what stands in for one.
+// Transform writes spec's assignment into meta's table as a single UPDATE.
+// UpdatedAt is bumped so the tiles keyed on it are invalidated. There is no
+// undo (LIM-17): PreviewTransform stands in for one.
 func (s *ColumnService) Transform(ctx context.Context, meta storage.Metadata, spec TransformSpec) (int64, error) {
 	prepared, err := s.prepare(ctx, meta, spec)
 	if err != nil {
@@ -402,8 +388,7 @@ func (s *ColumnService) Transform(ctx context.Context, meta storage.Metadata, sp
 	return written, nil
 }
 
-// maxTransformPreviewSample bounds PreviewTransform's before/after sample —
-// a preview is a glance at the effect, not a second page of rows.
+// maxTransformPreviewSample bounds PreviewTransform's before/after sample.
 const maxTransformPreviewSample = 20
 
 // PreviewTransform reports how many rows spec would touch and a bounded

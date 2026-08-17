@@ -8,10 +8,9 @@ type SortField struct {
 	Desc   bool
 }
 
-// ParseSort parses a comma-separated `sort` query value (e.g.
-// "tableName,-updatedAt") into an ordered list of SortFields — a leading
-// "-" marks a column descending. Empty segments are skipped; "" yields nil,
-// letting the caller fall back to its own default order.
+// ParseSort parses a comma-separated `sort` query value ("tableName,-updatedAt")
+// into an ordered list of SortFields, a leading "-" marking a column
+// descending. An empty value yields nil, for the caller's own default order.
 func ParseSort(raw string) []SortField {
 	if raw == "" {
 		return nil

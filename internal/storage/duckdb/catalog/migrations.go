@@ -6,27 +6,23 @@ import (
 	"fmt"
 )
 
-// Component is one schema-owning piece of the catalogue — metadata today, a
-// future settings or stored-filters table tomorrow — contributing its own
-// creation DDL and its own ordered migration list, versioned independently
-// in schema_version so adding a component never touches another's history.
+// Component is one schema-owning piece of the catalogue, contributing its
+// creation DDL and its ordered migration list. Each is versioned
+// independently, so adding one never touches another's history.
 type Component struct {
 	// Name identifies the component in schema_version. Stable, never
 	// reused once shipped.
 	Name string
-	// CreateSchema is applied on every startup — already at the latest
-	// column set, so a fresh component's table is created directly
-	// through it, at its latest version, without replaying Migrations.
+	// CreateSchema is applied on every startup, already at the latest column
+	// set, so a fresh component never replays Migrations.
 	CreateSchema string
-	// Migrations are ALTER statements applied once each, in order, to an
-	// existing component whose recorded version trails len(Migrations).
-	// Append to this list, never edit or remove an entry.
+	// Migrations are ALTER statements applied once each, in order, to a
+	// component whose recorded version trails them. Only ever appended to.
 	Migrations []string
 }
 
 // registry holds every Component contributed via register, in registration
-// order — Migrate iterates it to build and version each component's schema
-// independently.
+// order, for Migrate to version each independently.
 var registry []Component
 
 // register adds c to the registry. Called from each component's own file
@@ -35,12 +31,9 @@ func register(c Component) {
 	registry = append(registry, c)
 }
 
-// Migrate ensures schema_version exists, one row per component, and
-// applies every migration a database hasn't seen yet, for every registered
-// component. A component with no recorded version gets its CreateSchema
-// directly (already including every migrated column), so it's seeded at
-// its latest version rather than replaying migrations that would collide
-// with columns already present.
+// Migrate ensures schema_version exists, one row per component, and applies
+// every migration a database has not seen yet. An unrecorded component is
+// seeded at its latest version instead, its CreateSchema already holding it.
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (component TEXT, version INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("initializing schema_version: %w", err)

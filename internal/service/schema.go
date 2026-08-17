@@ -17,13 +17,9 @@ type ColumnSchema struct {
 	Type string
 }
 
-// SchemaService exposes a table's structure — column names and types —
-// distinct from RowService's row data. Adding a column never affects
-// derived metadata, so it needs no dependency on MetadataService. It is
-// the single owner of its own column schema cache, a size-bounded LRU
-// with expiration, invalidated by AddColumn and, through
-// InvalidateSchema, by MetadataService.RemoveTable. The cache sits behind
-// an atomic pointer so ResetCache can swap it for a freshly sized one.
+// SchemaService exposes a table's structure — column names and types. It owns
+// the schema cache, a size-bounded LRU with expiration invalidated by
+// AddColumn and InvalidateSchema, behind an atomic pointer ResetCache swaps.
 type SchemaService struct {
 	storage tableResolver
 	cache   atomic.Pointer[expirable.LRU[string, []ColumnSchema]]
@@ -38,28 +34,23 @@ func NewSchemaService(storage tableResolver, c *expirable.LRU[string, []ColumnSc
 }
 
 // ResetCache swaps the schema cache for a freshly built one sized maxItems
-// with the given ttl — called by core.NewServices when SettingsService
-// reports a change to settings.cacheTTLSec (maxItems itself is
-// config.SettingsConfig.CacheMaxItems, fixed for the process's life).
+// with the given ttl, on a change to settings.cacheTTLSec.
 func (s *SchemaService) ResetCache(maxItems int, ttl time.Duration) {
 	s.cache.Store(expirable.NewLRU[string, []ColumnSchema](maxItems, nil, ttl))
 }
 
 // Schema returns the name and type of every column of meta's underlying
-// table, geometry column included (this describes structure, not row
-// data, so the geometry-exclusion rule doesn't apply), from cache when
-// present: one DESCRIBE-driven population, not one per column, per cache
-// miss. meta is the caller's already-resolved metadata; only its TableId
-// is used as the cache key.
+// table, geometry column included since this describes structure, not row
+// data. It is served from cache, keyed on meta.TableId.
 func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error) {
 	cache := s.cache.Load()
 	if schema, ok := cache.Get(meta.TableId); ok {
 		return schema, nil
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	cols, err := repo.Schema(ctx)
 	if err != nil {
@@ -75,9 +66,8 @@ func (s *SchemaService) Schema(ctx context.Context, meta storage.Metadata) ([]Co
 	return schema, nil
 }
 
-// Types returns meta's column-name-to-DuckDB-type map, from the same
-// cache as Schema, so converting row values (RowService.convertRow) never
-// issues one DESCRIBE call per column.
+// Types returns meta's column-name-to-DuckDB-type map, off the same cache as
+// Schema.
 func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[string]string, error) {
 	schema, err := s.Schema(ctx, meta)
 	if err != nil {
@@ -92,18 +82,16 @@ func (s *SchemaService) Types(ctx context.Context, meta storage.Metadata) (map[s
 }
 
 // AddColumn adds colName of type colType to meta's underlying table and
-// invalidates its cached schema. colType is checked against
-// storage.ValidateColumnType before anything is opened — GEOMETRY
-// (or any type outside DuckDB's scalar allowlist) is rejected here rather
-// than reaching the repository (BLK-1).
+// invalidates its cached schema. Any type outside DuckDB's scalar allowlist,
+// GEOMETRY included, is rejected before the table is opened.
 func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error {
 	if err := storage.ValidateColumnType(colType); err != nil {
 		return err
 	}
 
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return err
 	}
 	if err := repo.AddColumn(ctx, colName, colType); err != nil {
 		return NewDisplayError(fmt.Sprintf("unable to add column %q to table %q", colName, meta.TableId), err)
@@ -112,9 +100,8 @@ func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, co
 	return nil
 }
 
-// InvalidateSchema drops tableId's cached schema. Called by
-// MetadataService.RemoveTable, the one structural change to a table that
-// happens outside SchemaService.
+// InvalidateSchema drops tableId's cached schema, for the structural changes
+// happening outside SchemaService.
 func (s *SchemaService) InvalidateSchema(tableId string) {
 	s.cache.Load().Remove(tableId)
 }

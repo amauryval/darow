@@ -8,21 +8,17 @@ import (
 	"darow/internal/storage"
 )
 
-// ComputedColumn is one column a guided derivation computes rather than
-// carries over: a free SQL scalar expression over the source table's
-// columns, under a caller-chosen alias. The expression is deliberately not
-// decomposed into a widget model — CASE WHEN, COALESCE and the spatial
-// functions are exactly what a derivation is wanted for, and no
-// operand/operator form reaches them.
+// ComputedColumn is one column a guided derivation or aggregation computes
+// rather than carries over: a free SQL expression under a caller-chosen
+// alias, since no operand/operator form reaches every SQL function.
 type ComputedColumn struct {
 	Alias      string
 	Expression string
 }
 
 // DeriveSpec is a derivation from one source table, expressed structurally
-// rather than as SQL: the columns to carry over, the columns to compute,
-// and the rows to keep. It is row-wise — one source row produces at most
-// one derived row — so it holds no grouping (`improvements.md` IMP-5).
+// rather than as SQL. It is row-wise — one source row produces at most one
+// derived row — so it holds no grouping (IMP-5).
 type DeriveSpec struct {
 	NewTableName string
 	// Columns carried over as they are. Empty means every column of the
@@ -35,21 +31,13 @@ type DeriveSpec struct {
 	Conditions []storage.FilterCondition
 }
 
-// maxComputedColumns bounds a single derivation's computed columns, so a
-// malformed client cannot assemble an unbounded projection.
+// maxComputedColumns bounds the computed columns of a single derivation or
+// aggregation, so a malformed client cannot assemble an unbounded projection.
 const maxComputedColumns = 50
 
-// DeriveFromTable materializes a new table from meta alone, described by
-// spec rather than by SQL. It exists because the free-SQL DeriveTable
-// reads every registered table and says nothing about which one it starts
-// from, which is unusable without knowing the physical schema; here the
-// source is the table in hand, its columns are offered by the caller's UI,
-// and the row filter is the very tree the read filters already use.
-//
-// The assembled query is materialized through the same path as a free-SQL
-// derivation, and therefore through the same DuckDB AST validation: a
-// computed expression grants no reach a free-SQL query does not already
-// have.
+// DeriveFromTable materializes a new table from meta alone, described by spec
+// rather than by SQL. The assembled query goes through the same path as a
+// free-SQL derivation, and therefore the same DuckDB AST validation.
 func (s *DeriveService) DeriveFromTable(ctx context.Context, meta storage.Metadata, spec DeriveSpec) (string, error) {
 	query, args, err := s.buildSpecQuery(ctx, meta, spec)
 	if err != nil {
@@ -58,10 +46,9 @@ func (s *DeriveService) DeriveFromTable(ctx context.Context, meta storage.Metada
 	return s.materialize(ctx, query, args, spec.NewTableName)
 }
 
-// buildSpecQuery turns spec into the SELECT that materializes it. The
-// query is assembled here rather than by the client precisely so that
-// identifier quoting and the filter DSL stay on this side: a client that
-// built its own SQL would bypass both.
+// buildSpecQuery turns spec into the SELECT that materializes it, assembled
+// server-side so that identifier quoting and the filter DSL are never
+// bypassed.
 func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadata, spec DeriveSpec) (string, []any, error) {
 	schema, err := s.schema.Schema(ctx, meta)
 	if err != nil {
@@ -78,9 +65,8 @@ func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadat
 		return "", nil, err
 	}
 
-	// physicalName is server-generated (t_<uuid>), so it is validated
-	// rather than quoted (§4.3), and the AST validator matches it against
-	// the registered names unquoted.
+	// physicalName is server-generated, so it is validated rather than
+	// quoted: the AST validator matches it unquoted.
 	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
 		return "", nil, err
 	}
@@ -92,14 +78,9 @@ func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadat
 	return query, args, nil
 }
 
-// projectionFor builds the SELECT list: the carried columns, in the
-// caller's order, then the computed ones.
-//
-// __pkey is never projected — CreateFromQuery generates a fresh one around
-// whatever it is given. The geometry column carries over like any other:
-// selecting it keeps the derived table geo, leaving it out of an explicit
-// selection derives a scalar table — isGeo/geometryColumn are read back off
-// the materialized table by RefreshDerivedMetadata, not decided here.
+// projectionFor builds the SELECT list: the carried columns, in the caller's
+// order, then the computed ones. __pkey is never projected, and the geometry
+// column carries over like any other.
 func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec) ([]string, error) {
 	available := make(map[string]bool, len(schema))
 	var carryable []string
@@ -147,12 +128,11 @@ func projectionFor(meta storage.Metadata, schema []ColumnSchema, spec DeriveSpec
 }
 
 // computedProjection renders the computed columns, rejecting an alias that
-// collides with a carried column or with another computed one — DuckDB
-// would silently rename the second to <alias>_1, producing a table whose
-// columns are not the ones that were asked for.
+// collides with an already-taken column: DuckDB would silently rename the
+// second to <alias>_1, producing columns nobody asked for.
 func computedProjection(computed []ComputedColumn, taken map[string]bool) ([]string, error) {
 	if len(computed) > maxComputedColumns {
-		return nil, &ValidationError{msg: fmt.Sprintf("at most %d computed columns per derivation", maxComputedColumns)}
+		return nil, &ValidationError{msg: fmt.Sprintf("at most %d computed columns", maxComputedColumns)}
 	}
 
 	rendered := make([]string, 0, len(computed))
@@ -168,7 +148,7 @@ func computedProjection(computed []ComputedColumn, taken map[string]bool) ([]str
 		// The whole query is checked for this too, but caught here it
 		// names the field the user has to fix.
 		if strings.Contains(expression, ";") {
-			return nil, &ValidationError{msg: fmt.Sprintf("the expression of computed column %q must be a single expression", alias)}
+			return nil, &ValidationError{msg: fmt.Sprintf("the expression of column %q must be a single expression", alias)}
 		}
 		if taken[alias] {
 			return nil, &ValidationError{msg: fmt.Sprintf("column %q is defined twice", alias)}
@@ -184,9 +164,9 @@ func computedProjection(computed []ComputedColumn, taken map[string]bool) ([]str
 	return rendered, nil
 }
 
-// whereFor builds the row filter through BuildFilter, the only allowed
-// path to a client-driven WHERE (rule 5). The geometry column is excluded
-// from the whitelist, as it is on every read.
+// whereFor builds the row filter through BuildFilter, the only allowed path
+// to a client-driven WHERE. The geometry column is excluded from the
+// whitelist, as it is on every read.
 func whereFor(meta storage.Metadata, schema []ColumnSchema, conditions []storage.FilterCondition) (string, []any, error) {
 	if len(conditions) == 0 {
 		return "", nil, nil

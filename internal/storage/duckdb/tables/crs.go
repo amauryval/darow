@@ -11,11 +11,9 @@ import (
 	"darow/internal/storage"
 )
 
-// DetectCRS reports the authority and code of layer's geometry field CRS,
-// as declared by the source file itself (via DuckDB's ST_Read_Meta) — not
-// assumed. layer selects one layer of a multi-layer source; pass "" to use
-// the source's first layer. authCode is 0 if the source declares no CRS
-// (e.g. a non-geo CSV, or a layer with no geometry field).
+// DetectCRS reports the authority and code of layer's declared CRS, via
+// ST_Read_Meta. An empty layer uses the source's first; authCode is 0 if the
+// source declares none.
 func (l *Materializer) DetectCRS(ctx context.Context, sourcePath, layer string) (authName string, authCode int, err error) {
 	query := `
         SELECT gf.crs.auth_name, gf.crs.auth_code
@@ -36,11 +34,10 @@ func (l *Materializer) DetectCRS(ctx context.Context, sourcePath, layer string) 
 	return name.String, int(code.Int64), nil
 }
 
-// SourceHasGeometry reports whether layer carries a geometry field at all,
-// which is what decides whether a source CRS has to be resolved for it.
-// layer selects one layer of a multi-layer source; pass "" for the first.
-// A Parquet file is read the same way CreateFromFile reads one — through
-// read_parquet, never ST_Read_Meta, which crashes the process on one.
+// SourceHasGeometry reports whether layer carries a geometry field, which is
+// what decides whether a CRS has to be resolved for it. A Parquet file is
+// read through read_parquet, never ST_Read_Meta, which crashes the process on
+// one.
 func (l *Materializer) SourceHasGeometry(ctx context.Context, sourcePath, layer string) (bool, error) {
 	if strings.HasSuffix(sourcePath, parquetExtension) {
 		return l.parquetHasGeometry(ctx, sourcePath)
@@ -86,12 +83,9 @@ func (l *Materializer) parquetHasGeometry(ctx context.Context, sourcePath string
 }
 
 // reprojectionSource returns the PROJ source-CRS string ST_Transform should
-// reproject from, for authCode as reported by DetectCRS (or supplied
-// explicitly by the caller, always assumed EPSG in that case). EPSG:4326
-// must be given as OGC:CRS84 instead: the EPSG registry's official axis
-// order for 4326 is (lat, lon), which would silently swap X/Y on the
-// lon/lat-ordered input ST_Read produces — verified against a known point
-// (Paris) when this was first fixed.
+// reproject from, for authCode as DetectCRS reports it. EPSG:4326 is always
+// given as OGC:CRS84 instead: the EPSG registry's axis order for 4326 is
+// (lat, lon), which would silently swap X/Y on ST_Read's lon/lat output.
 func reprojectionSource(authName string, authCode int) string {
 	if authCode == 4326 {
 		return "OGC:CRS84"
@@ -103,12 +97,9 @@ func reprojectionSource(authName string, authCode int) string {
 }
 
 // parseGeometryCRS extracts the CRS DuckDB's GEOMETRY('<crs>') column type
-// declares — how a GeoParquet file's own declared CRS surfaces once read
-// back via read_parquet, DuckDB's replacement for ST_Read_Meta on a format
-// ST_Read cannot open at all. crs is already in the "AUTH:CODE" (or
-// "OGC:CRS84") form ST_Transform's source argument expects; srid mirrors
-// reprojectionSource's convention of treating OGC:CRS84 as EPSG 4326. ok is
-// false for an untyped GEOMETRY column (no CRS declared).
+// declares. crs is already in the "AUTH:CODE" form ST_Transform expects;
+// srid mirrors reprojectionSource's convention of treating OGC:CRS84 as EPSG
+// 4326. ok is false for an untyped GEOMETRY column.
 func parseGeometryCRS(colType string) (crs string, srid int, ok bool) {
 	const prefix, suffix = "GEOMETRY('", "')"
 	if !strings.HasPrefix(colType, prefix) || !strings.HasSuffix(colType, suffix) {
@@ -130,11 +121,9 @@ func parseGeometryCRS(colType string) (crs string, srid int, ok bool) {
 }
 
 // reprojectToWebMercator reprojects physicalName's geometryColumn in place
-// from sourceCRS (a PROJ source-CRS string ST_Transform accepts, e.g.
-// "EPSG:2154" or "OGC:CRS84") to EPSG:3857 — once at import, since Tile()
-// always compares in Web Mercator. sourceCRS is bound, not interpolated: it
-// can originate from a source file's own declared CRS metadata, which is
-// not trusted content.
+// from sourceCRS to EPSG:3857, once at import, since Tile always compares in
+// Web Mercator. sourceCRS is bound, not interpolated: it can originate from
+// untrusted source file metadata.
 func (l *Materializer) reprojectToWebMercator(ctx context.Context, physicalName, geometryColumn, sourceCRS string) error {
 	quotedGeom, err := storage.QuoteIdentifier(geometryColumn)
 	if err != nil {
