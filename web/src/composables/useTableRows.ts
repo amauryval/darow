@@ -3,6 +3,7 @@ import type { SortingState } from '@tanstack/vue-table'
 import { addRows, deleteRow, getRowGeometry, listRows } from '../client/tables'
 import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
+import { inBatches } from '../utils/batch'
 import { cellValue } from '../utils/rows'
 import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
@@ -55,26 +56,31 @@ export function useTableRows(
     // with its own *Enregistrer*.
     const deleting = ref(false)
 
-    // No batch delete endpoint exists (LIM-F14): the rows go one request at a
-    // time, and a run stopped halfway still wrote — the grid and the table's
-    // counters are reloaded on whatever actually went through.
+    // No batch delete endpoint exists (LIM-F14): the rows go one request each,
+    // in parallel batches. The grid then drops exactly what the server dropped
+    // instead of re-fetching page 1 — the list already knows which rows
+    // disappeared, and a refetch emptied it for a round-trip after every
+    // deletion (§8.1, §8.2).
     async function deleteRows(pkeys: string[]) {
         if (pkeys.length === 0) return
         deleting.value = true
-        let done = 0
         try {
-            for (const pkey of pkeys) {
-                await deleteRow(tableId.value, pkey)
-                done += 1
-            }
-            toast.success(done > 1 ? `${done} lignes supprimées.` : 'Ligne supprimée.')
-        } catch (e) {
-            toast.error(errorMessage(e, 'Impossible de supprimer la sélection'))
-        } finally {
-            if (done > 0) {
-                await list.reload()
+            const { done, reason } = await inBatches(pkeys, (pkey) =>
+                deleteRow(tableId.value, pkey)
+            )
+            if (done.length > 0) {
+                const gone = new Set(done)
+                list.drop((row) => gone.has(row.pkey))
                 onMutated()
             }
+            if (reason !== null) {
+                toast.error(errorMessage(reason, 'Impossible de supprimer la sélection'))
+            } else {
+                toast.success(
+                    done.length > 1 ? `${done.length} lignes supprimées.` : 'Ligne supprimée.'
+                )
+            }
+        } finally {
             deleting.value = false
         }
     }
@@ -90,17 +96,28 @@ export function useTableRows(
         if (rows.length === 0) return
         duplicating.value = true
         try {
-            const copies: Record<string, unknown>[] = []
-            for (const row of rows) {
+            const geometries = new Map<string, unknown>()
+            const column = geometryColumn.value
+            if (column) {
+                const { reason } = await inBatches(rows, async (row) => {
+                    geometries.set(
+                        row.pkey,
+                        (await getRowGeometry(tableId.value, row.pkey)).geometry
+                    )
+                })
+                if (reason !== null) throw reason
+            }
+            const copies = rows.map((row) => {
                 const values: Record<string, unknown> = {}
                 for (const col of rowColumns.value) values[col] = cellValue(row, col)
-                const column = geometryColumn.value
-                if (column)
-                    values[column] = (await getRowGeometry(tableId.value, row.pkey)).geometry
-                copies.push(values)
-            }
+                if (column) values[column] = geometries.get(row.pkey)
+                return values
+            })
             await addRows(tableId.value, copies)
-            await list.reload()
+            // The copies land wherever the current sort puts them, so the page
+            // is re-read — but through reloadSorted, which keeps the rows on
+            // screen until the new ones arrive rather than flashing empty (§8.1).
+            await list.reloadSorted()
             onMutated()
             toast.success(
                 copies.length > 1 ? `${copies.length} lignes dupliquées.` : 'Ligne dupliquée.'

@@ -115,6 +115,21 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
         reloadSorted()
     }
 
+    // Drops the items a caller has just deleted server-side, without a
+    // refetch: the list already knows exactly which ones disappeared, and
+    // re-fetching page 1 emptied the grid for the length of a round-trip
+    // (§8.1). `offset` follows the drop — the server's remaining rows shifted
+    // up by as many, and leaving it there would make the next page skip that
+    // many.
+    function drop(shouldDrop: (item: T) => boolean) {
+        const kept = items.value.filter((item) => !shouldDrop(item))
+        const removed = items.value.length - kept.length
+        if (removed === 0) return
+        items.value = kept
+        total.value = Math.max(0, total.value - removed)
+        offset.value = Math.max(0, offset.value - removed)
+    }
+
     // Lets a caller replace the current page's items in place after a
     // server-side action that returns a fresh page itself (e.g. a "refresh
     // from disk" endpoint), without going through fetchPage again.
@@ -175,6 +190,7 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
         reloadSorted,
         retry,
         setSorting,
+        drop,
         replace,
         sortQuery
     }
