@@ -1,6 +1,11 @@
-import { ref, type Ref } from 'vue'
+import type { Ref } from 'vue'
 import type { SortingState } from '@tanstack/vue-table'
-import { addRows, deleteRow, getRowGeometry, listRows } from '../client/tables'
+import {
+    addRows,
+    deleteRows as deleteRowsRequest,
+    getRowGeometry,
+    listRows
+} from '../client/tables'
 import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
 import { inBatches } from '../utils/batch'
@@ -49,35 +54,27 @@ export function useTableRows(
     // single row is a selection of one (§8.6). Retyping is not here either — a
     // session holds its attribute drafts whole (useRowEdits) and writes them
     // with its own *Enregistrer*.
-    const deleting = ref(false)
+    const { isLoading: deleting, error: deleteError, run: runDelete } = useAsyncAction()
 
-    // No batch delete endpoint exists (LIM-F14): the rows go one request each,
-    // in parallel batches. The grid then drops exactly what the server dropped
-    // instead of re-fetching page 1 — the list already knows which rows
-    // disappeared, and a refetch emptied it for a round-trip after every
-    // deletion (§8.1, §8.2).
+    // One request for the whole selection (`DELETE /tables/{tableId}/rows`,
+    // a single storage-level write). The grid then drops exactly what was
+    // asked for rather than re-fetching page 1 — the list already knows
+    // which rows disappeared, and a refetch emptied it for a round-trip
+    // after every deletion (§8.1, §8.2).
     async function deleteRows(pkeys: string[]) {
         if (pkeys.length === 0) return
-        deleting.value = true
-        try {
-            const { done, reason } = await inBatches(pkeys, (pkey) =>
-                deleteRow(tableId.value, pkey)
-            )
-            if (done.length > 0) {
-                const gone = new Set(done)
-                list.drop((row) => gone.has(row.pkey))
-                onMutated()
-            }
-            if (reason !== null) {
-                toast.error(errorMessage(reason, 'Impossible de supprimer la sélection'))
-            } else {
-                toast.success(
-                    done.length > 1 ? `${done.length} lignes supprimées.` : 'Ligne supprimée.'
-                )
-            }
-        } finally {
-            deleting.value = false
+        const result = await runDelete(
+            () => deleteRowsRequest(tableId.value, pkeys),
+            'Impossible de supprimer la sélection'
+        )
+        if (result === null) {
+            toast.error(deleteError.value)
+            return
         }
+        const gone = new Set(pkeys)
+        list.drop((row) => gone.has(row.pkey))
+        onMutated()
+        toast.success(pkeys.length > 1 ? `${pkeys.length} lignes supprimées.` : 'Ligne supprimée.')
     }
 
     const { isLoading: duplicating, error: duplicateError, run: runDuplicate } = useAsyncAction()

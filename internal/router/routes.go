@@ -198,6 +198,7 @@ func (rt *Router) Setup() http.Handler {
 							w.Use(rt.guards.AdminScope())
 							w.Post("/", rt.rows.AddRows)
 							w.Patch("/", rt.rows.UpdateRows)
+							w.Delete("/", rt.rows.DeleteRows)
 						})
 
 						sub.Route("/{pkey}", func(sub chi.Router) {

@@ -147,10 +147,15 @@ export function patch<T>(path: string, body: unknown): Promise<T> {
     }).then((res) => handle<T>(res))
 }
 
-export function del<T>(path: string): Promise<T> {
-    return fetch(apiUrl(path), { method: 'DELETE', headers: authHeaders() }).then((res) =>
-        handle<T>(res)
-    )
+export function del<T>(path: string, body?: unknown): Promise<T> {
+    return fetch(apiUrl(path), {
+        method: 'DELETE',
+        headers: {
+            ...authHeaders(),
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+        },
+        body: body === undefined ? undefined : JSON.stringify(body)
+    }).then((res) => handle<T>(res))
 }
 
 // No Content-Type header here — the browser sets the multipart boundary

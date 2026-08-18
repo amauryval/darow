@@ -137,6 +137,14 @@ export function deleteRow(tableId: string, pkey: string): Promise<Deleted> {
     return del(`/tables/${tableId}/rows/${pkey}`)
 }
 
+// Deletes a set of rows in a single write rather than one request per row.
+export function deleteRows(
+    tableId: string,
+    pkeys: string[]
+): Promise<{ pkeys: string[]; rowsRemoved: number }> {
+    return del(`/tables/${tableId}/rows`, { pkeys })
+}
+
 // Free-SQL derivation: a top-level route, scoped to no table — the query may
 // read any registered table. deriveTableFromTable below is the
 // single-source mode.

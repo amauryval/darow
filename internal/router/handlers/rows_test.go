@@ -275,6 +275,47 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 	}
 }
 
+func Test_rowsHandler_deleteRows(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		removeErr  error
+		wantStatus int
+	}{
+		{name: "deletes every row in one write", body: map[string]any{"pkeys": []string{"1", "2"}}, wantStatus: http.StatusOK},
+		{name: "an empty list is rejected", body: map[string]any{"pkeys": []string{}}, wantStatus: http.StatusBadRequest},
+		{
+			name:       "a storage failure maps to 500",
+			body:       map[string]any{"pkeys": []string{"1", "2"}},
+			removeErr:  assert.AnError,
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			rowSvc := &mockRowAPI{}
+			rh := &RowsHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			if c.wantStatus != http.StatusBadRequest {
+				rowSvc.On("RemoveRows", mock.Anything, meta, []string{"1", "2"}).Return(c.removeErr).Once()
+			}
+
+			rec := doHandlerRequest(rh.DeleteRows, http.MethodDelete, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				assert.Contains(t, rec.Body.String(), `"rowsRemoved":2`)
+			}
+			metadataSvc.AssertExpectations(t)
+			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_rowsHandler_deleteRow(t *testing.T) {
 	cases := []struct {
 		name       string

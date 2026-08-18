@@ -315,6 +315,43 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusOK, map[string]any{"rows": rows})
 }
 
+// DeleteRows handles DELETE /tables/{tableId}/rows, deleting a set of rows in
+// one write rather than one request per row.
+//
+// @Summary Delete several rows in one request
+// @Tags rows
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/rows [delete]
+func (rh *RowsHandler) DeleteRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	body, ok := DecodeBody[struct {
+		Pkeys []string `json:"pkeys"`
+	}](w, req)
+	if !ok {
+		return
+	}
+	if len(body.Pkeys) == 0 {
+		response.WriteError(w, req, errNoRowsProvided, http.StatusBadRequest)
+		return
+	}
+
+	if err := rh.rowService.RemoveRows(req.Context(), meta, body.Pkeys); err != nil {
+		response.WriteServiceError(w, req, err)
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{
+		"pkeys": body.Pkeys, "rowsRemoved": int64(len(body.Pkeys)),
+	})
+}
+
 // DeleteRow handles DELETE /tables/{tableId}/rows/{pkey}.
 //
 // @Summary Delete a row
