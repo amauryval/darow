@@ -45,7 +45,7 @@ type Router struct {
 // NewRouter builds a Router serving every service in svcs. Every row/list
 // limit and geometry bound is read live off svcs.Settings.Current(), so a
 // PATCH /settings takes effect on the next request; the body cap and request
-// timeout are fixed at Setup instead, from settingsCfg (TODO-17).
+// timeout are fixed at Setup instead, from settingsCfg.
 //
 // uiAssets is the admin UI's built static files, served under /ui; ready
 // backs /readyz; trustedProxies decides whose Forwarded headers the OGC

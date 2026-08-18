@@ -68,7 +68,7 @@ func indexNames(ctx context.Context, conn Querier, physicalName string) ([]strin
 
 // RebuildSpatialIndex drops physicalName's RTREE indexes and recreates the one
 // rule 19 requires. It is the only known repair for an index the spatial
-// extension's own optimizer rule then crashes the planner on (blockers BLK-5).
+// extension's own optimizer rule then crashes the planner on.
 func RebuildSpatialIndex(ctx context.Context, conn Querier, tableId, physicalName, geometryColumn string) error {
 	if err := dropSpatialIndexes(ctx, conn, tableId, physicalName); err != nil {
 		return err
@@ -138,7 +138,7 @@ func dropIndexes(ctx context.Context, conn Querier, tableId string, names []stri
 
 // RepairSpatialIndex probes physicalName's spatial index the way a tile does
 // and rebuilds it when the probe raises an engine error, the state a write-ahead
-// log replayed at open can leave it in (BLK-5). It reports whether it rebuilt.
+// log replayed at open can leave it in. It reports whether it rebuilt.
 func RepairSpatialIndex(ctx context.Context, conn Querier, tableId, physicalName, geometryColumn string) (bool, error) {
 	quotedGeom, err := storage.QuoteIdentifier(geometryColumn)
 	if err != nil {

@@ -8,7 +8,7 @@ import Modal from '../ui/Modal.vue'
 import DeriveAggregateForm from './DeriveAggregateForm.vue'
 import NewTableFooter from './NewTableFooter.vue'
 
-// The aggregation mode's own screen (TODO-F37) — not a third tab on
+// The aggregation mode's own screen — not a third tab on
 // DeriveTableModal, whose column picker means "carry this column over" and
 // would mean "group by this column" here: the same word for two different
 // acts is exactly the confusion the guided mode was built to remove.

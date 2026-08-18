@@ -18,7 +18,7 @@ type ComputedColumn struct {
 
 // DeriveSpec is a derivation from one source table, expressed structurally
 // rather than as SQL. It is row-wise — one source row produces at most one
-// derived row — so it holds no grouping (IMP-5).
+// derived row — so it holds no grouping.
 type DeriveSpec struct {
 	NewTableName string
 	// Columns carried over as they are. Empty means every column of the

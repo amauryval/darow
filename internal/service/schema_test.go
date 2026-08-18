@@ -69,8 +69,8 @@ func Test_SchemaService_AddColumn(t *testing.T) {
 }
 
 // A column type outside the allowlist (or GEOMETRY specifically) must be
-// rejected before the table is even opened — BLK-1, the caller is never
-// allowed to sneak a second geometry column past isGeo this way.
+// rejected before the table is even opened: the caller is never allowed to
+// sneak a second geometry column past isGeo this way.
 func Test_SchemaService_AddColumn_RejectsDisallowedType(t *testing.T) {
 	svc, m, _ := setupSchemaService(t)
 	meta := storage.Metadata{TableId: "id-1"}

@@ -495,7 +495,7 @@ per page (the server's own live cap) until the reported `total` is reached.
   emptied and filled, resizing the grid and the map under the pointer at the exact moment the user
   was clicking rows. It is **not** an edit-session bar and does not wait for the *Éditer* toggle:
   duplicating and deleting are single confirmed writes with their own feedback, not drafts an
-  *Enregistrer* commits (LIM-F10). Both write buttons are disabled by `useWriteGuard` with the
+  *Enregistrer* commits. Both write buttons are disabled by `useWriteGuard` with the
   reason in their tooltip (§8.4), and deletion is confirmed with the count in its wording (§8.3).
 - Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
   discrete thing one creates or edits and then applies. `components/filters/` holds the whole
@@ -597,11 +597,11 @@ per page (the server's own live cap) until the reported `total` is reached.
   holds the new table's name, the submit and its own composable — `useDeriveTable` (guided,
   `tableId`-scoped) and `useDeriveFromQuery` (free SQL, scoped to no table) — rather than one
   instance shared by a tab pair, since the two modes no longer share a screen.
-  `DeriveTableModal` and `AggregateTableModal` share the block below their own form —
-  the new table's name field, the frozen-snapshot caption, the inline error and the footer —
-  through `NewTableFooter` (`components/tables/`): the caller passes the caption's own wording and
-  its `canSubmit`'s extra guard (`incompleteComputed` here, `incompleteAggregate`/`isEmpty` for the
-  aggregation), the shell owns nothing about either mode's draft. `DeriveFromTableForm`
+  All three share the block below their own form — the new table's name field, the frozen-snapshot
+  caption, the inline error and the footer — through `NewTableFooter` (`components/tables/`): the
+  caller passes the caption's own wording and its `canSubmit`'s extra guard (`incompleteComputed`
+  for the guided mode, `incompleteAggregate`/`isEmpty` for the aggregation, the write guard's own
+  verdict for the free-SQL one), the shell owns nothing about any mode's draft. `DeriveFromTableForm`
   is the guided mode's form — the column picker, the computed-column rows, and the condition tree,
   which reuses `FilterNodeEditor` rather than a second editor, plus a "reprendre un filtre
   enregistré" select that **copies** a stored filter's conditions into the draft (referencing it
@@ -814,7 +814,7 @@ This is the product's main screen; it follows fixed rules.
   in `TableSelectionBar` above the grid, where the count they apply to is stated, so one row and
   twenty are the same gesture and the grid is not striped with a red pill per line. A single row is
   a selection of one. Neither waits for the edit mode — they are immediate confirmed writes, not
-  drafts (LIM-F10). Duplicating carries the geometry and is not confirmed beforehand: it adds, and
+  drafts. Duplicating carries the geometry and is not confirmed beforehand: it adds, and
   what it added is deleted by the button beside it (§8.3).
 - Sorting, search and filtering apply to **all** the data server-side, never only to the pages
   already loaded: a silent partial result is a lie. The one exception is the map editor's working

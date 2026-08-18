@@ -14,7 +14,7 @@ import (
 
 // GeoService provides tile and geospatial query access on top of the storage
 // layer, caching MVT tiles per table version in a size-bounded LRU with no
-// time-based expiry (TODO-17/IMP-10).
+// time-based expiry.
 type GeoService struct {
 	storage   tableResolver
 	tileCache *expirable.LRU[string, []byte]

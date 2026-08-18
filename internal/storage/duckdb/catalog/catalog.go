@@ -34,7 +34,7 @@ type ExistingTables func(ctx context.Context) (map[string]bool, error)
 
 // GeometryInfo reports a physical table's actual isGeo/geometryColumn, read
 // from DuckDB's own catalogue. The metadata table's own columns are never
-// trusted for it: they can drift from the physical table (TODO-10).
+// trusted for it: they can drift from the physical table.
 type GeometryInfo func(ctx context.Context, physicalName string) (isGeo bool, geometryColumn string, err error)
 
 // TxGeometryInfo answers GeometryInfo's question from inside the transaction
@@ -226,7 +226,7 @@ func (c *Catalog) CreateFromFile(ctx context.Context, tableName, sourceName, sou
 			return err
 		}
 
-		// Srid is not derivable (TODO-10) and stays persisted; isGeo/
+		// Srid is not derivable and stays persisted; isGeo/
 		// geometryColumn are read back off the physical table instead.
 		patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
 		if isGeo {

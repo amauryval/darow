@@ -128,7 +128,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, `goauth.New` (the only place this module is imported, §6.7), HTTP server, graceful shutdown                                                                      |
-| `internal/guards`            | maps the two application roles `github.com/amauryval/goauth/types` grants to the two authorization scopes this API needs — `Guards.AdminScope` (write) and `Guards.GuestScope` (unused today, kept for `improvements.md` IMP-18). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
+| `internal/guards`            | maps the roles `github.com/amauryval/goauth/types` grants to the single authorization scope this API enforces — `Guards.AdminScope` (write), the only scope, since every read is public (§6.7). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
 | `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4), and the `auth` block it declares itself (`AuthConfig`, §2.7)              |
 | `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
@@ -191,9 +191,8 @@ behaviour asks for it explicitly, with `127.0.0.1`.
 `stripUntrustedForwarded`, §6.3): read only when the request's peer falls inside one of these
 prefixes, and stripped off any other request — a header is client-controlled, so with no trusted
 upstream `FeaturesHandler` would otherwise build an OGC link (§6.2) off whatever host a direct caller
-claims. This is its only purpose: since TODO-27 replaced the header-based identity model with
-`goauth`'s own bearer-token verification, `trustedProxies` no longer feeds an identity, only link
-integrity. Config-only, parsed once at `config.Load` (`config.ParseTrustedProxies`) and again by
+claims. This is its only purpose: the server verifies bearer tokens itself (§6.7), so
+`trustedProxies` feeds no identity at all, only link integrity. Config-only, parsed once at `config.Load` (`config.ParseTrustedProxies`) and again by
 `internal/router` to build the stripping middleware.
 
 ### 2.2 `duckdb`
@@ -236,7 +235,7 @@ it is allowed to send.
 | `cacheMaxItems`     | 1000                    | `GEOAPI_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
 | `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
-The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
+These memory/availability guards sit outside the runtime-editable settings table (§2.5),
 config-only for the same reason `duckdb.maxSizeBytes` is (§2.2), and the same reason the `auth`
 block is (§2.7): they sit on `PATCH /api/v1/settings`, a route every authorized writer reaches
 (§6.7), and a guard whose own limit is edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
@@ -244,9 +243,9 @@ cap (`routes.go`'s `maxBodyBytes` middleware; the upload carries its own, §6.3)
 `requestTimeoutSec` the same group's request
 timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
 every request" the way the settings table's own fields are (§6.3). `cacheMaxItems` sizes both the
-metadata and the schema `expirable.LRU` (merged from two separate fields, IMP-11); `tileMaxItems`
-sizes the tile cache, which additionally carries no TTL at all (IMP-10 — its key already carries the
-table's `UpdatedAt`, so a time-based expiry would invalidate nothing). Defaults and bounds are
+metadata and the schema `expirable.LRU`; `tileMaxItems` sizes the tile cache, which additionally
+carries no TTL at all — its key already carries the table's `UpdatedAt`, so a time-based expiry
+would invalidate nothing. Defaults and bounds are
 `internal/settings`'s exported constants, the same ones §2.5's bound table draws from — so a guard
 and its ceiling can never drift apart.
 
@@ -286,8 +285,8 @@ a page stops being a page, and anything above the family's ceiling
 raw: it goes through `internal/settings.Limit` (`limits.go`, `Resolve`/`Resolve64`), the one place
 that rule is written. `GET /api/v1/settings` therefore publishes exactly what it stores — every
 field editable, none derived. `config.yaml` keeps only what the process needs to start at
-all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
-now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
+all, before that table can even be read, plus the guards of §2.4. `exportBatchSize` is a plain
+`internal/settings` constant rather than a setting: it has no observable effect on an export's result,
 only on how it is produced, so it costs an operator a decision they had no way to make honestly.
 
 ### 2.5.1 Per-table overrides
@@ -728,7 +727,7 @@ rebuilds the RTREE indexes the engine cannot plan against. It exists because of 
 mode: an index whose state came back from a **replayed write-ahead log** made the spatial
 extension's own optimizer rule raise `INTERNAL Error: Operation requires a flat vector…` while
 *planning* — so every tile and every WFS read answered `500` while the rest of the server kept
-working, and the map hung on *Chargement…* (retired blocker BLK-5).
+working, and the map hung on *Chargement…*.
 
 -   The **probe** is the cheapest query shaped like a tile's — a constant `ST_MakeEnvelope` against
     the geometry column — since only that shape is rewritten into an index scan and only the rewrite
@@ -1071,14 +1070,13 @@ change was accepted, and `UpdatedAt` only when: after an incident, that is what 
 was always wrong from one raised an hour earlier.
 
 `core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
-and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
-`ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
+and one for `SchemaService.ResetCache` (`GeoService` has no `ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
 construction, with no live-resize API, so a changed `cacheTTLSec` takes effect by swapping the cache
 for a freshly built one, sized `cfg.Settings.CacheMaxItems` (fixed, never itself the reason for a
 swap) — each of the two services holds its cache behind `atomic.Pointer` for exactly this — rather
 than by mutating a field; every entry the old cache held is simply dropped, a cache miss costing one
 extra read, not a migration. The tile cache is built once at `NewServices` and never swapped: neither
-its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry, IMP-10) is
+its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry) is
 settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer`, no `ResetCache`.
 Every other setting (the three page sizes, simplification bounds,
 `tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
@@ -1327,8 +1325,8 @@ The global chain, in order: `RequestID` → `stripUntrustedForwarded` → struct
 -   **Forwarded-header stripping** (`stripUntrustedForwarded`, `middleware.go`): clears
     `Forwarded`/`X-Forwarded-For`/`X-Forwarded-Host`/`X-Forwarded-Proto` off any request whose peer
     does not fall inside `server.trustedProxies` (§2.1) — a link-integrity guard for
-    `FeaturesHandler`'s OGC links (§6.2), no longer an identity source since TODO-27 replaced the
-    header-based auth model. Applied globally, every route covered.
+    `FeaturesHandler`'s OGC links (§6.2), never an identity source: an identity comes from the
+    verified bearer token alone (§6.7). Applied globally, every route covered.
 -   There is **no global authentication middleware** any more: `goauth`'s verifier runs inside the
     write guard alone (§6.7), on the write routes it guards, and `/auth/session` (§6.1) runs its own
     verification for the one anonymous-or-not read that needs it. A public read resolves no caller at
@@ -1339,7 +1337,7 @@ The global chain, in order: `RequestID` → `stripUntrustedForwarded` → struct
 Every table/row/geo/source handler holds `SettingsService` through the same narrow
 `Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
 through `PATCH /api/v1/settings` applies to the very next request. The body cap and the per-request
-timeout are the exception (TODO-17): both are guards, config-only (§2.4), so `NewRouter` receives
+timeout are the exception: both are guards, config-only (§2.4), so `NewRouter` receives
 `config.SettingsConfig` and captures the two values once, at `Setup` — a change to either now costs a
 restart, not a `PATCH`.
 
@@ -1369,9 +1367,8 @@ the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles
 and `MountAuth` by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the
 `/api/v1` group that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so
 `/auth/config` and `/auth/session` (§6.1) answer before any write group's guard could apply.
-`rt.guards.AdminScope()` is used on every write route's own `Group` (§6.7); `rt.guards.GuestScope()`
-exists but is unused today (`improvements.md` IMP-18) — every read stays fully public, with no guard
-of any kind.
+`rt.guards.AdminScope()` is used on every write route's own `Group` (§6.7), and it is the only scope
+`guards.Guards` carries — every read stays fully public, with no guard of any kind.
 
 **Table resolution.** `TableResolver` (`router/validation/resolver.go`) resolves `{tableId}` once
 per request, served from the cache in the common case, and writes a `404` if the table does not
@@ -1450,7 +1447,7 @@ On top of the application cache (rule 20), `GET /tiles/{z}/{x}/{y}` emits an `ET
 `UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60`.
 `public` is correct because a tile is a read and every read is open to everyone (§6.7): no shared
 cache can serve one caller a tile another was not entitled to. It stops being correct the day
-authorization goes finer than global (`improvements.md` IMP-18), and would become `private` then.
+authorization goes finer than global (`improvements.md` IMP-24), and would become `private` then.
 Nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
 touching storage.
 
@@ -1482,18 +1479,17 @@ once here rather than route by route:
     and global settings writes, `/derive`, `/derive-from-table`, `/aggregate-from-table`,
     `/sources/upload`, `/sources/{name}/load` and `DELETE /sources/{name}`.
 
-**The identity model.** `github.com/amauryval/goauth` (`pkg/auth`'s replacement, TODO-27) verifies
-OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and
+**The identity model.** `github.com/amauryval/goauth` verifies OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and
 `types.RoleGuest`. Every write demands a verified token whose bearer holds `admin` — one middleware,
-`RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on the
-very `Group`s that carried the old `Authenticated`/`CanWrite` pair. **`guest` stands exactly where an
+`RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on
+every `Group` carrying a write route. **`guest` stands exactly where an
 anonymous caller stands**: it reads everything, which everyone already may, and writes nothing — say
 that plainly rather than leaving it to be inferred, because a role that grants no privilege reads as
 a bug otherwise. The role exists to be *named*: the provider grants it to identify a reader, and this
-server can later hang a private read on it (`improvements.md` IMP-18). This is also why
-`RequireRoles` is the right middleware and `RequireAnyRole` the wrong one even for a single required
-role: the first states "this role", the second states "one of these", and a second role added to a
-`RequireAnyRole` list would silently become a writer.
+server can later hang a private read on it (`improvements.md` IMP-24). It is also why
+`guards.RoleMiddlewares` declares `RequireRoles` alone and not `goauth`'s `RequireAnyRole`, even for
+a single required role: the first states "this role", the second "one of these", and a second role
+added to a `RequireAnyRole` list would silently become a writer.
 
 **Statuses.** `401` (`unauthorized`) with no bearer token or an invalid one; `403` (`forbidden`) for
 a verified token granted no role, or one granted `guest` alone; `503` if the authorization policy
@@ -1514,10 +1510,9 @@ route registered outside a group to escape that group's other middlewares would 
 it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for its own body cap
 (§6.3) and carrying the guard on its own group.
 
-**Trust and `trustedProxies` — no longer the same question.** Before TODO-27, `trustedProxies` (then
-part of the `auth` block) decided whose request headers this server would read as an identity.
-`goauth` verifies a bearer token itself and trusts no upstream to vouch for a caller, so
-`trustedProxies` moved to the `server` block (§2.1) and kept **only** its second, narrower purpose:
+**Trust and `trustedProxies` — not the same question.** `goauth` verifies a bearer token itself and
+trusts no upstream to vouch for a caller, so `trustedProxies` lives in the `server` block (§2.1) and
+carries **only** its narrower purpose:
 `FeaturesHandler`'s OGC links (§6.2) are built off `Forwarded`/`X-Forwarded-*`, and those headers are
 stripped off any request whose peer falls outside it (`stripUntrustedForwarded`, §6.3) — a guard on
 the host this API prints in a link, not on who may write. Dropping it instead would mean an
@@ -1547,8 +1542,8 @@ the guard's own denial warnings (`path`, `granted`, `required` roles) logged by 
 
 **Not done, on purpose** (`limitations.md` LIM-19): no CORS and no rate limiting, both delegated to
 whatever fronts this server. Authorization is global, never per table or per row
-(`improvements.md` IMP-18) — `guards.Guards.GuestScope()` exists for that day but guards no route
-today, `guest` being equivalent to anonymous everywhere reads already are.
+(`improvements.md` IMP-24) — `guards.Guards` carries the write scope alone, `guest` being equivalent
+to anonymous everywhere reads already are.
 
 The protections around all of this are unchanged: request body cap, pagination caps, per-request
 timeout, systematic whitelisting of identifiers and columns, restriction of `/derive` to registered
@@ -1768,7 +1763,7 @@ read-only `SELECT __pkey, <col> AS before, (<assignment>) AS after ... LIMIT n`)
 cmd/server/            entrypoint; the only package importing github.com/amauryval/goauth (§1, §6.7)
 internal/
   config/              bootstrap-only configuration loading and validation (§2.1-2.4), including AuthConfig (§2.7)
-  guards/              maps goauth's two roles to this API's two authorization scopes (§1, §6.7)
+  guards/              maps goauth's roles to this API's single write scope (§1, §6.7)
   settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
@@ -1815,7 +1810,7 @@ test files build on — sits in `fixtures_test.go`, which tests nothing itself; 
 | Level             | Approach                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config`          | loading with/without a file, environment overrides, invalid cases, including the `auth` block's own validation matrix (§2.7)                                                                                                                                                                                                                                                                                                                                 |
-| `guards`          | the role-to-scope mapping alone — `AdminScope`/`GuestScope` built on a fake `RoleMiddlewares`, no OIDC involved                                                                                                                                                                                                                                                                                                                                               |
+| `guards`          | the role-to-scope mapping alone — `AdminScope` built on a fake `RoleMiddlewares`, no OIDC involved                                                                                                                                                                                                                                                                                                                                               |
 | `storage`         | unit tests of the primitives (`BuildFilter`, identifiers, sorting)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` and `write_locks.go` alone (opening, pool, per-scope write locks, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
 | `service`         | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it                                                                                   |
@@ -1833,9 +1828,7 @@ _tested and vetted_, never linked — the binary is made only of `cmd/server`'s 
 `internal/webui` embeds `dist/` alone — but that is CI time spent on third-party code and a
 potential `gofmt` failure on code we do not control. Since the go tool has no exclusion mechanism,
 the package list is filtered explicitly (`go list ./... | grep -v /web/`) and `gofmt` only sweeps
-`cmd internal docs` — `pkg` is gone from that list along with `pkg/auth` itself (TODO-27); a stale
-reference to a second module here was one of TODO-27's own findings, closed by the same change that
-removed the module.
+`cmd internal docs`, the three directories this module's own Go code lives in.
 
 ---
 

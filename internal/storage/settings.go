@@ -7,7 +7,7 @@ import (
 
 // Settings holds every server parameter an operator retunes while the process
 // is serving: the page sizes, the geometry bounds, the tile cache lifetime and
-// the metadata/schema cache TTL. Everything else is Config's (TODO-17).
+// the metadata/schema cache TTL. Everything else is Config's.
 //
 // The three Default*Limit fields are one page size per family of pages, always
 // a real size: internal/settings seeds the row, an operator's value replaces

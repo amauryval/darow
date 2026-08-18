@@ -9,8 +9,7 @@ import { toggleInList } from '../utils/lists'
 
 // The guided derivation from the table being viewed: a spec the server turns
 // into SQL. Free-SQL derivation is `useDeriveFromQuery` — a top-level route
-// scoped to no table, opened from the catalogue rather than one table's page
-// (TODO-F38).
+// scoped to no table, opened from the catalogue rather than one table's page.
 //
 // The guided draft lives here rather than in the form component: pruning the
 // condition tree and coercing each value to the column's JSON type are

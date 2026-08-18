@@ -9,8 +9,8 @@ import { toggleInList } from '../utils/lists'
 
 // The guided aggregation from the table being viewed: GROUP BY columns plus
 // aggregate expressions — the aggregation counterpart of useDeriveTable's
-// guided mode, but its own composable rather than a third mode there
-// (TODO-F37). The two share no state: a column is either carried over
+// guided mode, but its own composable rather than a third mode there. The
+// two share no state: a column is either carried over
 // (row-wise) or grouped/aggregated (here), never both, and a shared
 // column-selection concept would let a column be "selected" without being
 // either — which GROUP BY refuses as a query error, not a default.

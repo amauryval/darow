@@ -4,11 +4,10 @@ import FormError from '../ui/FormError.vue'
 import ModalFormActions from '../ui/ModalFormActions.vue'
 import Typography from '../ui/Typography.vue'
 
-// The name field, its snapshot caption, the inline error and the footer
-// DeriveTableModal and AggregateTableModal both close on: a new table's
-// name, and the warning that it is a frozen snapshot, never resynchronised
-// with its source. They differ only in the caption's exact wording and in
-// canSubmit's own extra guard (`isEmpty` on the aggregation side), which
+// The name field, its snapshot caption, the inline error and the footer the
+// three new-table modals close on: a new table's name, and the warning that
+// it is a frozen snapshot, never resynchronised with its source. They differ
+// only in the caption's wording and in canSubmit's own extra guard, which
 // stay the caller's.
 defineProps<{
     name: string

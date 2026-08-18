@@ -26,7 +26,7 @@ instruction, not the patch — the code is written later, against the code as it
 `mise run ui-build` (type-check) and `mise run ui-lint` pass — a type error is part of the chantier,
 not a follow-up.
 
-The next identifier to use is `TODO-F50` — a retired identifier is never reused.
+The next identifier to use is `TODO-F52` — a retired identifier is never reused.
 
 ## 1. Architecture and code
 

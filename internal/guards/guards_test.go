@@ -40,14 +40,7 @@ func setupUserContext(t *testing.T, user *types.UserInfo) context.Context {
 }
 
 type mockRoleMiddlewares struct {
-	anyRoles []types.Role
 	allRoles []types.Role
-}
-
-func (m *mockRoleMiddlewares) RequireAnyRole(roles ...types.Role) func(http.Handler) http.Handler {
-	m.anyRoles = roles
-
-	return setupTaggingMiddleware("any")
 }
 
 func (m *mockRoleMiddlewares) RequireRoles(roles ...types.Role) func(http.Handler) http.Handler {
@@ -77,45 +70,13 @@ func setupGuardedRecorder(t *testing.T, middleware func(http.Handler) http.Handl
 	return recorder
 }
 
-func Test_New(t *testing.T) {
-	cases := []struct {
-		name      string
-		admin     bool
-		wantTag   string
-		wantRoles []types.Role
-	}{
-		{
-			name:      "Admin scope requires every listed role",
-			admin:     true,
-			wantTag:   "all",
-			wantRoles: []types.Role{types.RoleAdmin},
-		},
-		{
-			name:      "Guest scope requires any listed role",
-			wantTag:   "any",
-			wantRoles: []types.Role{types.RoleAdmin, types.RoleGuest},
-		},
-	}
+func Test_New_AdminScopeRequiresTheAdminRole(t *testing.T) {
+	roles := &mockRoleMiddlewares{}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			roles := &mockRoleMiddlewares{}
-			guards := New(roles)
+	recorder := setupGuardedRecorder(t, New(roles).AdminScope())
 
-			scope := guards.GuestScope()
-			gotRoles := roles.anyRoles
-
-			if c.admin {
-				scope = guards.AdminScope()
-				gotRoles = roles.allRoles
-			}
-
-			recorder := setupGuardedRecorder(t, scope)
-
-			assert.Equal(t, c.wantTag, recorder.Header().Get("X-Guard"))
-			assert.Equal(t, c.wantRoles, gotRoles)
-		})
-	}
+	assert.Equal(t, "all", recorder.Header().Get("X-Guard"))
+	assert.Equal(t, []types.Role{types.RoleAdmin}, roles.allRoles)
 }
 
 func Test_Authenticated(t *testing.T) {

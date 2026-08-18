@@ -17,7 +17,7 @@ import { useToast } from './useToast'
 // A table's rows: the current (unfiltered) page, server-side sorting,
 // insertion, duplication and deletion. Built on usePaginatedList for the
 // paging/sorting/scroll-sentinel triplet rather than reimplementing it a
-// fourth time (TODO-F4). onMutated is called after an add/delete, since
+// fourth time. onMutated is called after an add/delete, since
 // that changes the table's rowCount — the caller owns table metadata
 // (useTableMetadata) and reloads it. rowLimit is the table's effective row
 // limit (useTableSettings.rowLimit), never a size of this composable's

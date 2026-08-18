@@ -76,7 +76,7 @@ func Test_Catalog_Remove_RollsBackOnChildError(t *testing.T) {
 }
 
 // GetMetadata/List derive IsGeo/GeometryColumn from the physical table's own
-// catalogue entry — nothing in metadata stores them anymore (TODO-10), so a
+// catalogue entry — nothing in metadata stores them, so a
 // table with no geometry column reports as scalar however it was created.
 func Test_Catalog_GetMetadata_DerivesGeometryFromThePhysicalTable(t *testing.T) {
 	c := newTestCatalog(t)

@@ -101,9 +101,9 @@ func Test_exportHandler_exportTable(t *testing.T) {
 	}
 }
 
-// Test_exportHandler_exportTable_failureBeforeFirstByte covers BLK-2: a
-// streaming failure that happens before any byte reaches the client must
-// still be reported as a normal, parseable error response.
+// Test_exportHandler_exportTable_failureBeforeFirstByte covers a streaming
+// failure happening before any byte reaches the client: it must still be
+// reported as a normal, parseable error response.
 func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 	metadataSvc := &mockMetadataAPI{}
 	exportSvc := service.NewExportService(fakeExportTables{copyErr: assert.AnError, t: t})
@@ -122,7 +122,7 @@ func Test_exportHandler_exportTable_failureBeforeFirstByte(t *testing.T) {
 	metadataSvc.AssertExpectations(t)
 }
 
-// Test_exportHandler_exportTable_failureAfterFirstByte covers BLK-2's other
+// Test_exportHandler_exportTable_failureAfterFirstByte covers the other
 // half: once bytes are on the wire the status can no longer change, so
 // ExportTable must abort the connection rather than let the response
 // complete as if it were a whole file. Copying the finished file to the

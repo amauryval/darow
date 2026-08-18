@@ -21,8 +21,8 @@ import TransformPreview from './TransformPreview.vue'
 const DUCKDB_FUNCTIONS_URL = 'https://duckdb.org/docs/sql/functions/overview'
 
 // Rewrites column's values in place, on the rows a filter names — the write
-// neither the one-cell-at-a-time edit session nor *Dériver* can express
-// (spec/front/todo.md TODO-F44). Irreversible (§8.3): a preview against the
+// neither the one-cell-at-a-time edit session nor *Dériver* can express.
+// Irreversible (§8.3): a preview against the
 // server stands in for the undo the write does not have, and confirms
 // before applying. The new value is a single free SQL expression rather
 // than a guided arm picker — a per-row CASE WHEN builder was more machinery

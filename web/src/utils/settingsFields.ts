@@ -21,9 +21,8 @@ export interface SettingsFieldSpec {
     // here so SettingsView never has to special-case a field by key.
     zeroMeaning?: string
     // Whether a table can carry its own override of this field
-    // (TableSettingsModal, back/todo.md TODO-18) — defaultListLimit and
-    // cacheTTLSec stay global on purpose (LIM-12) and are the two fields
-    // without this flag.
+    // (TableSettingsModal) — defaultListLimit and cacheTTLSec stay global on
+    // purpose (back LIM-12) and are the two fields without this flag.
     perTable?: boolean
     // Whether this field only applies to a geo table — absent from a
     // non-geo table's modal rather than shown disabled.
@@ -35,7 +34,7 @@ export interface SettingsFieldGroup {
     description: string
     fields: SettingsFieldSpec[]
     // Set on a group that tunes a process internal rather than a product
-    // decision (IMP-F11/TODO-F40) — SettingsView folds it into a collapsed
+    // decision — SettingsView folds it into a collapsed
     // *Avancé* section instead of showing it at the same weight as
     // Pagination or Cartographie et tuiles.
     advanced?: boolean
@@ -155,7 +154,7 @@ export const TABLE_SETTINGS_FIELDS: SettingsFieldSpec[] = SETTINGS_FIELD_GROUPS.
 
 // tableFieldValue reads one field off a TableSettings response — its
 // override, its effective value and its bounds — or null for a field the
-// table does not carry: a global-only field (LIM-12) or a geometry field on
+// table does not carry: a global-only field (back LIM-12) or a geometry field on
 // a non-geo table. Excluding the two global-only keys first is what lets the
 // lookup type-check without an assertion (§0.9).
 export function tableFieldValue(

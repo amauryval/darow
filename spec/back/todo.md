@@ -21,6 +21,5 @@ the file, and a wrong line sends the reader to the wrong place with confidence. 
 search and stays true. What stays out is **code itself**: no snippet, no full signature, no diff.
 Write the instruction, not the patch — the code is written later, against the code as it is then.
 
-
-No chantier is open today. The next identifier to use is `TODO-32` — a retired identifier is never
+No chantier is open today. The next identifier to use is `TODO-33` — a retired identifier is never
 reused.

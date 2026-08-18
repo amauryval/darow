@@ -84,7 +84,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 // carrying no Authorization header is anonymous, and fakeTokenAdmin/
 // fakeTokenGuest/fakeTokenNoRole drive the write guard's four outcomes
 // (§6.7). There is no "authentication off" mode any more — every write
-// always demands an admin-role token (TODO-27).
+// always demands an admin-role token.
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
 	// fakeVerifier is never nil, so NewWithVerifier's one error case
 	// (a nil verifier) cannot occur here.

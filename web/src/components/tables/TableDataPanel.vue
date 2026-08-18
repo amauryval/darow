@@ -38,7 +38,7 @@ const props = defineProps<{
     selection: ReturnType<typeof useFeatureSelection>
     // The applied filter and the grid's sort are the view's state, carried in
     // the URL (§9) — read once at creation (initialSort) or controlled
-    // (activeFilterId), the two traps of TODO-F33.
+    // (activeFilterId), never both ways at once.
     activeFilterId: string | null
     initialSort?: SortingState
 }>()
@@ -154,7 +154,7 @@ function onRowClick(row: { original: Row }) {
 // What the selection bar acts on: the selection's own hydrated rows, not the
 // grid's page — a selection made on the map holds rows the grid has never
 // loaded (§8.8). Both are immediate writes, outside what a session's
-// *Enregistrer* commits (LIM-F10).
+// *Enregistrer* commits.
 function duplicateSelection() {
     rowsState.duplicateRows(selection.selectedRows.value)
 }

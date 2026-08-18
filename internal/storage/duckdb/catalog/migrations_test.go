@@ -50,9 +50,9 @@ func Test_Migrate_ReopeningDoesNotReapplyMigrations(t *testing.T) {
 
 // Test_Migrate_ComponentsAreVersionedIndependently registers a second
 // component only after metadata is already migrated on a database, proving
-// a component added later — exactly the situation TODO-3/TODO-4's settings
-// and stored-filters tables will be in — is seeded on its own without
-// touching metadata's version or rows.
+// a component added later — the situation the settings and stored-filters
+// tables are in — is seeded on its own without touching metadata's version
+// or rows.
 func Test_Migrate_ComponentsAreVersionedIndependently(t *testing.T) {
 	registered := registry
 	t.Cleanup(func() { registry = registered })
