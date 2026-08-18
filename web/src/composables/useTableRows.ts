@@ -48,50 +48,67 @@ export function useTableRows(
     // field rather than its Values map) — map the two back together for
     // display rather than showing a blank cell.
     //
-    // Retyping a cell is not here: an edit session holds its attribute drafts
-    // whole (useRowEdits) and writes them with its own *Enregistrer*, next to
-    // the geometries. What stays is what a single click does on the spot —
-    // duplicating a row or deleting one. Creating one is not here either: a
-    // new row is a draft of the session (useRowEdits) until it is saved.
-    const deletingPkey = ref<string | null>(null)
+    // Duplicating and deleting act on the **selection**, never on one row from
+    // its own cell: the grid already has a gesture that designates rows, and a
+    // single row is a selection of one (§8.6). Retyping is not here either — a
+    // session holds its attribute drafts whole (useRowEdits) and writes them
+    // with its own *Enregistrer*.
+    const deleting = ref(false)
 
-    async function deleteOneRow(pkey: string) {
-        deletingPkey.value = pkey
+    // No batch delete endpoint exists (LIM-F14): the rows go one request at a
+    // time, and a run stopped halfway still wrote — the grid and the table's
+    // counters are reloaded on whatever actually went through.
+    async function deleteRows(pkeys: string[]) {
+        if (pkeys.length === 0) return
+        deleting.value = true
+        let done = 0
         try {
-            const deleted = await deleteRow(tableId.value, pkey)
-            await list.reload()
-            onMutated()
-            toast.success(`Ligne ${deleted.id} supprimée.`)
+            for (const pkey of pkeys) {
+                await deleteRow(tableId.value, pkey)
+                done += 1
+            }
+            toast.success(done > 1 ? `${done} lignes supprimées.` : 'Ligne supprimée.')
         } catch (e) {
-            toast.error(errorMessage(e, 'Impossible de supprimer la ligne'))
+            toast.error(errorMessage(e, 'Impossible de supprimer la sélection'))
         } finally {
-            deletingPkey.value = null
+            if (done > 0) {
+                await list.reload()
+                onMutated()
+            }
+            deleting.value = false
         }
     }
 
-    // --- Duplicate row ---
-    const duplicatingPkey = ref<string | null>(null)
+    const duplicating = ref(false)
 
-    // A copy of the row under a new primary key: its attributes are taken from
-    // the row already on screen, but its geometry has to be read for it. The
-    // geometry column is deliberately absent from every row listing (LIM-F3),
-    // and a geo row duplicated without it would land empty — a row that exists
-    // in the grid and nowhere on the map.
-    async function duplicateRow(row: Row) {
-        duplicatingPkey.value = row.pkey
+    // Copies under new primary keys: the attributes are taken from the rows
+    // already on screen, but each geometry has to be read for it. The geometry
+    // column is deliberately absent from every row listing (LIM-F3), and a geo
+    // row duplicated without it would land empty — a row that exists in the
+    // grid and nowhere on the map.
+    async function duplicateRows(rows: Row[]) {
+        if (rows.length === 0) return
+        duplicating.value = true
         try {
-            const values: Record<string, unknown> = {}
-            for (const col of rowColumns.value) values[col] = cellValue(row, col)
-            const column = geometryColumn.value
-            if (column) values[column] = (await getRowGeometry(tableId.value, row.pkey)).geometry
-            await addRows(tableId.value, [values])
+            const copies: Record<string, unknown>[] = []
+            for (const row of rows) {
+                const values: Record<string, unknown> = {}
+                for (const col of rowColumns.value) values[col] = cellValue(row, col)
+                const column = geometryColumn.value
+                if (column)
+                    values[column] = (await getRowGeometry(tableId.value, row.pkey)).geometry
+                copies.push(values)
+            }
+            await addRows(tableId.value, copies)
             await list.reload()
             onMutated()
-            toast.success('Ligne dupliquée.')
+            toast.success(
+                copies.length > 1 ? `${copies.length} lignes dupliquées.` : 'Ligne dupliquée.'
+            )
         } catch (e) {
-            toast.error(errorMessage(e, 'Impossible de dupliquer la ligne'))
+            toast.error(errorMessage(e, 'Impossible de dupliquer la sélection'))
         } finally {
-            duplicatingPkey.value = null
+            duplicating.value = false
         }
     }
 
@@ -106,9 +123,9 @@ export function useTableRows(
         sorting: list.sorting,
         sentinel: list.sentinel,
         setSorting: list.setSorting,
-        deletingPkey,
-        deleteRow: deleteOneRow,
-        duplicatingPkey,
-        duplicateRow
+        deleting,
+        deleteRows,
+        duplicating,
+        duplicateRows
     }
 }

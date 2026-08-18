@@ -296,11 +296,12 @@ module level and documents it; that is the exception, not the rule.
 | `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
 | `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
-| `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
+| `useTableRows` | a table's rows: current page, sorting, and the two writes that act on a **set** of rows — `duplicateRows(rows)` / `deleteRows(pkeys)`. Built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`'. Duplicating reads each source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map. Deleting goes one request at a time (LIM-F14) and reloads on whatever actually went through, so a run stopped halfway still leaves the grid and the table's counters exact | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
-| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, because what is selected is one of the table's counters and is stated with the others in `TableHeader`. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
+| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, so that it survives what the panel reloads and is the one selection the map, the grid and `TableSelectionBar` share. It is what *Dupliquer* and *Supprimer* act on, and `selectedRows` — hydrated, not read off the grid's page — is what makes duplicating a row the map selected possible at all. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
+| `useSelectionView` | how the grid **arranges** the selection, and nothing else — the selection itself stays `useFeatureSelection`'s. Three states, one `view` ref: `inline` (the default — a selected row stays exactly where the sort put it), `pinned` (the selection lifted above the page) and `only` (the selection alone). `toggle('pinned'|'only')` is what both controls of `TableSelectionBar` call: asking for one arrangement leaves the other, asking again returns to `inline`. It produces `displayRows` — the session's drafts always first, being empty and having no place among sorted rows — and returns to `inline` on its own when the selection empties, an `only` left behind showing an empty grid over a full table | present |
 | `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
 | `useMapDraw` | the edit session's lifecycle: the layer it works on, the single interaction over it — a `Modify` to reshape, a `Translate` to move a geometry whole, never both — the contextmenu the right-click delete has to suppress, the `modifystart`/`modifyend` snapshot-and-diff that says which vertices a drag actually moved, `commit` (what the session would write), teardown. It is also where a hover that lands on nothing the session holds is turned into a request for the row underneath: it is given `pkeyAt` (which row of the rendering is under a pixel) and `reach` (ask for it) and knows nothing of either render mode | present |
 | `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the `moving` mode that hands the drag to a `Translate` instead of the `Modify`, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Arming any one of drawing, cutting and moving disarms the others — they all want the same drag. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
@@ -414,10 +415,7 @@ per page (the server's own live cap) until the reported `total` is reached.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
-- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update, and
-  how many of its rows are selected, with one icon button to frame the map on the selection's own
-  extent — geo tables only, via `useFeatureSelection.zoomToSelection` — and one to empty the
-  selection) and
+- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update) and
   what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
   *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
   *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
@@ -432,6 +430,23 @@ per page (the server's own live cap) until the reported `total` is reached.
   `Tableau / ⬛ / Carte` group), the two registers parted by a `Divider`. It owns nothing: the
   visible-column choice is the view's state, so the *Colonnes* button asks the panel for its modal
   and the panel asks the view.
+- `TableSelectionBar` (`components/tables/`) — shown as soon as one row is selected, holding **how
+  many** are selected and **everything that acts on them**: framing the map on the selection's own
+  extent (geo tables only, `useFeatureSelection.zoomToSelection`), *Dupliquer*, *Supprimer*, and
+  emptying the selection last. Selecting is one gesture — a click on a row, a click on its feature —
+  so what it enables is read in one place instead of being split between the table's identity line
+  and each row's own cell. Between the counter and the writes sit the two controls of
+  `useSelectionView` — *remonter la sélection en haut* and *n'afficher que la sélection*, one
+  `ButtonGroup` of icon toggles carrying `aria-pressed` — which are also the **only** way a row
+  selected on the map, outside the loaded pages, is reached in the grid. It **floats** over both
+  panels, absolutely positioned at their bottom
+  centre by `TableDataPanel` on a `pointer-events-none` wrapper that lets the map's and the grid's
+  own clicks through: a bar inserted into the layout appeared and disappeared as the selection
+  emptied and filled, resizing the grid and the map under the pointer at the exact moment the user
+  was clicking rows. It is **not** an edit-session bar and does not wait for the *Éditer* toggle:
+  duplicating and deleting are single confirmed writes with their own feedback, not drafts an
+  *Enregistrer* commits (LIM-F10). Both write buttons are disabled by `useWriteGuard` with the
+  reason in their tooltip (§8.4), and deletion is confirmed with the count in its wording (§8.3).
 - Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
   discrete thing one creates or edits and then applies. `components/filters/` holds the whole
   feature — `TableFilterBar` (the "Filtrer" button, the saved-filter menu, the pills, and the modal's
@@ -475,15 +490,17 @@ per page (the server's own live cap) until the reported `total` is reached.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: OpenLayers is the bundle’s largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
-- `TableRowsPanel` (`components/tables/`) — row grid and nothing else: the rows selected on the map
-  pinned at its top, infinite scroll, and the per-row action column. How many are selected, and the
-  control that empties the selection, are **not** here — that is a counter of the table and it is
-  stated with the table's other counters (`TableHeader`), where a count belongs. That column and the row number are the
-  grid's first two, pinned there: a grid wider than its panel otherwise hid the number that names a
-  row and pushed its actions past every attribute. The actions are icons alone — the same three on
-  every line, each with its name in its tooltip and to assistive tech (§8.7) — because a row of
-  labelled buttons, one of them a red *Supprimer* pill, repeated down the grid reads as a warning
-  about the data rather than as controls. That column is **always** rendered:
+- `TableRowsPanel` (`components/tables/`) — row grid and nothing else: the rows exactly as its
+  parent arranged them (`displayRows`, from `useSelectionView`), infinite scroll, and the grid's own
+  first columns. It owns no arrangement of its own; `selectionOnly` only tells it to state what is
+  on screen at its foot instead of the paged count and its sentinel — a selection has no next page,
+  and the paged wording would name a total the grid is not showing. Nothing that acts on the selection is
+  here — neither the count nor *Dupliquer* / *Supprimer*: they act on rows the grid may never have
+  loaded (a selection made on the map), and they are stated once, in `TableSelectionBar`. What the
+  row's own cell (`TableRowLeadCell`) carries is its **rank** and, for a draft the session has yet
+  to write, the one control that drops it. That cell and the geometry column are pinned first: a
+  grid wider than its panel otherwise hid the number that names a row. The geometry column is
+  **always** rendered:
   reading a row's geometry is a read, so arming edit mode to reach it would be a trap. It receives
   the `useTableRows` state and the `useRowEdits` draft its parent owns and emits intentions
   (`geometry`, `rowClick`), never reloading or writing anything itself. Which
@@ -709,15 +726,28 @@ This is the product's main screen; it follows fixed rules.
 - Sorting: a visible indicator on the sorted column, numbered order for multi-sort, and the
   affordance explained (`title`) rather than guessed.
 - Long cells are truncated with the full value in `title`; the row height is not broken.
-- The grid opens on a rank column (`#`): the row's position in the grid as it is displayed,
-  selection pinned at the top included. It is not the primary key — a pkey is an identifier, not a
-  position, and the two stop agreeing the moment the grid is sorted.
-- On a geo table, one click anywhere on a row that is not a control toggles it in and out of the
-  selection: it is the same selection the map holds, so the gesture that reverses it is the same
-  gesture (§8.8). A row whose cells are open for editing is not a target — the click is aimed at
-  the field under the pointer.
-- A row is duplicated from its own actions, geometry included, and the copy is not confirmed
-  beforehand: it adds, and what it added is deleted by the button beside it (§8.3).
+- The grid opens on a rank column (`#`): the row's position in the grid **as it is displayed**. It
+  is not the primary key — a pkey is an identifier, not a position, and the two stop agreeing the
+  moment the grid is sorted. A row the session has yet to write holds no rank at all.
+- **Selecting a row never moves it.** The default arrangement is `inline`: a selected row stays
+  exactly where the sort put it, on the map's clicks as on the grid's. Lifting a row the user just
+  clicked above the others moved the grid under the pointer, so the next click landed on a different
+  row than the one aimed at. Rearranging the selection is **asked for**, from the two toggles of
+  `TableSelectionBar` — *en haut de la liste* or *seule* — and returns to `inline` on its own when
+  the selection empties. Those two are also what makes a selection built on the map, on rows the
+  grid has never paged in, readable at all.
+- One click anywhere on a row that is not a control toggles it in and out of the selection, on
+  every table and not only a geo one: on a geo table it is the same selection the map holds, so the
+  gesture that reverses it is the same gesture (§8.8), and everywhere it is what the row actions act
+  on. A row whose cells are open for editing is not a target — the click is aimed at the field under
+  the pointer. A row the session has yet to write is not a target either: nothing acts on it before
+  *Enregistrer* does.
+- **Duplicating and deleting act on the selection, never on one row from its own cell.** They stand
+  in `TableSelectionBar` above the grid, where the count they apply to is stated, so one row and
+  twenty are the same gesture and the grid is not striped with a red pill per line. A single row is
+  a selection of one. Neither waits for the edit mode — they are immediate confirmed writes, not
+  drafts (LIM-F10). Duplicating carries the geometry and is not confirmed beforehand: it adds, and
+  what it added is deleted by the button beside it (§8.3).
 - Sorting, search and filtering apply to **all** the data server-side, never only to the pages
   already loaded: a silent partial result is a lie. The one exception is the map editor's working
   set, which is deliberately silent and says what it holds by drawing it (§8.8, LIM-F7) — nothing
@@ -815,7 +845,7 @@ This is the product's main screen; it follows fixed rules.
   *Éditer* toggle in `TableToolbar`, never one per half: the rows and the geometries are two halves
   of one object, and choosing between them before touching anything is a question the user cannot
   answer yet. Arming it raises `TableEditBar` over both panels, holding what the table can actually
-  carry — the row actions always, the map's tools only on a geo table. Those tools stay owned by
+  carry — the way to create a row always, the map's tools only on a geo table. Those tools stay owned by
   `MapView` (the OpenLayers session is theirs, and OpenLayers must not reach the initial bundle
   through the bar) and are rendered into it by a `Teleport`, which is also what keeps *Enregistrer*
   and *Annuler* reachable while the map is the hidden half of a maximized table. That pair

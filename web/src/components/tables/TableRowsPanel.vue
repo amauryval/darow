@@ -17,7 +17,7 @@ import ErrorState from '../ui/ErrorState.vue'
 import ListFooter from '../ui/ListFooter.vue'
 import Skeleton from '../ui/Skeleton.vue'
 
-// The rows grid of a table: the pinned selection, the infinite scroll, and
+// The rows grid of a table: the rows as its parent arranged them, the infinite scroll, and
 // the cells the attribute edit mode makes writable. It receives the row state
 // its view already owns (useTableRows) and reports intentions; it loads
 // nothing itself, and it does not own the mode either — arming it is a
@@ -31,6 +31,10 @@ const props = defineProps<{
     editableColumns: string[]
     columns: ColumnSchema[]
     displayRows: Row[]
+    // The grid is showing the selection alone: its foot states what is on
+    // screen, and no sentinel — there is no next page of a selection, and the
+    // paged count would name a total the grid is not showing (§8.6).
+    selectionOnly?: boolean
     visibleColumns: string[]
     isGeo: boolean
     // The geometry column's own name: it heads the column that opens it.
@@ -69,8 +73,8 @@ const columnDefs = computed(() => {
     )
 
     // Its width is stated rather than fitted, and so is the offset of whatever
-    // is pinned after it: both depend on the session, which is what puts the two
-    // action icons in the row's own cell.
+    // is pinned after it: both depend on the session, which is what raises the
+    // drafts whose one control shares that cell with the rank.
     const editing = props.edits.active.value
 
     // The geometry is a column of the table, so it is one of the grid: headed by
@@ -83,7 +87,7 @@ const columnDefs = computed(() => {
                 id: '__geometry',
                 header: props.geometryColumn ?? 'geom',
                 meta: {
-                    pinned: editing ? 'left-24' : 'left-12',
+                    pinned: editing ? 'left-20' : 'left-12',
                     class: 'w-16 max-w-16 px-2 truncate'
                 },
                 cell: (info) =>
@@ -96,12 +100,11 @@ const columnDefs = computed(() => {
         )
     }
 
-    // The row's own cell, first and pinned: what names the row and what acts on
-    // it — neither is a value of the table, and a column of their own for two
-    // icons pushed every attribute one step right for nothing. It stays put
+    // The row's own cell, first and pinned: what names the row, plus the one
+    // control a draft carries — neither is a value of the table. It stays put
     // while the columns scroll sideways, or a grid wider than its panel hides
-    // the number that names a row and pushes its actions past every attribute.
-    //
+    // the number that names a row. Duplicating and deleting are not here: they
+    // act on the selection, from the bar above the grid (§8.6).
     defs.unshift(
         columnHelper.display({
             id: '__row',
@@ -110,16 +113,14 @@ const columnDefs = computed(() => {
                 align: 'right',
                 pinned: 'left-0',
                 class: editing
-                    ? 'w-24 min-w-24 px-2 whitespace-nowrap'
+                    ? 'w-20 min-w-20 px-2 whitespace-nowrap'
                     : 'w-12 min-w-12 px-2 whitespace-nowrap'
             },
             cell: (info) => {
                 const row = info.row.original
-                // A draft holds no rank — it has no position in the table until it is
-                // written, and numbering it would shift every rank the user reads.
-                // Dropping it is the one action that applies to it, and only where the
-                // grid alone created it: a draft raised by a drawing goes with its
-                // shape, which is the session's *Annuler*.
+                // Dropping a draft is the one action that applies to it, and only
+                // where the grid alone created it: a draft raised by a drawing goes
+                // with its shape, which is the session's *Annuler*.
                 if (isDraft(row.pkey)) {
                     return h(TableRowLeadCell, {
                         rank: null,
@@ -128,13 +129,7 @@ const columnDefs = computed(() => {
                     })
                 }
                 return h(TableRowLeadCell, {
-                    rank: info.row.index + 1 - props.edits.draftCount.value,
-                    editable: editing,
-                    isDeletingPkey: props.state.deletingPkey.value ?? undefined,
-                    isDuplicating: props.state.duplicatingPkey.value === row.pkey,
-                    deletingPkey: row.pkey,
-                    onDuplicate: () => props.state.duplicateRow(row),
-                    onDelete: () => props.state.deleteRow(row.pkey)
+                    rank: info.row.index + 1 - props.edits.draftCount.value
                 })
             }
         })
@@ -177,7 +172,12 @@ const table = useVueTable({
         @row-click="emit('rowClick', $event)"
     >
         <template #footer>
+            <p v-if="selectionOnly" class="px-4 py-3 text-center text-xs text-base-content/40">
+                Sélection seule — {{ displayRows.length.toLocaleString('fr-FR') }} sur
+                {{ state.total.value.toLocaleString('fr-FR') }}
+            </p>
             <ListFooter
+                v-else
                 :sentinel="state.sentinel"
                 :loading="state.loading.value"
                 :loaded="state.rows.value.length"

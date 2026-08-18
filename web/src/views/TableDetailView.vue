@@ -68,10 +68,10 @@ const {
 
 useDocumentTitle(computed(() => table.value?.tableName ?? 'Table'))
 
-// Selection is owned here rather than in the data panel: what is selected is
-// a count of the table's rows, and it is stated where the table's other
-// counters are (TableHeader). The panel and the map act on it through this
-// one instance — there is a single selection, map and grid alike (§8.8).
+// Selection is owned here rather than in the data panel: it survives a
+// schema reload and belongs to the table in hand, not to one panel. The panel,
+// its selection bar and the map act on it through this one instance — there is
+// a single selection, map and grid alike (§8.8).
 const selection = useFeatureSelection(toRef(props, 'tableId'))
 
 const renaming = ref(false)
@@ -185,13 +185,9 @@ async function onColumnAdded(name: string, type: string) {
             v-if="table"
             :table="table"
             :editing-name="editingName"
-            :selected-count="selection.selectedPkeys.value.length"
-            :zooming="selection.zooming.value"
             :renaming="renaming"
             :exporting="exporting"
             @update:editing-name="editingName = $event"
-            @clear-selection="selection.clear"
-            @zoom-to-selection="selection.zoomToSelection"
             @rename="onRename"
             @add-column="openAddColumn"
             @derive="showDerive = true"

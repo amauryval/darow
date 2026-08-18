@@ -4,14 +4,12 @@ import {
     Download,
     GitBranch,
     Link2,
-    Maximize,
     MoreHorizontal,
     Pencil,
     Plus,
     Settings2,
     Sigma,
-    Trash2,
-    X
+    Trash2
 } from '@lucide/vue'
 import type { Metadata } from '../../client/types'
 import Badge from '../ui/Badge.vue'
@@ -28,8 +26,9 @@ import { useWriteGuard } from '../../composables/useWriteGuard'
 // What the table *is* — its name, its nature, its counters — and what can be
 // done to the table as an object. Nothing here acts on what is displayed:
 // filtering, editing and the panel layout belong to the workspace toolbar
-// below (`TableToolbar`), and mixing the two registers in one bar is what
-// made this row unreadable (§8.9).
+// below (`TableToolbar`), what is selected and what acts on it to the
+// selection's own bar (`TableSelectionBar`) — mixing those registers in one
+// row is what made it unreadable (§8.9).
 const props = defineProps<{
     table: Metadata
     // The rename form is opened by the menu but owned by the view: it is the
@@ -38,15 +37,9 @@ const props = defineProps<{
     editingName: boolean
     renaming: boolean
     exporting: boolean
-    // How many rows are selected, on the map and in the grid alike — a counter
-    // of the table, so it stands with the others rather than above the grid.
-    selectedCount: number
-    zooming: boolean
 }>()
 const emit = defineEmits<{
     'update:editingName': [editing: boolean]
-    clearSelection: []
-    zoomToSelection: []
     rename: [name: string]
     addColumn: []
     derive: []
@@ -111,36 +104,6 @@ function submitRename() {
                     {{ table.rowCount.toLocaleString('fr-FR') }} lignes · mis à jour
                     {{ new Date(table.updatedAt).toLocaleString('fr-FR') }}
                 </Typography>
-                <template v-if="selectedCount > 0">
-                    <span class="size-2.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
-                    <Typography variant="body-sm">
-                        {{ selectedCount.toLocaleString('fr-FR') }} sélectionnée{{
-                            selectedCount > 1 ? 's' : ''
-                        }}
-                    </Typography>
-                    <BaseButton
-                        v-if="table.isGeo"
-                        size="xs"
-                        variant="ghost"
-                        :icon="Maximize"
-                        icon-only
-                        :busy="zooming"
-                        title="Cadrer sur la sélection"
-                        @click="emit('zoomToSelection')"
-                    >
-                        Cadrer sur la sélection
-                    </BaseButton>
-                    <BaseButton
-                        size="xs"
-                        variant="ghost"
-                        :icon="X"
-                        icon-only
-                        title="Vider la sélection"
-                        @click="emit('clearSelection')"
-                    >
-                        Vider la sélection
-                    </BaseButton>
-                </template>
             </template>
         </div>
 

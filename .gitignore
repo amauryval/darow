@@ -13,5 +13,7 @@ data/geo.db
 data/sources/*.gpkg
 data/sources/*.parquet
 data/geo.db.wal
+data/darow.db.wal
 config.yaml
 data/darow.db
+internal/webui/dist/index.html
