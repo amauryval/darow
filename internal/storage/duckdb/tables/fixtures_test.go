@@ -76,6 +76,21 @@ func newGeoTestTable(t *testing.T, conn dbConn) storage.Metadata {
 	return storage.Metadata{TableId: "id-geo", PhysicalName: "t_geo", IsGeo: true, GeometryColumn: "geom"}
 }
 
+// newIndexedGeoTestTable is a geo table carrying the two indexes rule 19
+// requires, like every table the materializer creates — what a structural
+// ALTER has to work around.
+func newIndexedGeoTestTable(t *testing.T, conn dbConn) storage.Metadata {
+	_, err := conn.db.Exec(`CREATE TABLE t_indexed (__pkey TEXT, name TEXT, geom GEOMETRY)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`INSERT INTO t_indexed VALUES ('1', 'a', ST_GeomFromText('POINT(100000 100000)'))`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`CREATE UNIQUE INDEX idx_t_indexed_pkey ON t_indexed (__pkey)`)
+	require.NoError(t, err)
+	_, err = conn.db.Exec(`CREATE INDEX idx_t_indexed_geom ON t_indexed USING RTREE (geom)`)
+	require.NoError(t, err)
+	return storage.Metadata{TableId: "id-indexed", PhysicalName: "t_indexed", IsGeo: true, GeometryColumn: "geom"}
+}
+
 // assertPointNear checks a WKT point against expected lon/lat: a geometry
 // written in lon/lat is reprojected to EPSG:3857 and back on the way out,
 // so the last digits never survive the round trip and an exact comparison

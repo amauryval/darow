@@ -11,6 +11,7 @@ import TableHeader from '../components/tables/TableHeader.vue'
 import DeriveTableModal from '../components/tables/DeriveTableModal.vue'
 import AggregateTableModal from '../components/tables/AggregateTableModal.vue'
 import AddColumnModal from '../components/tables/AddColumnModal.vue'
+import ColumnStructureModal from '../components/tables/ColumnStructureModal.vue'
 import ApiRoutesModal from '../components/tables/ApiRoutesModal.vue'
 import ExportModal from '../components/tables/ExportModal.vue'
 import TableSettingsModal from '../components/tables/TableSettingsModal.vue'
@@ -63,7 +64,9 @@ const {
     loadTable,
     rename,
     remove,
-    addNewColumn
+    addNewColumn,
+    renameExistingColumn,
+    removeColumn
 } = useTableMetadata(toRef(props, 'tableId'))
 
 useDocumentTitle(computed(() => table.value?.tableName ?? 'Table'))
@@ -111,6 +114,7 @@ const showColumns = ref(false)
 const showDerive = ref(false)
 const showAggregate = ref(false)
 const showAddColumn = ref(false)
+const showColumnStructure = ref(false)
 const showApiRoutes = ref(false)
 const showTableSettings = ref(false)
 
@@ -170,6 +174,21 @@ async function onColumnAdded(name: string, type: string) {
     await addNewColumn(name, type)
     await loadTable()
 }
+
+// A renamed or dropped column changes what every loaded row holds, and the
+// grid pages are cached by tableId alone: remounting the panel is what makes
+// it read the new structure instead of showing stale cells.
+const structureVersion = ref(0)
+
+async function onColumnRenamed(name: string, newName: string) {
+    await renameExistingColumn(name, newName)
+    structureVersion.value += 1
+}
+
+async function onColumnDropped(name: string) {
+    await removeColumn(name)
+    structureVersion.value += 1
+}
 </script>
 
 <template>
@@ -190,6 +209,7 @@ async function onColumnAdded(name: string, type: string) {
             @update:editing-name="editingName = $event"
             @rename="onRename"
             @add-column="openAddColumn"
+            @edit-columns="showColumnStructure = true"
             @derive="showDerive = true"
             @aggregate="showAggregate = true"
             @export="showExport = true"
@@ -200,6 +220,7 @@ async function onColumnAdded(name: string, type: string) {
 
         <TableDataPanel
             v-if="table"
+            :key="structureVersion"
             :table-id="table.tableId"
             :bbox="table.bbox"
             :is-geo="table.isGeo"
@@ -248,6 +269,14 @@ async function onColumnAdded(name: string, type: string) {
             ref="addColumnModalRef"
             :on-add="onColumnAdded"
             @close="showAddColumn = false"
+        />
+
+        <ColumnStructureModal
+            v-if="showColumnStructure && table"
+            :columns="rowColumns"
+            :on-rename="onColumnRenamed"
+            :on-drop="onColumnDropped"
+            @close="showColumnStructure = false"
         />
 
         <ExportModal

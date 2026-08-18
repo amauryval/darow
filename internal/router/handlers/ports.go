@@ -39,6 +39,8 @@ type rowAPI interface {
 type schemaAPI interface {
 	Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error)
 	AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error
+	RenameColumn(ctx context.Context, meta storage.Metadata, colName, newName string) error
+	DropColumn(ctx context.Context, meta storage.Metadata, colName string) error
 }
 
 // deriveAPI is everything the router calls on *service.DeriveService.

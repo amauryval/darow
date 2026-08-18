@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -97,6 +98,77 @@ func (s *SchemaService) AddColumn(ctx context.Context, meta storage.Metadata, co
 		return NewDisplayError(fmt.Sprintf("unable to add column %q to table %q", colName, meta.TableId), err)
 	}
 	s.InvalidateSchema(meta.TableId)
+	return nil
+}
+
+// RenameColumn renames colName to newName on meta's underlying table and
+// invalidates its cached schema. Both names are checked against the real
+// schema first: an unknown source column, or a target name already taken,
+// is a ValidationError raised before the table is touched.
+func (s *SchemaService) RenameColumn(ctx context.Context, meta storage.Metadata, colName, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return storage.NewValidationError("the new column name is required")
+	}
+
+	types, err := s.Types(ctx, meta)
+	if err != nil {
+		return err
+	}
+	if err := checkRenameable(types, meta, colName); err != nil {
+		return err
+	}
+	if _, taken := types[newName]; taken || storage.IsHiddenColumn(newName) {
+		return storage.NewValidationError(fmt.Sprintf("column %q already exists", newName))
+	}
+
+	repo, err := openTable(s.storage, meta)
+	if err != nil {
+		return err
+	}
+	if err := repo.RenameColumn(ctx, colName, newName); err != nil {
+		return NewDisplayError(fmt.Sprintf("unable to rename column %q of table %q", colName, meta.TableId), err)
+	}
+	s.InvalidateSchema(meta.TableId)
+	return nil
+}
+
+// DropColumn drops colName from meta's underlying table and invalidates its
+// cached schema. Stored filters and per-table settings naming the column are
+// left as they are — they stop applying (§5.3).
+func (s *SchemaService) DropColumn(ctx context.Context, meta storage.Metadata, colName string) error {
+	types, err := s.Types(ctx, meta)
+	if err != nil {
+		return err
+	}
+	if err := checkRenameable(types, meta, colName); err != nil {
+		return err
+	}
+
+	repo, err := openTable(s.storage, meta)
+	if err != nil {
+		return err
+	}
+	if err := repo.DropColumn(ctx, colName); err != nil {
+		return NewDisplayError(fmt.Sprintf("unable to drop column %q of table %q", colName, meta.TableId), err)
+	}
+	s.InvalidateSchema(meta.TableId)
+	return nil
+}
+
+// checkRenameable reports whether colName is a real column of the table and
+// one a caller may rename or drop — never a hidden column, never the
+// geometry column the rest of the domain assumes stable.
+func checkRenameable(types map[string]string, meta storage.Metadata, colName string) error {
+	if _, ok := types[colName]; !ok {
+		return storage.NewValidationError(fmt.Sprintf("unknown column: %q", colName))
+	}
+	if storage.IsHiddenColumn(colName) {
+		return storage.NewValidationError(fmt.Sprintf("column %q is managed by the server", colName))
+	}
+	if meta.IsGeo && colName == meta.GeometryColumn {
+		return storage.NewValidationError(fmt.Sprintf("column %q is the geometry column", colName))
+	}
 	return nil
 }
 

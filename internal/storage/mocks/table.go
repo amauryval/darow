@@ -32,6 +32,14 @@ func (m *TableRepository) AddColumn(ctx context.Context, colName, colType string
 	return m.Called(ctx, colName, colType).Error(0)
 }
 
+func (m *TableRepository) RenameColumn(ctx context.Context, oldName, newName string) error {
+	return m.Called(ctx, oldName, newName).Error(0)
+}
+
+func (m *TableRepository) DropColumn(ctx context.Context, colName string) error {
+	return m.Called(ctx, colName).Error(0)
+}
+
 func (m *TableRepository) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	return m.Called(ctx, req).Error(0)
 }

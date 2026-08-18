@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -113,7 +114,34 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 	if err := a.catalog.RefreshMissingBbox(context.Background()); err != nil {
 		slog.Error("refreshing tables left without a bbox", "error", err)
 	}
+	a.repairSpatialIndexes(context.Background())
 	return a, nil
+}
+
+// repairSpatialIndexes probes every geo table's spatial index the way a tile
+// does and rebuilds the ones the engine crashes the planner on (BLK-5) — the
+// state a replayed write-ahead log can leave an RTREE index in. Best effort,
+// like the bbox refresh: a table it cannot repair is logged, never fatal.
+func (a *Adapter) repairSpatialIndexes(ctx context.Context) {
+	metas, _, err := a.catalog.List(ctx, nil, 0, math.MaxInt32)
+	if err != nil {
+		slog.Error("listing tables to check their spatial index", "error", err)
+		return
+	}
+
+	for _, meta := range metas {
+		if !meta.IsGeo {
+			continue
+		}
+		repaired, err := tables.RepairSpatialIndex(ctx, a, meta.TableId, meta.PhysicalName, meta.GeometryColumn)
+		if err != nil {
+			slog.Error("checking a table's spatial index", "table", meta.TableId, "error", err)
+			continue
+		}
+		if repaired {
+			slog.Warn("rebuilt a spatial index the engine could not plan against", "table", meta.TableId)
+		}
+	}
 }
 
 // conn returns the connection pool currently in use, safe against a
@@ -131,6 +159,7 @@ func (a *Adapter) conn() *sql.DB {
 // failed is the pool the caller observed the error on: comparing against it
 // lets a second caller see the pool has already been replaced. A failure to
 // reopen is left for the next caller — this is best effort, not a guarantee.
+// A pool that still answers a ping is not reopened at all.
 func (a *Adapter) recoverIfFatal(err error, failed *sql.DB) {
 	if !isFatalDuckDBError(err) {
 		return
@@ -140,6 +169,14 @@ func (a *Adapter) recoverIfFatal(err error, failed *sql.DB) {
 	defer a.reopenMu.Unlock()
 
 	if a.conn() != failed {
+		return
+	}
+
+	// Not every INTERNAL error invalidates the instance — a spatial index the
+	// planner crashes on (BLK-5) leaves it perfectly usable, and reopening a
+	// live database per failed tile is what turns one broken table into a
+	// broken server. One probe decides.
+	if pingErr := failed.PingContext(context.Background()); pingErr == nil {
 		return
 	}
 

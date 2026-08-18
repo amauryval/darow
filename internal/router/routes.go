@@ -183,6 +183,8 @@ func (rt *Router) Setup() http.Handler {
 						sub.Group(func(w chi.Router) {
 							w.Use(rt.guards.AdminScope())
 							w.Post("/", rt.tables.AddColumn)
+							w.Patch("/{col}", rt.tables.RenameColumn)
+							w.Delete("/{col}", rt.tables.DropColumn)
 							w.Post("/{col}/transform", rt.tables.TransformColumn)
 						})
 					})

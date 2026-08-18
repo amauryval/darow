@@ -1,5 +1,13 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import { addColumn, deleteTable, getSchema, getTable, renameTable } from '../client/tables'
+import {
+    addColumn,
+    deleteTable,
+    dropColumn,
+    getSchema,
+    getTable,
+    renameColumn,
+    renameTable
+} from '../client/tables'
 import type { ColumnSchema, Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
 import { isHiddenColumn } from '../utils/rows'
@@ -7,8 +15,8 @@ import { isHiddenColumn } from '../utils/rows'
 // A table's metadata and schema, reloaded whenever tableId changes (vue-router
 // reuses TableDetailView across :tableId navigations, so this must react to
 // the ref rather than run once in onMounted). Mutating actions (rename,
-// delete, addColumn) do the network call and rethrow on failure —
-// callers decide whether the error becomes a toast or an inline form
+// delete, addColumn, renameExistingColumn, removeColumn) do the network call
+// and rethrow on failure — callers decide whether the error becomes a toast or an inline form
 // message, since that varies by call site (règle 8.4). loadAll's own failure
 // is different: it is the initial load, so it is exposed as loading/error
 // (§0.18, §8.1) for the view to render a Skeleton/ErrorState instead of a
@@ -68,6 +76,16 @@ export function useTableMetadata(tableId: Ref<string>) {
         await loadSchema()
     }
 
+    async function renameExistingColumn(name: string, newName: string) {
+        await renameColumn(tableId.value, name, newName)
+        await loadSchema()
+    }
+
+    async function removeColumn(name: string) {
+        await dropColumn(tableId.value, name)
+        await loadSchema()
+    }
+
     watch(tableId, loadAll, { immediate: true })
 
     return {
@@ -82,6 +100,8 @@ export function useTableMetadata(tableId: Ref<string>) {
         loadTable,
         rename,
         remove,
-        addNewColumn
+        addNewColumn,
+        renameExistingColumn,
+        removeColumn
     }
 }

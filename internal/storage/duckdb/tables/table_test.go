@@ -81,6 +81,90 @@ func Test_TableRepository_AddColumn_AcceptsParameterizedType(t *testing.T) {
 	assert.Contains(t, types, "label")
 }
 
+func Test_TableRepository_RenameAndDropColumn(t *testing.T) {
+	conn := openRepoTestDB(t)
+	meta := newScalarTestTable(t, conn)
+	repo, err := Open(conn, conn, nil, meta)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	require.NoError(t, repo.RenameColumn(ctx, "name", "label"))
+	types, err := repo.Types(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, types, "label")
+	assert.NotContains(t, types, "name")
+
+	require.NoError(t, repo.DropColumn(ctx, "label"))
+	types, err = repo.Types(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, types, "label")
+}
+
+// DuckDB refuses any ALTER on a table an index depends on — the unique
+// `__pkey` index as much as the RTREE one, so both are cleared and rebuilt
+// around the statement and rule 19 holds on both sides. The fixture carries
+// both, like every table the materializer creates.
+func Test_TableRepository_AlterColumn_KeepsTheIndexes(t *testing.T) {
+	cases := []struct {
+		name  string
+		alter func(repo storage.TableRepository) error
+		gone  string
+		kept  string
+	}{
+		{
+			name:  "drop",
+			alter: func(repo storage.TableRepository) error { return repo.DropColumn(context.Background(), "name") },
+			gone:  "name",
+		},
+		{
+			name: "rename",
+			alter: func(repo storage.TableRepository) error {
+				return repo.RenameColumn(context.Background(), "name", "label")
+			},
+			gone: "name",
+			kept: "label",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			conn := openRepoTestDB(t)
+			meta := newIndexedGeoTestTable(t, conn)
+			repo, err := Open(conn, conn, nil, meta)
+			require.NoError(t, err)
+			ctx := context.Background()
+
+			require.NoError(t, c.alter(repo))
+
+			types, err := repo.Types(ctx)
+			require.NoError(t, err)
+			assert.NotContains(t, types, c.gone)
+			if c.kept != "" {
+				assert.Contains(t, types, c.kept)
+			}
+			names, err := indexNames(ctx, conn, meta.PhysicalName)
+			require.NoError(t, err)
+			assert.Len(t, names, 2, "both indexes must be back")
+		})
+	}
+}
+
+// The repository is the layer that interpolates the column name, so it
+// refuses the server-managed columns itself even though SchemaService
+// already does: __pkey and the geometry column must survive any caller.
+func Test_TableRepository_RenameDropColumn_RefusesManagedColumns(t *testing.T) {
+	conn := openRepoTestDB(t)
+	geoRepo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	var validationErr *storage.ValidationError
+	assert.ErrorAs(t, geoRepo.DropColumn(ctx, storage.PkeyColumn), &validationErr)
+	assert.ErrorAs(t, geoRepo.DropColumn(ctx, "geom"), &validationErr)
+	assert.ErrorAs(t, geoRepo.RenameColumn(ctx, "geom", "shape"), &validationErr)
+	assert.ErrorAs(t, geoRepo.RenameColumn(ctx, "name", storage.PkeyColumn), &validationErr)
+}
+
 func Test_TableRepository_Geo_ReportsIsGeo(t *testing.T) {
 	conn := openRepoTestDB(t)
 

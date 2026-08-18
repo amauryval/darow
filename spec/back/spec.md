@@ -546,7 +546,7 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 | Interface           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `ListProvenance` (every imported table's `sourceName`/`sourceLayer`, §3.2), `CreateFromFile`, `CreateFromQuery`, `ReloadFromFile`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
-| `TableRepository`   | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `TableRepository`   | `Schema`, `Types`, `AddColumn`, `RenameColumn`, `DropColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `RowRepository`     | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete`                                                                                                                                                                                                                       |
 | `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `CountFeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
 | `TableMaterializer` | `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. The materialization itself (CTAS, indexing, clustering, from a source file or a derived SELECT) is not on this interface — it runs transactionally through `Catalog.CreateFromFile`/`CreateFromQuery` (below) instead                                                                                                                                                                                          |
@@ -672,7 +672,8 @@ constructions run in that order rather than through a deferred closure.
 -   **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
     creation of the parent directory, then schema migration, then `RefreshMissingBbox` — every geo
     table left without a bbox has its derived metadata recomputed, `bbox` being derived and never
-    stored truth (rule 9). Best-effort: a failure is logged and the server still opens.
+    stored truth (rule 9), then the spatial-index repair (§4.6.1). Both are best-effort: a failure
+    is logged and the server still opens.
 -   **Readiness**: `Ping` is the connection ping **plus** the assertion that `spatial` is loaded
     (§4.8) — the extension is loaded once at open (rule 3) and every geo route depends on it.
 -   **Write serialization**: `Exec` and `WithTx` each name a `storage.WriteScope` and take that
@@ -691,10 +692,11 @@ constructions run in that order rather than through a deferred closure.
     globally is what keeps a transaction conflict off every caller without a retry path (rule 21,
     LIM-3). Across processes the choice is not the server's: DuckDB holds the database file under
     an exclusive lock, so one instance at a time serves a given database (LIM-15).
--   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error invalidates the whole
-    instance, not just the query that raised it. Every call that reaches the connection (`Query`,
-    `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError` and, on a
-    match, reopens the pool — a fresh `sql.Open` plus `INSTALL`/`LOAD spatial` — through
+-   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error *may* invalidate the whole
+    instance, not just the query that raised it — it does not always, and a spatial index the
+    planner crashes on (§4.6.1) leaves it perfectly usable. Every call that reaches the connection
+    (`Query`, `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError`
+    and, on a match **whose pool no longer answers a ping**, reopens it — a fresh `sql.Open` plus `INSTALL`/`LOAD spatial` — through
     `recoverIfFatal`, guarded by `reopenMu` so two callers hitting the same dead instance at once
     reopen it only once. `db` itself is guarded by `dbMu`, read through `conn()`, so the swap never
     races a concurrent reader.
@@ -715,6 +717,37 @@ constructions run in that order rather than through a deferred closure.
 > **`OGC:CRS84`, never `EPSG:4326`.** EPSG:4326's official axis order is (lat, lon): using it as the
 > target CRS silently swaps X and Y. This rule applies to the four places that transform: `bbox`
 > computation, `FilteredExtent`, `GetGeometryGeoJSON`, `GetFeatures`.
+
+### 4.6.1 Spatial-index repair at open
+
+`repairSpatialIndexes` (`adapter.go`, `duckdb/tables/repair.go`) probes every geo table at open and
+rebuilds the RTREE indexes the engine cannot plan against. It exists because of one observed failure
+mode: an index whose state came back from a **replayed write-ahead log** made the spatial
+extension's own optimizer rule raise `INTERNAL Error: Operation requires a flat vector…` while
+*planning* — so every tile and every WFS read answered `500` while the rest of the server kept
+working, and the map hung on *Chargement…* (retired blocker BLK-5).
+
+-   The **probe** is the cheapest query shaped like a tile's — a constant `ST_MakeEnvelope` against
+    the geometry column — since only that shape is rewritten into an index scan and only the rewrite
+    crashes. It costs one planned query per geo table at open.
+-   Only `IsEngineError` (DuckDB's `INTERNAL`/`FATAL`) triggers a rebuild. Any other failure is
+    returned: a table that is merely missing or misnamed must not have its index silently rewritten.
+-   The **rebuild** drops every RTREE index the table carries — read from DuckDB's catalogue, never
+    rebuilt from the naming convention, an older database may name it otherwise — and recreates the
+    single one rule 19 requires, then probes again.
+-   `DropTableIndexes`/`RebuildIndexes` are what every structural `ALTER` goes through
+    (`table.alterAroundIndexes`, feeding `RenameColumn` and `DropColumn`). DuckDB refuses to alter a
+    table **any** index depends on — `Dependency Error: Cannot alter entry …` on a rename,
+    `Cannot drop this column: an index depends on a column after it!` on a drop — and that includes
+    the unique `__pkey` index every table carries, not only the RTREE one. So both come off before
+    the statement and are rebuilt after it, failure path included. It is cheap — 24 ms to rebuild
+    the RTREE index of a 35 k-multipolygon table — so no structural write is deferred because of it.
+
+Two repairs were measured and rejected. A `CHECKPOINT` at open raises the same error as a **FATAL**
+one on such a database, which invalidates the instance outright — it turns a broken map into a dead
+server. A tile predicate written without the index (four scalar comparisons on the geometry's own
+extent) plans and answers correctly, but took over 150 s for a single z2 tile on a 35 k-multipolygon
+table, against 0.4 s once the index is rebuilt.
 
 ### 4.7 Rendering an MVT tile
 
@@ -917,6 +950,18 @@ never produce the second geometry column the rest of the domain assumes cannot e
 `isGeo` never learns about. `duckdb/tables`' `table.AddColumn`, the one place that interpolates
 `colType` into the `ALTER TABLE` statement, checks it again with the same function — the repository
 never trusts a caller other than this service to have validated first.
+
+`RenameColumn` and `DropColumn` are the two other structural writes, invalidating the cache the same
+way. Both read the real schema first: an unknown column, a **hidden** column (§4.4) and the
+**geometry column** are refused as a `ValidationError` before the table is opened, and a rename
+additionally refuses an empty or already-taken target name. `duckdb/tables`' `table.RenameColumn`/
+`table.DropColumn` refuse the hidden and geometry columns again before quoting — the same
+belt-and-braces `AddColumn` applies to `colType`: `__pkey` and the geometry column the rest of the
+domain assumes exist must survive any caller. Neither touches `MetadataService`: no derived field
+moves, and the other columns' values do not change, so the tile cache (rule 20) stays correct.
+Both writes drop and rebuild the table's indexes (§4.6.1), DuckDB refusing to alter a table any
+index depends on. A **stored filter** (§4.5.1) or a per-table override naming the
+column is left as it is and simply stops applying — dropping a column has no undo, exactly like a transform (§5.11).
 
 ### 5.4 `DeriveService` and `ImportService` — creating a table, transactionally
 
@@ -1161,6 +1206,8 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data, `200` with the deleted table's id and name                                                                   |
 | GET    | `/api/v1/tables/{tableId}/schema`                 | columns and types, geometry included                                                                                                         |
 | POST   | `/api/v1/tables/{tableId}/columns`                | adds a column                                                                                                                                |
+| PATCH  | `/api/v1/tables/{tableId}/columns/{col}`          | renames `{col}`, `{name: <newName>}`                                                                                                         |
+| DELETE | `/api/v1/tables/{tableId}/columns/{col}`          | drops `{col}` and the values it held                                                                                                         |
 | GET    | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search`          |
 | POST   | `/api/v1/tables/{tableId}/columns/{col}/transform` | rewrites `{col}`'s values in place, on the rows a filter names, `{written: <rowCount>}` (§8.3, §5.11)                                       |
 | POST   | `/api/v1/tables/{tableId}/columns/{col}/transform/preview` | how many rows a transform would touch and a bounded before/after sample, writing nothing (§8.3, §5.11)                             |
@@ -1419,10 +1466,10 @@ once here rather than route by route:
     an authentication outage into a rolling restart. `/diagnostics`, `/swagger/*`, `/ui/*` and
     `/api/v1/auth/config`/`/api/v1/auth/session` (§6.1) are reads as well, deliberately — the same
     decision, not an oversight of where they were registered.
--   **Write** — everything else: row create/update/delete, `/columns` and `/columns/{col}/transform`,
-    table rename and delete, the `/filters` writes, per-table and global settings writes, `/derive`,
-    `/derive-from-table`, `/aggregate-from-table`, `/sources/upload`, `/sources/{name}/load` and
-    `DELETE /sources/{name}`.
+-   **Write** — everything else: row create/update/delete, `/columns`, `/columns/{col}` (rename,
+    drop) and `/columns/{col}/transform`, table rename and delete, the `/filters` writes, per-table
+    and global settings writes, `/derive`, `/derive-from-table`, `/aggregate-from-table`,
+    `/sources/upload`, `/sources/{name}/load` and `DELETE /sources/{name}`.
 
 **The identity model.** `github.com/amauryval/goauth` (`pkg/auth`'s replacement, TODO-27) verifies
 OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and

@@ -846,6 +846,65 @@ paths:
             summary: Add a column
             tags:
                 - tables
+    /api/v1/tables/{tableId}/columns/{col}:
+        delete:
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Column name
+                  in: path
+                  name: col
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete a column
+            tags:
+                - tables
+        patch:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+                - description: Column name
+                  in: path
+                  name: col
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Rename a column
+            tags:
+                - tables
     /api/v1/tables/{tableId}/columns/{col}/distinct:
         get:
             parameters:

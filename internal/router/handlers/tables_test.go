@@ -307,6 +307,83 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 	}
 }
 
+func Test_tablesHandler_renameColumn(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		renameErr  error
+		wantStatus int
+	}{
+		{name: "renames the column", wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "validation error returns 400", renameErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", renameErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				schemaSvc.On("RenameColumn", mock.Anything, meta, "age", "years").Return(c.renameErr).Once()
+			}
+
+			body := map[string]string{"name": "years"}
+			rec := doHandlerRequest(th.RenameColumn, http.MethodPatch, "/api/v1/tables/t1/columns/age", body, map[string]string{"tableId": "t1", "col": "age"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_tablesHandler_dropColumn(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		dropErr    error
+		wantStatus int
+	}{
+		{name: "drops the column", wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "validation error returns 400", dropErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", dropErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				schemaSvc.On("DropColumn", mock.Anything, meta, "age").Return(c.dropErr).Once()
+			}
+
+			rec := doHandlerRequest(th.DropColumn, http.MethodDelete, "/api/v1/tables/t1/columns/age", nil, map[string]string{"tableId": "t1", "col": "age"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_tablesHandler_deriveTable(t *testing.T) {
 	cases := []struct {
 		name            string

@@ -303,7 +303,7 @@ module level and documents it; that is the exception, not the rule.
 | `useAuth` | the OIDC lifecycle and its shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): the session read from `GET /auth/session`, cached a few tens of seconds and keyed by the current token so a re-render never refetches it; the display name from the **ID token**'s own profile (`user.profile.name`, then `preferred_username`, then `email` — the access token carries no name at all); `signIn`/`signOut` (`signOut` reads the user before clearing it, passing its `id_token` as `id_token_hint` to `signoutRedirect`, or the provider shows an account picker instead of logging anyone out); the OIDC event wiring (`addUserLoaded` refreshes the session, `addAccessTokenExpired`/`addSilentRenewError` drop it and warn through `useToast`); a `BroadcastChannel` every tab listens on to drop its user on a logout elsewhere; and the `http.ts` `onUnauthorized` registration that drops the token and asks for a re-check on any `401`. Built on `auth/oidc.ts`'s non-reactive `UserManager` | present |
 | `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
 | `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
-| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
+| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions plus the two structural writes on a column (rename, drop), each reloading the schema (still toasted, per §8.4 — a mutation's result, not the load's) | present |
 | `useTableRows` | a table's rows: current page, sorting, and the two writes that act on a **set** of rows — `duplicateRows(rows)` / `deleteRows(pkeys)`, both fanned out through `utils/batch.ts`. Built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`'. Duplicating reads each source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map. Deleting takes one request per row (LIM-F14) and does **not** re-fetch a page afterwards: it drops from the list exactly the rows the server dropped (`usePaginatedList.drop`), so the grid updates the moment the writes land instead of emptying for a further round-trip, and a run stopped halfway still leaves it and the table's counters exact. Duplicating cannot do the same — the copies land wherever the current sort puts them — so it re-reads through `reloadSorted`, which keeps the rows on screen until the new page arrives | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
@@ -425,10 +425,10 @@ per page (the server's own live cap) until the reported `total` is reached.
 
 - `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update) and
   what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
-  *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
-  *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
-  Five buttons of five registers side by side read as a pile, and four of them are used once in a
-  table's life. The rename form is opened from the menu but the view owns its open state
+  *Actions*: *Renommer*, *Ajouter une colonne* and *Renommer / supprimer une colonne*
+  under **Structure**, *Dériver une table* and *Exporter* under **Produire**, then *Supprimer la
+  table* alone under a divider, last as §8.9 asks. Five buttons of five registers side by side read
+  as a pile, and four of them are used once in a table's life. The rename form is opened from the menu but the view owns its open state
   (`editingName`): only the view knows whether the write went through, and therefore whether the
   form may close.
 - `TableToolbar` (`components/tables/`) — the workspace's own bar, one row below, holding
@@ -518,8 +518,15 @@ per page (the server's own live cap) until the reported `total` is reached.
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `AddColumnModal`, `ColumnsModal`, `GeometryModal`, `ExportModal` — one modal = one file, never
-  inline modal markup in a view. `ExportModal` picks the export's format and its output CRS: the
+- `AddColumnModal`, `ColumnStructureModal`, `ColumnsModal`, `GeometryModal`, `ExportModal` — one
+  modal = one file, never inline modal markup in a view. `ColumnStructureModal` renames and drops
+  columns — the structure, where `ColumnsModal` governs what is *displayed* (visibility, distinct
+  values): two registers, two modals (§8.9). It only ever lists the columns a caller may touch
+  (`rowColumns`, so never the pkey nor the geometry column), confirms a drop through
+  `ConfirmDialog` since the values go with the column, and writes through the callbacks its caller
+  passes, as `AddColumnModal` does. A rename or a drop remounts `TableDataPanel` (`structureVersion`
+  as its `key`): the loaded pages are cached by `tableId` alone and would otherwise show cells of a
+  structure that no longer exists. `ExportModal` picks the export's format and its output CRS: the
   EPSG field only shows for a format that carries geometry (never CSV) on a geo table, and comes
   pre-filled with the table's own CRS, which is also what the server falls back to — leaving it
   untouched exports the table as it came in. The downloaded file takes the name the server sends in
@@ -804,7 +811,10 @@ This is the product's main screen; it follows fixed rules.
   `useWfsLayer` around each tile's paging), and only the mode actually on the map is read — the
   other one's layer is torn down, not hidden. A failed tile counts as answered there, since what the
   indicator reports is that requests are outstanding, not that they succeeded; a failed tile does not
-  break the map.
+  break the map. It is counted **apart** all the same (`useMvtLayer.failed`): once nothing is in
+  flight any more, the same corner says *Tuiles indisponibles* rather than showing nothing — a
+  server refusing every tile must never read as a map still loading. The WFS mode reports its own
+  incomplete loads through a toast instead.
 - `pointer` cursor on queryable features, highlighting of selected features, and selection reversible
   in one click — with no modifier key, to stay usable on a trackpad.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with

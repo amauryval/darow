@@ -271,6 +271,16 @@ func (m *mockSchemaAPI) AddColumn(ctx context.Context, meta storage.Metadata, co
 	return args.Error(0)
 }
 
+func (m *mockSchemaAPI) RenameColumn(ctx context.Context, meta storage.Metadata, colName, newName string) error {
+	args := m.Called(ctx, meta, colName, newName)
+	return args.Error(0)
+}
+
+func (m *mockSchemaAPI) DropColumn(ctx context.Context, meta storage.Metadata, colName string) error {
+	args := m.Called(ctx, meta, colName)
+	return args.Error(0)
+}
+
 type mockDeriveAPI struct{ mock.Mock }
 
 var _ deriveAPI = (*mockDeriveAPI)(nil)

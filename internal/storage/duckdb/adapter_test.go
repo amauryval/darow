@@ -176,6 +176,43 @@ func Test_Adapter_CatalogCreateFromFile_RollsBackOnMaterializationFailure(t *tes
 
 // Ping backs /readyz: it answers for the spatial extension too, since
 // every geo route depends on an extension loaded once at open.
+// The startup repair is a no-op on a healthy database: it probes every geo
+// table's spatial index and rebuilds only the ones the engine cannot plan
+// against (BLK-5), so a table opened twice keeps the index it was created with.
+func Test_New_RepairsOnlyABrokenSpatialIndex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repair.db")
+
+	a, err := New(path, 4)
+	require.NoError(t, err)
+	meta := newTable(t, a)
+	require.NoError(t, a.Close())
+
+	reopened, err := New(path, 4)
+	require.NoError(t, err)
+	t.Cleanup(func() { reopened.Close() })
+
+	repo, err := reopened.Table(meta)
+	require.NoError(t, err)
+	geo, ok := repo.Geo()
+	require.True(t, ok)
+	mvt, err := geo.Tile(context.Background(), 0, 0, 0, nil, storage.GeoQuery{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, mvt)
+}
+
+// A pool that still answers a ping is never swapped: an INTERNAL error that
+// leaves the instance usable (a spatial index the planner crashes on) must
+// not cost a full reopen per failed request (BLK-5).
+func Test_Adapter_RecoverIfFatal_KeepsALivePool(t *testing.T) {
+	a := setupAdapter(t)
+	before := a.conn()
+
+	a.recoverIfFatal(&duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "planner crash"}, before)
+
+	assert.Same(t, before, a.conn())
+}
+
 func Test_Adapter_Ping(t *testing.T) {
 	a := setupAdapter(t)
 
@@ -245,10 +282,13 @@ func Test_isFatalDuckDBError(t *testing.T) {
 
 // recoverIfFatal is what BLK-2 fixes: db must be swapped for a fresh
 // connection once a query observes DuckDB's instance as invalidated,
-// rather than every later caller reusing the dead one.
+// rather than every later caller reusing the dead one. An instance is
+// observed as dead, never assumed from the error alone (BLK-5): the pool is
+// closed here, which is what a caller of a truly invalidated one sees.
 func Test_Adapter_recoverIfFatal_ReopensOnFatalError(t *testing.T) {
 	a := setupAdapter(t)
 	original := a.conn()
+	require.NoError(t, original.Close())
 
 	fatal := &duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "INTERNAL Error: boom"}
 	a.recoverIfFatal(fatal, original)
@@ -273,6 +313,7 @@ func Test_Adapter_recoverIfFatal_IgnoresNonFatalError(t *testing.T) {
 func Test_Adapter_recoverIfFatal_SkipsAlreadyReplacedPool(t *testing.T) {
 	a := setupAdapter(t)
 	stale := a.conn()
+	require.NoError(t, stale.Close())
 
 	fatal := &duckdbgo.Error{Type: duckdbgo.ErrorTypeInternal, Msg: "INTERNAL Error: boom"}
 	a.recoverIfFatal(fatal, stale)

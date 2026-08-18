@@ -4,6 +4,7 @@ import {
     Download,
     GitBranch,
     Link2,
+    Columns3,
     MoreHorizontal,
     Pencil,
     Plus,
@@ -42,6 +43,7 @@ const emit = defineEmits<{
     'update:editingName': [editing: boolean]
     rename: [name: string]
     addColumn: []
+    editColumns: []
     derive: []
     aggregate: []
     export: []
@@ -142,6 +144,18 @@ function submitRename() {
                         }
                     "
                     >Ajouter une colonne</MenuItem
+                >
+                <MenuItem
+                    :icon="Columns3"
+                    :disabled="writeDisabled"
+                    :title="writeDisabled ? writeGuardReason : undefined"
+                    @click="
+                        () => {
+                            close()
+                            emit('editColumns')
+                        }
+                    "
+                    >Renommer / supprimer une colonne</MenuItem
                 >
 
                 <MenuTitle>Produire</MenuTitle>

@@ -50,6 +50,20 @@ export function addColumn(tableId: string, name: string, type: string): Promise<
     return post(`/tables/${tableId}/columns`, { name, type })
 }
 
+// Renaming and dropping act on the structure, not on what is displayed: the
+// caller reloads the schema afterwards, as it does after addColumn.
+export function renameColumn(
+    tableId: string,
+    col: string,
+    name: string
+): Promise<{ name: string }> {
+    return patch(`/tables/${tableId}/columns/${encodeURIComponent(col)}`, { name })
+}
+
+export function dropColumn(tableId: string, col: string): Promise<{ name: string }> {
+    return del(`/tables/${tableId}/columns/${encodeURIComponent(col)}`)
+}
+
 export function listRows(
     tableId: string,
     offset: number,

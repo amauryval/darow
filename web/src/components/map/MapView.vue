@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import 'ol/ol.css'
+import { TriangleAlert } from '@lucide/vue'
 import type { FilterCondition } from '../../client/types'
 import { useMapDraw, type DrawShape } from '../../composables/useMapDraw'
 import type { EditableFeature, LayerChanges } from '../../composables/useEditLayer'
@@ -120,6 +121,9 @@ const { family } = useGeometryTypes(tableId, sessionActive, dataVersion)
 // Only the mode actually on the map is loading anything — the other one's
 // layer is torn down, not hidden (see showTable).
 const loadingData = computed(() => (wfsEnabled.value ? wfs.loading.value : mvt.loading.value))
+// A tile the server refuses is said, never spun on: the WFS mode reports its
+// own failures through a toast, the MVT one has only its tiles to go by.
+const tilesFailed = computed(() => !wfsEnabled.value && mvt.failed.value)
 
 const draw = useMapDraw(map, {
     pkeyAt: (pixel) => (wfsEnabled.value ? wfs.pkeyAt(pixel) : mvt.pkeyAt(pixel)),
@@ -257,6 +261,13 @@ function pick(value: DrawShape) {
             <span class="flex flex-row items-center gap-2 text-xs text-base-content/60">
                 <Spinner label="Chargement des données" />
                 Chargement…
+            </span>
+        </FloatingPanel>
+
+        <FloatingPanel v-else-if="tilesFailed" position="top-right">
+            <span class="flex flex-row items-center gap-2 text-xs text-error">
+                <TriangleAlert class="h-4 w-4" />
+                Tuiles indisponibles
             </span>
         </FloatingPanel>
 

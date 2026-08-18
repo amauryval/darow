@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -258,6 +259,64 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 	}
 
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"name": body.Name, "type": body.Type})
+}
+
+// RenameColumn handles PATCH /tables/{tableId}/columns/{col}.
+//
+// @Summary Rename a column
+// @Tags tables
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Param col path string true "Column name"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/columns/{col} [patch]
+func (th *TablesHandler) RenameColumn(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+	col := chi.URLParam(req, "col")
+
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
+	if err := th.schemaService.RenameColumn(req.Context(), meta, col, body.Name); err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(body.Name)})
+}
+
+// DropColumn handles DELETE /tables/{tableId}/columns/{col}. The values it
+// held are gone with it — there is no undo, as for a transform.
+//
+// @Summary Delete a column
+// @Tags tables
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Param col path string true "Column name"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/columns/{col} [delete]
+func (th *TablesHandler) DropColumn(w http.ResponseWriter, req *http.Request) {
+	meta, ok := th.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+	col := chi.URLParam(req, "col")
+
+	if err := th.schemaService.DropColumn(req.Context(), meta, col); err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]string{"name": col})
 }
 
 // DeriveTable handles POST /derive, rejecting anything that is not a SELECT.

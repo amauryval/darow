@@ -89,6 +89,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 4.5 Filter construction` | `BuildFilter`, query filtering                             |
 | `### 4.5.1 Stored filters` | `StoredFilter`, `FilterStore`                              |
 | `### 4.6 The DuckDB adapter` | connection, per-scope write locks, `WithTx`, accessors     |
+| `### 4.6.1 Spatial-index repair at open` | the startup probe/rebuild of a broken RTREE index  |
 | `### 4.7 Rendering an MVT tile` | tile SQL                                                   |
 | `### 4.8 Reading DuckDB's own catalogue` | introspection (`duckdb_columns`, `duckdb_indexes`, …)     |
 | `### 4.9 The settings repository` | persisting settings                                        |

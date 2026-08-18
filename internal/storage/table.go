@@ -59,6 +59,11 @@ type TableRepository interface {
 	// Types is Schema reshaped into a column-name-to-type map.
 	Types(ctx context.Context) (map[string]string, error)
 	AddColumn(ctx context.Context, colName, colType string) error
+	// RenameColumn renames oldName to newName, both refused when they name a
+	// column the server manages itself (hidden or geometry).
+	RenameColumn(ctx context.Context, oldName, newName string) error
+	// DropColumn drops colName, refused for the same managed columns.
+	DropColumn(ctx context.Context, colName string) error
 	// CopyTo writes the whole table to req.DestPath in req.Format, through
 	// DuckDB's own COPY.
 	CopyTo(ctx context.Context, req ExportRequest) error

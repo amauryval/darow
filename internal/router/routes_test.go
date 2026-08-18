@@ -371,6 +371,8 @@ func writeRoutes() [][2]string {
 		{http.MethodPost, "/api/v1/tables/id-1/filters"},
 		{http.MethodPatch, "/api/v1/tables/id-1/filters/f-1"},
 		{http.MethodDelete, "/api/v1/tables/id-1/filters/f-1"},
+		{http.MethodPatch, "/api/v1/tables/id-1/columns/name"},
+		{http.MethodDelete, "/api/v1/tables/id-1/columns/name"},
 		{http.MethodPost, "/api/v1/tables/id-1/columns/name/transform"},
 		{http.MethodPost, "/api/v1/tables/id-1/rows"},
 		{http.MethodPatch, "/api/v1/tables/id-1/rows"},
