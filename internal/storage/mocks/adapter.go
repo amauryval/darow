@@ -1,8 +1,6 @@
-// Package mocks holds the testify doubles of storage's interfaces, one
-// file per file of storage that declares them. It is a normal package, not
-// a _test.go file, because Go cannot share test-only code across packages
-// and three of them need the same doubles (service, router, core); nothing
-// in cmd/server's import graph reaches it.
+// Package mocks holds the testify doubles of storage's interfaces, one file
+// per file of storage declaring them. It is a normal package because Go cannot
+// share test-only code across the three packages needing it.
 package mocks
 
 import (
@@ -13,10 +11,9 @@ import (
 	"darow/internal/storage"
 )
 
-// Adapter is a testify mock of the storage engine: the same accessors
-// *duckdb.Adapter exposes (Catalog, Materializer, Filters, Settings, Table),
-// plus every method behind them. Kept as one mock since a service-layer test
-// exercises catalogue, materializer and resolver methods interchangeably.
+// Adapter is a testify mock of the storage engine: the accessors
+// *duckdb.Adapter exposes, plus every method behind them. It is one mock
+// because a service-layer test exercises them interchangeably.
 type Adapter struct {
 	mock.Mock
 }
@@ -75,12 +72,6 @@ func (m *Adapter) List(ctx context.Context, sort []storage.SortField, offset, li
 	return tables, total, callArgs.Error(2)
 }
 
-func (m *Adapter) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
-	callArgs := m.Called(ctx)
-	bySource, _ := callArgs.Get(0).(map[storage.SourceKey]string)
-	return bySource, callArgs.Error(1)
-}
-
 func (m *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	callArgs := m.Called(ctx, tableId)
 	meta, _ := callArgs.Get(0).(storage.Metadata)
@@ -99,16 +90,23 @@ func (m *Adapter) RefreshDerivedMetadata(ctx context.Context, tableId string, to
 	return m.Called(ctx, tableId, touchesGeometry).Error(0)
 }
 
-// Table resolves meta into a storage.TableRepository — the entrypoint
-// RowService/SchemaService/GeoService use to reach a table's data. Matched
-// on the full meta value, unlike catalogue methods, since a test controls
-// the returned TableRepository's behavior (via a mocks.TableRepository),
-// which must reflect the same Metadata the production resolver would have
-// seen.
+// Table resolves meta into a storage.TableRepository. It matches on the full
+// meta value, unlike the catalogue methods, since the repository a test
+// returns must reflect the Metadata the real resolver would have seen.
 func (m *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) {
 	callArgs := m.Called(meta)
 	repo, _ := callArgs.Get(0).(storage.TableRepository)
 	return repo, callArgs.Error(1)
+}
+
+func (m *Adapter) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
+	callArgs := m.Called(ctx)
+	items, _ := callArgs.Get(0).([]storage.TableProvenance)
+	return items, callArgs.Error(1)
+}
+
+func (m *Adapter) ReloadFromFile(ctx context.Context, tableId, sourceName, sourcePath, layer string, sridOverride int) error {
+	return m.Called(ctx, tableId, sourceName, sourcePath, layer, sridOverride).Error(0)
 }
 
 func (m *Adapter) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {

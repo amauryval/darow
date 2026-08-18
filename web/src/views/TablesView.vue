@@ -9,20 +9,21 @@ import {
     useVueTable
 } from '@tanstack/vue-table'
 import { GitBranch } from '@lucide/vue'
-import { listTables, renameTable } from '../client/tables'
 import type { Metadata } from '../client/types'
-import { errorMessage } from '../client/http'
-import { usePaginatedList } from '../composables/usePaginatedList'
+import { useTablesCatalog } from '../composables/useTablesCatalog'
 import { useDocumentTitle } from '../composables/useDocumentTitle'
+import { useWriteGuard } from '../composables/useWriteGuard'
 import { parseSorting, stringifySorting } from '../utils/sort'
 import { queryString } from '../utils/routeQuery'
 import Badge from '../components/ui/Badge.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import DataTable from '../components/ui/DataTable.vue'
 import ErrorState from '../components/ui/ErrorState.vue'
+import ListFooter from '../components/ui/ListFooter.vue'
 import Skeleton from '../components/ui/Skeleton.vue'
 import BaseInput from '../components/ui/BaseInput.vue'
 import Breadcrumbs from '../components/ui/Breadcrumbs.vue'
+import TableActionsCell from '../components/tables/TableActionsCell.vue'
 import TableNameCell from '../components/tables/TableNameCell.vue'
 import DeriveSqlModal from '../components/tables/DeriveSqlModal.vue'
 
@@ -31,31 +32,15 @@ const route = useRoute()
 
 useDocumentTitle(computed(() => 'Tables'))
 
-// The list's own page size — deliberately independent of the operator's
-// defaultListLimit setting, a REST API page size rather than a UI choice; see
-// useTableRows' PAGE_SIZE for why.
-const PAGE_SIZE = 50
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
-const list = usePaginatedList<Metadata>({
-    limit: PAGE_SIZE,
-    initialSorting: queryString(route.query.sort)
+const list = useTablesCatalog(
+    queryString(route.query.sort)
         ? parseSorting(queryString(route.query.sort))
-        : [{ id: 'updatedAt', desc: true }],
-    fetchPage: (offset, limit, sort) =>
-        listTables(offset, limit, sort).then((page) => ({ items: page.tables, total: page.total })),
-    describeError: (e) => errorMessage(e, 'Impossible de charger les tables')
-})
-const {
-    items: tables,
-    total,
-    loading,
-    loadedOnce,
-    error,
-    sorting,
-    setSorting,
-    loadMore,
-    retry
-} = list
+        : [{ id: 'updatedAt', desc: true }]
+)
+const { tables, total, loading, loadedOnce, error, sorting, setSorting, loadMore, retry } = list
+
 const globalFilter = ref(queryString(route.query.q))
 
 watch([globalFilter, sorting], ([q, sort]) => {
@@ -91,26 +76,6 @@ async function onDerived(result: { tableId: string }) {
     await router.push(`/tables/${result.tableId}`)
 }
 
-const renamingId = ref<string | null>(null)
-const renameError = ref<{ tableId: string; message: string } | null>(null)
-
-// Patches the renamed row in place instead of reloading the whole list: a
-// rename from this page must not lose the operator's current scroll
-// position, page or search (§8.6).
-async function onRename(tableId: string, name: string) {
-    renamingId.value = tableId
-    renameError.value = null
-    try {
-        const renamed = await renameTable(tableId, name)
-        const index = tables.value.findIndex((t) => t.tableId === renamed.tableId)
-        if (index !== -1) tables.value[index] = renamed
-    } catch (e) {
-        renameError.value = { tableId, message: errorMessage(e, 'Impossible de renommer la table') }
-    } finally {
-        renamingId.value = null
-    }
-}
-
 const columnHelper = createColumnHelper<Metadata>()
 const columnDefs = [
     columnHelper.accessor('tableName', {
@@ -119,12 +84,14 @@ const columnDefs = [
             h(TableNameCell, {
                 tableId: row.original.tableId,
                 tableName: row.original.tableName,
-                renaming: renamingId.value === row.original.tableId,
+                editing: list.editingId.value === row.original.tableId,
+                renaming: list.renamingId.value === row.original.tableId,
                 error:
-                    renameError.value?.tableId === row.original.tableId
-                        ? renameError.value.message
+                    list.renameError.value?.tableId === row.original.tableId
+                        ? list.renameError.value.message
                         : undefined,
-                onRename
+                onRename: list.rename,
+                onCancel: list.cancelRename
             })
     }),
     columnHelper.display({
@@ -146,6 +113,19 @@ const columnDefs = [
         header: 'Mise à jour',
         enableGlobalFilter: false,
         cell: ({ getValue }) => new Date(getValue()).toLocaleString('fr-FR')
+    }),
+    columnHelper.display({
+        id: 'actions',
+        header: '',
+        enableGlobalFilter: false,
+        meta: { align: 'right' },
+        cell: ({ row }) =>
+            h(TableActionsCell, {
+                tableName: row.original.tableName,
+                removing: list.removingId.value === row.original.tableId,
+                onRename: () => list.startRename(row.original.tableId),
+                onRemove: () => list.remove(row.original.tableId, row.original.tableName)
+            })
     })
 ]
 
@@ -181,6 +161,8 @@ const table = useVueTable({
                 variant="secondary"
                 size="sm"
                 :icon="GitBranch"
+                :disabled="writeDisabled"
+                :title="writeDisabled ? writeGuardReason : undefined"
                 @click="showDeriveSql = true"
                 >Créer une nouvelle table</BaseButton
             >
@@ -201,10 +183,12 @@ const table = useVueTable({
             @row-click="onRowClick"
         >
             <template #footer>
-                <div :ref="list.sentinel" class="h-px"></div>
-                <p v-if="loading" class="px-4 py-3 text-center text-xs text-base-content/40">
-                    Chargement…
-                </p>
+                <ListFooter
+                    :sentinel="list.sentinel"
+                    :loading="loading"
+                    :loaded="tables.length"
+                    :total="total"
+                />
             </template>
         </DataTable>
 

@@ -353,14 +353,18 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: pkey, RowsRemoved: 1})
 }
 
-// GetRowGeometry handles GET /tables/{tableId}/rows/{pkey}/geometry.
+// GetRowGeometry handles GET /tables/{tableId}/rows/{pkey}/geometry?srid=.
+// srid reprojects what is read, exactly as it does for an export, and
+// defaults to the table's own CRS — nothing stored changes either way.
 //
 // @Summary Get a row's geometry, as GeoJSON and as WKT
 // @Tags rows
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
+// @Param srid query int false "EPSG code the geometry is read in (default: the table's own)"
 // @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
 // @Router /api/v1/tables/{tableId}/rows/{pkey}/geometry [get]
 func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) {
@@ -370,8 +374,14 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 	}
 	pkey := chi.URLParam(req, "pkey")
 
+	srid, err := parseSrid(req)
+	if err != nil {
+		response.WriteError(w, req, err, http.StatusBadRequest)
+		return
+	}
+
 	decimals := rh.tableSettings.Resolve(meta.TableId).CoordinateDecimals
-	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals)
+	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, service.ResolveCRS(srid, meta))
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
@@ -385,5 +395,6 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 		"pkey":     geometry.Pkey,
 		"geometry": json.RawMessage(geometry.GeoJSON),
 		"wkt":      geometry.WKT,
+		"crs":      geometry.CRS,
 	})
 }

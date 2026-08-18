@@ -1,9 +1,8 @@
 package storage
 
-// GeoQuery bundles an optional storage.BuildFilter clause with its bound
-// args and optional simplify-tolerance/precision overrides, shared by every
-// geometry-serving path (Tile, GetFeatures) so a client-controlled filter or
-// tolerance behaves identically everywhere.
+// GeoQuery bundles a BuildFilter clause with its args and the geometry
+// overrides, shared by every geometry-serving path so that a client-controlled
+// filter or tolerance behaves identically everywhere.
 type GeoQuery struct {
 	Filter    string
 	Args      []any
@@ -12,9 +11,8 @@ type GeoQuery struct {
 	// meters) coordinates are snapped to after simplification. nil means no
 	// reduction.
 	Precision *float64
-	// CoordinateDecimals, if set, is the number of decimal digits CRS84
-	// coordinates are rounded to once emitted as GeoJSON — the resolved
-	// per-table/global setting (TODO-21), never a client override. nil means
-	// full resolution. Applied after ST_Transform, unlike Precision.
+	// CoordinateDecimals is how many decimal digits emitted CRS84 coordinates
+	// are rounded to — a resolved setting, never a client override, applied
+	// after ST_Transform unlike Precision. nil is full resolution.
 	CoordinateDecimals *int
 }

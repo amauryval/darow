@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"darow/internal/guards"
 	"darow/internal/service"
 	"darow/internal/storage"
 )
@@ -39,10 +40,8 @@ func WriteJSONAs(w http.ResponseWriter, code int, contentType string, v any) {
 }
 
 // ErrorResponse is the JSON body written by WriteError. Error is a stable,
-// machine-readable discriminator (errorCode's return value) a client can
-// switch on without matching on prose; Message is the human-readable
-// detail. RequestId lets a user quote the identifier the server logged the
-// failure under, so an operator can find the matching log line.
+// machine-readable discriminator a client can switch on without matching on
+// prose; RequestId lets a user quote the identifier logged server-side.
 type ErrorResponse struct {
 	Error     string `json:"error"`
 	Message   string `json:"message"`
@@ -51,12 +50,16 @@ type ErrorResponse struct {
 }
 
 // errorCode maps a status to the stable discriminator ErrorResponse.Error
-// carries, kept coarser than the HTTP status itself so a client can
-// switch on a handful of classes rather than every code in play.
+// carries, coarser than the HTTP status so a client switches on a handful of
+// classes rather than every code.
 func errorCode(code int) string {
 	switch code {
 	case http.StatusBadRequest:
 		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
 	case http.StatusNotFound:
 		return "not_found"
 	case http.StatusConflict:
@@ -78,16 +81,11 @@ func errorCode(code int) string {
 	return "request_error"
 }
 
-// WriteError writes a JSON error response with the given status code. A 5xx
-// is additionally logged server-side, but the client gets the same
-// underlying message a 4xx does — the server is designed for a trusted
-// network (LIM-1), never exposed directly on the Internet, so the detail
-// (which may name a physicalName or quote a DuckDB error) is worth more to
-// an operator diagnosing a failure than the risk of a generic-status-text
-// alternative is worth avoiding. If err wraps a *service.DisplayError, its
-// DisplayMessage is sent instead of the wrapped cause's own text — a
-// service reaches for that when the cause's raw message is too internal to
-// show as is, without changing how MapServiceError classifies the failure.
+// WriteError writes a JSON error response with the given status code, and
+// logs a 5xx server-side. A 5xx answers an unauthenticated caller with the
+// status's generic text instead of the raw cause. If err wraps a
+// *service.DisplayError, its DisplayMessage is sent instead of the cause's
+// own text, without changing how MapServiceError classifies the failure.
 func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	requestId := middleware.GetReqID(req.Context())
 	if code >= 500 {
@@ -100,8 +98,11 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	}
 	message := err.Error()
 	var displayErr *service.DisplayError
-	if errors.As(err, &displayErr) {
+	switch {
+	case errors.As(err, &displayErr):
 		message = displayErr.DisplayMessage()
+	case code >= 500 && !guards.Authenticated(req.Context()):
+		message = http.StatusText(code)
 	}
 	WriteJSON(w, code, ErrorResponse{
 		Error:     errorCode(code),
@@ -112,10 +113,8 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 }
 
 // MapServiceError maps a service error to an HTTP status by its type,
-// defaulting to 500 so an unclassified internal failure (a storage/DuckDB
-// error, whose message may leak physicalName or other internals) is never
-// mistaken for a client mistake. Mirrors the errors.As dispatch ExportTable
-// already used for service.ExportValidationError.
+// defaulting to 500 so an unclassified internal failure is never mistaken for
+// a client mistake.
 func MapServiceError(err error) int {
 	var validationErr *service.ExportValidationError
 	if errors.As(err, &validationErr) {

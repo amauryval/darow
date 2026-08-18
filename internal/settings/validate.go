@@ -8,10 +8,8 @@ import (
 )
 
 // Validator wraps a storage.Settings value with one validation method per
-// field. Each method checks only what that field owns — its own bound, plus
-// the ordering it enters into with a sibling field — and returns the field's
-// own value unchanged once it passes, so a caller after one field's value
-// never has to run every other field's checks to get it.
+// field. Each method checks only what that field owns and returns its value
+// unchanged, so reading one field never runs every other field's checks.
 type Validator struct {
 	s storage.Settings
 }
@@ -68,9 +66,8 @@ func (f Validator) TileCacheMaxAgeSec() (int, error) {
 	return f.s.TileCacheMaxAgeSec, nil
 }
 
-// CacheTTLSec drives both the metadata and the schema cache (TODO-17
-// merged their once-separate TTLs): 0 is a valid, meaningful input — no
-// time-based expiry, the cache only bounded by its (config-fixed) size.
+// CacheTTLSec drives both the metadata and the schema cache. A 0 is
+// meaningful: no time-based expiry, the cache bounded by its size alone.
 func (f Validator) CacheTTLSec() (int, error) {
 	if f.s.CacheTTLSec < 0 {
 		return 0, fmt.Errorf("cacheTTLSec must not be negative")
@@ -90,44 +87,35 @@ func (f Validator) CoordinateDecimals() (int, error) {
 	return f.s.CoordinateDecimals, nil
 }
 
-// Result is the outcome of Validate: Settings is s, unchanged, and Err is
-// nil once every field's method passed, or the joined violations otherwise —
-// the one value a caller needs, so it never has to hold a Settings and an
-// error as two separate locals in step with each other.
+// Result is the outcome of Validate: s unchanged, and the joined violations,
+// nil once every field's method passed.
 type Result struct {
 	Settings storage.Settings
 	Err      error
 }
 
-// Validate checks every field of s through its own Validator method, collecting
-// every violation rather than stopping at the first. Called by
-// SettingsService.UpdateSettings against the settings a patch would
-// produce, never against the store directly.
+// errorOf keeps only the error half of a Validator method's result.
+func errorOf[T any](_ T, err error) error { return err }
+
+// Validate checks every field of s through its own Validator method,
+// collecting every violation rather than stopping at the first.
 func Validate(s storage.Settings) Result {
 	f := NewValidator(s)
 	var msgs []string
-	collect := func(err error) {
+	for _, err := range []error{
+		errorOf(f.DefaultRowLimit()),
+		errorOf(f.DefaultListLimit()),
+		errorOf(f.DefaultFeaturesLimit()),
+		errorOf(f.MaxSimplifyTolerance()),
+		errorOf(f.MaxPrecision()),
+		errorOf(f.TileCacheMaxAgeSec()),
+		errorOf(f.CacheTTLSec()),
+		errorOf(f.CoordinateDecimals()),
+	} {
 		if err != nil {
 			msgs = append(msgs, err.Error())
 		}
 	}
-
-	_, err := f.DefaultRowLimit()
-	collect(err)
-	_, err = f.DefaultListLimit()
-	collect(err)
-	_, err = f.DefaultFeaturesLimit()
-	collect(err)
-	_, err = f.MaxSimplifyTolerance()
-	collect(err)
-	_, err = f.MaxPrecision()
-	collect(err)
-	_, err = f.TileCacheMaxAgeSec()
-	collect(err)
-	_, err = f.CacheTTLSec()
-	collect(err)
-	_, err = f.CoordinateDecimals()
-	collect(err)
 
 	if len(msgs) == 0 {
 		return Result{Settings: s}

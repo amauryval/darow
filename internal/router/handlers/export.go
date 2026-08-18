@@ -14,10 +14,9 @@ import (
 	"darow/internal/storage"
 )
 
-// firstByteWriter wraps an http.ResponseWriter to record whether any byte
-// has actually reached it, so ExportTable can tell an export failure before
-// streaming started (still reportable as a normal JSON error) from one
-// mid-stream (the status is already committed and can no longer change).
+// firstByteWriter wraps an http.ResponseWriter to record whether any byte has
+// reached it, so ExportTable can tell a failure before streaming started from
+// one mid-stream, where the status can no longer change.
 type firstByteWriter struct {
 	http.ResponseWriter
 	wrote bool
@@ -46,11 +45,9 @@ func NewExportHandler(metadataSvc metadataAPI, exportSvc *service.ExportService)
 }
 
 // ExportTable handles GET /tables/{tableId}/export?format=csv|geojson|parquet&srid=.
-// format defaults to "geojson" for geo tables and "csv" otherwise; srid
-// pins the CRS the geometry is written in, exactly as it pins an import's
-// source CRS, and defaults to lon/lat. The content type and headers are
-// validated and set before any streaming starts — once it starts, the
-// status code can no longer change.
+// format defaults to "geojson" for geo tables and "csv" otherwise; srid pins
+// the written CRS and defaults to lon/lat. Content type and headers are set
+// before streaming starts, since the status can no longer change after.
 //
 // @Summary Export a table
 // @Tags tables
@@ -80,7 +77,7 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
-	targetCRS := service.ExportCRS(srid, meta)
+	targetCRS := service.ResolveCRS(srid, meta)
 
 	contentType, err := eh.exportService.ContentType(meta, format)
 	if err != nil {
@@ -88,13 +85,9 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// http.Server.WriteTimeout is a hard deadline on the whole response
-	// write, independent of chi's middleware.Timeout (which the route
-	// registration in routes.go already exempts this handler from) — it
-	// would otherwise still truncate a large streamed export after
-	// WriteTimeoutSec regardless. Clearing it here, once
-	// streaming is about to start, does not affect ReadTimeout or any other
-	// route.
+	// WriteTimeout would otherwise still truncate a large streamed export,
+	// independent of chi's middleware.Timeout, which routes.go already
+	// exempts this handler from.
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
 		slog.Warn("could not clear write deadline for export", "error", err)
 	}
@@ -114,13 +107,9 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 			response.WriteError(w, req, err, response.MapServiceError(err))
 			return
 		}
-		// Headers and a partial body are already on the wire: the status can
-		// no longer change to signal the failure. Aborting the connection
-		// instead of returning normally prevents Go from silently closing
-		// out the chunked response as if it were complete — the client sees
-		// a broken download rather than a truncated file it believes whole.
-		// http.ErrAbortHandler is net/http's documented sentinel for this;
-		// chi's Recoverer re-panics it untouched (see recoverJSON).
+		// Headers and a partial body are already on the wire, so aborting the
+		// connection is what makes the client see a broken download instead
+		// of Go silently closing it out as complete.
 		panic(http.ErrAbortHandler)
 	}
 }

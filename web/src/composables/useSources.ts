@@ -2,38 +2,33 @@ import { ref } from 'vue'
 import type { SortingState } from '@tanstack/vue-table'
 import {
     deleteSource,
-    getSourceMetadata,
+    getSourceLimits,
     listSources,
-    loadSource,
     refreshSources,
     uploadSource
 } from '../client/sources'
-import type { Source } from '../client/types'
+import type { Source, SourceLimits } from '../client/types'
 import { errorMessage } from '../client/http'
+import { LIST_PAGE_SIZE } from '../utils/pageSizes'
 import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
 
-// The list's own page size — deliberately independent of the operator's
-// defaultListLimit setting, a REST API page size rather than a UI choice; see
-// useTableRows' PAGE_SIZE for why.
-const PAGE_SIZE = 50
-
 // Display column ids that don't match the API's Source field names 1:1
-// ("size" formats sizeBytes+layerCount, "status" formats loaded).
-const sourceSortColumnMap: Record<string, string> = { size: 'sizeBytes', status: 'loaded' }
+// ("size" formats sizeBytes+layerCount).
+const sourceSortColumnMap: Record<string, string> = { size: 'sizeBytes' }
 
 export function layerKey(source: Source, layerName: string): string {
     return `${source.name}::${layerName}`
 }
 
-// workDir source list, upload, per-layer loading (with EPSG override) and
-// deletion. Built on usePaginatedList for the paging/sorting/scroll-sentinel
-// triplet (TODO-F4).
+// workDir source list, refresh, upload and file deletion. Built on
+// usePaginatedList for the paging/sorting/sentinel triplet; loading a source
+// into a table is useSourceLoad's own flow.
 export function useSources(initialSorting?: SortingState) {
     const toast = useToast()
 
     const list = usePaginatedList<Source>({
-        limit: PAGE_SIZE,
+        limit: LIST_PAGE_SIZE,
         initialSorting,
         sortColumnMap: sourceSortColumnMap,
         fetchPage: (offset, limit, sort) =>
@@ -48,7 +43,7 @@ export function useSources(initialSorting?: SortingState) {
     // of just re-fetching the already-known list.
     async function refresh() {
         try {
-            const page = await refreshSources(0, PAGE_SIZE, list.sortQuery())
+            const page = await refreshSources(0, LIST_PAGE_SIZE, list.sortQuery())
             list.replace({ items: page.sources, total: page.total })
         } catch (e) {
             toast.error(errorMessage(e, 'Impossible de rafraîchir les sources'))
@@ -58,75 +53,24 @@ export function useSources(initialSorting?: SortingState) {
     // --- Upload ---
     const uploading = ref(false)
 
-    // Resolves to { tableId } when the file was loaded straight away, or null
-    // for a multi-layer GeoPackage (no layer auto-selected — the caller finds
-    // it back in the reloaded list to let the user pick a layer). Rethrows on
-    // failure so the caller can word the error with the file name.
-    async function upload(file: File): Promise<{ tableId: string } | null> {
+    // The deployment's own cap and extension whitelist, read once: the modal
+    // states them and checks the file against them instead of assuming the
+    // default config.yaml. Best-effort — a failed read only costs the hint,
+    // the server refusing an oversized file either way (§0.13).
+    const limits = ref<SourceLimits | null>(null)
+    getSourceLimits()
+        .then((value) => (limits.value = value))
+        .catch(() => {})
+
+    // Writes the file into workDir; loading it is the user's next, explicit
+    // step. Rethrows so the caller can word the error with the file name.
+    async function upload(file: File): Promise<void> {
         uploading.value = true
         try {
-            const result = await uploadSource(file)
-            if (result.loaded) return { tableId: result.tableId }
+            await uploadSource(file)
             await list.reload()
-            return null
         } finally {
             uploading.value = false
-        }
-    }
-
-    // --- Load (EPSG detection + confirmation) ---
-    const epsgEditingKey = ref<string | null>(null)
-    const epsgInput = ref('')
-    const epsgDetecting = ref(false)
-    // Whether the source being loaded has a geometry to project. Until the
-    // detection answers, the question is assumed to apply — asking and finding
-    // out it did not costs nothing, loading without asking cannot be undone.
-    const epsgApplies = ref(true)
-    const loadingKey = ref<string | null>(null)
-
-    async function startLoad(source: Source, layerName?: string) {
-        const key = layerName ? layerKey(source, layerName) : source.name
-        epsgEditingKey.value = key
-        epsgInput.value = ''
-        epsgApplies.value = true
-        epsgDetecting.value = true
-        try {
-            const crs = await getSourceMetadata(source.name, layerName)
-            if (epsgEditingKey.value === key) {
-                epsgInput.value = crs.srid ? String(crs.srid) : ''
-                epsgApplies.value = crs.hasGeometry
-            }
-        } catch (e) {
-            toast.error(
-                errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`)
-            )
-        } finally {
-            epsgDetecting.value = false
-        }
-        // Nothing to project, nothing to ask: the click that opened this was the
-        // *Charger* the user meant, and a confirmation of an empty question is a
-        // step that only asks them to click again.
-        if (epsgEditingKey.value === key && !epsgApplies.value) await confirmLoad(source, layerName)
-    }
-
-    function cancelLoad() {
-        epsgEditingKey.value = null
-        epsgInput.value = ''
-        epsgApplies.value = true
-    }
-
-    async function confirmLoad(source: Source, layerName?: string) {
-        const key = layerName ? layerKey(source, layerName) : source.name
-        loadingKey.value = key
-        try {
-            await loadSource(source.name, layerName, Number(epsgInput.value))
-            epsgEditingKey.value = null
-            await list.reload()
-            toast.success(`${key} chargé.`)
-        } catch (e) {
-            toast.error(errorMessage(e, `Impossible de charger ${key}`))
-        } finally {
-            loadingKey.value = null
         }
     }
 
@@ -138,7 +82,7 @@ export function useSources(initialSorting?: SortingState) {
         try {
             const deleted = await deleteSource(name)
             await list.reload()
-            toast.success(`${deleted.id} supprimé.`)
+            toast.success(`${deleted.id} supprimé du répertoire de travail.`)
         } catch (e) {
             toast.error(errorMessage(e, `Impossible de supprimer ${name}`))
         } finally {
@@ -160,14 +104,7 @@ export function useSources(initialSorting?: SortingState) {
         refresh,
         uploading,
         upload,
-        epsgEditingKey,
-        epsgInput,
-        epsgDetecting,
-        epsgApplies,
-        loadingKey,
-        startLoad,
-        cancelLoad,
-        confirmLoad,
+        limits,
         deletingName,
         remove
     }

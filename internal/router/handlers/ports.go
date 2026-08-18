@@ -14,6 +14,7 @@ import (
 type metadataAPI interface {
 	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 	ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error)
+	ListProvenance(ctx context.Context) ([]storage.TableProvenance, error)
 	RemoveTable(ctx context.Context, meta storage.Metadata) error
 	UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error
 }
@@ -38,6 +39,8 @@ type rowAPI interface {
 type schemaAPI interface {
 	Schema(ctx context.Context, meta storage.Metadata) ([]service.ColumnSchema, error)
 	AddColumn(ctx context.Context, meta storage.Metadata, colName, colType string) error
+	RenameColumn(ctx context.Context, meta storage.Metadata, colName, newName string) error
+	DropColumn(ctx context.Context, meta storage.Metadata, colName string) error
 }
 
 // deriveAPI is everything the router calls on *service.DeriveService.
@@ -62,7 +65,8 @@ type geoAPI interface {
 	GetFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 	CountFeatures(ctx context.Context, meta storage.Metadata, pkeys []string, bbox *[4]float64, q storage.GeoQuery) (int64, error)
 	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
-	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*service.RowGeometry, error)
+	CountFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, q storage.GeoQuery) (int64, error)
+	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int, targetCRS string) (*service.RowGeometry, error)
 	NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error)
 }
 
@@ -76,9 +80,8 @@ type filterAPI interface {
 }
 
 // settingsAPI is everything the router calls on *service.SettingsService:
-// Current for every handler sizing a page or bounding a body live off the
-// current settings, GetSettings/UpdateSettings for SettingsHandler's own
-// routes.
+// Current for every handler sizing a page live off it, and
+// GetSettings/UpdateSettings for SettingsHandler's own routes.
 type settingsAPI interface {
 	Current() storage.Settings
 	GetSettings(ctx context.Context) (storage.Settings, error)
@@ -106,11 +109,13 @@ type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
 	Refresh(ctx context.Context) ([]service.Source, error)
 	Upload(filename string, content io.Reader) (string, error)
-	Load(ctx context.Context, name, layer string, srid int) (string, error)
-	Delete(ctx context.Context, name string) error
+	Load(ctx context.Context, name, layer, tableName string, srid int) (string, error)
+	Reload(ctx context.Context, tableId, name, layer string, srid int) error
+	Delete(name string) error
 	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
 	SourceHasGeometry(ctx context.Context, name, layer string) (bool, error)
 	MaxUploadBytes() int64
+	AllowedExtensions() []string
 }
 
 var (

@@ -2,10 +2,9 @@ package storage
 
 import "context"
 
-// Diagnostics is a snapshot of the storage engine's own operating state —
-// on-disk size, buffer-manager memory usage, bytes currently spilled to
-// disk, and the extensions loaded in the session. Every field is read live;
-// none of it is cached.
+// Diagnostics is a snapshot of the storage engine's own operating state: its
+// on-disk size, memory usage, spilled bytes and loaded extensions. Every field
+// is read live, none is cached.
 type Diagnostics struct {
 	DatabaseSizeBytes   int64
 	MemoryUsageBytes    int64

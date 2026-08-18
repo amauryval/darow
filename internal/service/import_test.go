@@ -16,29 +16,13 @@ import (
 	"darow/internal/storage/mocks"
 )
 
+// TODO WTF ?
 func setupImportService(t *testing.T) (*ImportService, *mocks.Adapter) {
 	m := &mocks.Adapter{}
 	metadata := NewMetadataService(m, expirable.NewLRU[string, storage.Metadata](1000, nil, 5*time.Minute), &observer.Observer[storage.Metadata]{})
 	svc := NewImportService(metadata, m, &allowSizeGuard{})
 	t.Cleanup(func() { m.AssertExpectations(t) })
 	return svc, m
-}
-
-func Test_ImportService_LoadedSourceNames(t *testing.T) {
-	svc, m := setupImportService(t)
-
-	// Keyed on SourceName, not TableName — a table with no SourceName
-	// (e.g. from /derive) is excluded, and a table renamed away from its
-	// source file's name still resolves by its SourceName.
-	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
-		{SourceName: "buildings.geojson"}: "id-1",
-		{SourceName: "roads.geojson"}:     "id-2",
-	}, nil).Once()
-
-	names, err := svc.LoadedSourceNames(context.Background())
-
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"buildings.geojson": "id-1", "roads.geojson": "id-2"}, names)
 }
 
 func Test_ImportService_ListLayers(t *testing.T) {
@@ -82,7 +66,7 @@ func Test_ImportService_ImportFromFile_RefusesOverQuota(t *testing.T) {
 	svc, m := setupImportService(t)
 	svc.sizeGuard = &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
 
-	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
+	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
 	require.Error(t, err)
 	var quotaErr *QuotaExceededError
@@ -95,7 +79,7 @@ func Test_ImportService_ImportFromFile(t *testing.T) {
 
 	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("id-1", nil).Once()
 
-	tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
+	tableId, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-1", tableId)
@@ -108,7 +92,7 @@ func Test_ImportService_ImportFromFile_WrapsCreateFromFileFailure(t *testing.T) 
 
 	m.On("CreateFromFile", mock.Anything, "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", "", 0).Return("", errors.New("corrupt file")).Once()
 
-	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
+	_, err := svc.ImportFromFile(context.Background(), "buildings.geojson", "buildings.geojson", "/data/buildings.geojson", ".geojson", "", 0)
 
 	require.Error(t, err)
 	var displayErr *DisplayError
@@ -121,7 +105,7 @@ func Test_ImportService_ImportFromFile_ForwardsSridOverride(t *testing.T) {
 
 	m.On("CreateFromFile", mock.Anything, "lambert.geojson", "lambert.geojson", "/data/lambert.geojson", "", 2154).Return("id-1", nil).Once()
 
-	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
+	tableId, err := svc.ImportFromFile(context.Background(), "lambert.geojson", "lambert.geojson", "/data/lambert.geojson", ".geojson", "", 2154)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-1", tableId)
@@ -132,29 +116,68 @@ func Test_ImportService_ImportFromFile_ForwardsLayer(t *testing.T) {
 
 	m.On("CreateFromFile", mock.Anything, "regions.gpkg::communes", "regions.gpkg", "/data/regions.gpkg", "communes", 0).Return("id-1", nil).Once()
 
-	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes", 0)
+	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "regions.gpkg::communes", "/data/regions.gpkg", ".gpkg", "communes", 0)
 
 	require.NoError(t, err)
 	assert.Equal(t, "id-1", tableId)
 }
 
-func Test_ImportService_RemoveTable(t *testing.T) {
+func Test_ImportService_ImportFromFile_TakesAnExplicitTableName(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{TableId: "id-1"}, nil).Once()
-	m.On("Remove", mock.Anything, "id-1").Return(nil).Once()
+	m.On("CreateFromFile", mock.Anything, "communes 2024", "regions.gpkg", "/data/regions.gpkg", "communes", 0).Return("id-1", nil).Once()
 
-	err := svc.RemoveTable(context.Background(), "id-1")
+	tableId, err := svc.ImportFromFile(context.Background(), "regions.gpkg::communes", "communes 2024", "/data/regions.gpkg", ".gpkg", "communes", 0)
 
 	require.NoError(t, err)
+	assert.Equal(t, "id-1", tableId)
 }
 
-func Test_ImportService_RemoveTable_MetadataLookupFails(t *testing.T) {
+func Test_ImportService_ReloadFromFile(t *testing.T) {
+	cases := []struct {
+		name       string
+		loadedName string
+		layer      string
+		srid       int
+		wantSource string
+	}{
+		{name: "reloads a single-layer source", loadedName: "buildings.geojson", wantSource: "buildings.geojson"},
+		{name: "reloads one layer of a multi-layer source", loadedName: "regions.gpkg::communes", layer: "communes", wantSource: "regions.gpkg"},
+		{name: "forwards the srid override", loadedName: "lambert.geojson", srid: 2154, wantSource: "lambert.geojson"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m := setupImportService(t)
+
+			m.On("ReloadFromFile", mock.Anything, "t1", c.wantSource, "/data/file", c.layer, c.srid).Return(nil).Once()
+
+			err := svc.ReloadFromFile(context.Background(), "t1", c.loadedName, "/data/file", c.layer, c.srid)
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func Test_ImportService_ReloadFromFile_RefusesOverQuota(t *testing.T) {
+	svc, m := setupImportService(t)
+	svc.sizeGuard = &allowSizeGuard{err: &QuotaExceededError{msg: "over quota"}}
+
+	err := svc.ReloadFromFile(context.Background(), "t1", "buildings.geojson", "/data/buildings.geojson", "", 0)
+
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	m.AssertNotCalled(t, "ReloadFromFile", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func Test_ImportService_ReloadFromFile_WrapsStorageFailure(t *testing.T) {
 	svc, m := setupImportService(t)
 
-	m.On("GetMetadata", mock.Anything, "id-1").Return(storage.Metadata{}, errors.New("not found")).Once()
+	m.On("ReloadFromFile", mock.Anything, "t1", "buildings.geojson", "/data/buildings.geojson", "", 0).Return(errors.New("corrupt file")).Once()
 
-	err := svc.RemoveTable(context.Background(), "id-1")
+	err := svc.ReloadFromFile(context.Background(), "t1", "buildings.geojson", "/data/buildings.geojson", "", 0)
 
-	require.Error(t, err)
+	var displayErr *DisplayError
+	require.ErrorAs(t, err, &displayErr)
+	assert.Contains(t, displayErr.DisplayMessage(), "buildings.geojson")
 }

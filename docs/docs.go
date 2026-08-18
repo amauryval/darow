@@ -404,6 +404,25 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/sources/limits": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Read the upload constraints",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.sourceLimitsDTO"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sources/refresh": {
             "post": {
                 "produces": [
@@ -461,7 +480,7 @@ const docTemplate = `{
                 "tags": [
                     "sources"
                 ],
-                "summary": "Upload a file and load it into a new table",
+                "summary": "Upload a file into workDir",
                 "parameters": [
                     {
                         "type": "integer",
@@ -531,7 +550,7 @@ const docTemplate = `{
                 "tags": [
                     "sources"
                 ],
-                "summary": "Load a source file into a new table",
+                "summary": "Load a source file into a table",
                 "parameters": [
                     {
                         "type": "string",
@@ -551,11 +570,23 @@ const docTemplate = `{
                         "description": "Explicit source EPSG code, overriding auto-detection",
                         "name": "srid",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Name of the created table, defaulting to the source name",
+                        "name": "tableName",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Id of an existing table to reload in place instead of creating one",
+                        "name": "replace",
+                        "in": "query"
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -563,10 +594,13 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "409": {
-                        "description": "Conflict",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "507": {
@@ -659,6 +693,33 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/provenance": {
+            "get": {
+                "description": "Compact index of every table's origin, for a client to tell which sources are already loaded",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "List the tables imported from a source file",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/response.ErrorResponse"
                         }
@@ -868,6 +929,95 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tables/{tableId}/columns/{col}": {
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Delete a column",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "col",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tables"
+                ],
+                "summary": "Rename a column",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "col",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1768,6 +1918,12 @@ const docTemplate = `{
                         "name": "pkey",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "EPSG code the geometry is read in (default: the table's own)",
+                        "name": "srid",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1776,6 +1932,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     },
                     "404": {
@@ -2261,6 +2423,12 @@ const docTemplate = `{
                 "rowCount": {
                     "type": "integer"
                 },
+                "sourceLayer": {
+                    "type": "string"
+                },
+                "sourceName": {
+                    "type": "string"
+                },
                 "srid": {
                     "type": "integer"
                 },
@@ -2393,6 +2561,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.sourceLimitsDTO": {
+            "type": "object",
+            "properties": {
+                "allowedExtensions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "maxSizeBytes": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.spatialExtentDTO": {
             "type": "object",
             "properties": {
@@ -2446,14 +2628,8 @@ const docTemplate = `{
         "handlers.uploadResultDTO": {
             "type": "object",
             "properties": {
-                "loaded": {
-                    "type": "boolean"
-                },
                 "source": {
                     "$ref": "#/definitions/service.Source"
-                },
-                "tableId": {
-                    "type": "string"
                 }
             }
         },
@@ -2483,11 +2659,8 @@ const docTemplate = `{
                 "layers": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/service.SourceLayer"
+                        "type": "string"
                     }
-                },
-                "loaded": {
-                    "type": "boolean"
                 },
                 "modTime": {
                     "type": "string"
@@ -2497,23 +2670,6 @@ const docTemplate = `{
                 },
                 "sizeBytes": {
                     "type": "integer"
-                },
-                "tableId": {
-                    "type": "string"
-                }
-            }
-        },
-        "service.SourceLayer": {
-            "type": "object",
-            "properties": {
-                "loaded": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tableId": {
-                    "type": "string"
                 }
             }
         },

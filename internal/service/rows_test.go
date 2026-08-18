@@ -217,7 +217,7 @@ func Test_RowService_UpdateRow(t *testing.T) {
 				m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 				geoRepo := &mocks.GeoRepository{}
 				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 
 			result, err := svc.UpdateRow(context.Background(), meta, []string{"pk-1"}, updates, storage.DefaultGeometryCRS)
@@ -280,7 +280,7 @@ func Test_RowService_InsertRow_RefreshesBboxOnlyIfGeometrySet(t *testing.T) {
 				written["geom"] = storage.GeometryValue{Literal: "POINT(1 1)", Format: storage.GeometryWKT, CRS: storage.DefaultGeometryCRS}
 				geoRepo := &mocks.GeoRepository{}
 				expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+				geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 			}
 			rowRepo.On("Insert", mock.Anything, written).Return("pk-1", nil).Once()
 			m.On("RefreshDerivedMetadata", mock.Anything, "id-1", c.touchesGeometry).Return(nil).Once()
@@ -424,7 +424,7 @@ func Test_RowService_UpdateRows(t *testing.T) {
 	m.On("RefreshDerivedMetadata", mock.Anything, "id-1", true).Return(nil).Once()
 	geoRepo := &mocks.GeoRepository{}
 	expectStoredTypes(tableRepo, geoRepo, []string{"POINT"})
-	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+	geoRepo.On("GeoJSONByPkey", mock.Anything, []string{"pk-1"}, mock.Anything, mock.Anything).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
 
 	written, err := svc.UpdateRows(context.Background(), meta, []RowUpdate{
 		{Pkey: "pk-1", Values: map[string]any{"geom": geometry}},

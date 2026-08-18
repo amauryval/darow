@@ -5,9 +5,8 @@ package storage
 const PkeyColumn = "__pkey"
 
 // ogcFIDColumn is the feature-id column GDAL/OGR injects on almost every
-// vector format duckdb/tables' CreateFromFile reads through ST_Read
-// (GeoJSON, Shapefile, GeoPackage, CSV), geometry or not — a driver
-// implementation detail, never something a caller asked to store.
+// vector format read through ST_Read — a driver detail, never something a
+// caller asked to store.
 const ogcFIDColumn = "OGC_FID"
 
 // hiddenColumns are physical columns the server manages internally and

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { getSchema, listTables } from '../client/tables'
 import { errorMessage } from '../client/http'
+import { LIST_PAGE_SIZE } from '../utils/pageSizes'
 import { usePaginatedList } from './usePaginatedList'
 import type { ColumnSchema, Metadata } from '../client/types'
 
@@ -12,11 +13,13 @@ import type { ColumnSchema, Metadata } from '../client/types'
 export function useSqlSchemaReference() {
     const {
         items: tables,
+        total,
         loading,
         error,
         loadedOnce,
         sentinel
     } = usePaginatedList<Metadata>({
+        limit: LIST_PAGE_SIZE,
         fetchPage: (offset, limit) =>
             listTables(offset, limit).then((page) => ({ items: page.tables, total: page.total })),
         describeError: (e) => errorMessage(e, 'Impossible de charger les tables')
@@ -45,6 +48,7 @@ export function useSqlSchemaReference() {
 
     return {
         tables,
+        total,
         loading,
         error,
         loadedOnce,

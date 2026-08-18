@@ -65,6 +65,22 @@ func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc.AssertExpectations(t)
 }
 
+func Test_sourcesHandler_sourceLimits(t *testing.T) {
+	sourceSvc := &mockSourceAPI{}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: defaultTestSettings}
+
+	sourceSvc.On("MaxUploadBytes").Return(1024).Once()
+	sourceSvc.On("AllowedExtensions").Return([]string{".geojson", ".csv"}).Once()
+
+	rec := doHandlerRequest(sh.SourceLimits, http.MethodGet, "/api/v1/sources/limits", nil, nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := decodeJSON[sourceLimitsDTO](rec)
+	assert.EqualValues(t, 1024, body.MaxSizeBytes)
+	assert.Equal(t, []string{".geojson", ".csv"}, body.AllowedExtensions)
+	sourceSvc.AssertExpectations(t)
+}
+
 func Test_sourcesHandler_listSources_InvalidSort(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
 	sh := &SourcesHandler{sourceService: sourceSvc, settings: defaultTestSettings}
@@ -112,21 +128,19 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 		uploadErr  error
 		refreshErr error
 		sources    []service.Source
-		loadErr    error
 		wantStatus int
-		wantLoaded bool
+		wantLayers []string
 	}{
 		{
-			name:       "single-layer upload loads immediately",
-			sources:    []service.Source{{Name: "a.geojson"}},
+			name:       "returns the rescanned source with its layers",
+			sources:    []service.Source{{Name: "a.geojson", Layers: []string{"l1", "l2"}}},
 			wantStatus: http.StatusCreated,
-			wantLoaded: true,
+			wantLayers: []string{"l1", "l2"},
 		},
 		{
-			name:       "multi-layer upload is returned unresolved",
-			sources:    []service.Source{{Name: "a.geojson", Layers: []service.SourceLayer{{Name: "l1"}, {Name: "l2"}}}},
+			name:       "returns a single-layer source unloaded",
+			sources:    []service.Source{{Name: "a.geojson"}},
 			wantStatus: http.StatusCreated,
-			wantLoaded: false,
 		},
 		{
 			name:       "save failure returns 400",
@@ -139,12 +153,6 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 			refreshErr: assert.AnError,
 			wantStatus: http.StatusInternalServerError,
 		},
-		{
-			name:       "load failure maps to its service error",
-			sources:    []service.Source{{Name: "a.geojson"}},
-			loadErr:    &service.ValidationError{},
-			wantStatus: http.StatusBadRequest,
-		},
 	}
 
 	for _, c := range cases {
@@ -156,9 +164,6 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 			if c.uploadErr == nil {
 				sourceSvc.On("Refresh", mock.Anything).Return(c.sources, c.refreshErr).Once()
 			}
-			if c.uploadErr == nil && c.refreshErr == nil && len(c.sources[0].Layers) <= 1 {
-				sourceSvc.On("Load", mock.Anything, "a.geojson", "", 0).Return("t1", c.loadErr).Once()
-			}
 
 			req := multipartFileRequest(t, "/api/v1/sources/upload", "file", "a.geojson", "{}")
 			rec := httptest.NewRecorder()
@@ -167,13 +172,9 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantStatus == http.StatusCreated {
 				result := decodeJSON[uploadResultDTO](rec)
-				assert.Equal(t, c.wantLoaded, result.Loaded)
-				if c.wantLoaded {
-					assert.Equal(t, "t1", result.TableId)
-				} else {
-					require.NotNil(t, result.Source)
-					assert.Equal(t, "a.geojson", result.Source.Name)
-				}
+				require.NotNil(t, result.Source)
+				assert.Equal(t, "a.geojson", result.Source.Name)
+				assert.Equal(t, c.wantLayers, result.Source.Layers)
 			}
 			sourceSvc.AssertExpectations(t)
 		})
@@ -183,11 +184,17 @@ func Test_sourcesHandler_uploadSource(t *testing.T) {
 func Test_sourcesHandler_loadSource(t *testing.T) {
 	cases := []struct {
 		name       string
+		query      string
+		wantName   string
+		replaceId  string
 		loadErr    error
 		wantStatus int
 	}{
-		{name: "loads the source", wantStatus: http.StatusCreated},
+		{name: "loads the source into a new table", wantStatus: http.StatusCreated},
+		{name: "names the new table", query: "?tableName=communes", wantName: "communes", wantStatus: http.StatusCreated},
+		{name: "reloads an existing table in place", query: "?replace=t1", replaceId: "t1", wantStatus: http.StatusOK},
 		{name: "conflict maps to 409", loadErr: &service.ConflictError{}, wantStatus: http.StatusConflict},
+		{name: "unknown replaced table maps to 404", query: "?replace=t9", replaceId: "t9", loadErr: &service.NotFoundError{}, wantStatus: http.StatusNotFound},
 	}
 
 	for _, c := range cases {
@@ -195,11 +202,18 @@ func Test_sourcesHandler_loadSource(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
 			sh := &SourcesHandler{sourceService: sourceSvc}
 
-			sourceSvc.On("Load", mock.Anything, "a.geojson", "", 0).Return("t1", c.loadErr).Once()
+			if c.replaceId != "" {
+				sourceSvc.On("Reload", mock.Anything, c.replaceId, "a.geojson", "", 0).Return(c.loadErr).Once()
+			} else {
+				sourceSvc.On("Load", mock.Anything, "a.geojson", "", c.wantName, 0).Return("t1", c.loadErr).Once()
+			}
 
-			rec := doHandlerRequest(sh.LoadSource, http.MethodPost, "/api/v1/sources/a.geojson/load", nil, map[string]string{"name": "a.geojson"})
+			rec := doHandlerRequest(sh.LoadSource, http.MethodPost, "/api/v1/sources/a.geojson/load"+c.query, nil, map[string]string{"name": "a.geojson"})
 
 			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus < 300 {
+				assert.Equal(t, "t1", decodeJSON[map[string]string](rec)["tableId"])
+			}
 			sourceSvc.AssertExpectations(t)
 		})
 	}
@@ -273,7 +287,7 @@ func Test_sourcesHandler_deleteSource(t *testing.T) {
 		deleteErr  error
 		wantStatus int
 	}{
-		{name: "deletes the source", wantStatus: http.StatusOK},
+		{name: "deletes the source file", wantStatus: http.StatusOK},
 		{name: "unknown source returns its mapped error", deleteErr: &service.NotFoundError{}, wantStatus: http.StatusNotFound},
 	}
 
@@ -282,7 +296,7 @@ func Test_sourcesHandler_deleteSource(t *testing.T) {
 			sourceSvc := &mockSourceAPI{}
 			sh := &SourcesHandler{sourceService: sourceSvc}
 
-			sourceSvc.On("Delete", mock.Anything, "a.geojson").Return(c.deleteErr).Once()
+			sourceSvc.On("Delete", "a.geojson").Return(c.deleteErr).Once()
 
 			rec := doHandlerRequest(sh.DeleteSource, http.MethodDelete, "/api/v1/sources/a.geojson", nil, map[string]string{"name": "a.geojson"})
 

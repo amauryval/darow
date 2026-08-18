@@ -27,10 +27,9 @@ const emit = defineEmits<{
 const initial = draftOf(props.node ?? null, props.columns[0]?.name ?? '')
 const bool = ref<'AND' | 'OR'>(initial.bool)
 const children = ref<DraftNode[]>(initial.children)
-// Every filter is persisted — there is no draft state to reason about, so no
-// opt-out either. The name field fills itself from the conditions, which keeps
-// saving a one-click affair; nameTouched stops that suggestion from
-// overwriting a name the user typed.
+// Every filter is persisted — no draft state, hence no opt-out. The name
+// fills itself from the conditions to keep saving one click; nameTouched stops
+// that suggestion from overwriting a name the user typed.
 const name = ref(props.savedName ?? '')
 const nameTouched = ref(props.savedName !== undefined)
 

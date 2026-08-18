@@ -86,9 +86,9 @@ func sortedKeys(set map[string]bool) []string {
 }
 
 func (s *RowService) storedFamilies(ctx context.Context, meta storage.Metadata) ([]string, error) {
-	repo, err := s.storage.Table(meta)
+	repo, err := openTable(s.storage, meta)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to open table %q", meta.TableId), err)
+		return nil, err
 	}
 	geo, ok := repo.Geo()
 	if !ok {

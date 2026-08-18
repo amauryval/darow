@@ -25,21 +25,16 @@ type RowQuery struct {
 }
 
 // FeatureQuery groups Features'/FeaturesInTile's filter criteria into one
-// struct instead of positional parameters, so a future criterion (a
-// datetime, a sort) is an added field, never an added parameter position.
-// Pkeys, if non-nil, restricts to those primary keys; Bbox, if non-nil,
-// additionally restricts to intersecting geometries (Features only —
-// FeaturesInTile computes its own envelope from zoom/x/y instead); Query
-// adds a filter clause and/or a simplify tolerance; Attrs selects which
-// non-geometry columns populate GeoFeature.Values (nil/empty means every
-// column).
+// struct, so a new criterion is an added field, never a parameter position.
+// Each non-zero field narrows the result further.
 type FeatureQuery struct {
 	Pkeys []string
-	Bbox  *[4]float64
-	// Near restricts the result to the rows whose geometry intersects a
-	// buffer around a caller-supplied geometry — the neighbours of a shape
-	// being edited, which a bbox cannot express (a bbox around an L-shaped
-	// parcel catches what the parcel itself never touches).
+	// Bbox restricts to the geometries intersecting it. Features only:
+	// FeaturesInTile computes its own envelope from zoom/x/y.
+	Bbox *[4]float64
+	// Near restricts to the rows whose geometry intersects a buffer around a
+	// caller-supplied geometry — the neighbours of a shape being edited, which
+	// a bbox cannot express.
 	Near    *NearQuery
 	Exclude []string
 	Attrs   []string
@@ -48,17 +43,15 @@ type FeatureQuery struct {
 	Offset  int
 }
 
-// NearQuery is a geometry and the distance around it, in meters (the unit
-// of the EPSG:3857 the geometry column is stored in), a neighbour search
-// works with.
+// NearQuery is what a neighbour search works with: a geometry and the buffer
+// around it, in meters.
 type NearQuery struct {
 	Geometry GeometryValue
 	Buffer   float64
 }
 
-// TableRepository groups every operation on a single resolved data table.
-// Obtained once per request from the adapter's Table, its existence is the
-// proof its identifiers are already validated — no method below
+// TableRepository groups every operation on a single resolved data table. Its
+// existence proves its identifiers are already validated: no method below
 // re-validates PhysicalName or the geometry column.
 type TableRepository interface {
 	// Schema lists every column together with its DuckDB type.
@@ -66,6 +59,11 @@ type TableRepository interface {
 	// Types is Schema reshaped into a column-name-to-type map.
 	Types(ctx context.Context) (map[string]string, error)
 	AddColumn(ctx context.Context, colName, colType string) error
+	// RenameColumn renames oldName to newName, both refused when they name a
+	// column the server manages itself (hidden or geometry).
+	RenameColumn(ctx context.Context, oldName, newName string) error
+	// DropColumn drops colName, refused for the same managed columns.
+	DropColumn(ctx context.Context, colName string) error
 	// CopyTo writes the whole table to req.DestPath in req.Format, through
 	// DuckDB's own COPY.
 	CopyTo(ctx context.Context, req ExportRequest) error
@@ -82,10 +80,9 @@ type TableRepository interface {
 // RowRepository reads and writes the rows of a single resolved data table
 // — every method already knows its table, so none takes a Metadata.
 type RowRepository interface {
-	// Pkeys returns a page of primary keys ordered by sort (or by pkey
-	// alone when empty — DuckDB guarantees no stable order without
-	// ORDER BY). Callers that need full rows should use Page instead — it
-	// does the same job in one query rather than two.
+	// Pkeys returns a page of primary keys ordered by sort, or by pkey alone
+	// when empty. Callers needing full rows use Page, which does the same job
+	// in one query rather than two.
 	Pkeys(ctx context.Context, sort []SortField, offset, limit int64) ([]string, error)
 	// Page returns up to limit rows starting at offset, ordered by sort (or
 	// by pkey alone when empty), excluding the geometry column — a single
@@ -98,9 +95,8 @@ type RowRepository interface {
 	// column.
 	Filtered(ctx context.Context, q RowQuery, limit int) ([]Row, error)
 	// Distinct returns a page of up to limit distinct values of column,
-	// ordered by column itself for a deterministic offset. A non-empty
-	// search keeps only the values whose text form contains it,
-	// case-insensitively, as a literal (its %/_ match themselves).
+	// ordered by column itself. A non-empty search keeps only the values whose
+	// text form contains it, case-insensitively and literally.
 	Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error)
 	Insert(ctx context.Context, values map[string]any) (string, error)
 	// InsertMany inserts every row in a single transaction.
@@ -114,18 +110,16 @@ type RowRepository interface {
 	UpdateMany(ctx context.Context, updates []RowUpdate) error
 	// Delete removes the given rows. An empty pkeys is a no-op.
 	Delete(ctx context.Context, pkeys []string) error
-	// ProbeExpressionType reports the DuckDB type expression would produce
-	// over this table, without writing or materializing anything —
-	// validated through the same gate a /derive query passes. args binds
-	// expression's own placeholders, if it has any.
+	// ProbeExpressionType reports the DuckDB type expression would produce over
+	// this table, without writing anything — validated through the same gate a
+	// /derive query passes.
 	ProbeExpressionType(ctx context.Context, expression string, args ...any) (string, error)
 	// Transform sets column to setExpr (its own bound args in setArgs) on
 	// the rows matching where (its args in whereArgs), as a single UPDATE.
 	// Returns the number of rows written.
 	Transform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any) (int64, error)
-	// PreviewTransform reports, for up to limit rows matching
-	// where/whereArgs, column's current value and what setExpr/setArgs
-	// would write — a column transform's preview, computed without
+	// PreviewTransform reports, for up to limit rows matching where/whereArgs,
+	// column's current value and what setExpr/setArgs would write, without
 	// writing anything.
 	PreviewTransform(ctx context.Context, column, setExpr string, setArgs []any, where string, whereArgs []any, limit int) ([]TransformSample, error)
 }
@@ -145,39 +139,35 @@ type GeoRepository interface {
 	// FeaturesInTile is Features scoped to a single MVT-style z/x/y tile
 	// instead of an arbitrary bbox.
 	FeaturesInTile(ctx context.Context, zoom, x, y int, q FeatureQuery) ([]GeoFeature, error)
-	// PkeysInBbox returns a page of up to limit pkeys of rows whose
-	// geometry intersects bbox (lon/lat in OGC:CRS84, the same CRS
-	// Metadata.Bbox is reported in), ordered by pkey for a deterministic
-	// offset.
+	// CountFeaturesInTile is CountFeatures over the same z/x/y envelope
+	// FeaturesInTile pages through — that page's numberMatched.
+	CountFeaturesInTile(ctx context.Context, zoom, x, y int, q FeatureQuery) (int64, error)
+	// PkeysInBbox returns a page of up to limit pkeys of rows whose geometry
+	// intersects bbox, in OGC:CRS84, ordered by pkey.
 	PkeysInBbox(ctx context.Context, bbox [4]float64, offset, limit int) ([]string, error)
 	// Extent returns the bounding box, in the same "minX,minY,maxX,maxY"
 	// OGC:CRS84 format as Metadata.Bbox, of every row matching q — empty if
 	// no row matches.
 	Extent(ctx context.Context, q GeoQuery) (string, error)
 	// GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
-	// keyed by pkey — an export-only exception to never returning the
-	// geometry column. decimals, if non-nil, rounds CRS84 coordinates to
-	// that many digits after the transform; nil is full resolution.
-	GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
+	// keyed by pkey, reprojected to targetCRS ("" being OGC:CRS84, what every
+	// other read emits). A non-nil decimals rounds the coordinates to that
+	// many digits; nil is full resolution.
+	GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error)
 	// WKTByPkey returns each row's geometry as Well-Known Text, keyed by
-	// pkey, in the same OGC:CRS84 lon/lat GeoJSONByPkey reports. decimals
-	// behaves as in GeoJSONByPkey.
-	WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
+	// pkey. targetCRS and decimals behave as in GeoJSONByPkey.
+	WKTByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
-	// ValidateGeometries reports, for each of values in order, whether it is
-	// valid (ST_IsValid) once parsed and reprojected exactly as a write
-	// would store it (rule 23) — evaluated in one batched query rather than
-	// one round trip per geometry.
+	// ValidateGeometries reports, for each of values in order, whether
+	// ST_IsValid accepts it once reprojected as a write would store it —
+	// evaluated in a single batched query.
 	ValidateGeometries(ctx context.Context, values []GeometryValue) ([]bool, error)
 }
 
-// TableMaterializer answers questions about a source file before any table
-// is created from it — the layers it holds, its declared CRS, whether it
-// carries geometry at all. The materialization itself (CTAS, indexing,
-// reprojection, Hilbert clustering) runs transactionally through
-// storage.Catalog's CreateFromFile/CreateFromQuery instead, so no method
-// here creates a table.
+// TableMaterializer answers questions about a source file before any table is
+// created from it. The materialization itself runs transactionally through
+// Catalog.CreateFromFile/CreateFromQuery, so no method here creates a table.
 type TableMaterializer interface {
 	// ListLayers returns the names of every layer sourcePath exposes, for
 	// formats that can hold more than one.

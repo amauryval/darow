@@ -1,8 +1,7 @@
 package storage
 
-// InvalidSortError marks a client-supplied sort field that doesn't match
-// any sortable column, so the router can map it to 400 instead of the 500
-// default.
+// InvalidSortError marks a client-supplied sort field matching no sortable
+// column, so the router maps it to 400 instead of 500.
 type InvalidSortError struct{ msg string }
 
 func (e *InvalidSortError) Error() string { return e.msg }
@@ -13,8 +12,7 @@ func NewInvalidSortError(msg string) *InvalidSortError {
 }
 
 // ValidationError marks a storage write rejected because of the data the
-// caller supplied (e.g. a geometry column that isn't valid WKT), so the
-// router can map it to 400 instead of the 500 default.
+// caller supplied, so the router maps it to 400 instead of 500.
 type ValidationError struct{ msg string }
 
 func (e *ValidationError) Error() string { return e.msg }
@@ -24,11 +22,9 @@ func NewValidationError(msg string) *ValidationError {
 	return &ValidationError{msg: msg}
 }
 
-// NotFoundError marks a storage failure caused by a missing entity (e.g. no
-// metadata row for a tableId), so the router can map it to 404 instead of
-// the 500 default — distinct from any other failure reading the same row
-// (a dropped connection, a cancelled context), which must not be reported
-// as "not found".
+// NotFoundError marks a storage failure caused by a missing entity, so the
+// router maps it to 404 instead of 500. Any other failure reading the same
+// row must never be reported as "not found".
 type NotFoundError struct{ msg string }
 
 func (e *NotFoundError) Error() string { return e.msg }

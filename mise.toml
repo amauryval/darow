@@ -81,7 +81,16 @@ description = "Build the server binary"
 depends = ["docs", "ui-build"]
 run = "go build -o bin/server ./cmd/server"
 
+# authdemo lets goauth's demo verifier answer every request — backend and,
+# through /auth/session, the UI too — as an administrator without a token
+# or provider contacted. The developer's own build tag, never carried by
+# `mise run build` or the Dockerfile.
 [tasks."run-dev"]
+description = "Run the server with no auth"
+depends = ["docs", "ui-build"]
+run = "go run -tags authdemo ./cmd/server -config ./config.example.yaml"
+
+[tasks."run-dev-prod"]
 description = "Run the server against config.yaml"
 depends = ["docs", "ui-build"]
-run = "go run ./cmd/server"
+run = "go run ./cmd/server -config config.yaml"

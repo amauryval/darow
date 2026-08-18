@@ -6,10 +6,9 @@ import (
 	"darow/internal/storage"
 )
 
-// DiagnosticsService exposes the storage engine's own operating state — the
-// read that tells "the server is up" from "the server is healthy". It owns
-// no cache: every call reads live, since a stale spike would misreport the
-// one thing a caller is asking about.
+// DiagnosticsService exposes the storage engine's own operating state — what
+// tells "the server is up" from "the server is healthy". Every call reads
+// live: a stale spike would misreport the one thing being asked about.
 type DiagnosticsService struct {
 	reader storage.DiagnosticsReader
 }

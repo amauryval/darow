@@ -10,28 +10,22 @@ import (
 
 // parquetExtension is the sourcePath suffix CreateFromFile dispatches on to
 // route a Parquet/GeoParquet source through createFromParquet instead of
-// ST_Read — see that method's doc comment for why the two can never share
-// a code path.
+// ST_Read.
 const parquetExtension = ".parquet"
 
 // CreateFromFile materializes physicalName from a source file readable by
-// ST_Read (GeoJSON, Shapefile, CSV, GeoPackage). ST_Read only reads the
-// file — it never backs CRUD operations — so the result is
-// always a materialized table with a generated __pkey. layer selects one
-// layer of a multi-layer source (e.g. GeoPackage); pass "" for formats that
-// hold a single layer. sridOverride pins the source CRS explicitly (always
-// interpreted as EPSG:<code>); pass 0 to detect it from the file via
-// DetectCRS. If a geo table's CRS can be neither detected nor overridden,
-// CreateFromFile fails rather than guessing.
+// ST_Read (GeoJSON, Shapefile, CSV, GeoPackage), always with a generated
+// __pkey. An empty layer selects a single-layer source; a zero sridOverride
+// detects the CRS from the file via DetectCRS. A geo table whose CRS can be
+// neither detected nor overridden fails rather than guessing.
 func (l *Materializer) CreateFromFile(ctx context.Context, physicalName, sourcePath, layer string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, 0, err
 	}
 
 	// Parquet/GeoParquet read through DuckDB's own read_parquet, never
-	// ST_Read: ST_Read cannot open a Parquet file at all, and ST_Read_Meta
-	// (which DetectCRS/ListLayers use for every other format) crashes the
-	// process outright on one — see createFromParquet.
+	// ST_Read: ST_Read cannot open a Parquet file, and ST_Read_Meta crashes
+	// the process outright on one — see createFromParquet.
 	if strings.HasSuffix(sourcePath, parquetExtension) {
 		return l.createFromParquet(ctx, physicalName, sourcePath, sridOverride)
 	}
@@ -85,14 +79,10 @@ func (l *Materializer) CreateFromFile(ctx context.Context, physicalName, sourceP
 }
 
 // createFromParquet materializes physicalName from a Parquet or GeoParquet
-// file via DuckDB's native read_parquet, which — unlike ST_Read — actually
-// opens a Parquet file, and never calls ST_Read_Meta. A GeoParquet file's
-// geometry column already carries its declared CRS in DuckDB's own
-// GEOMETRY('<crs>') column type, read back via DESCRIBE — the only CRS
-// "detection" a Parquet source needs, which is why it is never
-// Introspectable at the service layer (service/formats.go). sridOverride,
-// if given, wins over the file's own declared CRS, exactly like
-// CreateFromFile's ST_Read path.
+// file via DuckDB's native read_parquet, never ST_Read_Meta. A GeoParquet
+// file's declared CRS is read back off its GEOMETRY('<crs>') column type via
+// DESCRIBE; sridOverride, if given, wins over it, exactly like the ST_Read
+// path.
 func (l *Materializer) createFromParquet(ctx context.Context, physicalName, sourcePath string, sridOverride int) (geometryColumn string, isGeo bool, srid int, err error) {
 	if _, err := l.conn.Exec(ctx, storage.TxWriteScope, fmt.Sprintf(
 		`CREATE TABLE %s AS SELECT uuid()::TEXT AS __pkey, * FROM read_parquet(?)`, physicalName,
@@ -129,11 +119,9 @@ func (l *Materializer) createFromParquet(ctx context.Context, physicalName, sour
 	return geometryColumn, true, srid, nil
 }
 
-// findGeoParquetColumn is findGeometryColumn plus the CRS DuckDB's
-// GEOMETRY('<crs>') column type declares (see parseGeometryCRS) — the two
-// are fetched together since read_parquet's schema is the only place a
-// GeoParquet file's declared CRS is exposed, and the catalogue reports both
-// in one row.
+// findGeoParquetColumn is findGeometryColumn plus the CRS declared by DuckDB's
+// GEOMETRY('<crs>') column type (see parseGeometryCRS), fetched together
+// since the catalogue reports both in one row.
 func (l *Materializer) findGeoParquetColumn(ctx context.Context, physicalName string) (geometryColumn, crs string, srid int, err error) {
 	columns, err := tableColumns(ctx, l.conn, physicalName)
 	if err != nil {

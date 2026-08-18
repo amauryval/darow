@@ -28,18 +28,15 @@ func copyOptions(req storage.ExportRequest) (string, error) {
 }
 
 // CopyTo writes the whole table to req.DestPath in req.Format, through
-// DuckDB's own COPY — the escaping of a CSV, the shape of a
-// FeatureCollection and the GeoParquet metadata are the engine's business,
-// never rebuilt here.
+// DuckDB's own COPY, so the engine owns the format's own escaping and shape.
 //
 // The geometry column is reprojected from the stored EPSG:3857 to
-// req.TargetCRS, and aliased to "geometry" for the GDAL driver, which reads
-// the Feature's geometry off that name and turns every other column into a
-// property. CSV carries no geometry at all (rule 7).
+// req.TargetCRS and aliased to "geometry" for the GDAL driver, which reads a
+// Feature's geometry off that name. CSV carries no geometry at all (rule 7).
 //
 // The statement writes a file and no database state; it names the table's
-// write scope only because every Exec names one, the effect being that an
-// export and a write to the same table do not overlap.
+// write scope only because every Exec does, so an export and a write to the
+// same table simply do not overlap.
 func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	options, err := copyOptions(req)
 	if err != nil {
@@ -48,7 +45,7 @@ func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 
 	withGeometry := t.ref.Meta.IsGeo && req.Format != storage.ExportCSV
 	if withGeometry {
-		if err := t.validateCRS(ctx, req.TargetCRS); err != nil {
+		if err := validateCRS(ctx, t.conn, req.TargetCRS); err != nil {
 			return err
 		}
 	}
@@ -86,18 +83,4 @@ func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	)
 	_, err = t.conn.Exec(ctx, storage.TableWriteScope(t.ref.Meta.TableId), query, args...)
 	return err
-}
-
-// validateCRS refuses a CRS PROJ cannot resolve before any file is written,
-// so a mistyped code is a rejected request rather than an export that fails
-// halfway through.
-func (t *table) validateCRS(ctx context.Context, targetCRS string) error {
-	var probe string
-	err := t.conn.QueryRow(ctx,
-		`SELECT ST_AsText(ST_Transform(ST_Point(0, 0), 'EPSG:3857', ?))`, targetCRS,
-	).Scan(&probe)
-	if err != nil {
-		return storage.NewValidationError(fmt.Sprintf("unknown coordinate reference system: %q", targetCRS))
-	}
-	return nil
 }

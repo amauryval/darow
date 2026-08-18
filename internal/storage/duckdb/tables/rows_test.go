@@ -222,7 +222,7 @@ func Test_RowRepository_Insert_GeometryColumn_ReprojectsFromItsCRS(t *testing.T)
 			pkey, err := repo.Rows().Insert(ctx, map[string]any{"geom": c.value})
 			require.NoError(t, err)
 
-			wkt, err := geo.WKTByPkey(ctx, []string{pkey}, nil)
+			wkt, err := geo.WKTByPkey(ctx, []string{pkey}, nil, "")
 			require.NoError(t, err)
 			assertPointNear(t, wkt[pkey], 2.35, 48.85, 1e-6)
 		})
@@ -246,7 +246,7 @@ func Test_RowRepository_Insert_GeometryColumn_HonoursTheStatedCRS(t *testing.T) 
 	})
 	require.NoError(t, err)
 
-	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, nil)
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, nil, "")
 	require.NoError(t, err)
 	assertPointNear(t, wkt[pkey], 2.35, 48.8566, 1e-3)
 }
@@ -315,7 +315,7 @@ func Test_RowRepository_UpdateMany_IsAtomic(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, updated, 2)
 
-	wkt, err := geo.WKTByPkey(ctx, []string{"1"}, nil)
+	wkt, err := geo.WKTByPkey(ctx, []string{"1"}, nil, "")
 	require.NoError(t, err)
 	assertPointNear(t, wkt["1"], 1, 1, 1e-6)
 

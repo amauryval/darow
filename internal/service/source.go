@@ -15,54 +15,36 @@ import (
 	"darow/internal/storage"
 )
 
-// layerSeparator joins a source file name and layer name into the composite
-// table name each loaded layer is registered under (see Load), so a single
-// GeoPackage can back several independently loaded tables.
+// layerSeparator joins a source file name and a layer name into the composite
+// table name each loaded layer is registered under.
 const layerSeparator = "::"
 
-// Source describes a file found in workDir, whether or not it has been
-// loaded into a table yet.
+// Source describes a file found in workDir. It says nothing about the tables
+// loaded from it: a loaded table holds its own copy of the data and lives on
+// its own from then on.
 type Source struct {
-	Name      string        `json:"name"`
-	Ext       string        `json:"ext"`
-	SizeBytes int64         `json:"sizeBytes"`
-	ModTime   time.Time     `json:"modTime"`
-	Loaded    bool          `json:"loaded"`
-	TableId   string        `json:"tableId,omitempty"`
-	Layers    []SourceLayer `json:"layers,omitempty"`
+	Name      string    `json:"name"`
+	Ext       string    `json:"ext"`
+	SizeBytes int64     `json:"sizeBytes"`
+	ModTime   time.Time `json:"modTime"`
+	Layers    []string  `json:"layers,omitempty"`
 }
 
-// SourceLayer describes one layer of a multi-layer source (e.g. a
-// GeoPackage feature table), tracked independently since each layer loads
-// into its own table.
-type SourceLayer struct {
-	Name    string `json:"name"`
-	Loaded  bool   `json:"loaded"`
-	TableId string `json:"tableId,omitempty"`
-}
-
-// tableImporter is everything SourceService needs from TableService —
-// declared here, the consumer, rather than depending on the concrete
-// *TableService: this is SourceService's actual dependency, not
-// TableService's whole method set.
+// tableImporter is everything SourceService needs from ImportService.
 type tableImporter interface {
-	LoadedSourceNames(ctx context.Context) (map[string]string, error)
 	ListLayers(ctx context.Context, path string) ([]string, error)
-	ImportFromFile(ctx context.Context, name, path, ext, layer string, srid int) (string, error)
+	ImportFromFile(ctx context.Context, name, tableName, path, ext, layer string, srid int) (string, error)
+	ReloadFromFile(ctx context.Context, tableId, name, path, layer string, srid int) error
 	DetectCRS(ctx context.Context, path, layer string) (authName string, authCode int, err error)
 	SourceHasGeometry(ctx context.Context, path, layer string) (bool, error)
-	RemoveTable(ctx context.Context, tableId string) error
 }
 
-// SourceService scans workDir for loadable files and imports them into
-// tables on demand. name is only ever accepted from the last Refresh/List
-// cache — never a path built freely from the HTTP request, to
-// eliminate any directory traversal risk. mu is held for the whole
-// duration of Load's check-then-import, not just around the cache lookup,
-// so two concurrent Load calls for the same source can't both pass the
-// "not loaded yet" check before either has actually imported it.
+// SourceService scans workDir for loadable files and imports them into tables
+// on demand. A name is only ever accepted from the last Refresh's cache,
+// never built from the request, so no path can escape workDir.
 type SourceService struct {
-	cfg          config.SourcesConfig
+	serverCfg    config.ServerConfig
+	sourcesCfg   config.SourcesConfig
 	tableService tableImporter
 
 	mu      sync.Mutex
@@ -71,28 +53,29 @@ type SourceService struct {
 
 // NewSourceService builds a SourceService scanning cfg.WorkDir and
 // importing through tableService.
-func NewSourceService(cfg config.SourcesConfig, tableService tableImporter) *SourceService {
-	return &SourceService{cfg: cfg, tableService: tableService}
+func NewSourceService(serverCfg config.ServerConfig, sourcesCfg config.SourcesConfig, tableService tableImporter) *SourceService {
+	return &SourceService{serverCfg: serverCfg, sourcesCfg: sourcesCfg, tableService: tableService}
 }
 
 // MaxUploadBytes returns the largest file Upload will accept, used by the
 // router to size the request body limit on /sources/upload.
 func (s *SourceService) MaxUploadBytes() int64 {
-	return s.cfg.MaxSizeBytes
+	return s.sourcesCfg.MaxSizeBytes
+}
+
+// AllowedExtensions returns the file extensions Upload and Refresh accept,
+// as configured in sources.allowedExtensions.
+func (s *SourceService) AllowedExtensions() []string {
+	return slices.Clone(s.sourcesCfg.AllowedExtensions)
 }
 
 // Refresh rescans workDir and replaces the in-memory cache. Files beyond
 // MaxSizeBytes or with a non-whitelisted extension are silently excluded,
 // not reported as an error.
 func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
-	entries, err := os.ReadDir(s.cfg.WorkDir)
+	entries, err := os.ReadDir(s.serverCfg.SourcesPath())
 	if err != nil {
 		return nil, NewDisplayError("unable to scan the sources directory", err)
-	}
-
-	loaded, err := s.tableService.LoadedSourceNames(ctx)
-	if err != nil {
-		return nil, err
 	}
 
 	sources := []Source{}
@@ -101,14 +84,14 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 			continue
 		}
 		ext := filepath.Ext(entry.Name())
-		if !slices.Contains(s.cfg.AllowedExtensions, ext) {
+		if !slices.Contains(s.sourcesCfg.AllowedExtensions, ext) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if info.Size() > s.cfg.MaxSizeBytes {
+		if info.Size() > s.sourcesCfg.MaxSizeBytes {
 			continue
 		}
 
@@ -119,9 +102,7 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 			ModTime:   info.ModTime(),
 		}
 		if format, ok := lookupSourceFormat(ext); ok && format.MultiLayer {
-			source.Layers = s.listLoadedLayers(ctx, entry.Name(), loaded)
-		} else {
-			source.TableId, source.Loaded = loaded[entry.Name()]
+			source.Layers = s.listLayers(ctx, entry.Name())
 		}
 		sources = append(sources, source)
 	}
@@ -132,42 +113,22 @@ func (s *SourceService) Refresh(ctx context.Context) ([]Source, error) {
 	return sources, nil
 }
 
-// listLoadedLayers enumerates name's layers and cross-references each
-// against loaded (keyed the same way Load names a loaded layer's table), so
-// a multi-layer source's loaded state is tracked per layer. If the file's
-// layers can't be read (e.g. corrupt), it is still listed as a source, just
-// without layer info, rather than failing the whole Refresh.
-func (s *SourceService) listLoadedLayers(ctx context.Context, name string, loaded map[string]string) []SourceLayer {
-	path := filepath.Join(s.cfg.WorkDir, name)
-	layerNames, err := s.tableService.ListLayers(ctx, path)
+// listLayers enumerates a multi-layer source's layers. An unreadable file
+// yields no layer rather than failing the whole Refresh.
+func (s *SourceService) listLayers(ctx context.Context, name string) []string {
+	layers, err := s.tableService.ListLayers(ctx, filepath.Join(s.serverCfg.SourcesPath(), name))
 	if err != nil {
 		return nil
-	}
-
-	layers := make([]SourceLayer, len(layerNames))
-	for i, layerName := range layerNames {
-		tableId, isLoaded := loaded[name+layerSeparator+layerName]
-		layers[i] = SourceLayer{Name: layerName, Loaded: isLoaded, TableId: tableId}
 	}
 	return layers
 }
 
-// sourceSortFields maps a sort field's public name to a comparator over two
-// Sources — an allowlist, mirroring metadataSortColumns/rowsOrderBy's role
-// for the SQL-backed listings, since Source has no query to validate an
-// arbitrary column against.
+// sourceSortFields is the allowlist of sortable fields, mapped to their
+// comparator — Source has no query to validate an arbitrary column against.
 var sourceSortFields = map[string]func(a, b Source) int{
 	"name":      func(a, b Source) int { return cmp.Compare(a.Name, b.Name) },
 	"sizeBytes": func(a, b Source) int { return cmp.Compare(a.SizeBytes, b.SizeBytes) },
 	"modTime":   func(a, b Source) int { return a.ModTime.Compare(b.ModTime) },
-	"loaded":    func(a, b Source) int { return cmp.Compare(boolToInt(a.Loaded), boolToInt(b.Loaded)) },
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // sortSources sorts sources in place by sort (multi-column, each field
@@ -198,14 +159,9 @@ func sortSources(sources []Source, sort []storage.SortField) error {
 	return nil
 }
 
-// List returns one page (offset/limit over the top-level sources, a
-// multi-layer source counting as one item regardless of its layer count)
-// of the cache from the last Refresh, ordered by sort or by scan order when
-// empty, plus the total count — it never rescans the disk itself, so an
-// implicit scan per request doesn't defeat the intent of an explicit
-// refresh or cost an os.ReadDir per call. Sorts a copy, not the live
-// internal slice, so a caller can never mutate cache state out from under
-// Load.
+// List returns one page of the cache from the last Refresh, ordered by sort
+// or by scan order when empty, plus the total count. It never rescans the
+// disk, and sorts a copy so a caller cannot mutate the cache.
 func (s *SourceService) List(sort []storage.SortField, offset, limit int) ([]Source, int, error) {
 	s.mu.Lock()
 	sources := cloneSources(s.sources)
@@ -226,26 +182,23 @@ func cloneSources(sources []Source) []Source {
 	for i, src := range sources {
 		out[i] = src
 		if src.Layers != nil {
-			out[i].Layers = append([]SourceLayer(nil), src.Layers...)
+			out[i].Layers = append([]string(nil), src.Layers...)
 		}
 	}
 	return out
 }
 
-// Upload writes content to workDir under filename, validated against the
-// same extension whitelist and size limit as Refresh, and rejected outright
-// if a file with that name already exists — callers wanting to replace a
-// source must remove it first, never silently overwritten. filename is
-// sanitized to its base name to eliminate directory traversal.
-// Returns the sanitized name actually written, for chaining into Load.
+// Upload writes content to workDir under filename, sanitized to its base name
+// and validated against the same extension whitelist and size limit as
+// Refresh. An existing file is a conflict, never silently overwritten.
 func (s *SourceService) Upload(filename string, content io.Reader) (string, error) {
 	filename = filepath.Base(filename)
 	ext := filepath.Ext(filename)
-	if !slices.Contains(s.cfg.AllowedExtensions, ext) {
+	if !slices.Contains(s.sourcesCfg.AllowedExtensions, ext) {
 		return "", fmt.Errorf("extension not allowed: %q", ext)
 	}
 
-	path := filepath.Join(s.cfg.WorkDir, filename)
+	path := filepath.Join(s.serverCfg.SourcesPath(), filename)
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
@@ -255,155 +208,110 @@ func (s *SourceService) Upload(filename string, content io.Reader) (string, erro
 	}
 	defer out.Close()
 
-	written, err := io.Copy(out, io.LimitReader(content, s.cfg.MaxSizeBytes+1))
+	written, err := io.Copy(out, io.LimitReader(content, s.sourcesCfg.MaxSizeBytes+1))
 	if err != nil {
 		os.Remove(path)
 		return "", NewDisplayError(fmt.Sprintf("unable to write file %q", filename), err)
 	}
-	if written > s.cfg.MaxSizeBytes {
+	if written > s.sourcesCfg.MaxSizeBytes {
 		os.Remove(path)
-		return "", fmt.Errorf("file exceeds maxSizeBytes (%d bytes)", s.cfg.MaxSizeBytes)
+		return "", fmt.Errorf("file exceeds maxSizeBytes (%d bytes)", s.sourcesCfg.MaxSizeBytes)
 	}
 	return filename, nil
 }
 
-// Load imports the source named name, which must match an entry in the
-// current cache. For a multi-layer (.gpkg) source, layer must
-// name one of that source's cached layers — the file itself is never
-// loaded as a whole. For any other source, layer must be empty. srid pins
-// the source CRS explicitly; pass 0 to detect it from the file.
-// Returns the newly created tableId. Held under mu for its whole duration
-// (see SourceService doc) — the on-success update of the cached entry
-// below is what lets an immediate second Load, with no Refresh in
-// between, see the source as loaded instead of importing it again.
-func (s *SourceService) Load(ctx context.Context, name, layer string, srid int) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var found *Source
-	for i := range s.sources {
-		if s.sources[i].Name == name {
-			found = &s.sources[i]
-			break
-		}
+// Load imports the cached source into a new table and returns its tableId. A
+// multi-layer source is loaded one named layer at a time; a zero srid detects
+// the CRS from the file. The same source may be loaded any number of times.
+func (s *SourceService) Load(ctx context.Context, name, layer, tableName string, srid int) (string, error) {
+	found, loadedName, err := s.resolveLoad(name, layer)
+	if err != nil {
+		return "", err
 	}
-	if found == nil {
-		return "", &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
+	if tableName == "" {
+		tableName = loadedName
+	}
+	return s.tableService.ImportFromFile(ctx, loadedName, tableName, s.pathOf(found.Name), found.Ext, layer, srid)
+}
+
+// Reload replaces tableId's data with a fresh import of the cached source,
+// keeping the table itself — its name, its settings and its filters. The
+// source is resolved exactly as Load resolves it.
+func (s *SourceService) Reload(ctx context.Context, tableId, name, layer string, srid int) error {
+	found, loadedName, err := s.resolveLoad(name, layer)
+	if err != nil {
+		return err
+	}
+	return s.tableService.ReloadFromFile(ctx, tableId, loadedName, s.pathOf(found.Name), layer, srid)
+}
+
+// resolveLoad validates name and layer against the cache and returns the entry
+// plus the composite name a load registers the table under.
+func (s *SourceService) resolveLoad(name, layer string) (Source, string, error) {
+	found, err := s.findSource(name)
+	if err != nil {
+		return Source{}, "", err
 	}
 
 	format, known := lookupSourceFormat(found.Ext)
 	if !known || !format.MultiLayer {
 		if layer != "" {
-			return "", &ValidationError{fmt.Sprintf("source %q does not support layer selection", name)}
+			return Source{}, "", &ValidationError{fmt.Sprintf("source %q does not support layer selection", name)}
 		}
-		if found.Loaded {
-			return "", &ConflictError{fmt.Sprintf("source %q already loaded (table %s)", name, found.TableId)}
+	} else {
+		if layer == "" {
+			return Source{}, "", &ValidationError{fmt.Sprintf("source %q has multiple layers — specify one", name)}
 		}
-		path := filepath.Join(s.cfg.WorkDir, found.Name)
-		tableId, err := s.tableService.ImportFromFile(ctx, found.Name, path, found.Ext, "", srid)
-		if err != nil {
-			return "", err
+		if !slices.Contains(found.Layers, layer) {
+			return Source{}, "", &NotFoundError{fmt.Sprintf("unknown layer %q for source %q — call /sources/refresh first", layer, name)}
 		}
-		found.Loaded = true
-		found.TableId = tableId
-		return tableId, nil
 	}
 
-	if layer == "" {
-		return "", &ValidationError{fmt.Sprintf("source %q has multiple layers — specify one", name)}
+	loadedName := found.Name
+	if layer != "" {
+		loadedName += layerSeparator + layer
 	}
-	var foundLayer *SourceLayer
-	for i := range found.Layers {
-		if found.Layers[i].Name == layer {
-			foundLayer = &found.Layers[i]
-			break
+	return found, loadedName, nil
+}
+
+// findSource returns a copy of the cached entry named name, or a NotFoundError
+// — the only way a name from a request is turned into a file.
+func (s *SourceService) findSource(name string) (Source, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, source := range s.sources {
+		if source.Name == name {
+			return source, nil
 		}
 	}
-	if foundLayer == nil {
-		return "", &NotFoundError{fmt.Sprintf("unknown layer %q for source %q — call /sources/refresh first", layer, name)}
-	}
-	if foundLayer.Loaded {
-		return "", &ConflictError{fmt.Sprintf("layer %q of source %q already loaded (table %s)", layer, name, foundLayer.TableId)}
-	}
+	return Source{}, &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
+}
 
-	path := filepath.Join(s.cfg.WorkDir, found.Name)
-	tableName := found.Name + layerSeparator + layer
-	tableId, err := s.tableService.ImportFromFile(ctx, tableName, path, found.Ext, layer, srid)
+func (s *SourceService) pathOf(name string) string {
+	return filepath.Join(s.serverCfg.SourcesPath(), name)
+}
+
+// sourcePath resolves name, and for a multi-layer source layer, against the
+// cache: a name is never turned into a path without this check.
+func (s *SourceService) sourcePath(name, layer string) (string, error) {
+	found, err := s.findSource(name)
 	if err != nil {
 		return "", err
 	}
-	foundLayer.Loaded = true
-	foundLayer.TableId = tableId
-	return tableId, nil
-}
-
-// UnmarkLoaded drops meta's loaded state from the cache, so a table deleted
-// elsewhere (MetadataService.RemoveTable) stops being reported as loaded —
-// registered onto core.NewServices' removed observer. Looked up by
-// SourceName/SourceLayer, not TableId: those are what a removed table's
-// metadata carries, and finding the entry by them needs no reverse scan
-// keyed on a field the cache wasn't already tracking for that purpose. A
-// no-op if meta has no source, or no entry matches it.
-func (s *SourceService) UnmarkLoaded(meta storage.Metadata) {
-	if meta.SourceName == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i := range s.sources {
-		if s.sources[i].Name != meta.SourceName {
-			continue
-		}
-		if meta.SourceLayer == "" {
-			s.sources[i].Loaded = false
-			s.sources[i].TableId = ""
-			continue
-		}
-		for j := range s.sources[i].Layers {
-			if s.sources[i].Layers[j].Name == meta.SourceLayer {
-				s.sources[i].Layers[j].Loaded = false
-				s.sources[i].Layers[j].TableId = ""
-			}
-		}
-	}
-}
-
-// sourcePath resolves name (and, for a multi-layer source, layer) against
-// the cache exactly like Load does — name is never turned into a path
-// without this check — without mutating any loaded state.
-func (s *SourceService) sourcePath(name, layer string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var found *Source
-	for i := range s.sources {
-		if s.sources[i].Name == name {
-			found = &s.sources[i]
-			break
-		}
-	}
-	if found == nil {
-		return "", &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
-	}
 
 	if format, known := lookupSourceFormat(found.Ext); known && format.MultiLayer && layer != "" {
-		found := slices.ContainsFunc(found.Layers, func(l SourceLayer) bool { return l.Name == layer })
-		if !found {
+		if !slices.Contains(found.Layers, layer) {
 			return "", &NotFoundError{fmt.Sprintf("unknown layer %q for source %q — call /sources/refresh first", layer, name)}
 		}
 	}
 
-	return filepath.Join(s.cfg.WorkDir, name), nil
+	return s.pathOf(found.Name), nil
 }
 
-// DetectCRS reports the authority/code of a source's declared CRS (0 if
-// undetectable), so a caller can preview it before Load — the "editable
-// EPSG" flow. layer selects one layer of a multi-layer source. A format
-// that isn't Introspectable (e.g. Parquet/GeoParquet, resolved instead at
-// Load time) reports no CRS rather than calling into storage — its
-// declared-CRS reader is never the same one ListLayers/DetectCRS use for
-// every other format, and must never be reached with the wrong file type.
+// DetectCRS reports the authority/code of a source's declared CRS, 0 if
+// undetectable, so a caller can preview it before Load. A format that is not
+// Introspectable reports no CRS rather than calling into storage.
 func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error) {
 	path, err := s.sourcePath(name, layer)
 	if err != nil {
@@ -419,11 +327,9 @@ func (s *SourceService) DetectCRS(ctx context.Context, name, layer string) (auth
 	return authName, authCode, nil
 }
 
-// SourceHasGeometry reports whether a source carries a geometry field at all —
-// what tells a caller whether the CRS question applies to it. Every format is
-// asked, Parquet included: the storage layer reads each one the way that
-// format has to be read, exactly as CreateFromFile does, so a plain Parquet
-// answers no rather than being assumed to carry a geometry.
+// SourceHasGeometry reports whether a source carries a geometry field, which
+// is what tells a caller whether the CRS question applies to it. Every format
+// is asked, each read the way CreateFromFile reads it.
 func (s *SourceService) SourceHasGeometry(ctx context.Context, name, layer string) (bool, error) {
 	path, err := s.sourcePath(name, layer)
 	if err != nil {
@@ -436,55 +342,21 @@ func (s *SourceService) SourceHasGeometry(ctx context.Context, name, layer strin
 	return hasGeometry, nil
 }
 
-// Delete removes the table(s) loaded from name and drops its cache entry —
-// the source file itself in workDir is never touched, only its loaded
-// table(s) (deleting a user's uploaded file is out of scope; a caller who
-// wants that must remove it from workDir directly). name is validated
-// against the cache, never an unvalidated path. The cache entry
-// is only spliced out after every table removal has succeeded, so a
-// failure midway (e.g. one layer's RemoveTable erroring after another's
-// already succeeded) leaves the source visible for a retry instead of
-// silently vanishing from the cache. found is read under mu and
-// never mutated outside it: it is about to be deleted from the cache
-// wholesale, so updating its Loaded/TableId fields on the way out would only
-// race a concurrent List against the live entry's shared Layers slice for no
-// observable benefit.
-func (s *SourceService) Delete(ctx context.Context, name string) error {
-	s.mu.Lock()
-	index := -1
-	for i := range s.sources {
-		if s.sources[i].Name == name {
-			index = i
-			break
-		}
+// Delete erases the source file from workDir and drops its cache entry. The
+// tables loaded from it are left alone: they hold their own copy of the data
+// and are independent of the file they came from.
+func (s *SourceService) Delete(name string) error {
+	found, err := s.findSource(name)
+	if err != nil {
+		return err
 	}
-	if index == -1 {
-		s.mu.Unlock()
-		return &NotFoundError{fmt.Sprintf("unknown source %q — call /sources/refresh first", name)}
-	}
-	found := s.sources[index]
-	s.mu.Unlock()
 
-	if found.Loaded && found.TableId != "" {
-		if err := s.tableService.RemoveTable(ctx, found.TableId); err != nil {
-			return err
-		}
-	}
-	for _, layer := range found.Layers {
-		if layer.Loaded && layer.TableId != "" {
-			if err := s.tableService.RemoveTable(ctx, layer.TableId); err != nil {
-				return err
-			}
-		}
+	if err := os.Remove(s.pathOf(found.Name)); err != nil && !os.IsNotExist(err) {
+		return NewDisplayError(fmt.Sprintf("unable to delete file %q from workDir", name), err)
 	}
 
 	s.mu.Lock()
-	for i := range s.sources {
-		if s.sources[i].Name == name {
-			s.sources = slices.Delete(s.sources, i, i+1)
-			break
-		}
-	}
+	s.sources = slices.DeleteFunc(s.sources, func(source Source) bool { return source.Name == name })
 	s.mu.Unlock()
 	return nil
 }

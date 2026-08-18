@@ -30,14 +30,11 @@ func (l *Materializer) createPkeyIndex(ctx context.Context, physicalName string)
 }
 
 // clusterByHilbert physically reorders physicalName's rows along a Hilbert
-// curve over geometryColumn, so tile scans (ST_Intersects_Extent) prune row
-// groups by spatial locality instead of touching the whole table. DuckDB
-// has no in-place ORDER BY, so the table is rebuilt from scratch — every
-// index that existed on physicalName is gone afterward and must be
-// recreated by the caller. A table with no non-NULL geometry is left
-// untouched, since ST_Hilbert has no reference extent to sort against. The
-// rebuild runs in a single transaction, so a concurrent read never
-// observes physicalName mid-rebuild (dropped but not yet renamed back).
+// curve over geometryColumn, so tile scans prune row groups by spatial
+// locality. DuckDB has no in-place ORDER BY, so the table is rebuilt from
+// scratch and every prior index is gone afterward; a table with no non-NULL
+// geometry is left untouched. The rebuild runs in a single transaction, so a
+// concurrent read never observes it mid-rebuild.
 func (l *Materializer) clusterByHilbert(ctx context.Context, physicalName, geometryColumn string) error {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return err
@@ -76,10 +73,8 @@ func (l *Materializer) clusterByHilbert(ctx context.Context, physicalName, geome
 	})
 }
 
-// indexAfterClustering clusters physicalName by geometryColumn (rebuilding
-// the table) and recreates both indexes rule 19 requires — clustering
-// drops every index that existed on physicalName before it, so neither can
-// be created beforehand.
+// indexAfterClustering clusters physicalName by geometryColumn, which drops
+// every prior index, then recreates both indexes rule 19 requires.
 func (l *Materializer) indexAfterClustering(ctx context.Context, physicalName, geometryColumn string) error {
 	if err := l.clusterByHilbert(ctx, physicalName, geometryColumn); err != nil {
 		return err
@@ -94,9 +89,8 @@ func (l *Materializer) indexAfterClustering(ctx context.Context, physicalName, g
 }
 
 // verifyIndexes asserts against DuckDB's catalogue that the indexes rule 19
-// requires are really there once a table is materialized. A silently
-// missing RTREE index degrades every tile scan without failing anything,
-// so the load fails here instead.
+// requires are really there. A silently missing RTREE index would degrade
+// every tile scan without failing anything, so the load fails here instead.
 func (l *Materializer) verifyIndexes(ctx context.Context, physicalName string, wantSpatial bool) error {
 	indexes, err := tableIndexes(ctx, l.conn, physicalName)
 	if err != nil {

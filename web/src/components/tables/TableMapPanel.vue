@@ -31,6 +31,7 @@ const emit = defineEmits<{
     save: [changes: LayerChanges]
     cancel: []
     drawnCount: [count: number]
+    changedCount: [count: number]
 }>()
 
 // The session's unsaved work lives inside the map, so the map stays mounted
@@ -66,6 +67,7 @@ const mapHidden = computed(() => props.focusPanel === 'table')
             @request-feature="emit('requestFeature', $event)"
             @release-features="emit('releaseFeatures', $event)"
             @drawn-count="emit('drawnCount', $event)"
+            @changed-count="emit('changedCount', $event)"
             @save="emit('save', $event)"
             @cancel="emit('cancel')"
         />

@@ -8,11 +8,9 @@ import (
 	"darow/internal/storage"
 )
 
-// tableSettingsSchema is the DDL applied on every startup — already at the
-// latest column set (no accumulated pre-1.0 migration history: see LIM-7).
-// One row per table that carries at least one override — a table with none
-// has no row, which is what makes "inherit the global value" the storable
-// default rather than a magic number.
+// tableSettingsSchema is the DDL applied on every startup, already at the
+// latest column set (LIM-7). One row per table carrying an override: a table
+// with none has no row, which is how inheritance is stored.
 const tableSettingsSchema = `
 CREATE TABLE IF NOT EXISTS table_settings (
     tableId TEXT PRIMARY KEY,
@@ -26,10 +24,8 @@ CREATE TABLE IF NOT EXISTS table_settings (
 );
 `
 
-// tableSettingsMigrations are ALTER statements applied in order, once each,
-// to an existing table_settings table whose recorded version trails this
-// list — empty today (LIM-7), populated once the server has a first stable
-// release.
+// tableSettingsMigrations are ALTER statements applied in order, once each, to
+// a table_settings whose recorded version trails this list. Empty today.
 var tableSettingsMigrations = []string{}
 
 func init() {
@@ -80,9 +76,8 @@ func (r *TableSettings) GetTableSettings(ctx context.Context, tableId string) (s
 	return s, err
 }
 
-// applyTableSettingsPatch merges patch onto current, following the
-// TableSettingsPatch tri-state: a nil field leaves current's override
-// unchanged, a non-nil field pointing to nil clears it, a non-nil field
+// applyTableSettingsPatch merges patch onto current: a nil field leaves the
+// override unchanged, a non-nil one pointing to nil clears it, and one
 // pointing to a value sets it.
 func applyTableSettingsPatch(current storage.TableSettings, patch storage.TableSettingsPatch) storage.TableSettings {
 	merged := current

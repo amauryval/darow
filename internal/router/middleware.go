@@ -3,30 +3,72 @@ package router
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"darow/internal/config"
 	"darow/internal/router/response"
 )
 
-// maxBodyBytes caps the request body so a handler that decodes it into
-// memory (json.Decode, ParseMultipartForm) can never be driven to exhaust
-// memory or disk by an oversized request. max is a closure rather than a
-// plain value for a single reason: the upload route (routes.go) overrides
-// it per-source-size rather than with the fixed global cap — the global cap
-// itself is config.SettingsConfig.MaxBodyBytes (TODO-17), fixed at Setup,
-// no longer read from the settings row. When the client declares
-// Content-Length upfront (browsers always do for a multipart file upload,
-// since a File's size is known before the request is sent) and it already
-// exceeds max, the request is rejected immediately with a clean 413 —
-// without reading a single body byte. This matters because once
-// http.MaxBytesReader trips mid-stream on a large body, Go's server can
-// only respond by closing the connection with unread bytes still buffered,
-// which the client sees as a raw connection reset (no HTTP status at all)
-// rather than the JSON error this middleware would otherwise produce.
+// forwardedHeaders are the hints only a trusted upstream may set. They are
+// cleared off any request that did not come from server.trustedProxies, so
+// the OGC links never take a direct caller's word for the host they should
+// point at.
+var forwardedHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
+
+// stripUntrustedForwarded clears forwardedHeaders off any request whose peer
+// address does not fall inside trusted. Applied globally: reads and writes
+// alike build OGC links off these headers.
+func stripUntrustedForwarded(trustedProxies []string) func(http.Handler) http.Handler {
+	// config.Load already rejected an unparseable entry at startup; nothing
+	// left to strip is the safe default if this is ever reached anyway.
+	trusted, _ := config.ParseTrustedProxies(trustedProxies)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if !trustsPeer(trusted, req.RemoteAddr) {
+				for _, name := range forwardedHeaders {
+					req.Header.Del(name)
+				}
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+func trustsPeer(trusted []netip.Prefix, remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap().WithZone("")
+
+	for _, prefix := range trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxBodyBytes caps the request body so a handler decoding it into memory can
+// never be driven to exhaust memory or disk. max is a closure since the
+// upload route overrides it per-source-size rather than with the fixed
+// global cap.
+//
+// A Content-Length already over max is rejected immediately with a clean
+// 413, without reading a body byte: once http.MaxBytesReader trips
+// mid-stream instead, Go can only close the connection, which the client
+// sees as a raw reset rather than a JSON error.
 func maxBodyBytes(max func() int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -42,10 +84,7 @@ func maxBodyBytes(max func() int64) func(http.Handler) http.Handler {
 }
 
 // requestTimeout bounds every request's context to secs() seconds — secs is
-// a closure for symmetry with maxBodyBytes, though the value it returns is
-// now fixed at Setup (config.SettingsConfig.RequestTimeoutSec, TODO-17): a
-// new middleware.Timeout is built per request rather than once, but that's
-// a cheap closure, not a resource. secs() <= 0 disables the bound.
+// a closure for symmetry with maxBodyBytes. secs() <= 0 disables the bound.
 func requestTimeout(secs func() int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -60,13 +99,9 @@ func requestTimeout(secs func() int) func(http.Handler) http.Handler {
 }
 
 // recoverJSON recovers from a panic and answers with the standard error
-// envelope instead of chi's default empty-bodied 500, so a client-side
-// panic recovery is a normal, parseable ErrorResponse like any other 5xx.
-// http.ErrAbortHandler is re-panicked untouched — that sentinel is how a
-// handler (ExportHandler.ExportTable) deliberately aborts an in-flight
-// streamed response once bytes are already committed, and must still reach
-// net/http's own server loop rather than be answered with a body that can
-// no longer be sent cleanly.
+// envelope instead of chi's default empty-bodied 500. http.ErrAbortHandler is
+// re-panicked untouched: it is how ExportTable deliberately aborts an
+// in-flight streamed response, and must still reach net/http's own loop.
 func recoverJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		defer func() {
@@ -93,9 +128,8 @@ func recoverJSON(next http.Handler) http.Handler {
 }
 
 // notFoundJSON answers an unmatched route with the standard error envelope
-// instead of chi's default plain-text "404 page not found", so a JSON
-// client (web/src/client/http.ts's handle) can parse it like any other
-// error response.
+// instead of chi's default plain-text 404, so a JSON client can parse it like
+// any other error response.
 func notFoundJSON(w http.ResponseWriter, req *http.Request) {
 	response.WriteError(w, req, fmt.Errorf("no such route: %s %s", req.Method, req.URL.Path), http.StatusNotFound)
 }

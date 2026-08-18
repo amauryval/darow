@@ -10,12 +10,9 @@ import (
 
 var selectOnlyRe = regexp.MustCompile(`(?is)^\s*select\b`)
 
-// validateSelectOnly is a cheap fail-fast on the query's shape, rejecting
-// anything before it ever reaches storage. It is intentionally not the
-// authoritative check: storage.CreateFromQuery validates the query's full
-// structure with DuckDB's own parser — a regex/keyword blacklist
-// can never enumerate every table function that reads files or system
-// state, so it isn't trusted to do that job here.
+// validateSelectOnly is a cheap fail-fast on the query's shape.
+// The authoritative check is storage.CreateFromQuery, which validates the
+// whole query with DuckDB's own parser.
 func validateSelectOnly(query string) error {
 	if strings.Contains(query, ";") {
 		return &ValidationError{"query must be a single statement"}
@@ -27,16 +24,13 @@ func validateSelectOnly(query string) error {
 }
 
 // metadataStore is what DeriveService needs from MetadataService to
-// register and transactionally materialize a new logical table — declared
-// here, the consumer, rather than depending on the concrete
-// *MetadataService.
+// register and transactionally materialize a new logical table.
 type metadataStore interface {
 	CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (tableId string, err error)
 }
 
 // schemaReader is what DeriveService needs from SchemaService to build a
-// guided derivation's projection and validate its conditions against the
-// source table's real columns.
+// guided derivation's projection and validate its conditions.
 type schemaReader interface {
 	Schema(ctx context.Context, meta storage.Metadata) ([]ColumnSchema, error)
 }
@@ -50,25 +44,23 @@ type DeriveService struct {
 	sizeGuard sizeGuard
 }
 
-// NewDeriveService builds a DeriveService registering and materializing new
-// tables via metadata, reading source structure via schema, and enforcing
-// duckdb.maxSizeBytes on every derivation through guard.
+// NewDeriveService builds a DeriveService materializing tables via metadata,
+// reading source structure via schema and enforcing duckdb.maxSizeBytes
+// through guard.
 func NewDeriveService(metadata metadataStore, schema schemaReader, guard sizeGuard) *DeriveService {
 	return &DeriveService{metadata: metadata, schema: schema, sizeGuard: guard}
 }
 
-// DeriveTable materializes a new table from a caller-provided SELECT query
-// (anything else is rejected before reaching Exec). The query is free to
-// read **any** registered table, not only one: this is the free-SQL mode,
-// as opposed to DeriveFromTable's single-source one.
+// DeriveTable materializes a new table from a caller-provided SELECT query.
+// This is the free-SQL mode: the query may read any registered table, unlike
+// DeriveFromTable's single-source one.
 func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
 	return s.materialize(ctx, query, nil, newTableName)
 }
 
-// materialize is what both derivation modes share: reject anything but a
-// single SELECT, then register and materialize the new table in one
-// transaction through MetadataService.CreateFromQuery. The derived table is
-// a frozen snapshot, never a view and never synced with its source.
+// materialize rejects anything but a single SELECT, then registers and
+// materializes the new table in one transaction. The result is a frozen
+// snapshot, never a view synced with its source.
 func (s *DeriveService) materialize(ctx context.Context, query string, args []any, newTableName string) (string, error) {
 	if err := validateSelectOnly(query); err != nil {
 		return "", err

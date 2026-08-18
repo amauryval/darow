@@ -5,9 +5,8 @@ import (
 )
 
 // tableRef is a storage.Metadata resolved once into the identifiers its
-// physical table needs — its existence is the proof that PhysicalName and
-// QuotedGeometryColumn are already validated, so callers never revalidate
-// them.
+// physical table needs. Its existence proves PhysicalName and
+// QuotedGeometryColumn are already validated.
 type tableRef struct {
 	Meta                 storage.Metadata
 	PhysicalName         string

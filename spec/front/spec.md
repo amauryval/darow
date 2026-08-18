@@ -92,6 +92,10 @@ reordered.
     defect, not a user one (§8.2).
 20. **Everything done with a mouse is done with a keyboard.** A clickable target is a `<button>` or
     an `<a>`, never a `<div>`/`<tr>` with an `@click`; every control has an accessible name (§8.7).
+21. **A control that performs a write carries the session's verdict, and a new one is not done
+    until it does.** A view or a domain component reads `useWriteGuard` and passes its `disabled`/
+    `reason` down as the plain props `BaseButton`/`ConfirmButton` already take — never read by a
+    `components/ui/` primitive itself (§0.5).
 
 ---
 
@@ -137,17 +141,54 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `settings.ts`,
-  `tablesettings.ts` — one function per endpoint **the
+  `AuthConfig`/`AuthSession` are the **only** DTOs here that are not camelCase: they mirror goauth's
+  own serialization verbatim (`issuer_url`, `client_id`, `scopes`, `logged_in`, `authorized`,
+  `roles`, `user`), and `AuthSession.user`'s fields (`Provider`/`ID`/`Roles`) are bare Go struct
+  field names with no JSON tags at all — renaming any of these keys into house camelCase is a silent
+  runtime `undefined`, which reads as "nobody is logged in" rather than a type error.
+- `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `auth.ts`,
+  `settings.ts`, `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
   return. A wrapper the app stopped calling is deleted rather than kept as surface: the server's
   contract is described on its own side, and an unreachable function here is code that rots without
   anyone noticing. Nothing is exported that only its own module uses. URLs built for a
   non-`fetch` use (export, tile template) go through `apiUrl` and are therefore subject to `baseUrl`
-  like the rest.
+  like the rest. `auth.ts` — `getAuthConfig`/`getAuthSession` over `GET /auth/config` and
+  `GET /auth/session`, both through `http.ts` like every other call (rule 0.1 has no exception for
+  authentication) — replaces the old gateway-era `session.ts`.
+- `http.ts` also carries the bearer token every request attaches: a module-level `authToken` set and
+  cleared by `useAuth` (`setAuthToken`), merged into every request's headers (`get`/`post`/`patch`/
+  `del`/`postForm`/`getBlob`) alongside any header the call already sets — `postForm`'s FormData
+  keeps its browser-set multipart `Content-Type`. A `401` on any call fires an `onUnauthorized`
+  callback (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual
+  `ApiError` — never an import of the auth composable into the transport.
 
 The endpoint contracts (pagination, sorting, filter DSL, formats) are described on the server side —
 `spec.md` §6. This document does not restate them.
+
+### 2.1 One client among others
+
+The REST server is an application in its own right, serving any client; this UI is one of them and
+holds no privilege over it. Two consequences, and they pull in opposite directions:
+
+- **What the client asks for is the client's choice.** A page size is a display decision — how many
+  rows a screen shows, how big a chunk of a map query is — and belongs to the front, stated once in
+  `utils/pageSizes.ts` (`LIST_PAGE_SIZE`, `MAP_FEATURES_PAGE_SIZE`) rather than read off the
+  operator's settings. The server resolves any requested size against its own limit and answers
+  against the one *it* chose (back §2.5), so asking is always safe, and another client asking
+  differently is the normal case, not a divergence. Two places deliberately follow the operator
+  instead, and they are the exception: a table's grid pages on that table's effective row limit
+  (`useTableSettings.rowLimit` — the setting exists to be applied to the table it names), and the
+  dashboard's full-catalogue sweep pages at `defaultListLimit`, so it never asks for more than one
+  response can carry.
+- **What the server enforces is never guessed.** A constraint a request is *refused* against — the
+  upload's size cap and extension whitelist (`GET /sources/limits`), a setting's own bounds
+  (published beside its value, §6's settings screen) — is read from the running deployment, never
+  restated as a client-side constant matching the default `config.yaml`. A guessed constraint tells
+  the user something the deployment does not enforce, or hides a refusal until it happens.
+
+The line between the two is whether the server would refuse the request or simply serve less than
+was asked for.
 
 ---
 
@@ -155,6 +196,9 @@ The endpoint contracts (pagination, sorting, filter DSL, formats) are described 
 
 One module per subject, no module state, no side effect:
 
+- `pageSizes.ts` — the request sizes this client asks for, its own display choices (§2.1) and the
+  only place they are written: `LIST_PAGE_SIZE` for a catalogue, `MAP_FEATURES_PAGE_SIZE` for one
+  chunk of a map query. A constraint the server enforces never lands here.
 - `tileGrid.ts` — the per-zoom simplification tolerance, aligned on the server formula
   (`internal/storage/duckdb/tables/geo.go`), and `xyzGrid`, the 256-pixel XYZ grid both tile
   endpoints are cut along. Any change to the tolerance on one side requires the same on the other.
@@ -200,6 +244,14 @@ One module per subject, no module state, no side effect:
   column list becomes a visible or editable column list — `useTableMetadata`'s `editableColumns`
   and `DeriveFromTableForm`'s `carryable`.
 - `sort.ts` — projection of TanStack's sorting state onto the API's `sort` parameter.
+- `batch.ts` — `inBatches`, running one per-item request over a list in parallel batches of
+  `BATCH_SIZE`, in order, and stopping at the first batch holding a refusal. It answers **what went
+  through** (`done`) as well as the reason, because a run that stopped halfway still wrote and the
+  caller has to reconcile on that, never on all-or-nothing. Used wherever an action applies to a
+  selection and the API only offers a per-row route (`useTableRows`'s `deleteRows`, and the geometry
+  reads `duplicateRows` needs): the server serializes those writes on its own lock (back §4.6), so
+  issuing them one at a time paid a round-trip per row for nothing, while an unbounded fan-out would
+  open a socket per row.
 - `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text and the bounded
   excerpt a modal may put in the DOM (the clipboard still carries the whole value).
 - `holes.ts` — `punchHole`, adding a drawn ring to the polygon that contains it as an interior ring.
@@ -250,7 +302,13 @@ One module per subject, no module state, no side effect:
   them under the plain dots of the geometry carrying them.
 - `sourceRows.ts` — the `SourceRow` view model of the sources tree (`toSourceRows`: a multi-layer
   file becomes a parent row over its layers, a single-layer one stays flat) and `formatSize`. The
-  shape the cells read is defined once here, not rebuilt in the view and in each cell.
+  shape the cells read is defined once here, not rebuilt in the view and in each cell. A row carries
+  no loaded state: a `Source` is a file, and says nothing of the tables loaded from it (back §3.1) —
+  what a file already produced comes from the catalogue's provenance index instead
+  (`useTableProvenance`).
+- `tableNames.ts` — `suggestTableName(base, taken)`: the free name a load is proposed, `base` or
+  `base (n)`. Table names are not unique server-side, so this suggests rather than enforces — a
+  deliberate duplicate is still allowed, an accidental one is not the default.
 
 ---
 
@@ -267,14 +325,18 @@ module level and documents it; that is the exception, not the rule.
 | Composable | Subject | Today |
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
-| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` accepts a `Ref<number>` as well as a plain number — a page size resolved asynchronously (a table's effective row limit, `useTableRows`) reloads from page 1 the moment it changes, the same way a sort change does | present |
+| `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` is required — a list states the size it asks for, whether that is this client's own (`utils/pageSizes`) or one it deliberately follows the server on (§2.1). It accepts a `Ref<number>` as well as a plain number, and a page size resolved asynchronously (a table's effective row limit, `useTableSettings.rowLimit`) reloads the list from page 1 the moment it changes, the same way a sort change does. `drop(predicate)` is the deletion counterpart of `replace`: a caller that has just deleted rows server-side removes exactly those from the list without a refetch — `total` and `offset` both follow, the latter because the server's remaining rows shifted up by as many and a stale offset would make the next page skip them | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
-| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions (still toasted, per §8.4 — a mutation's result, not the load's) | present |
-| `useTableRows` | a table's rows: current page, sorting, duplication, deletion — built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, from `useTableSettings`) rather than a hardcoded size — `PAGE_SIZE` (exported) is only the value used before that limit has loaded. Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`', and what a single click does on the spot is this composable's. Duplicating reads the source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map | present |
+| `useAuth` | the OIDC lifecycle and its shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): the session read from `GET /auth/session`, cached a few tens of seconds and keyed by the current token so a re-render never refetches it; the display name from the **ID token**'s own profile (`user.profile.name`, then `preferred_username`, then `email` — the access token carries no name at all); `signIn`/`signOut` (`signOut` reads the user before clearing it, passing its `id_token` as `id_token_hint` to `signoutRedirect`, or the provider shows an account picker instead of logging anyone out); the OIDC event wiring (`addUserLoaded` refreshes the session, `addAccessTokenExpired`/`addSilentRenewError` drop it and warn through `useToast`); a `BroadcastChannel` every tab listens on to drop its user on a logout elsewhere; and the `http.ts` `onUnauthorized` registration that drops the token and asks for a re-check on any `401`. Built on `auth/oidc.ts`'s non-reactive `UserManager` | present |
+| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
+| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
+| `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions plus the two structural writes on a column (rename, drop), each reloading the schema (still toasted, per §8.4 — a mutation's result, not the load's) | present |
+| `useTableRows` | a table's rows: current page, sorting, and the two writes that act on a **set** of rows — `duplicateRows(rows)` / `deleteRows(pkeys)`, both fanned out through `utils/batch.ts`. Built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, `useTableSettings.rowLimit`) — one of the two places the front follows the operator's setting rather than its own choice (§2.1). Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`'. Duplicating reads each source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map. Deleting takes one request per row (LIM-F14) and does **not** re-fetch a page afterwards: it drops from the list exactly the rows the server dropped (`usePaginatedList.drop`), so the grid updates the moment the writes land instead of emptying for a further round-trip, and a run stopped halfway still leaves it and the table's counters exact. Duplicating cannot do the same — the copies land wherever the current sort puts them — so it re-reads through `reloadSorted`, which keeps the rows on screen until the new page arrives | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
-| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, because what is selected is one of the table's counters and is stated with the others in `TableHeader`. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
+| `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, so that it survives what the panel reloads and is the one selection the map, the grid and `TableSelectionBar` share. It is what *Dupliquer* and *Supprimer* act on, and `selectedRows` — hydrated, not read off the grid's page — is what makes duplicating a row the map selected possible at all. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
+| `useSelectionView` | how the grid **arranges** the selection, and nothing else — the selection itself stays `useFeatureSelection`'s. Three states, one `view` ref: `inline` (the default — a selected row stays exactly where the sort put it), `pinned` (the selection lifted above the page) and `only` (the selection alone). `toggle('pinned'|'only')` is what both controls of `TableSelectionBar` call: asking for one arrangement leaves the other, asking again returns to `inline`. It produces `displayRows` — the session's drafts always first, being empty and having no place among sorted rows — and returns to `inline` on its own when the selection empties, an `only` left behind showing an empty grid over a full table | present |
 | `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
 | `useMapDraw` | the edit session's lifecycle: the layer it works on, the single interaction over it — a `Modify` to reshape, a `Translate` to move a geometry whole, never both — the contextmenu the right-click delete has to suppress, the `modifystart`/`modifyend` snapshot-and-diff that says which vertices a drag actually moved, `commit` (what the session would write), teardown. It is also where a hover that lands on nothing the session holds is turned into a request for the row underneath: it is given `pkeyAt` (which row of the rendering is under a pixel) and `reach` (ask for it) and knows nothing of either render mode | present |
 | `useEditTools` | which tool the edit bar has armed and nothing else: the `Draw` a shape button arms, the hole being cut, the `moving` mode that hands the drag to a `Translate` instead of the `Modify`, the two independent switches (`snapping`, `topological`) and the `Snap` the first one governs. Arming any one of drawing, cutting and moving disarms the others — they all want the same drag. Split from `useMapDraw` because every arming path has to respect the `Snap`'s place — it handles the pointer before the interactions it corrects, so nothing may be added over it — and that rule is kept in one place, `addUnderSnap`, rather than in each tool. The `Snap` itself is built once per session and never taken off the map to be put back: doing so drops and rebuilds the segment index it keeps over every feature in view, which is a freeze the length of the layer for each tool picked | present |
@@ -286,8 +348,11 @@ module level and documents it; that is the exception, not the rule.
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
 | `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
-| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source reading the OGC API - Features items endpoint, one bbox query per tile of the loading grid — the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan, the grid's zoom surviving only as the simplification tolerance. Each bbox is paged and its pages are added to the source as they arrive (§8.8), a load whose generation was ended by a refresh dropping the pages still in flight rather than injecting them into the emptied source | present |
-| `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
+| `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source reading the OGC API - Features items endpoint, one bbox query per tile of the loading grid — the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan, the grid's zoom surviving only as the simplification tolerance. Each bbox is paged at this client's own chunk size (`utils/pageSizes`), which the server clamps to the operator's `defaultFeaturesLimit` when that is smaller, and its pages are added to the source as they arrive (§8.8), a load whose generation was ended by a refresh dropping the pages still in flight rather than injecting them into the emptied source | present |
+| `useSources` | source list, refresh, upload, deletion of the file — built on `usePaginatedList`. It also reads the deployment's upload constraints once (`GET /sources/limits` → `limits`), which `SourcesView` hands to `SourceUploadModal`: the cap and the extension whitelist stated to the user are the running configuration's, never the default `config.yaml`'s. That read is best-effort — a failure only costs the hint, the server refusing an oversized or unlisted file either way. Loading one into a table is not here: it is its own flow, `useSourceLoad` | present |
+| `useSourceLoad` | the load flow of a single source: which source (or layer) the form is open on, the CRS read from `/sources/{name}/metadata` before anything is imported, and the confirmation — a new table, or a reload of an existing one in place. Reports whether the write landed, so the caller refreshes the provenance index it holds | present |
+| `useTableProvenance` | the catalogue's provenance index (`GET /tables/provenance`), one unpaginated read: which table came from which file, so the sources screen shows what is already loaded and proposes a free name for the next load. Never the table catalogue paged and filtered client-side — the index is a projection the server builds for exactly this | present |
+| `useTablesCatalog` | the table catalogue and the two actions a row offers: rename and delete. Both patch the loaded list in place (the renamed row replaced, the deleted one dropped and the total decremented) rather than reloading it — a mutation from this page must not lose the operator's scroll position, page or search (§8.6). Which row is in edition, whose rename is in flight and whose rename failed live here too, since the list is the owner of that state | present |
 | `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery` | present |
 | `useDeriveFromQuery` | the free-SQL derivation: busy state, inline error, submission of a bare query against every registered table. Scoped to no table — opened from the catalogue screen, not one table's page | present |
 | `useSqlSchemaReference` | the free-SQL form's schema reference panel: the registered tables, infinite-scrolled like `TablesView`, and each one's columns loaded only once expanded and cached from then on — never every table's columns up front, the same restraint `useTableSettingsOverrides` applies to a table-wide sweep | present |
@@ -295,8 +360,8 @@ module level and documents it; that is the exception, not the rule.
 | `useColumnTransform` | rewriting one column's values in place, over the rows a filter names: a single free SQL expression, the row-scope condition tree, the server preview (invalidated by any further edit) and the write itself | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
-| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), and per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`). Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value — `useDashboardStats` sweeps the catalogue at `defaultListLimit`, the page size the server itself applies, so it never asks for more than one response can carry — without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
-| `useTableSettings` | one table's settings overrides: load, patch, reset, its own four states (§0.18, like `useTableMetadata`'s). `tableId`-scoped like `useTableMetadata`, but **not** shared module state like `useSettings` — every caller (the modal, `TableDataPanel`'s row limit) gets its own load, since a table's overrides are not a cross-cutting default the way the global row is | present |
+| `useSettings` | the runtime-editable settings row: load, draft-free save (a caller passes the patch it built), per-field errors parsed out of the server's one joined validation message (`utils/settingsFields.ts`), and the two operator-set page sizes the application deliberately follows rather than choosing for itself (§2.1): `rowLimit` (the size a table is served at, read through `useTableSettings`) and `listLimit` (what the dashboard's full sweep pages at). Both stand in on the server's own seed values until `/settings` has answered, and those two figures are the only server defaults restated in the front. Shared module state, the second exception to the "one composable, one component" default (`useToast` is the first): every caller reads the same loaded value without each fetching `/settings` on its own. `App.vue` triggers the load once, on mount, ahead of any view that depends on it | present |
+| `useTableSettings` | one table's settings overrides: load, patch, reset, its own four states (§0.18, like `useTableMetadata`'s). `tableId`-scoped like `useTableMetadata`, but **not** shared module state like `useSettings` — every caller (`TableSettingsModal`, `TableDataPanel`, `ApiRoutesModal`) gets its own load, since a table's overrides are not a cross-cutting default the way the global row is. `rowLimit` is where the two rows are resolved into the size this table is actually served at — its override when it has one, `useSettings.rowLimit` otherwise — so no caller re-derives it | present |
 | `useTableSettingsOverrides` | the tables that carry a settings override, for the settings screen's own section: a dedicated load (`GET /settings/tables`), its own four states, and a per-table reset. Never the table catalogue filtered client-side — a deployment with a thousand tables must not load them all to find the few that override something | present |
 
 ---
@@ -312,7 +377,7 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 |---|---|
 | `Spinner` | the busy indicator, wherever something is in flight and the content around it stays on screen — a `Skeleton` is for a first load, this is for a refresh happening next to what it refreshes |
 | `ButtonGroup` | a row of buttons welded into one control (daisyUI `join`). Each child carries `BaseButton`'s `joined` prop: daisyUI needs the modifier on the items, and a wrapper cannot put it there without reaching into the slot |
-| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`). The caller says where, never how |
+| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`), what is in flight in the opposite one (`top-right`). The caller says where, never how |
 | `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
 | `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>`. `BaseTextarea` exposes `insertAtCursor` (`defineExpose`) — replacing the current selection at the caret, which plain `v-model` cannot express since it only ever replaces the whole value — for a caller that inserts text from outside the field itself (`DeriveSqlForm`'s schema reference, `TransformColumnModal`'s column reference) |
 | `BaseAutocomplete` | free-text field that suggests without constraining: the caller loads `options` in reaction to the `search` event (on focus and on every keystroke), keyboard navigation (↑/↓/Entrée/Échap), selection on `mousedown` so `blur` never wins the race. The list is absolutely positioned, so it never lengthens what contains it; a container that scrolls its own content has to let it spill over (`Modal`'s `overflowVisible`) |
@@ -322,18 +387,32 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
-| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen |
+| `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen. `disabled`/`title`, the same plain contract as `BaseButton`'s, are what a caller passes `useWriteGuard`'s verdict through (rule 21) — this component stays domain-free and never reads the guard itself |
 | `Badge` | status pill, **semantic** tones (neutral, primary, success, warning, error) — never colour names. `warning` is the amber a pending write is shown in everywhere, including the edit bar's count of touched geometries |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
-| `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
+| `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`), its "Chargement…" indicator and, once a page has landed, `loaded` against `total` ("50 sur 1 240") — what tells a complete list from its first screen (§8.6). Dropped into `DataTable`'s `footer` slot, worded and styled once rather than repeated per paginated list |
 | `StatTile` | a single-number KPI card, on daisyUI's own `stats`/`stat` component — `label`, `value`, optional `hint` and `icon` |
+| `Logo` | the product's mark — a duck sat on its rows, the idiom the name comes from — drawn in `currentColor` so the one mark serves wherever it is put (the sidebar's badge today). Its standalone, coloured twin is `web/public/favicon.svg`, which a browser reads as a file and so cannot share this markup (project §1) |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
 rich cells (source actions, EPSG input, row actions, editable cell) are of this kind — that is what
-replaces the `h()` trees.
+replaces the `h()` trees. Domain components (`components/tables/`, `components/sources/`,
+`components/map/`, `components/settings/`, and the filter bar) are also where `useWriteGuard` is
+read directly, next to the write button it gates (rule 21) — the one exception to "mute": a
+composable read, never a network call or a router import.
+
+**`components/session/SessionMenu.vue` — the navbar's account control.** Fed by `useSession`. Three
+states: `enabled` false (demo mode) renders nothing at all — there is no account, and an empty
+affordance would suggest one exists; signed out renders a *Se connecter* `BaseButton` that calls
+`signIn()`; signed in keeps the `MenuDropdown` shell (`MenuTitle` with the display name, `MenuItem`
+*Se déconnecter*) and adds a `Badge` stating the role — `tone="primary"` *Administrateur* for
+`admin`, `tone="warning"` *Invité — lecture seule* for `guest`, `tone="warning"` *Aucun rôle —
+lecture seule* for `none`. The badge is the one thing the menu could not say before: a signed-in
+`guest` gets nothing an anonymous visitor does not already have, and without it the screen would
+read as broken to them rather than merely read-only.
 
 **`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
 `ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
@@ -354,9 +433,9 @@ single, link-less entry naming the page.
 | Route | View | Role |
 |---|---|---|
 | `/dashboard` | `DashboardView` | landing route (`/` redirects here). Server diagnostics (`GET /diagnostics`, including a disk-quota donut against `maxSizeBytes` when it is set) and data stats aggregated client-side from every page of `GET /tables` — table count, row totals, geo/non-geo split, SRID distribution, top tables by row count |
-| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it — and free-SQL derivation (`DeriveSqlModal`), navigating to the created table on success |
+| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, per-row rename and delete (`components/tables/TableActionsCell.vue`, the inline editor being `TableNameCell.vue`) — both patch the already-loaded list instead of reloading it — and free-SQL derivation (`DeriveSqlModal`), navigating to the created table on success |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
-| `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
+| `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading (naming the table, or reloading an existing one), file deletion |
 | `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, one input per field through `components/settings/SettingsField.vue`, saved as a diff-only patch, per-field refusals attached to their own input. A page size is one plain number per family (§back 2.5): what the input holds is what the server serves, so nothing is shown under it. An input's `min`/`max` and a field's unit come from the payload the value was read in (§back 2.5's descriptor), never from `utils/settingsFields.ts` — which carries what the server has no opinion on: the label, the description, the input `step`, the meaning of `0`, and whether the field is per-table. `inputRange` is the one place the server's bounds become an `<input>`'s, an exclusive minimum becoming the first value the step grid allows |
 
 **`DashboardView`** composes two independent sections, each owning its own four-state load
@@ -366,20 +445,17 @@ endpoints, different latency/failure profiles, and a shared retry would re-trigg
 section's failure. `useDashboardStats` is the one composable allowed to page a listing
 (`listTables`) to completion instead of going through `usePaginatedList`'s infinite scroll: the
 dashboard needs the whole catalogue to sum/aggregate (`utils/dashboardStats.ts`'s
-`computeDashboardStats`), not a displayed page — it loops at `useSettings().current.defaultListLimit`
+`computeDashboardStats`), not a displayed page — it loops at `useSettings().listLimit`
 per page (the server's own live cap) until the reported `total` is reached.
 
 **Target split of `TableDetailView`** — the view keeps only the header and the assembly:
 
-- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update, and
-  how many of its rows are selected, with one icon button to frame the map on the selection's own
-  extent — geo tables only, via `useFeatureSelection.zoomToSelection` — and one to empty the
-  selection) and
+- `TableHeader` (`components/tables/`) — what the table **is** (badge, row count, last update) and
   what can be done to the table **as an object**, gathered behind one `MenuDropdown` labelled
-  *Actions*: *Renommer* and *Ajouter une colonne* under **Structure**, *Dériver une table* and
-  *Exporter* under **Produire**, then *Supprimer la table* alone under a divider, last as §8.9 asks.
-  Five buttons of five registers side by side read as a pile, and four of them are used once in a
-  table's life. The rename form is opened from the menu but the view owns its open state
+  *Actions*: *Renommer*, *Ajouter une colonne* and *Renommer / supprimer une colonne*
+  under **Structure**, *Dériver une table* and *Exporter* under **Produire**, then *Supprimer la
+  table* alone under a divider, last as §8.9 asks. Five buttons of five registers side by side read
+  as a pile, and four of them are used once in a table's life. The rename form is opened from the menu but the view owns its open state
   (`editingName`): only the view knows whether the write went through, and therefore whether the
   form may close.
 - `TableToolbar` (`components/tables/`) — the workspace's own bar, one row below, holding
@@ -389,6 +465,23 @@ per page (the server's own live cap) until the reported `total` is reached.
   `Tableau / ⬛ / Carte` group), the two registers parted by a `Divider`. It owns nothing: the
   visible-column choice is the view's state, so the *Colonnes* button asks the panel for its modal
   and the panel asks the view.
+- `TableSelectionBar` (`components/tables/`) — shown as soon as one row is selected, holding **how
+  many** are selected and **everything that acts on them**: framing the map on the selection's own
+  extent (geo tables only, `useFeatureSelection.zoomToSelection`), *Dupliquer*, *Supprimer*, and
+  emptying the selection last. Selecting is one gesture — a click on a row, a click on its feature —
+  so what it enables is read in one place instead of being split between the table's identity line
+  and each row's own cell. Between the counter and the writes sit the two controls of
+  `useSelectionView` — *remonter la sélection en haut* and *n'afficher que la sélection*, one
+  `ButtonGroup` of icon toggles carrying `aria-pressed` — which are also the **only** way a row
+  selected on the map, outside the loaded pages, is reached in the grid. It **floats** over both
+  panels, absolutely positioned at their bottom
+  centre by `TableDataPanel` on a `pointer-events-none` wrapper that lets the map's and the grid's
+  own clicks through: a bar inserted into the layout appeared and disappeared as the selection
+  emptied and filled, resizing the grid and the map under the pointer at the exact moment the user
+  was clicking rows. It is **not** an edit-session bar and does not wait for the *Éditer* toggle:
+  duplicating and deleting are single confirmed writes with their own feedback, not drafts an
+  *Enregistrer* commits (LIM-F10). Both write buttons are disabled by `useWriteGuard` with the
+  reason in their tooltip (§8.4), and deletion is confirmed with the count in its wording (§8.3).
 - Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
   discrete thing one creates or edits and then applies. `components/filters/` holds the whole
   feature — `TableFilterBar` (the "Filtrer" button, the saved-filter menu, the pills, and the modal's
@@ -432,15 +525,17 @@ per page (the server's own live cap) until the reported `total` is reached.
 - `TableMapPanel` — map (loaded via `defineAsyncComponent`: OpenLayers is the bundle’s largest
   dependency) and the MVT/WFS toggle. Shares the width 50/50 with `TableRowsPanel` by default; a
   `Tableau / ⬛ / Carte` toggle group maximizes either one.
-- `TableRowsPanel` (`components/tables/`) — row grid and nothing else: the rows selected on the map
-  pinned at its top, infinite scroll, and the per-row action column. How many are selected, and the
-  control that empties the selection, are **not** here — that is a counter of the table and it is
-  stated with the table's other counters (`TableHeader`), where a count belongs. That column and the row number are the
-  grid's first two, pinned there: a grid wider than its panel otherwise hid the number that names a
-  row and pushed its actions past every attribute. The actions are icons alone — the same three on
-  every line, each with its name in its tooltip and to assistive tech (§8.7) — because a row of
-  labelled buttons, one of them a red *Supprimer* pill, repeated down the grid reads as a warning
-  about the data rather than as controls. That column is **always** rendered:
+- `TableRowsPanel` (`components/tables/`) — row grid and nothing else: the rows exactly as its
+  parent arranged them (`displayRows`, from `useSelectionView`), infinite scroll, and the grid's own
+  first columns. It owns no arrangement of its own; `selectionOnly` only tells it to state what is
+  on screen at its foot instead of the paged count and its sentinel — a selection has no next page,
+  and the paged wording would name a total the grid is not showing. Nothing that acts on the selection is
+  here — neither the count nor *Dupliquer* / *Supprimer*: they act on rows the grid may never have
+  loaded (a selection made on the map), and they are stated once, in `TableSelectionBar`. What the
+  row's own cell (`TableRowLeadCell`) carries is its **rank** and, for a draft the session has yet
+  to write, the one control that drops it. That cell and the geometry column are pinned first: a
+  grid wider than its panel otherwise hid the number that names a row. The geometry column is
+  **always** rendered:
   reading a row's geometry is a read, so arming edit mode to reach it would be a trap. It receives
   the `useTableRows` state and the `useRowEdits` draft its parent owns and emits intentions
   (`geometry`, `rowClick`), never reloading or writing anything itself. Which
@@ -450,13 +545,24 @@ per page (the server's own live cap) until the reported `total` is reached.
   `key` on each — two entirely different TanStack Table instances patched in place, at the same
   template position, left `<table-layout: auto>` column widths stale in Chromium until some
   unrelated repaint (a hover) forced a reflow; the `key` makes Vue replace the DOM outright instead.
-- `AddColumnModal`, `ColumnsModal`, `GeometryModal`, `ExportModal` — one modal = one file, never
-  inline modal markup in a view. `ExportModal` picks the export's format and its output CRS: the
+- `AddColumnModal`, `ColumnStructureModal`, `ColumnsModal`, `GeometryModal`, `ExportModal` — one
+  modal = one file, never inline modal markup in a view. `ColumnStructureModal` renames and drops
+  columns — the structure, where `ColumnsModal` governs what is *displayed* (visibility, distinct
+  values): two registers, two modals (§8.9). It only ever lists the columns a caller may touch
+  (`rowColumns`, so never the pkey nor the geometry column), confirms a drop through
+  `ConfirmDialog` since the values go with the column, and writes through the callbacks its caller
+  passes, as `AddColumnModal` does. A rename or a drop remounts `TableDataPanel` (`structureVersion`
+  as its `key`): the loaded pages are cached by `tableId` alone and would otherwise show cells of a
+  structure that no longer exists. `ExportModal` picks the export's format and its output CRS: the
   EPSG field only shows for a format that carries geometry (never CSV) on a geo table, and comes
   pre-filled with the table's own CRS, which is also what the server falls back to — leaving it
   untouched exports the table as it came in. The downloaded file takes the name the server sends in
   `Content-Disposition` rather than one rebuilt here: for an export that name carries the CRS, which
-  no format states reliably (back LIM-16). `GeometryModal` (`components/tables/`) shows one row's geometry in both
+  no format states reliably (back LIM-16). `GeometryModal` (`components/tables/`) also carries the EPSG code the row is
+  *displayed* in — same field, same default (the table's own CRS) and same fallback as
+  `ExportModal`'s, `useRowGeometry.reproject` re-reading the same row through the API's `srid`. It
+  is display only: nothing stored moves, and the caption states the CRS the **server** reports, not
+  the code typed in the field, which may not be applied yet. `GeometryModal` shows one row's geometry in both
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
   whole value. There is **no** add-row modal: a row is created empty, in the grid, by the session
   itself (§8.3).
@@ -520,23 +626,34 @@ per page (the server's own live cap) until the reported `total` is reached.
   states of §8.1) before the write, invalidating it on every further edit — the confirmation step
   must never count a stale number.
 
-**`SourcesView`**: the view holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the
-TanStack instance over `toSourceRows`; `components/sources/` holds the rest — `SourceUploadModal`
-(the drag-and-drop zone, in a modal opened by the import button rather than a permanent panel: the
-page is a catalogue, and an import is an occasional act that should not cost a third of the screen),
-`SourceNameCell` (file/layer icon, extension badge, layer indentation) and `SourceActionsCell`
-(load with its EPSG prompt, link to the loaded table, deletion). The EPSG is asked **only of a
-source that carries a geometry**: the load's first step reads `/sources/{name}/metadata`, and a file
-of plain columns — a CSV of attributes, a non-geo Parquet — has nothing to project, so it is loaded
-straight away rather than held behind a code the user would have to invent. `SourceActionsCell` stays
-presentational: which row is being edited, loaded or deleted is decided by the view comparing
-`useSources`' keys, the cell only renders the state it is handed and emits intentions.
+**`SourcesView`**: the screen is a **file** catalogue, and states it — loading a file makes an
+independent table, so a file may be loaded again and may be deleted without touching what was loaded
+from it (back §3). A file has no single table, so the *Tables chargées* column lists **every** table
+it produced (`SourceTablesCell`, each a link) rather than a loaded/not-loaded flag; the data comes
+from `useTableProvenance`, never from the `Source` itself. `components/sources/` holds
+`SourceUploadModal` (the drag-and-drop zone, in a modal opened by the import button rather than a
+permanent panel: the page is a catalogue, and an import is an occasional act that should not cost a
+third of the screen), `SourceNameCell` (file/layer icon, extension badge, layer indentation),
+`SourceTablesCell`, `SourceActionsCell` (icon-only load and delete, the same language as every other
+row's actions) and `SourceLoadModal` (the load form itself).
 
-`SourcesView` holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the upload modal's
-open state; `SourcesTable` (`components/sources/`) holds the files/layers tree — column definitions,
-the TanStack instance and its four states — taking the whole `useSources` instance rather than a
-narrower prop set, since its action functions (`startLoad`, `remove`…) are already the single owner
-of that state.
+The load form is a modal, not an inline prompt: it asks three things at once — the source CRS, the
+name the table takes (pre-filled with a free one, `utils/tableNames.ts`), and, when this source
+already has tables, whether the load **replaces** one instead of creating a second table of the same
+name. Replacing keeps the table's id, name, settings and stored filters and only swaps its data
+(back §7); creating is still allowed, which is why the choice is stated rather than decided. The
+EPSG is asked **only of a source that carries a geometry**: the form's first step reads
+`/sources/{name}/metadata`, and a file of plain columns — a CSV of attributes, a non-geo Parquet —
+has nothing to project, so the field is not shown at all. A load **creates or reloads the table and
+stops there** — the screen never navigates away, the toast being the whole confirmation.
+
+`SourcesView` holds the header (count, `Rafraîchir`, `Importer un fichier`), the upload modal's open
+state and the load modal — the load form needs both the provenance index and the source it is open
+on, and the view is the one place holding both. `SourcesTable` (`components/sources/`) holds the
+files/layers tree — column definitions, the TanStack instance and its four states — taking the whole
+`useSources` and `useTableProvenance` instances rather than a narrower prop set, since their action
+functions and lookups are already the single owner of that state; opening the load form is the one
+thing it emits rather than calls.
 
 The title shown by the banner comes from `route.meta.title`, whose type is declared once
 (augmentation of `vue-router`'s `RouteMeta`) rather than read untyped.
@@ -600,10 +717,18 @@ height jump.
   `confirm()`) — `ConfirmButton` opens it uniformly, whether the action is rare (a table, a source)
   or frequent (a row): the friction of an extra step is deliberate for all of them.
 - The confirmation message names what is about to disappear, and mentions cascade effects where
-  there are any (deleting a source deletes the tables derived from it).
+  there are any. It also names what **survives**, where that is the surprise: deleting a source file
+  keeps the tables loaded from it.
 - **No input is lost by accident.** A modal holding a modified form does not close on a backdrop
   click; `Escape` asks for confirmation. A schema reload does not reset the visible columns the user
   chose, nor the filter in progress.
+- **Leaving the edit session is confirmed while it holds work.** Every way out — the *Éditer*
+  toggle, the bar's *Annuler*, the map's — goes through `TableDataPanel.cancelEditing`, so the
+  barrier stands once rather than at each of them. What it counts is both halves at once: the
+  retyped cells and the drafts the grid holds (`useRowEdits.dirtyCount`/`draftCount`) and the
+  reshapes, which only exist on the layer and are reported up by `MapView`'s `changed-count`
+  (`useEditLayer`'s own `changedCount`). Zero is left unasked — the confirmation is a barrier in
+  front of losing work, and there is none.
 - No undo: the server does not offer it. That is precisely why confirmation is the barrier.
 
 ### 8.4 Messages: what goes where
@@ -619,6 +744,12 @@ An error that prevents the action in progress **never** goes out as a toast alon
 of the user, where they have to act. A message is short, in French, in the active voice, and says
 what to do ("Nom de table déjà utilisé." rather than "erreur 409").
 
+A write control disabled by `useWriteGuard` (rule 21) states its reason in its `title`, worded once:
+*Connexion requise pour modifier les données* when nobody is signed in, *Votre compte n'a pas les
+droits d'édition* for a signed-in user who is not an administrator (`guest` included). Disabling is
+additive, not a substitute for the `401`/`403` handling the request itself already has: a token can
+expire mid-screen, and the server stays the only authority.
+
 ### 8.5 Forms
 
 - One label per field, above it, always visible — a placeholder is an example, not a label.
@@ -628,7 +759,9 @@ what to do ("Nom de table déjà utilisé." rather than "erreur 409").
   moves there.
 - Constant button order: secondary action left, primary action right.
 - Known constraints (EPSG format, maximum upload size, accepted extensions) are stated **before** the
-  attempt, not only in an error response.
+  attempt, not only in an error response, and are read from the server rather than assumed: the
+  upload's cap and extension whitelist come from `GET /sources/limits` (`useSources.limits`), so
+  what the user is told is what the running deployment enforces.
 
 ### 8.6 Data tables
 
@@ -641,15 +774,28 @@ This is the product's main screen; it follows fixed rules.
 - Sorting: a visible indicator on the sorted column, numbered order for multi-sort, and the
   affordance explained (`title`) rather than guessed.
 - Long cells are truncated with the full value in `title`; the row height is not broken.
-- The grid opens on a rank column (`#`): the row's position in the grid as it is displayed,
-  selection pinned at the top included. It is not the primary key — a pkey is an identifier, not a
-  position, and the two stop agreeing the moment the grid is sorted.
-- On a geo table, one click anywhere on a row that is not a control toggles it in and out of the
-  selection: it is the same selection the map holds, so the gesture that reverses it is the same
-  gesture (§8.8). A row whose cells are open for editing is not a target — the click is aimed at
-  the field under the pointer.
-- A row is duplicated from its own actions, geometry included, and the copy is not confirmed
-  beforehand: it adds, and what it added is deleted by the button beside it (§8.3).
+- The grid opens on a rank column (`#`): the row's position in the grid **as it is displayed**. It
+  is not the primary key — a pkey is an identifier, not a position, and the two stop agreeing the
+  moment the grid is sorted. A row the session has yet to write holds no rank at all.
+- **Selecting a row never moves it.** The default arrangement is `inline`: a selected row stays
+  exactly where the sort put it, on the map's clicks as on the grid's. Lifting a row the user just
+  clicked above the others moved the grid under the pointer, so the next click landed on a different
+  row than the one aimed at. Rearranging the selection is **asked for**, from the two toggles of
+  `TableSelectionBar` — *en haut de la liste* or *seule* — and returns to `inline` on its own when
+  the selection empties. Those two are also what makes a selection built on the map, on rows the
+  grid has never paged in, readable at all.
+- One click anywhere on a row that is not a control toggles it in and out of the selection, on
+  every table and not only a geo one: on a geo table it is the same selection the map holds, so the
+  gesture that reverses it is the same gesture (§8.8), and everywhere it is what the row actions act
+  on. A row whose cells are open for editing is not a target — the click is aimed at the field under
+  the pointer. A row the session has yet to write is not a target either: nothing acts on it before
+  *Enregistrer* does.
+- **Duplicating and deleting act on the selection, never on one row from its own cell.** They stand
+  in `TableSelectionBar` above the grid, where the count they apply to is stated, so one row and
+  twenty are the same gesture and the grid is not striped with a red pill per line. A single row is
+  a selection of one. Neither waits for the edit mode — they are immediate confirmed writes, not
+  drafts (LIM-F10). Duplicating carries the geometry and is not confirmed beforehand: it adds, and
+  what it added is deleted by the button beside it (§8.3).
 - Sorting, search and filtering apply to **all** the data server-side, never only to the pages
   already loaded: a silent partial result is a lie. The one exception is the map editor's working
   set, which is deliberately silent and says what it holds by drawing it (§8.8, LIM-F7) — nothing
@@ -692,7 +838,16 @@ This is the product's main screen; it follows fixed rules.
   and never the query's: it is what decides which extents are missing and remembers those already
   loaded, while the zoom it yields survives only as the simplification tolerance — how finely the
   features come back, not which ones.
-- A loading indicator visible while tiles are in flight; a failed tile does not break the map.
+- A loading indicator visible while tiles are in flight, in the map's own top-right corner
+  (`FloatingPanel`): each rendering counts the requests it has outstanding and exposes it as its own
+  `loading` (`useMvtLayer` off the source's `tileloadstart`/`tileloadend`/`tileloaderror`,
+  `useWfsLayer` around each tile's paging), and only the mode actually on the map is read — the
+  other one's layer is torn down, not hidden. A failed tile counts as answered there, since what the
+  indicator reports is that requests are outstanding, not that they succeeded; a failed tile does not
+  break the map. It is counted **apart** all the same (`useMvtLayer.failed`): once nothing is in
+  flight any more, the same corner says *Tuiles indisponibles* rather than showing nothing — a
+  server refusing every tile must never read as a map still loading. The WFS mode reports its own
+  incomplete loads through a toast instead.
 - `pointer` cursor on queryable features, highlighting of selected features, and selection reversible
   in one click — with no modifier key, to stay usable on a trackpad.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with
@@ -741,7 +896,7 @@ This is the product's main screen; it follows fixed rules.
   *Éditer* toggle in `TableToolbar`, never one per half: the rows and the geometries are two halves
   of one object, and choosing between them before touching anything is a question the user cannot
   answer yet. Arming it raises `TableEditBar` over both panels, holding what the table can actually
-  carry — the row actions always, the map's tools only on a geo table. Those tools stay owned by
+  carry — the way to create a row always, the map's tools only on a geo table. Those tools stay owned by
   `MapView` (the OpenLayers session is theirs, and OpenLayers must not reach the initial bundle
   through the bar) and are rendered into it by a `Teleport`, which is also what keeps *Enregistrer*
   and *Annuler* reachable while the map is the hidden half of a maximized table. That pair
@@ -958,6 +1113,23 @@ This is the product's main screen; it follows fixed rules.
 - **Pagination.** Since sorting and filtering are server-side, any change to either invalidates the
   pages already loaded: we start again from page 1, keeping the displayed rows until the new page
   arrives (no empty flicker).
+- **Boot order.** `main.ts` builds the OIDC manager (`auth/oidc.ts`'s `initOidc`) and runs the boot
+  recovery (`restoreBrowserSession`) **before** `createApp(...).mount(...)`: the first frame already
+  knows whether anyone is signed in, so no control flickers from enabled to disabled. A failed
+  `GET /auth/config` leaves the app usable with no login control rather than blocking the mount.
+  `router.ts` carries one extra route, `/auth/callback` → `views/AuthCallbackView.vue`, whose job is
+  the code exchange and nothing else — there is deliberately **no route guard** anywhere in this
+  app: every screen reads regardless of role, so guarding a route would lock a user out of a page
+  the API serves them anyway (the verdict gates controls, `useWriteGuard`, not navigation).
+- **The bearer token has one owner.** `http.ts`'s module-level `authToken`, set and cleared
+  exclusively by `useAuth` — on session load, on logout, on expiry (rule 0.12). No other module
+  reads or writes it.
+- **Per-tab storage.** `auth/oidc.ts`'s `UserManager` keeps both its user store (the tokens) and its
+  state store (the PKCE verifier across the redirect) on `sessionStorage` — a token never touches
+  `localStorage`. Two non-secret `localStorage` flags carry the cross-tab, cross-reload signal
+  instead: `darow.auth.signed-in` ("someone is signed in on this browser", read by the boot
+  recovery) and, in `sessionStorage`, `darow.auth.silent-attempted` (this tab already tried a silent
+  sign-in, so a user granted no role does not redirect forever).
 
 ---
 
@@ -984,12 +1156,15 @@ type-checks, and the human looks.
 
 ```
 web/
+  public/           static files served as-is under /ui/ — favicon.svg, the mark's standalone twin
   src/
     client/           HTTP transport + one module per endpoint family + types.ts
+    auth/             oidc.ts — the UserManager and its storage/broadcast plumbing, non-reactive
     utils/            pure functions (tile grid, filter tree, types, sorting)
     composables/      one composable per subject (§4)
     components/
       ui/             domain-free primitives (§5)
+      session/        the navbar's account control (§5)
       tables/         table domain components
       sources/        source domain components
       map/            map domain components
@@ -999,8 +1174,10 @@ web/
       SourcesView.vue / SourcesView/    sub-views and panels
       TableDetailView.vue / TableDetailView/
       SettingsView.vue
-    router.ts         one route per view
+      AuthCallbackView.vue             the OIDC redirect's landing page
+    router.ts         one route per view, plus /auth/callback
     App.vue           shell: navigation, server status, toasts
+    main.ts           builds the OIDC manager and runs boot recovery before mount (§9)
     style.css         Tailwind + daisyUI
 ```
 

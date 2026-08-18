@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"darow/internal/observer"
@@ -10,12 +11,9 @@ import (
 	"darow/internal/storage"
 )
 
-// SettingsService is the single owner of the runtime-editable settings row:
-// every other service and handler reads the current value through Current
-// rather than caching independently, exactly as MetadataService is for
-// metadata. The current value is held in memory (one row, read far more
-// often than written) and refreshed by Load at startup and by every
-// UpdateSettings.
+// SettingsService is the single owner of the runtime-editable settings row,
+// which every reader reaches through Current. The value is held in memory and
+// refreshed by Load at startup and by every UpdateSettings.
 type SettingsService struct {
 	store   storage.SettingsStore
 	mu      sync.RWMutex
@@ -23,17 +21,15 @@ type SettingsService struct {
 	changed *observer.Observer[storage.Settings]
 }
 
-// NewSettingsService builds a SettingsService backed by store. changed is
-// notified with the new value after every successful UpdateSettings, so
-// core.NewServices can rebuild whatever is sized or timed from a setting
-// (the metadata/schema/tile LRU caches).
+// NewSettingsService builds a SettingsService backed by store, notifying
+// changed after every successful UpdateSettings so that whatever a setting
+// sizes or times can be rebuilt.
 func NewSettingsService(store storage.SettingsStore, changed *observer.Observer[storage.Settings]) *SettingsService {
 	return &SettingsService{store: store, changed: changed}
 }
 
 // Load reads the settings row once and populates the in-memory value Current
-// serves. Called once by core.Setup before any request is served — a
-// failure here is a startup failure, exactly as an invalid config.yaml is.
+// serves, before any request is. A failure here is a startup failure.
 func (s *SettingsService) Load(ctx context.Context) error {
 	current, err := s.store.GetSettings(ctx)
 	if err != nil {
@@ -45,9 +41,8 @@ func (s *SettingsService) Load(ctx context.Context) error {
 	return nil
 }
 
-// Current returns the in-memory settings value, for every hot-path reader
-// (a handler building a page, a service sizing a batch) that cannot afford
-// a database round trip per call.
+// Current returns the in-memory settings value, for the hot-path readers that
+// cannot afford a database round trip per call.
 func (s *SettingsService) Current() storage.Settings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -64,7 +59,8 @@ func (s *SettingsService) GetSettings(ctx context.Context) (storage.Settings, er
 // persists it, refreshes the in-memory value, and notifies changed with the
 // result — so a cache-affecting field takes effect without a restart.
 func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
-	merged := mergeSettings(s.Current(), patch)
+	before := s.Current()
+	merged := mergeSettings(before, patch)
 	result := settings.Validate(merged)
 	if result.Err != nil {
 		return storage.Settings{}, &ValidationError{msg: result.Err.Error()}
@@ -79,14 +75,14 @@ func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.Sett
 	s.current = updated
 	s.mu.Unlock()
 
+	logSettingsChange(before, updated)
 	s.changed.Notify(updated)
 	return updated, nil
 }
 
-// mergeSettings applies patch's non-nil fields onto current, without
-// touching the store — the shape UpdateSettings validates before persisting
-// anything, so a patch is checked against the settings it would actually
-// produce rather than in isolation.
+// mergeSettings applies patch's non-nil fields onto current, without touching
+// the store, so a patch is checked against the settings it would produce
+// rather than in isolation.
 func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storage.Settings {
 	merged := current
 	if patch.DefaultRowLimit != nil {
@@ -114,4 +110,25 @@ func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storag
 		merged.CoordinateDecimals = *patch.CoordinateDecimals
 	}
 	return merged
+}
+
+// logSettingsChange traces every field an accepted update moved, with the
+// value on both sides: the request line alone says that the process-wide
+// limits changed, never which one nor from what.
+func logSettingsChange(before, after storage.Settings) {
+	logFieldChange(settings.FieldDefaultRowLimit, before.DefaultRowLimit, after.DefaultRowLimit)
+	logFieldChange(settings.FieldDefaultListLimit, before.DefaultListLimit, after.DefaultListLimit)
+	logFieldChange(settings.FieldDefaultFeaturesLimit, before.DefaultFeaturesLimit, after.DefaultFeaturesLimit)
+	logFieldChange(settings.FieldMaxSimplifyTolerance, before.MaxSimplifyTolerance, after.MaxSimplifyTolerance)
+	logFieldChange(settings.FieldMaxPrecision, before.MaxPrecision, after.MaxPrecision)
+	logFieldChange(settings.FieldTileCacheMaxAgeSec, before.TileCacheMaxAgeSec, after.TileCacheMaxAgeSec)
+	logFieldChange(settings.FieldCacheTTLSec, before.CacheTTLSec, after.CacheTTLSec)
+	logFieldChange(settings.FieldCoordinateDecimals, before.CoordinateDecimals, after.CoordinateDecimals)
+}
+
+func logFieldChange[T comparable](field string, before, after T) {
+	if before == after {
+		return
+	}
+	slog.Info("setting changed", "field", field, "from", before, "to", after)
 }

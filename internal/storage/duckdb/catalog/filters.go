@@ -14,10 +14,9 @@ import (
 	"darow/internal/storage"
 )
 
-// storedFilterSchema is the DDL applied on every startup — already at the
-// latest column set (no accumulated pre-1.0 migration history: see LIM-7).
-// The predicate tree is stored as JSON rather than exploded into rows: it is
-// read and written whole, never queried into.
+// storedFilterSchema is the DDL applied on every startup, already at the
+// latest column set (LIM-7). The predicate tree is stored as JSON, being read
+// and written whole and never queried into.
 const storedFilterSchema = `
 CREATE TABLE IF NOT EXISTS filters (
     filterId TEXT PRIMARY KEY,

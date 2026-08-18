@@ -97,11 +97,9 @@ func (r *tableRows) ByPkey(ctx context.Context, pkeys []string) ([]storage.Row, 
 	return scanRows(rows)
 }
 
-// Filtered fetches rows matching q, produced exclusively by
-// storage.BuildFilter, excluding the geometry column.
-// Ordered by __pkey, like every other paginated read, so two identical
-// calls never return rows in a different order (DuckDB guarantees none
-// without ORDER BY).
+// Filtered fetches rows matching q, produced exclusively by storage.BuildFilter,
+// excluding the geometry column. Ordered by __pkey, like every other
+// paginated read, since DuckDB guarantees none without ORDER BY.
 func (r *tableRows) Filtered(ctx context.Context, q storage.RowQuery, limit int) ([]storage.Row, error) {
 	projection, err := attrProjection(r.ref, nil)
 	if err != nil {
@@ -128,10 +126,9 @@ func (r *tableRows) Filtered(ctx context.Context, q storage.RowQuery, limit int)
 var searchEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // Distinct returns a page of up to limit distinct values found in column,
-// skipping offset matches first, ordered by column itself so paging is
-// deterministic across calls. A non-empty search keeps only the values
-// containing it, case-insensitively, matched against their text form so
-// the same query works whatever the column's type.
+// skipping offset matches first, ordered by column itself. A non-empty
+// search keeps only the values matching it, case-insensitively, against
+// their text form.
 func (r *tableRows) Distinct(ctx context.Context, column, search string, offset, limit int) ([]any, error) {
 	quotedCol, err := storage.QuoteIdentifier(column)
 	if err != nil {
@@ -164,11 +161,9 @@ func (r *tableRows) Distinct(ctx context.Context, column, search string, offset,
 	return values, rows.Err()
 }
 
-// wrapWriteError classifies a failed insert/update: when the write touched
-// the geometry column, the most likely cause is a literal the parser
-// rejects — a caller mistake, not a server failure — so it's reported as a
-// storage.ValidationError (400) instead of the 500 an unclassified DuckDB
-// error would get.
+// wrapWriteError classifies a failed insert/update: when the write touched the
+// geometry column, the likely cause is a literal the parser rejects, so it is
+// reported as a ValidationError (400) rather than a 500.
 func wrapWriteError(err error, writesGeometry bool) error {
 	if !writesGeometry {
 		return err
@@ -195,11 +190,8 @@ func geometryValueOf(value any) storage.GeometryValue {
 }
 
 // geometryExpr builds the SQL expression writing value into the geometry
-// column: the literal is parsed according to its encoding, then reprojected
-// from the CRS it is expressed in to the EPSG:3857 the column stores — the
-// exact mirror of the ST_Transform every geometry read applies. The CRS is
-// bound, never interpolated, like the one reprojectToWebMercator uses at
-// import.
+// column: the literal is parsed per its encoding, then reprojected from its
+// CRS to the stored EPSG:3857. The CRS is bound, never interpolated.
 func geometryExpr(value any) (string, []any) {
 	geom := geometryValueOf(value)
 	if geom.Literal == "" {
@@ -338,9 +330,8 @@ func (r *tableRows) Update(ctx context.Context, pkeys []string, updates map[stri
 }
 
 // UpdateMany applies a different set of values to each row, in a single
-// transaction held under the table's write scope for its whole duration: a topological edit
-// moves a shared boundary on several rows at once, and half of it landing
-// is a corrupted boundary, not a partial success.
+// transaction: a topological edit moves a shared boundary on several rows at
+// once, and half of it landing is a corrupted boundary, not a success.
 func (r *tableRows) UpdateMany(ctx context.Context, updates []storage.RowUpdate) error {
 	if len(updates) == 0 {
 		return nil

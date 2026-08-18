@@ -37,7 +37,38 @@ mise run build   # regenerates Swagger docs and the admin UI, then builds ./serv
 ```
 
 The server reads `config.yaml` from the current directory by default; pass `--config` to point it
-elsewhere. It listens on port 8080 (see `server.port` in `config.yaml`).
+elsewhere. `config.example.yaml` lists every field at its default value — copy it and keep only what
+you change; the file itself is optional. It listens on every interface, port 8080 (`server.host`,
+`server.port`).
+
+### Protect it
+
+Reads are open to everyone. Every route that changes data needs a caller who is **authenticated**
+with the `admin` role — `guest` reads like an anonymous visitor, it does not write. Darow verifies
+OIDC bearer tokens itself, through
+[`github.com/amauryval/goauth`](https://github.com/amauryval/goauth); it does not issue them, so an
+identity provider (Zitadel or Pocket ID) must exist first and be configured to hand out **JWT**
+access tokens that assert roles — see the module's own `SETUP.md` for the per-provider steps. Six
+environment variables configure it:
+
+| Variable          | Meaning                                                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_DEMO`       | `true` authorizes every visitor as admin without a provider — build with `-tags authdemo` for this to be allowed at all (`mise run run-dev` already does) |
+| `AUTH_PROVIDER`   | `zitadel` or `pocketid`                                                                                                                                   |
+| `AUTH_ISSUER`     | the provider's base URL                                                                                                                                   |
+| `AUTH_AUDIENCE`   | this application's client id at the provider                                                                                                              |
+| `AUTH_ADMIN_ROLE` | the provider's name for the admin role, if not `admin`                                                                                                    |
+| `AUTH_GUEST_ROLE` | the provider's name for the guest role, if not `guest`                                                                                                    |
+
+Register `https://<host>/ui/auth/callback` as the client's redirect URI — the admin UI is served
+under `/ui/`. The access token's lifetime at the provider **is** the revocation delay: nothing
+server-side is stateful enough to revoke a token already issued, so keep it short.
+
+For a local try without a provider, build and run with the demo tag:
+
+```sh
+go run -tags authdemo ./cmd/server   # or: mise run run-dev
+```
 
 ### Point it at a working directory
 

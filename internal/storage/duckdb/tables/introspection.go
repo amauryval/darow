@@ -15,11 +15,9 @@ import (
 // apart from a genuine catalogue read failure.
 var errTableNotFound = errors.New("table does not exist")
 
-// This file is the only place DuckDB's own catalogue functions
-// (duckdb_columns, duckdb_indexes, duckdb_tables, duckdb_extensions,
-// pragma_database_size, duckdb_memory, duckdb_temporary_files) are read:
-// their result columns are versioned with the engine, so a DuckDB upgrade
-// is a single file to check.
+// This file is the only place DuckDB's own catalogue functions are read:
+// their result columns are versioned with the engine, so a DuckDB upgrade is a
+// single file to check.
 
 // catalogColumn describes one column as DuckDB's catalogue reports it. Type is the
 // full declared type, parameters included — a geometry column carrying a
@@ -80,11 +78,9 @@ func tableColumns(ctx context.Context, conn Querier, tableName string) ([]catalo
 	return cols, nil
 }
 
-// queryColumns describes the shape a SELECT query produces, without
-// materializing it — the one case the catalogue cannot answer, since an
-// unmaterialized query has no catalogue entry. DESCRIBE resolves aliases,
-// wildcards and computed expressions exactly as DuckDB will when the query
-// runs, so callers never parse the query themselves.
+// queryColumns describes the shape a SELECT query produces without
+// materializing it. DESCRIBE resolves aliases, wildcards and computed
+// expressions exactly as DuckDB will when the query runs.
 func queryColumns(ctx context.Context, conn Querier, query string, args ...any) ([]catalogColumn, error) {
 	rows, err := conn.Query(ctx, fmt.Sprintf(`DESCRIBE %s`, query), args...)
 	if err != nil {
@@ -109,8 +105,7 @@ func queryColumns(ctx context.Context, conn Querier, query string, args ...any) 
 
 // soleGeometryColumn returns the single geometry column of cols, or an empty
 // name when there is none. More than one is rejected outright: the rest of
-// the domain (Tile, FilterByBbox, row reads) assumes a single geometry
-// column throughout, so picking the first would only be partially correct.
+// the domain assumes a single geometry column throughout.
 func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
 	var found []catalogColumn
 	for _, c := range cols {
@@ -134,13 +129,10 @@ func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
 }
 
 // GeometryInfo reports whether physicalName currently has a geometry column
-// and, if so, its name — the same tableColumns/soleGeometryColumn read
-// findGeometryColumn uses to detect it during materialization, exposed here
-// so a table's isGeo/geometryColumn can be derived from the catalogue at
-// read time instead of trusted from stored metadata, which can drift from
-// what the physical table actually has (TODO-10). A physical table that
-// does not exist yet — a metadata row registered but not yet materialized —
-// reports no geometry rather than erroring.
+// and, if so, its name, so isGeo/geometryColumn can be derived from the
+// catalogue at read time rather than trusted from metadata (TODO-10). A
+// physical table not yet materialized reports no geometry rather than
+// erroring.
 func GeometryInfo(ctx context.Context, conn Querier, physicalName string) (isGeo bool, geometryColumn string, err error) {
 	columns, err := tableColumns(ctx, conn, physicalName)
 	if errors.Is(err, errTableNotFound) {
@@ -183,11 +175,9 @@ func tableIndexes(ctx context.Context, conn Querier, tableName string) ([]catalo
 	return indexes, rows.Err()
 }
 
-// ExistingTables binds conn into a reader of the tables that physically
-// exist in it, which is all the catalogue needs to tell a registered table
-// apart from a metadata row whose physical table is gone. Returning the
-// bound reader keeps the wiring a single expression, and keeps
-// duckdb_tables() read here alone.
+// ExistingTables binds conn into a reader of the tables that physically exist
+// in it, which is all the catalogue needs to tell a registered table apart
+// from a metadata row whose physical table is gone.
 func ExistingTables(conn Querier) func(ctx context.Context) (map[string]bool, error) {
 	return func(ctx context.Context) (map[string]bool, error) {
 		return existingTableNames(ctx, conn)
@@ -228,10 +218,9 @@ func ExtensionLoaded(ctx context.Context, conn Querier, name string) (bool, erro
 	return loaded, err
 }
 
-// Diagnostics reads a snapshot of the engine's own operating state — what
-// /diagnostics answers. Every value comes off a byte-typed catalogue
-// column, never off pragma_database_size's formatted ("16.0 MiB") ones,
-// which are meant for display and not for parsing back.
+// Diagnostics reads a snapshot of the engine's own operating state. Every
+// value comes off a byte-typed catalogue column, never off
+// pragma_database_size's formatted ones, which are meant for display.
 func Diagnostics(ctx context.Context, conn Querier) (storage.Diagnostics, error) {
 	size, err := databaseSizeBytes(ctx, conn)
 	if err != nil {

@@ -8,11 +8,12 @@ export interface Page<T> {
 }
 
 export interface UsePaginatedListOptions<T> {
-    // A page size that can change after mount (a table's effective row
-    // limit, resolved async from its settings) is passed as a Ref rather
-    // than a plain number — the list reloads from page 1 when it changes,
-    // same as a sort change.
-    limit?: number | Ref<number>
+    // The page size the caller reads off the server's settings — never a
+    // constant of the list itself. A size that can change after mount (the
+    // operator's list limit, a table's effective row limit) is passed as a
+    // Ref: the list then reloads from page 1 when it changes, same as a sort
+    // change.
+    limit: number | Ref<number>
     initialSorting?: SortingState
     sortColumnMap?: Record<string, string>
     // What the list is a list *of*, when that is a route parameter: the
@@ -36,7 +37,7 @@ export interface UsePaginatedListOptions<T> {
 // sort change never flashes an empty table (règle 8.1).
 export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
     function currentLimit(): number {
-        return unref(options.limit) ?? 50
+        return unref(options.limit)
     }
     // ref() unwraps a generic T through UnwrapRef, which the checker cannot
     // prove equal to T for an arbitrary caller's T — a plain annotation is
@@ -115,6 +116,21 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
         reloadSorted()
     }
 
+    // Drops the items a caller has just deleted server-side, without a
+    // refetch: the list already knows exactly which ones disappeared, and
+    // re-fetching page 1 emptied the grid for the length of a round-trip
+    // (§8.1). `offset` follows the drop — the server's remaining rows shifted
+    // up by as many, and leaving it there would make the next page skip that
+    // many.
+    function drop(shouldDrop: (item: T) => boolean) {
+        const kept = items.value.filter((item) => !shouldDrop(item))
+        const removed = items.value.length - kept.length
+        if (removed === 0) return
+        items.value = kept
+        total.value = Math.max(0, total.value - removed)
+        offset.value = Math.max(0, offset.value - removed)
+    }
+
     // Lets a caller replace the current page's items in place after a
     // server-side action that returns a fresh page itself (e.g. a "refresh
     // from disk" endpoint), without going through fetchPage again.
@@ -175,6 +191,7 @@ export function usePaginatedList<T>(options: UsePaginatedListOptions<T>) {
         reloadSorted,
         retry,
         setSorting,
+        drop,
         replace,
         sortQuery
     }

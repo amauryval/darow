@@ -31,6 +31,12 @@ const props = withDefaults(
         // actions the destructive one is a ghost that turns red under the
         // pointer, so the grid is not striped with alarm colour.
         variant?: 'danger' | 'ghost'
+        // Plain trigger-disabling, same contract as BaseButton's — the caller
+        // (a view or a domain component reading useWriteGuard) decides whether
+        // the action is refused; this component stays domain-free and only
+        // renders the verdict it is handed.
+        disabled?: boolean
+        title?: string
     }>(),
     { confirmLabel: 'Confirmer', size: 'xs', variant: 'danger' }
 )
@@ -48,8 +54,9 @@ defineExpose({ reset: () => (open.value = false) })
         :size="size"
         :icon="icon"
         :icon-only="iconOnly"
+        :disabled="disabled"
         :aria-label="iconOnly ? label : undefined"
-        :title="iconOnly ? label : undefined"
+        :title="title ?? (iconOnly ? label : undefined)"
         :class="variant === 'ghost' ? 'text-error/70 hover:text-error' : ''"
         @click="open = true"
     >

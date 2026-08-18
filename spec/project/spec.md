@@ -43,10 +43,15 @@ same change.**
 | npm package (UI) | `darow-web` |
 | API title (Swagger) | Darow |
 | UI title and header | Darow |
+| Mark | a duck sat on its rows — `web/src/components/ui/Logo.vue` (in `currentColor`) and `web/public/favicon.svg` (on the brand cyan `#40a9bf`) |
+| Banner | `img/darow_logo.png`, the illustrated wordmark, in the `README` |
 | Licence | BSD 3-Clause, © 2026 amauryval |
 
 The name is **Darow** — from "ducks in a row": DuckDB putting your tabular and spatial data *in a
-row*. It never ships bare: wherever it first appears to a reader — the `README` title, the
+row*. The mark draws exactly that, and it is drawn twice rather than shared: a browser reads a
+favicon as a file, so the Vue component and the SVG file carry the same shapes independently, the
+component in `currentColor` so the one mark serves wherever it is put. The `README`'s banner is the
+illustrated wordmark, which says the same thing at a size that can afford to. It never ships bare: wherever it first appears to a reader — the `README` title, the
 Swagger description, the UI header — it carries the tagline "Darow — get your Ducks in A ROW",
 immediately followed by the statement that the server is backed by DuckDB. The git remote still
 carries the previous name; renaming it is out of scope for the repository itself.
@@ -62,11 +67,16 @@ carries the previous name; renaming it is out of scope for the repository itself
 | `docs/` | generated Swagger only (`docs.go`, `swagger.json`, `swagger.yaml`) |
 | `spec/` | this documentation tree: `back/`, `front/`, `project/` |
 | `data/`, `config.yaml` | the local working directory and its configuration |
+| `config.example.yaml` | every configuration field at its default value, commented — the file to copy, kept in step with the defaults by a test in `internal/config` |
 | `mise.toml` | the tool versions and every task |
 | `Dockerfile`, `.dockerignore` | the multi-stage image build |
 | `.github/workflows/ci.yml` | continuous integration |
 | `.claude/` | agent instructions, skills and reviewers |
 | `README.md` | the repository's entry point: what the product does, how to run it, how to contribute |
+
+The root module carries `github.com/amauryval/goauth` (and through it `go-oidc` and
+`golang.org/x/oauth2`), `web/` carries `oidc-client-ts` — the first third-party dependencies either
+side takes for authentication.
 
 ## 3. Toolchain
 
@@ -83,17 +93,23 @@ Pinned in `mise.toml`: Go 1.26.4, Node 22, `swag` 1.16.6. `./bin` is prepended t
 | `ui-install` / `ui-build` / `ui-dev` | UI dependencies / production build into `internal/webui/dist` / Vite dev server |
 | `ui-lint` / `ui-test` | eslint / vitest on the UI |
 | `build` | the server binary, after regenerating docs and UI |
-| `run-dev` | runs the server against `config.yaml`, after regenerating docs and UI |
+| `run-dev` | runs the server against `config.yaml`, after regenerating docs and UI, built with `-tags authdemo` |
 
-`ui-dev` and `run-dev` are the developer's to launch, never an agent's.
+`ui-dev` and `run-dev` are the developer's to launch, never an agent's. The `authdemo` build tag is
+`run-dev`'s alone: it is what lets `goauth` run in demo mode at all (`../back/spec.md` §2.7), and
+neither `build` nor the `Dockerfile` ever carries it.
 
 ## 5. Build and distribution
 
 `Dockerfile` is a three-stage build: Node 22 builds the UI into the embed directory, Go 1.26
 compiles the single binary (stripped, `-ldflags="-s -w"`), and a `gcr.io/distroless/cc-debian12:nonroot`
 runtime carries it — glibc, libstdc++ and ca-certificates, no shell or package manager, running as
-the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary.
-Configuration and the working directory come from outside the image.
+the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary. The Go
+stage never carries the `authdemo` build tag, so a container that forgets `AUTH_PROVIDER`,
+`AUTH_ISSUER` and `AUTH_AUDIENCE` fails at startup rather than opening to everyone; those three, plus
+`AUTH_ADMIN_ROLE`/`AUTH_GUEST_ROLE` when the provider's own role names differ, are passed in from
+outside the image, like the configuration and the working directory already are, and carry no
+default.
 
 ## 6. Continuous integration
 

@@ -1,11 +1,11 @@
-// Package tables implements DuckDB access to the physical tables
-// (t_<uuid>) the catalogue references: their resolution from a Metadata,
-// their rows, their geometry, and their creation/drop — as opposed to the
-// catalogue itself (duckdb/catalog), which holds the logical tables.
+// Package tables implements DuckDB access to the physical tables (t_<uuid>)
+// the catalogue references: their resolution from a Metadata, their rows,
+// their geometry and their creation/drop.
 package tables
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"darow/internal/storage"
@@ -22,11 +22,9 @@ type table struct {
 
 var _ storage.TableRepository = (*table)(nil)
 
-// Open resolves meta into a storage.TableRepository backed by conn
-// (reads and single-statement writes), tx (multi-row writes) and names (a
-// column transform's expression allowlist, the same dependency
-// NewMaterializer takes) — the single validation point every operation on
-// the table then relies on.
+// Open resolves meta into a storage.TableRepository backed by conn, tx and
+// names — the single validation point every operation on the table then
+// relies on.
 func Open(conn Querier, tx TxRunner, names physicalNamesReader, meta storage.Metadata) (storage.TableRepository, error) {
 	ref, err := resolve(meta)
 	if err != nil {
@@ -77,6 +75,61 @@ func (t *table) AddColumn(ctx context.Context, colName, colType string) error {
 
 	_, err = t.conn.Exec(ctx, storage.TableWriteScope(t.ref.Meta.TableId), fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, t.ref.PhysicalName, quotedCol, colType))
 	return err
+}
+
+// RenameColumn renames oldName to newName on the underlying table.
+func (t *table) RenameColumn(ctx context.Context, oldName, newName string) error {
+	quotedOld, err := t.quoteEditableColumn(oldName)
+	if err != nil {
+		return err
+	}
+	quotedNew, err := t.quoteEditableColumn(newName)
+	if err != nil {
+		return err
+	}
+
+	return t.alterAroundIndexes(ctx, fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s`, t.ref.PhysicalName, quotedOld, quotedNew))
+}
+
+// DropColumn drops colName from the underlying table.
+func (t *table) DropColumn(ctx context.Context, colName string) error {
+	quotedCol, err := t.quoteEditableColumn(colName)
+	if err != nil {
+		return err
+	}
+
+	return t.alterAroundIndexes(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, t.ref.PhysicalName, quotedCol))
+}
+
+// alterAroundIndexes runs a structural statement DuckDB refuses outright while
+// any index depends on the table — the unique `__pkey` one as much as the
+// RTREE one. Both come off before and are rebuilt after, failure path included,
+// so rule 19 holds on both sides of the write.
+func (t *table) alterAroundIndexes(ctx context.Context, statement string) error {
+	tableId := t.ref.Meta.TableId
+	if err := DropTableIndexes(ctx, t.conn, tableId, t.ref.PhysicalName); err != nil {
+		return err
+	}
+
+	_, err := t.conn.Exec(ctx, storage.TableWriteScope(tableId), statement)
+	geometryColumn := ""
+	if t.ref.Meta.IsGeo {
+		geometryColumn = t.ref.Meta.GeometryColumn
+	}
+	return errors.Join(err, RebuildIndexes(ctx, t.conn, tableId, t.ref.PhysicalName, geometryColumn))
+}
+
+// quoteEditableColumn quotes colName after refusing the columns the server
+// manages itself — the hidden ones and the geometry column — which no
+// rename or drop may ever reach, whichever caller asks.
+func (t *table) quoteEditableColumn(colName string) (string, error) {
+	if storage.IsHiddenColumn(colName) {
+		return "", storage.NewValidationError(fmt.Sprintf("column %q is managed by the server", colName))
+	}
+	if t.ref.Meta.IsGeo && colName == t.ref.Meta.GeometryColumn {
+		return "", storage.NewValidationError(fmt.Sprintf("column %q is the geometry column", colName))
+	}
+	return storage.QuoteIdentifier(colName)
 }
 
 // Count returns the total number of rows in the underlying table.

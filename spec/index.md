@@ -34,8 +34,9 @@ place an audit's findings are written — never a `spec.md`.
 
 | Package / path            | Sections                                                    |
 | ------------------------- | ----------------------------------------------------------- |
-| `cmd/server`              | back §1, §9                                                 |
-| `internal/config`         | back §2                                                     |
+| `cmd/server`              | back §1, §6.7                                               |
+| `internal/config`         | back §2, §2.7                                               |
+| `internal/guards`         | back §1, §6.7                                               |
 | `internal/settings`       | back §2.4, §2.5                                             |
 | `internal/core`           | back §1                                                     |
 | `internal/observer`       | back §1                                                     |
@@ -74,6 +75,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 2.5 Runtime-editable settings` | settings editable through the API/UI               |
 | `### 2.5.1 Per-table overrides` | a table's own departure from a global setting        |
 | `### 2.6 Command-line flags` | `--workdir` and friends                              |
+| `### 2.7 auth` | the auth block: demo vs. a real provider, the two application roles, why it is config-only |
 
 ### Storage layer (`internal/storage`, `internal/storage/duckdb`)
 
@@ -87,6 +89,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 4.5 Filter construction` | `BuildFilter`, query filtering                             |
 | `### 4.5.1 Stored filters` | `StoredFilter`, `FilterStore`                              |
 | `### 4.6 The DuckDB adapter` | connection, per-scope write locks, `WithTx`, accessors     |
+| `### 4.6.1 Spatial-index repair at open` | the startup probe/rebuild of a broken RTREE index  |
 | `### 4.7 Rendering an MVT tile` | tile SQL                                                   |
 | `### 4.8 Reading DuckDB's own catalogue` | introspection (`duckdb_columns`, `duckdb_indexes`, …)     |
 | `### 4.9 The settings repository` | persisting settings                                        |
@@ -122,13 +125,13 @@ place an audit's findings are written — never a `spec.md`.
 | Section                        | Read it when                                     |
 | ------------------------------ | ------------------------------------------------ |
 | `## 6. REST API` | any handler change — the API contract             |
-| `### 6.1 Endpoints` | the endpoint list (largest section — grep it)     |
+| `### 6.1 Endpoints` | the endpoint list, `/session` included (largest section — grep it) |
 | `### 6.2 OGC API - Features` | OGC-conformant routes                             |
 | `### 6.3 Router and middlewares` | mounting, middleware order                       |
 | `### 6.4 Errors` | error → status mapping, error body                |
 | `### 6.5 HTTP tile caching` | tile cache headers                                |
 | `### 6.6 Swagger documentation` | `swag init` annotations                           |
-| `### 6.7 Security — current state` | auth/exposure state, before touching security     |
+| `### 6.7 Security — reads are public, writes are authenticated` | the read/write split, how it is enforced, what is trusted |
 
 ### Domain model (`internal/service`, sources)
 
@@ -147,6 +150,7 @@ place an audit's findings are written — never a `spec.md`.
 | `## 0. Non-negotiable rules` | **always**, before any Vue change                          |
 | `## 1. Architecture` | layering, where a piece of code belongs                    |
 | `## 2. Client layer (src/client/)` | calling the REST API                                       |
+| `### 2.1 One client among others` | which figures are the front's own choice and which are read from the server |
 | `## 3. Pure functions (src/utils/)` | pure helpers                                               |
 | `## 4. Composables (src/composables/)` | business logic, state                                     |
 | `## 5. Components (src/components/)` | presentational components, `components/ui/` primitives     |

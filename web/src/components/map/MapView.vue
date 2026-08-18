@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import 'ol/ol.css'
+import { TriangleAlert } from '@lucide/vue'
 import type { FilterCondition } from '../../client/types'
 import { useMapDraw, type DrawShape } from '../../composables/useMapDraw'
 import type { EditableFeature, LayerChanges } from '../../composables/useEditLayer'
@@ -12,6 +13,7 @@ import MapEditBar from './MapEditBar.vue'
 import MapEditLegend from './MapEditLegend.vue'
 import BaseCheckbox from '../ui/BaseCheckbox.vue'
 import FloatingPanel from '../ui/FloatingPanel.vue'
+import Spinner from '../ui/Spinner.vue'
 
 const props = defineProps<{
     tableId: string
@@ -67,6 +69,11 @@ const emit = defineEmits<{
     // what creates a row: the grid holds one empty, writable draft per shape,
     // and it is the map that counts them (§8.3).
     drawnCount: [count: number]
+    // How many stored geometries the session has reshaped. The grid can count
+    // its own retyped cells, but this half only exists on the layer — and
+    // leaving the mode drops both, so whoever guards the exit needs both
+    // (§8.3).
+    changedCount: [count: number]
 }>()
 
 // MVT and WFS are two independent rendering modes for the same table/filter,
@@ -110,6 +117,13 @@ const wfs = useWfsLayer(map, tableId, conditions, selection, dataVersion)
 // What the table can hold, read when the session opens and after every write.
 const sessionActive = computed(() => props.editing === true)
 const { family } = useGeometryTypes(tableId, sessionActive, dataVersion)
+
+// Only the mode actually on the map is loading anything — the other one's
+// layer is torn down, not hidden (see showTable).
+const loadingData = computed(() => (wfsEnabled.value ? wfs.loading.value : mvt.loading.value))
+// A tile the server refuses is said, never spun on: the WFS mode reports its
+// own failures through a toast, the MVT one has only its tiles to go by.
+const tilesFailed = computed(() => !wfsEnabled.value && mvt.failed.value)
 
 const draw = useMapDraw(map, {
     pkeyAt: (pixel) => (wfsEnabled.value ? wfs.pkeyAt(pixel) : mvt.pkeyAt(pixel)),
@@ -185,6 +199,11 @@ watch(
     (count) => emit('drawnCount', count)
 )
 
+watch(
+    () => draw.changedCount.value,
+    (count) => emit('changedCount', count)
+)
+
 function onSave() {
     emit('save', draw.commit())
 }
@@ -235,6 +254,22 @@ function pick(value: DrawShape) {
                 @cancel="emit('cancel')"
             />
         </Teleport>
+
+        <!-- What is in flight, said where the data lands: a pan otherwise
+         signals nothing until its first tile answers (§8.8). -->
+        <FloatingPanel v-if="loadingData" position="top-right">
+            <span class="flex flex-row items-center gap-2 text-xs text-base-content/60">
+                <Spinner label="Chargement des données" />
+                Chargement…
+            </span>
+        </FloatingPanel>
+
+        <FloatingPanel v-else-if="tilesFailed" position="top-right">
+            <span class="flex flex-row items-center gap-2 text-xs text-error">
+                <TriangleAlert class="h-4 w-4" />
+                Tuiles indisponibles
+            </span>
+        </FloatingPanel>
 
         <MapEditLegend v-if="editing" />
 

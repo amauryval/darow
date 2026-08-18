@@ -3,71 +3,67 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/amauryval/goauth/provider"
+
 	"darow/internal/settings"
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
-// GEOAPI_SERVER_PORT overrides server.port, GEOAPI_SOURCES_WORKDIR
-// overrides sources.workDir, and so on — one variable per YAML field.
+// GEOAPI_SERVER_PORT overrides server.port, and so on — one variable per YAML field.
 const envPrefix = "GEOAPI_"
 
-// Config holds the parameters needed to initialize the server itself, plus
-// the settings that are memory/availability guards on an unauthenticated
-// route (TODO-17) rather than a product decision an operator retunes while
-// serving — those two categories are what Settings holds, restart-only.
-// Everything an operator legitimately retunes live (row/list limits, cache
-// TTL, geometry bounds, the tile cache lifetime) lives instead in the
-// settings table, edited at runtime through service.SettingsService
-// (internal/settings holds its defaults) rather than config.yaml.
+// Config holds the server parameters, storage settings, and auth config.
+// Runtime-editable settings live in the settings table instead.
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	DuckDB   DuckDBConfig   `yaml:"duckdb"`
 	Sources  SourcesConfig  `yaml:"sources"`
 	Settings SettingsConfig `yaml:"settings"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
-// ServerConfig holds HTTP server settings: the listen port, per-connection
-// timeouts, and how long a graceful shutdown waits for in-flight requests
-// before giving up.
+// ServerConfig holds HTTP server settings: host, port, timeouts, and trusted proxies.
 type ServerConfig struct {
-	Port               int `yaml:"port"`
-	ReadTimeoutSec     int `yaml:"readTimeoutSec"`
-	WriteTimeoutSec    int `yaml:"writeTimeoutSec"`
-	IdleTimeoutSec     int `yaml:"idleTimeoutSec"`
-	ShutdownTimeoutSec int `yaml:"shutdownTimeoutSec"`
+	Host               string   `yaml:"host"`
+	Port               int      `yaml:"port"`
+	ReadTimeoutSec     int      `yaml:"readTimeoutSec"`
+	WriteTimeoutSec    int      `yaml:"writeTimeoutSec"`
+	IdleTimeoutSec     int      `yaml:"idleTimeoutSec"`
+	ShutdownTimeoutSec int      `yaml:"shutdownTimeoutSec"`
+	TrustedProxies     []string `yaml:"trustedProxies"`
+	WorkDir            string   `yaml:"workDir"`
 }
 
-// DuckDBConfig holds the DuckDB database file path and connection pool
-// size — the tuning parameter most likely to need adjusting by whoever
-// operates the server, since DuckDB serializes writes but allows
-// concurrent pooled reads. MaxSizeBytes is a hard cap on the database's
-// on-disk size (0 disables it), an operator decision about the disk the
-// process runs on — unlike the settings table, never editable at runtime.
+func (c ServerConfig) DbFilePath() string {
+	return filepath.Join(c.WorkDir, "darow.db")
+}
+
+func (c ServerConfig) SourcesPath() string {
+	return filepath.Join(c.WorkDir, "sources")
+}
+
+// DuckDBConfig holds the DuckDB database file path and connection pool size.
 type DuckDBConfig struct {
-	Path         string `yaml:"path"`
-	MaxOpenConns int    `yaml:"maxOpenConns"`
-	MaxSizeBytes int64  `yaml:"maxSizeBytes"`
+	MaxOpenConns int   `yaml:"maxOpenConns"`
+	MaxSizeBytes int64 `yaml:"maxSizeBytes"`
 }
 
 // SourcesConfig holds settings for scanning and loading files from workDir.
 type SourcesConfig struct {
-	WorkDir           string   `yaml:"workDir"`
 	MaxSizeBytes      int64    `yaml:"maxSizeBytes"`
 	AllowedExtensions []string `yaml:"allowedExtensions"`
 }
 
-// SettingsConfig holds the memory/availability guards taken out of the
-// runtime-editable settings table (TODO-17): the request body cap, the
-// per-request timeout, and the size of every in-memory LRU cache
-// (metadata and schema share cacheMaxItems, having merged in the same
-// chantier). Raising any of them costs a restart, same as
-// duckdb.maxSizeBytes.
+// SettingsConfig holds memory/availability guards (max body, timeout, cache sizes).
 type SettingsConfig struct {
 	MaxBodyBytes      int64 `yaml:"maxBodyBytes"`
 	RequestTimeoutSec int   `yaml:"requestTimeoutSec"`
@@ -75,18 +71,65 @@ type SettingsConfig struct {
 	TileMaxItems      int   `yaml:"tileMaxItems"`
 }
 
+// AuthConfig holds OIDC settings. Enabled=false is demo mode (no verification).
+type AuthConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Issuer    string `yaml:"issuer"`
+	Audience  string `yaml:"audience"`
+	AdminRole string `yaml:"adminRole"`
+	GuestRole string `yaml:"guestRole"`
+}
+
+// validate ensures AuthConfig is valid if enabled.
+func (c AuthConfig) validate() []error {
+	if !c.Enabled {
+		return nil
+	}
+	var errs []error
+	if _, err := provider.Parse(c.Provider); err != nil {
+		errs = append(errs, fmt.Errorf("auth.provider: %w", err))
+	}
+	if c.Issuer == "" {
+		errs = append(errs, errors.New("auth.issuer must not be empty"))
+	}
+	if c.Audience == "" {
+		errs = append(errs, errors.New("auth.audience must not be empty"))
+	}
+	return errs
+}
+
+// ParseTrustedProxies turns IP addresses or CIDR blocks into prefixes.
+func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			prefixes = append(prefixes, prefix)
+			continue
+		}
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%q is neither an IP address nor a CIDR block", entry)
+		}
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes, nil
+}
+
 func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
-			Port:               8080,
+			Host:               "0.0.0.0",
+			Port:               3000,
 			ReadTimeoutSec:     15,
 			WriteTimeoutSec:    30,
 			IdleTimeoutSec:     60,
 			ShutdownTimeoutSec: 10,
+			WorkDir:            "./data",
 		},
-		DuckDB: DuckDBConfig{Path: "./data/geo.db", MaxOpenConns: 4, MaxSizeBytes: 0},
+		DuckDB: DuckDBConfig{MaxOpenConns: 4, MaxSizeBytes: 0},
 		Sources: SourcesConfig{
-			WorkDir:           "./data/sources",
 			MaxSizeBytes:      100 * 1024 * 1024,
 			AllowedExtensions: []string{".geojson", ".shp", ".csv", ".gpkg", ".parquet"},
 		},
@@ -96,14 +139,12 @@ func defaultConfig() Config {
 			CacheMaxItems:     settings.CacheMaxItems,
 			TileMaxItems:      settings.TileMaxItems,
 		},
+		Auth: AuthConfig{}, // Enabled: false — demo mode, the zero value
 	}
 }
 
-// Load reads path if present, falling back to defaults for any unset field,
-// then applies GEOAPI_* environment variable overrides, then validates the
-// result. A missing file is not an error; a malformed file, an invalid
-// environment variable, or a value that fails validation is rejected
-// explicitly rather than silently ignored.
+// Load reads path if present, falling back to defaults, then applies
+// GEOAPI_* environment variables and validates the result.
 func Load(path string) (Config, error) {
 	cfg := defaultConfig()
 
@@ -127,10 +168,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// applyEnvOverrides overrides cfg's fields from GEOAPI_* environment
-// variables, one variable per YAML field (e.g. GEOAPI_SERVER_PORT for
-// server.port), collecting every malformed value instead of stopping at
-// the first one.
+// applyEnvOverrides overrides cfg's fields from GEOAPI_* environment variables.
 func applyEnvOverrides(cfg *Config) error {
 	var errs []error
 	check := func(err error) {
@@ -139,24 +177,43 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 	}
 
-	check(envInt(&cfg.Server.Port, envPrefix+"SERVER_PORT"))
-	check(envInt(&cfg.Server.ReadTimeoutSec, envPrefix+"SERVER_READ_TIMEOUT_SEC"))
-	check(envInt(&cfg.Server.WriteTimeoutSec, envPrefix+"SERVER_WRITE_TIMEOUT_SEC"))
-	check(envInt(&cfg.Server.IdleTimeoutSec, envPrefix+"SERVER_IDLE_TIMEOUT_SEC"))
-	check(envInt(&cfg.Server.ShutdownTimeoutSec, envPrefix+"SERVER_SHUTDOWN_TIMEOUT_SEC"))
+	s, p := &cfg.Server, envPrefix+"SERVER_"
+	envString(&s.Host, p+"HOST")
+	check(envInt(&s.Port, p+"PORT"))
+	check(envInt(&s.ReadTimeoutSec, p+"READ_TIMEOUT_SEC"))
+	check(envInt(&s.WriteTimeoutSec, p+"WRITE_TIMEOUT_SEC"))
+	check(envInt(&s.IdleTimeoutSec, p+"IDLE_TIMEOUT_SEC"))
+	check(envInt(&s.ShutdownTimeoutSec, p+"SHUTDOWN_TIMEOUT_SEC"))
+	envStringSlice(&s.TrustedProxies, p+"TRUSTED_PROXIES")
+	envString(&s.WorkDir, envPrefix+"WORKDIR")
 
-	envString(&cfg.DuckDB.Path, envPrefix+"DUCKDB_PATH")
-	check(envInt(&cfg.DuckDB.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
-	check(envInt64(&cfg.DuckDB.MaxSizeBytes, envPrefix+"DUCKDB_MAX_SIZE_BYTES"))
+	d := &cfg.DuckDB
+	check(envInt(&d.MaxOpenConns, envPrefix+"DUCKDB_MAX_OPEN_CONNS"))
+	check(envInt64(&d.MaxSizeBytes, envPrefix+"DUCKDB_MAX_SIZE_BYTES"))
 
-	envString(&cfg.Sources.WorkDir, envPrefix+"SOURCES_WORKDIR")
-	check(envInt64(&cfg.Sources.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
-	envStringSlice(&cfg.Sources.AllowedExtensions, envPrefix+"SOURCES_ALLOWED_EXTENSIONS")
+	src := &cfg.Sources
+	check(envInt64(&src.MaxSizeBytes, envPrefix+"SOURCES_MAX_SIZE_BYTES"))
+	envStringSlice(&src.AllowedExtensions, envPrefix+"SOURCES_ALLOWED_EXTENSIONS")
 
-	check(envInt64(&cfg.Settings.MaxBodyBytes, envPrefix+"SETTINGS_MAX_BODY_BYTES"))
-	check(envInt(&cfg.Settings.RequestTimeoutSec, envPrefix+"SETTINGS_REQUEST_TIMEOUT_SEC"))
-	check(envInt(&cfg.Settings.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
-	check(envInt(&cfg.Settings.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
+	st := &cfg.Settings
+	check(envInt64(&st.MaxBodyBytes, envPrefix+"SETTINGS_MAX_BODY_BYTES"))
+	check(envInt(&st.RequestTimeoutSec, envPrefix+"SETTINGS_REQUEST_TIMEOUT_SEC"))
+	check(envInt(&st.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
+	check(envInt(&st.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
+
+	a := &cfg.Auth
+	if v, ok := os.LookupEnv(goauth.DemoEnv); ok {
+		if demo, err := strconv.ParseBool(v); err == nil {
+			a.Enabled = !demo
+		} else {
+			check(fmt.Errorf("%s: %w", goauth.DemoEnv, err))
+		}
+	}
+	envString(&a.Provider, goauth.ProviderEnv)
+	envString(&a.Issuer, goauth.IssuerEnv)
+	envString(&a.Audience, goauth.AudienceEnv)
+	envString(&a.AdminRole, goauth.AdminRoleEnv)
+	envString(&a.GuestRole, goauth.GuestRoleEnv)
 
 	return errors.Join(errs...)
 }
@@ -199,10 +256,7 @@ func envInt64(dst *int64, key string) error {
 	return nil
 }
 
-// validate rejects a Config that would otherwise fail confusingly at
-// runtime (a zero row limit, a negative timeout, an extension missing its
-// leading dot) explicitly at load time, collecting every violation rather
-// than stopping at the first.
+// validate ensures Config is valid.
 func (cfg Config) validate() error {
 	var errs []error
 	check := func(cond bool, msg string) {
@@ -211,17 +265,20 @@ func (cfg Config) validate() error {
 		}
 	}
 
-	check(cfg.Server.Port > 0 && cfg.Server.Port <= 65535, "server.port must be between 1 and 65535")
-	check(cfg.Server.ReadTimeoutSec >= 0, "server.readTimeoutSec must not be negative")
-	check(cfg.Server.WriteTimeoutSec >= 0, "server.writeTimeoutSec must not be negative")
-	check(cfg.Server.IdleTimeoutSec >= 0, "server.idleTimeoutSec must not be negative")
-	check(cfg.Server.ShutdownTimeoutSec >= 0, "server.shutdownTimeoutSec must not be negative")
+	s := cfg.Server
+	check(s.Host != "", "server.host must not be empty")
+	check(s.Port > 0 && s.Port <= 65535, "server.port must be between 1 and 65535")
+	if s.ReadTimeoutSec < 0 || s.WriteTimeoutSec < 0 || s.IdleTimeoutSec < 0 || s.ShutdownTimeoutSec < 0 {
+		errs = append(errs, errors.New("server timeouts must not be negative"))
+	}
+	if _, err := ParseTrustedProxies(s.TrustedProxies); err != nil {
+		errs = append(errs, fmt.Errorf("server.trustedProxies: %w", err))
+	}
+	check(s.WorkDir != "", "server.workDir must not be empty")
 
-	check(cfg.DuckDB.Path != "", "duckdb.path must not be empty")
 	check(cfg.DuckDB.MaxOpenConns > 0, "duckdb.maxOpenConns must be positive")
 	check(cfg.DuckDB.MaxSizeBytes >= 0, "duckdb.maxSizeBytes must not be negative")
 
-	check(cfg.Sources.WorkDir != "", "sources.workDir must not be empty")
 	check(cfg.Sources.MaxSizeBytes > 0, "sources.maxSizeBytes must be positive")
 	check(len(cfg.Sources.AllowedExtensions) > 0, "sources.allowedExtensions must not be empty")
 	for _, ext := range cfg.Sources.AllowedExtensions {
@@ -230,14 +287,17 @@ func (cfg Config) validate() error {
 		}
 	}
 
-	check(cfg.Settings.MaxBodyBytes >= settings.BodyBytesFloor && cfg.Settings.MaxBodyBytes <= settings.BodyBytesCeiling,
+	st := cfg.Settings
+	check(st.MaxBodyBytes >= settings.BodyBytesFloor && st.MaxBodyBytes <= settings.BodyBytesCeiling,
 		fmt.Sprintf("settings.maxBodyBytes must be between %d and %d", settings.BodyBytesFloor, settings.BodyBytesCeiling))
-	check(cfg.Settings.RequestTimeoutSec >= 0 && cfg.Settings.RequestTimeoutSec <= settings.RequestTimeoutCeiling,
+	check(st.RequestTimeoutSec >= 0 && st.RequestTimeoutSec <= settings.RequestTimeoutCeiling,
 		fmt.Sprintf("settings.requestTimeoutSec must be between 0 and %d", settings.RequestTimeoutCeiling))
-	check(cfg.Settings.CacheMaxItems > 0 && cfg.Settings.CacheMaxItems <= settings.CacheMaxItemsCeiling,
+	check(st.CacheMaxItems > 0 && st.CacheMaxItems <= settings.CacheMaxItemsCeiling,
 		fmt.Sprintf("settings.cacheMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
-	check(cfg.Settings.TileMaxItems > 0 && cfg.Settings.TileMaxItems <= settings.CacheMaxItemsCeiling,
+	check(st.TileMaxItems > 0 && st.TileMaxItems <= settings.CacheMaxItemsCeiling,
 		fmt.Sprintf("settings.tileMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
+
+	errs = append(errs, cfg.Auth.validate()...)
 
 	return errors.Join(errs...)
 }

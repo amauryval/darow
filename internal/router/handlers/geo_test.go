@@ -2,13 +2,17 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"darow/internal/router/validation"
 	"darow/internal/service"
@@ -249,6 +253,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 		query      string
 		schemaErr  error
 		featErr    error
+		countErr   error
 		wantStatus int
 	}{
 		{name: "returns features", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, wantStatus: http.StatusOK},
@@ -258,6 +263,7 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 		{name: "unknown attr is rejected", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, attrs: "bogus", wantStatus: http.StatusBadRequest},
 		{name: "invalid filter returns 400", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, query: "?filter=not-json", wantStatus: http.StatusBadRequest},
 		{name: "storage failure returns 500", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, featErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+		{name: "count failure returns 500", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, countErr: assert.AnError, wantStatus: http.StatusInternalServerError},
 		// GeoService rejects a scalar table with a typed NotFoundError
 		// — the handler must map it to 404, not 500.
 		{name: "non-geo table returns 404", coords: map[string]string{"z": "3", "x": "2", "y": "3"}, featErr: storage.NewNotFoundError("no geometry column"), wantStatus: http.StatusNotFound},
@@ -278,6 +284,8 @@ func Test_geoHandler_getTileFeatures(t *testing.T) {
 				if c.attrs != "bogus" && c.query != "?filter=not-json" {
 					geoSvc.On("GetFeaturesTile", mock.Anything, meta, 3, 2, 3, []string(nil), mock.Anything, 100, 0).
 						Return([]storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, c.featErr).Maybe()
+					geoSvc.On("CountFeaturesTile", mock.Anything, meta, 3, 2, 3, mock.Anything).
+						Return(int64(1), c.countErr).Maybe()
 				}
 			}
 
@@ -310,6 +318,7 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
 	geoSvc.On("GetFeaturesTile", mock.Anything, meta, 3, 2, 3, []string(nil), mock.Anything, 1, 3).
 		Return([]storage.GeoFeature{{Pkey: "pk-4", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, nil).Once()
+	geoSvc.On("CountFeaturesTile", mock.Anything, meta, 3, 2, 3, mock.Anything).Return(int64(10), nil).Once()
 
 	rec := doHandlerRequest(gh.GetTileFeatures, http.MethodGet, "/api/v1/tables/t1/tiles/3/2/3/features?offset=3", nil, map[string]string{
 		"tableId": "t1", "z": "3", "x": "2", "y": "3",
@@ -320,6 +329,50 @@ func Test_geoHandler_getTileFeatures_PagesPastDefaultLimit(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"rel":"next"`)
 	metadataSvc.AssertExpectations(t)
 	geoSvc.AssertExpectations(t)
+}
+
+// numberMatched is the count over the tile's own envelope, never the length
+// of the page just returned, and it alone decides the "next" link.
+func Test_geoHandler_getTileFeatures_NumberMatched(t *testing.T) {
+	cases := []struct {
+		name          string
+		offset        int
+		numberMatched int64
+		wantNext      bool
+	}{
+		{name: "a total larger than the page offers a next link", numberMatched: 42, wantNext: true},
+		{name: "a total the page exhausts offers no next link", numberMatched: 1, wantNext: false},
+		{name: "a last page offers no next link", offset: 41, numberMatched: 42, wantNext: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			geoSvc := &mockGeoAPI{}
+			global := storage.Settings{DefaultFeaturesLimit: 1}
+			gh := NewGeoHandler(metadataSvc, schemaSvc, geoSvc, stubSettingsAPI{settings: global}, stubTableSettingsAPI{global: global})
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			schemaSvc.On("Schema", mock.Anything, meta).Return([]service.ColumnSchema(nil), nil).Once()
+			geoSvc.On("GetFeaturesTile", mock.Anything, meta, 3, 2, 3, []string(nil), mock.Anything, 1, c.offset).
+				Return([]storage.GeoFeature{{Pkey: "pk-1", GeoJSON: `{"type":"Point","coordinates":[0,0]}`}}, nil).Once()
+			geoSvc.On("CountFeaturesTile", mock.Anything, meta, 3, 2, 3, mock.Anything).Return(c.numberMatched, nil).Once()
+
+			target := fmt.Sprintf("/api/v1/tables/t1/tiles/3/2/3/features?offset=%d", c.offset)
+			rec := doHandlerRequest(gh.GetTileFeatures, http.MethodGet, target, nil, map[string]string{
+				"tableId": "t1", "z": "3", "x": "2", "y": "3",
+			})
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, float64(c.numberMatched), body["numberMatched"])
+			assert.Equal(t, c.wantNext, strings.Contains(rec.Body.String(), `"rel":"next"`))
+			geoSvc.AssertExpectations(t)
+		})
+	}
 }
 
 func Test_geoHandler_getGeometryTypes(t *testing.T) {

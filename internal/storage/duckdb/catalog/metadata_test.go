@@ -104,29 +104,6 @@ func Test_Repository_List_RejectsInvalidSortColumn(t *testing.T) {
 	require.Error(t, err)
 }
 
-func Test_Repository_BySource(t *testing.T) {
-	r := newTestRepository(t)
-	ctx := context.Background()
-
-	derivedId, err := r.Create(ctx, "derived")
-	require.NoError(t, err)
-	importedId, err := r.Create(ctx, "imported")
-	require.NoError(t, err)
-	sourceName, sourceLayer := "buildings.geojson", ""
-	require.NoError(t, r.UpdateMetadata(ctx, importedId, storage.MetadataPatch{
-		SourceName: &sourceName, SourceLayer: &sourceLayer,
-	}))
-
-	bySource, err := r.BySource(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, map[storage.SourceKey]string{
-		{SourceName: "buildings.geojson"}: importedId,
-	}, bySource)
-	for key := range bySource {
-		assert.NotEqual(t, derivedId, bySource[key])
-	}
-}
-
 func Test_Repository_PhysicalNames(t *testing.T) {
 	r, conn := newTestRepositoryWithConn(t)
 	ctx := context.Background()
@@ -333,4 +310,29 @@ func Test_Repository_TableIds_Sort(t *testing.T) {
 
 	_, err = r.TableIds(ctx, []storage.SortField{{Column: "bogus"}})
 	assert.Error(t, err)
+}
+
+func Test_Repository_ListProvenance(t *testing.T) {
+	r, conn := newTestRepositoryWithConn(t)
+	ctx := context.Background()
+
+	imported, err := r.Create(ctx, "regions.gpkg::communes")
+	require.NoError(t, err)
+	sourceName, layer := "regions.gpkg", "communes"
+	require.NoError(t, r.UpdateMetadata(ctx, imported, storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}))
+	meta, err := r.GetMetadata(ctx, imported)
+	require.NoError(t, err)
+	materialize(t, conn, meta.PhysicalName)
+
+	derived, err := r.Create(ctx, "derived")
+	require.NoError(t, err)
+	derivedMeta, err := r.GetMetadata(ctx, derived)
+	require.NoError(t, err)
+	materialize(t, conn, derivedMeta.PhysicalName)
+
+	items, err := r.ListProvenance(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, items, 1, "a table with no source is not part of the provenance index")
+	assert.Equal(t, storage.TableProvenance{TableId: imported, TableName: "regions.gpkg::communes", SourceName: "regions.gpkg", SourceLayer: "communes"}, items[0])
 }

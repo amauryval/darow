@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,10 +27,8 @@ func NewSourcesHandler(sourceSvc sourceAPI, settings settingsAPI) *SourcesHandle
 	return &SourcesHandler{sourceService: sourceSvc, settings: settings}
 }
 
-// paginationParams reads offset/limit query params, resolved through the
-// list limits — same shape as TablesHandler's, kept as its own method rather
-// than shared, since coupling the two handlers together for ~10 lines isn't
-// worth it.
+// paginationParams reads offset/limit query params, resolved through the list
+// limits, the same shape as TablesHandler's own.
 func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int) {
 	offset = 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
@@ -44,6 +43,27 @@ func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int
 // /sources/upload route's body-size middleware.
 func (sh *SourcesHandler) MaxUploadBytes() int64 {
 	return sh.sourceService.MaxUploadBytes()
+}
+
+// sourceLimitsDTO is what an upload has to satisfy before it is attempted:
+// the config-only sources.maxSizeBytes and sources.allowedExtensions.
+type sourceLimitsDTO struct {
+	MaxSizeBytes      int64    `json:"maxSizeBytes"`
+	AllowedExtensions []string `json:"allowedExtensions"`
+}
+
+// SourceLimits handles GET /sources/limits.
+//
+// @Summary Read the upload constraints
+// @Tags sources
+// @Produce json
+// @Success 200 {object} sourceLimitsDTO
+// @Router /api/v1/sources/limits [get]
+func (sh *SourcesHandler) SourceLimits(w http.ResponseWriter, req *http.Request) {
+	response.WriteJSON(w, http.StatusOK, sourceLimitsDTO{
+		MaxSizeBytes:      sh.sourceService.MaxUploadBytes(),
+		AllowedExtensions: sh.sourceService.AllowedExtensions(),
+	})
 }
 
 // parseSrid reads an optional "srid" query param, 0 (auto-detect) if
@@ -78,9 +98,8 @@ func (sh *SourcesHandler) ListSources(w http.ResponseWriter, req *http.Request) 
 	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
 }
 
-// RefreshSources handles POST /sources/refresh. The rescanned list is
-// returned through the same paginated envelope as ListSources, offset/limit
-// applying to the freshly rescanned cache.
+// RefreshSources handles POST /sources/refresh, returning the rescanned list
+// through the same paginated envelope as ListSources.
 //
 // @Summary Rescan workDir
 // @Tags sources
@@ -107,16 +126,10 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 }
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field
-// "file"). Not part of spec/back/spec.md's original endpoint table (section 6.1
-// only lists refresh/load) — added as an explicit extension. Writes the
-// file into workDir via SourceService.Upload, then immediately loads it
-// into a table exactly like POST /sources/{name}/load would, so the
-// caller gets a queryable table back in one round trip. An optional
-// ?srid= pins the source CRS explicitly for that auto-load; a
-// multi-layer upload stays unresolved regardless — srid is supplied
-// per-layer on the follow-up Load call instead.
+// "file"), writing it into workDir and returning the rescanned entry. Loading
+// it into a table is a separate, explicit step.
 //
-// @Summary Upload a file and load it into a new table
+// @Summary Upload a file into workDir
 // @Tags sources
 // @Accept multipart/form-data
 // @Produce json
@@ -126,18 +139,9 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
 func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
-	srid, err := parseSrid(req)
-	if err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
-		return
-	}
-
-	// http.Server.ReadTimeout is a hard deadline on reading the whole
-	// request, body included: a source file of any size takes longer than
-	// any value sized for a normal request, and would be cut off mid-body
-	// regardless of the caps. Clearing it here is the read-side mirror of
-	// what ExportTable does for the write deadline, and affects no other
-	// route.
+	// ReadTimeout would cut off a large source file mid-body regardless of
+	// the caps; clearing it here is the read-side mirror of what ExportTable
+	// does for the write deadline.
 	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil {
 		slog.Warn("could not clear read deadline for upload", "error", err)
 	}
@@ -168,52 +172,48 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 			break
 		}
 	}
-	if uploaded != nil && len(uploaded.Layers) > 1 {
-		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: false, Source: uploaded})
-		return
-	}
-
-	layer := ""
-	if uploaded != nil && len(uploaded.Layers) == 1 {
-		layer = uploaded.Layers[0].Name
-	}
-	tableId, err := sh.sourceService.Load(req.Context(), savedName, layer, srid)
-	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
-		return
-	}
-
-	w.Header().Set("Location", "/tables/"+tableId)
-	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, TableId: tableId})
+	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Source: uploaded})
 }
 
-// LoadSource handles POST /sources/{name}/load. name is validated against
-// the cache by SourceService.Load itself — this handler does no
-// path validation of its own. layer selects one layer of a multi-layer
-// (.gpkg) source; required for those, rejected otherwise. An optional
-// ?srid= pins the source CRS explicitly, overriding auto-detection
-// — required if the source declares no CRS DetectCRS can resolve.
+// LoadSource handles POST /sources/{name}/load. name is validated against the
+// cache by SourceService itself. layer is required for a multi-layer source,
+// rejected otherwise; ?srid= overrides auto-detection, required if none can be
+// detected. ?tableName= names the new table, ?replace= reloads an existing one
+// in place instead of creating a second.
 //
-// @Summary Load a source file into a new table
+// @Summary Load a source file into a table
 // @Tags sources
 // @Produce json
 // @Param name path string true "Source file name"
 // @Param layer query string false "Layer name (required for multi-layer sources)"
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
+// @Param tableName query string false "Name of the created table, defaulting to the source name"
+// @Param replace query string false "Id of an existing table to reload in place instead of creating one"
+// @Success 200 {object} map[string]string
 // @Success 201 {object} map[string]string
-// @Failure 409 {object} response.ErrorResponse
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
 func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
+	tableName := strings.TrimSpace(req.URL.Query().Get("tableName"))
+	replaceId := req.URL.Query().Get("replace")
 	srid, err := parseSrid(req)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	tableId, err := sh.sourceService.Load(req.Context(), name, layer, srid)
+	if replaceId != "" {
+		if err := sh.sourceService.Reload(req.Context(), replaceId, name, layer, srid); err != nil {
+			response.WriteError(w, req, err, response.MapServiceError(err))
+			return
+		}
+		response.WriteJSON(w, http.StatusOK, map[string]string{"tableId": replaceId})
+		return
+	}
+
+	tableId, err := sh.sourceService.Load(req.Context(), name, layer, tableName, srid)
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
@@ -223,14 +223,10 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// GetSourceMetadata handles GET /sources/{name}/metadata — a preview of a
-// not-yet-loaded source's detected CRS, so a client can show it to the
-// user before Load and let them override it. layer selects one layer
-// of a multi-layer source. hasGeometry says whether the source carries a
-// geometry field at all: a source that carries none needs no CRS, and Load
-// takes it with no ?srid=. srid is null if the source declares no CRS
-// DetectCRS can resolve — Load then requires an explicit ?srid= for a source
-// that does have a geometry.
+// GetSourceMetadata handles GET /sources/{name}/metadata, a preview of a
+// not-yet-loaded source's detected CRS, so a client can show and override it
+// before Load. hasGeometry false means no CRS applies; srid null means Load
+// will require an explicit ?srid=.
 //
 // @Summary Preview a source's detected CRS
 // @Tags sources
@@ -269,10 +265,8 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 	response.WriteJSON(w, http.StatusOK, body)
 }
 
-// DeleteSource handles DELETE /sources/{name}. name is validated against
-// the cache by SourceService.Delete itself. If the source (or
-// one of its layers) was loaded, its table(s) are removed too — explicit
-// replacement is delete then re-upload.
+// DeleteSource handles DELETE /sources/{name}, erasing the file from workDir.
+// The tables already loaded from it are untouched.
 //
 // @Summary Delete a source file
 // @Tags sources
@@ -283,7 +277,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 
-	if err := sh.sourceService.Delete(req.Context(), name); err != nil {
+	if err := sh.sourceService.Delete(name); err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}

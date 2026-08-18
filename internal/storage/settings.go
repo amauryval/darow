@@ -5,21 +5,13 @@ import (
 	"time"
 )
 
-// Settings holds every server parameter that an operator legitimately
-// retunes while the process is serving, without a restart: the row/list/
-// feature page sizes, geometry simplification bounds, the
-// tile HTTP cache lifetime, and the shared TTL of the metadata/schema
-// caches. What Config keeps instead (TODO-17): the server listen port, the
-// DuckDB file path, sources.workDir, and the memory/availability guards
-// that sit on this table's own unauthenticated PATCH route — the request
-// body cap, the per-request timeout, and every LRU cache's size.
-// The three Default*Limit fields carry one page size per family of pages
-// (rows, catalogue listings, features): the number of items a handler serves
-// when the caller asks for no limit, and the most it serves when the caller
-// asks for more. They are always a real page size — internal/settings' seed
-// constants put one there the first time the row is created, and an
-// operator's value replaces it — so there is no sentinel and no fallback to
-// read them against.
+// Settings holds every server parameter an operator retunes while the process
+// is serving: the page sizes, the geometry bounds, the tile cache lifetime and
+// the metadata/schema cache TTL. Everything else is Config's (TODO-17).
+//
+// The three Default*Limit fields are one page size per family of pages, always
+// a real size: internal/settings seeds the row, an operator's value replaces
+// it, and neither is ever a sentinel.
 type Settings struct {
 	DefaultRowLimit      int
 	DefaultListLimit     int
@@ -46,9 +38,8 @@ type SettingsPatch struct {
 	CoordinateDecimals   *int
 }
 
-// SettingsStore owns the single row of runtime-editable settings, seeded
-// with internal/settings' defaults the first time the process opens the
-// database. Implemented by duckdb/catalog.
+// SettingsStore owns the single row of runtime-editable settings, seeded with
+// internal/settings' defaults when the database is first opened.
 type SettingsStore interface {
 	GetSettings(ctx context.Context) (Settings, error)
 	UpdateSettings(ctx context.Context, patch SettingsPatch) (Settings, error)

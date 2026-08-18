@@ -10,10 +10,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/amauryval/goauth/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/guards"
 	"darow/internal/service"
 	"darow/internal/settings"
 	"darow/internal/storage"
@@ -174,6 +177,12 @@ func (m *mockMetadataAPI) ListTables(ctx context.Context, sort []storage.SortFie
 	return tables, total, args.Error(2)
 }
 
+func (m *mockMetadataAPI) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
+	args := m.Called(ctx)
+	items, _ := args.Get(0).([]storage.TableProvenance)
+	return items, args.Error(1)
+}
+
 func (m *mockMetadataAPI) RemoveTable(ctx context.Context, meta storage.Metadata) error {
 	args := m.Called(ctx, meta)
 	return args.Error(0)
@@ -262,6 +271,16 @@ func (m *mockSchemaAPI) AddColumn(ctx context.Context, meta storage.Metadata, co
 	return args.Error(0)
 }
 
+func (m *mockSchemaAPI) RenameColumn(ctx context.Context, meta storage.Metadata, colName, newName string) error {
+	args := m.Called(ctx, meta, colName, newName)
+	return args.Error(0)
+}
+
+func (m *mockSchemaAPI) DropColumn(ctx context.Context, meta storage.Metadata, colName string) error {
+	args := m.Called(ctx, meta, colName)
+	return args.Error(0)
+}
+
 type mockDeriveAPI struct{ mock.Mock }
 
 var _ deriveAPI = (*mockDeriveAPI)(nil)
@@ -320,8 +339,8 @@ func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 	return features, args.Error(1)
 }
 
-func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*service.RowGeometry, error) {
-	args := m.Called(ctx, meta, pkey, coordinateDecimals)
+func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int, targetCRS string) (*service.RowGeometry, error) {
+	args := m.Called(ctx, meta, pkey, coordinateDecimals, targetCRS)
 	geometry, _ := args.Get(0).(*service.RowGeometry)
 	return geometry, args.Error(1)
 }
@@ -355,6 +374,11 @@ func (m *mockGeoAPI) GetFeaturesTile(ctx context.Context, meta storage.Metadata,
 	return features, args.Error(1)
 }
 
+func (m *mockGeoAPI) CountFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, q storage.GeoQuery) (int64, error) {
+	args := m.Called(ctx, meta, zoom, x, y, q)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 type mockSourceAPI struct{ mock.Mock }
 
 var _ sourceAPI = (*mockSourceAPI)(nil)
@@ -377,13 +401,17 @@ func (m *mockSourceAPI) Upload(filename string, content io.Reader) (string, erro
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockSourceAPI) Load(ctx context.Context, name, layer string, srid int) (string, error) {
-	args := m.Called(ctx, name, layer, srid)
+func (m *mockSourceAPI) Reload(ctx context.Context, tableId, name, layer string, srid int) error {
+	return m.Called(ctx, tableId, name, layer, srid).Error(0)
+}
+
+func (m *mockSourceAPI) Load(ctx context.Context, name, layer, tableName string, srid int) (string, error) {
+	args := m.Called(ctx, name, layer, tableName, srid)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockSourceAPI) Delete(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *mockSourceAPI) Delete(name string) error {
+	args := m.Called(name)
 	return args.Error(0)
 }
 
@@ -400,6 +428,12 @@ func (m *mockSourceAPI) SourceHasGeometry(ctx context.Context, name, layer strin
 func (m *mockSourceAPI) MaxUploadBytes() int64 {
 	args := m.Called()
 	return int64(args.Int(0))
+}
+
+func (m *mockSourceAPI) AllowedExtensions() []string {
+	args := m.Called()
+	extensions, _ := args.Get(0).([]string)
+	return extensions
 }
 
 func newHandlerRequest(method, target string, body any, params map[string]string) *http.Request {
@@ -426,6 +460,30 @@ func doHandlerRequest(handlerFunc http.HandlerFunc, method, target string, body 
 	req := newHandlerRequest(method, target, body, params)
 	rec := httptest.NewRecorder()
 	handlerFunc(rec, req)
+	return rec
+}
+
+// adminVerifier answers every request as an authorized administrator, so a
+// handler test can drive a write route the way a guarded one is reached.
+type adminVerifier struct{}
+
+func (adminVerifier) Verify(_ context.Context, _ string) (types.SessionInfo, error) {
+	return types.SessionInfo{
+		LoggedIn: true, Authorized: true,
+		Roles: []types.Role{types.RoleAdmin},
+		User:  &types.UserInfo{Provider: "fake", ID: "alice"},
+	}, nil
+}
+
+func doAdminHandlerRequest(t *testing.T, handlerFunc http.HandlerFunc, method, target string, body any, params map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	authApp, err := goauth.NewWithVerifier(adminVerifier{}, nil)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	guards.New(authApp).AdminScope()(handlerFunc).ServeHTTP(rec, newHandlerRequest(method, target, body, params))
+
 	return rec
 }
 

@@ -8,11 +8,8 @@ import (
 
 // Materializer implements storage.TableMaterializer over conn/tx, resolving a
 // derived query's table references against names. This file holds only the
-// type itself and what every family needs; the families live one per file —
-// create_from_file.go (import a source file), create_from_query.go
-// (/derive), crs.go (CRS detection and reprojection), indexes.go (the pkey
-// and RTREE indexes, and Hilbert clustering). Its counterpart, DropTable
-// (drop.go), is a function: it needs none of this type's state.
+// type itself; the families live one per file. Its counterpart, DropTable, is
+// a function, needing none of this type's state.
 type Materializer struct {
 	conn  Querier
 	tx    TxRunner
@@ -28,10 +25,9 @@ func NewMaterializer(conn Querier, tx TxRunner, names physicalNamesReader) *Mate
 	return &Materializer{conn: conn, tx: tx, names: names}
 }
 
-// findGeometryColumn inspects physicalName's catalogue entry and returns
-// the name of its geometry column, if any. The column name varies by
-// source format (often "geom", sometimes "wkb_geometry"), so it is never
-// assumed fixed.
+// findGeometryColumn inspects physicalName's catalogue entry and returns the
+// name of its geometry column, if any — never assumed fixed, since it varies
+// by source format.
 func (l *Materializer) findGeometryColumn(ctx context.Context, physicalName string) (string, error) {
 	columns, err := tableColumns(ctx, l.conn, physicalName)
 	if err != nil {

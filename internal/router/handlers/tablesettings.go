@@ -41,10 +41,8 @@ var geoOnlyFields = []string{
 	settings.FieldCoordinateDecimals,
 }
 
-// overrideField is one field's override, the effective value it resolves to,
-// and the bounds and unit both are constrained by — an override is validated
-// against the bounds the global value respects, so it publishes the same
-// ones.
+// overrideField is one field's override, its effective value, and the bounds
+// both are validated against.
 type overrideField[T int | float64] struct {
 	Override  *T `json:"override"`
 	Effective T  `json:"effective"`
@@ -56,10 +54,9 @@ func overrideFieldOf[T int | float64](field string, override *T, effective T) ov
 }
 
 // tableSettingsDTO is the JSON representation of a table's settings: its
-// override (nil when inherited) and its effective value, per field.
+// override (nil when inherited) and effective value, per field.
 // defaultRowLimit applies to every table; the rest are present only on a geo
-// table (Metadata.IsGeo) — a control that can never apply is absent, not
-// disabled.
+// table.
 type tableSettingsDTO struct {
 	TableId string `json:"tableId"`
 	IsGeo   bool   `json:"isGeo"`
@@ -129,9 +126,8 @@ func float64Override(raw json.RawMessage) (**float64, error) {
 }
 
 // parseTableSettingsPatch turns a decoded JSON object into a
-// storage.TableSettingsPatch: a key absent from body leaves that override
-// unchanged (the field stays nil), present with "null" clears it, present
-// with a number sets it.
+// storage.TableSettingsPatch: an absent key leaves that override unchanged, a
+// "null" clears it, a number sets it.
 func parseTableSettingsPatch(body map[string]json.RawMessage) (storage.TableSettingsPatch, error) {
 	var patch storage.TableSettingsPatch
 	var err error
@@ -187,11 +183,9 @@ func (tsh *TableSettingsHandler) GetTableSettings(w http.ResponseWriter, req *ht
 	response.WriteJSON(w, http.StatusOK, toTableSettingsDTO(meta, override, tsh.tableSettingsService.Resolve(meta.TableId)))
 }
 
-// UpdateTableSettings handles PATCH /tables/{tableId}/settings. Every field
-// is optional; an absent key leaves that override unchanged, a null value
-// clears it back to "inherit," and a number sets it. On a non-geo table, any
-// geometry-only field named in the body is refused as a whole, with nothing
-// persisted.
+// UpdateTableSettings handles PATCH /tables/{tableId}/settings. Every field is
+// optional, following parseTableSettingsPatch's tri-state. On a non-geo
+// table, any geometry-only field in the body is refused as a whole.
 //
 // @Summary Set or clear a table's settings overrides
 // @Tags settings
@@ -257,11 +251,9 @@ func (tsh *TableSettingsHandler) DeleteTableSettings(w http.ResponseWriter, req 
 	response.WriteJSON(w, http.StatusOK, toTableSettingsDTO(meta, storage.TableSettings{TableId: meta.TableId}, tsh.tableSettingsService.Resolve(meta.TableId)))
 }
 
-// ListOverriddenTables handles GET /settings/tables — every table that
-// carries at least one override, for the settings screen's per-table list.
-// A table is skipped rather than failing the whole request if it was
-// removed in the narrow race between listing overrides and resolving each
-// one's metadata.
+// ListOverriddenTables handles GET /settings/tables — every table carrying at
+// least one override. A table removed in the race between listing overrides
+// and resolving its metadata is skipped, not a request failure.
 //
 // @Summary List the tables that carry a settings override
 // @Tags settings

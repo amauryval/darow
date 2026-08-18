@@ -7,6 +7,7 @@ import BaseButton from '../ui/BaseButton.vue'
 import ButtonGroup from '../ui/ButtonGroup.vue'
 import Divider from '../ui/Divider.vue'
 import Typography from '../ui/Typography.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // The workspace's bar: everything that acts on what is *displayed*, in the
 // order it is read — which rows (les données), what is being written
@@ -29,6 +30,8 @@ const emit = defineEmits<{
     toggleEditing: []
     openColumns: []
 }>()
+
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 </script>
 
 <template>
@@ -50,10 +53,13 @@ const emit = defineEmits<{
                 :variant="editing ? 'primary' : 'secondary'"
                 :icon="PencilLine"
                 :aria-pressed="editing"
+                :disabled="!editing && writeDisabled"
                 :title="
-                    editing
-                        ? 'Quitter le mode édition'
-                        : 'Modifier les lignes et les géométries de cette table'
+                    !editing && writeDisabled
+                        ? writeGuardReason
+                        : editing
+                          ? 'Quitter le mode édition'
+                          : 'Modifier les lignes et les géométries de cette table'
                 "
                 @click="emit('toggleEditing')"
             >

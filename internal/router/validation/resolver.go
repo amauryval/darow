@@ -29,11 +29,9 @@ func NewTableResolver(metadataSvc MetadataGetter) TableResolver {
 	return TableResolver{metadataService: metadataSvc}
 }
 
-// ResolveTable fetches the {tableId} path param's metadata (served from
-// MetadataService's cache in the common case), writing an error response and
-// reporting ok=false if the lookup fails — 404 only when the table truly
-// does not exist (storage.NotFoundError), 500 for any other failure (a
-// dropped connection, a cancelled context). Callers must stop handling the
+// ResolveTable fetches the {tableId} path param's metadata, from
+// MetadataService's cache in the common case, writing an error response and
+// reporting ok=false if the lookup fails. Callers must stop handling the
 // request when ok is false.
 func (tr TableResolver) ResolveTable(w http.ResponseWriter, req *http.Request) (meta storage.Metadata, ok bool) {
 	tableId := chi.URLParam(req, "tableId")

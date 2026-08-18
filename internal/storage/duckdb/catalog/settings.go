@@ -15,12 +15,9 @@ import (
 const settingsColumns = `defaultRowLimit, defaultListLimit, defaultFeaturesLimit, maxSimplifyTolerance,
     maxPrecision, tileCacheMaxAgeSec, cacheTTLSec, coordinateDecimals, updatedAt`
 
-// settingsSchema is the DDL applied on every startup — already at the
-// latest column set (no accumulated pre-1.0 migration history: see LIM-7).
-// settings is a singleton: exactly one row, id fixed at 1, seeded the first
-// time the table is created from internal/settings' seed constants — the
-// three page sizes included, which is why no reader of this table ever needs
-// a fallback: the value it holds is always the one applied.
+// settingsSchema is the DDL applied on every startup, already at the latest
+// column set (LIM-7). settings is a singleton, seeded from internal/settings'
+// constants, so no reader of this table ever needs a fallback.
 var settingsSchema = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY,

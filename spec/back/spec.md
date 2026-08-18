@@ -100,9 +100,10 @@ reordered — code comments describe the code itself and do not refer to these n
     by default, what every read emits) to the EPSG:3857 the column stores, the exact mirror of the
     read. The CRS is a bound parameter. The write triggers `RefreshDerived` through the service,
     never from the storage layer.
-24. **`context.Context` is the first parameter of every method that touches DuckDB or the disk**,
-    received from `req.Context()` and propagated without derivation. Purely in-memory methods
-    (`SourceService.List`, `MaxUploadBytes`) do not take one.
+24. **`context.Context` is the first parameter of every method that touches DuckDB**, received from
+    `req.Context()` and propagated without derivation. Methods that touch neither DuckDB nor
+    anything cancellable do not take one — `SourceService.List`/`MaxUploadBytes`, and the plain
+    filesystem calls of `SourceService.Upload`/`Delete`.
 25. **Every application cache is a bounded LRU with expiry** (`hashicorp/golang-lru/v2/expirable`),
     never unbounded, with TTL and size configurable.
 
@@ -126,8 +127,9 @@ identifier, storage knows neither HTTP nor the application caches.
 
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cmd/server`                 | entrypoint: config, bootstrap, HTTP server, graceful shutdown                                                                                                                                    |
-| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4)                                                                             |
+| `cmd/server`                 | entrypoint: config, bootstrap, `goauth.New` (the only place this module is imported, §6.7), HTTP server, graceful shutdown                                                                      |
+| `internal/guards`            | maps the two application roles `github.com/amauryval/goauth/types` grants to the two authorization scopes this API needs — `Guards.AdminScope` (write) and `Guards.GuestScope` (unused today, kept for `improvements.md` IMP-18). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
+| `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4), and the `auth` block it declares itself (`AuthConfig`, §2.7)              |
 | `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
 | `internal/router`            | `chi` router, middlewares, mounting of the SPA and of Swagger                                                                                                                                    |
@@ -157,8 +159,10 @@ error alongside `*Services` for that settings load to fail into.
 
 ## 2. Configuration
 
-A `config.yaml` file at the root, **optional** (defaults apply if it is absent). Order of
-application: defaults → file → `GEOAPI_*` environment variables → validation. A malformed file, an
+A `config.yaml` file at the root, **optional** (defaults apply if it is absent);
+`config.example.yaml` beside it states every field at its default value, commented, and a test in
+`internal/config` fails if the two drift apart. Order of application: defaults → file → `GEOAPI_*`
+environment variables → validation. A malformed file, an
 unparsable variable or an invalid value are fatal errors at startup, never silently ignored.
 Validation collects **all** violations before failing.
 
@@ -168,11 +172,29 @@ File: `internal/config/config.go`.
 
 | Field                | Default | Env variable                         | Constraint |
 | -------------------- | ------- | ------------------------------------ | ---------- |
+| `host`               | `0.0.0.0` | `GEOAPI_SERVER_HOST`               | not empty  |
 | `port`               | 8080    | `GEOAPI_SERVER_PORT`                 | 1..65535   |
 | `readTimeoutSec`     | 15      | `GEOAPI_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
 | `writeTimeoutSec`    | 30      | `GEOAPI_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
 | `idleTimeoutSec`     | 60      | `GEOAPI_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
 | `shutdownTimeoutSec` | 10      | `GEOAPI_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
+| `trustedProxies`     | empty   | `GEOAPI_SERVER_TRUSTED_PROXIES`      | each entry an IP or CIDR |
+
+`host` is the interface the listener binds to, joined to `port` by `cmd/server`. The default accepts
+connections from every interface, which is what a containerized process behind a reverse proxy
+needs: bound to the loopback, a process in a container answers nothing through a published port, and
+no gateway on another host or in another container can reach it. An operator who wants the previous
+behaviour asks for it explicitly, with `127.0.0.1`.
+
+`trustedProxies` names the reverse proxy this server's `Forwarded`/`X-Forwarded-For`/
+`X-Forwarded-Host`/`X-Forwarded-Proto` headers are believed from (`internal/router`'s
+`stripUntrustedForwarded`, §6.3): read only when the request's peer falls inside one of these
+prefixes, and stripped off any other request — a header is client-controlled, so with no trusted
+upstream `FeaturesHandler` would otherwise build an OGC link (§6.2) off whatever host a direct caller
+claims. This is its only purpose: since TODO-27 replaced the header-based identity model with
+`goauth`'s own bearer-token verification, `trustedProxies` no longer feeds an identity, only link
+integrity. Config-only, parsed once at `config.Load` (`config.ParseTrustedProxies`) and again by
+`internal/router` to build the stripping middleware.
 
 ### 2.2 `duckdb`
 
@@ -200,7 +222,10 @@ always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMax
 | `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
-which takes priority over everything else (§2.6).
+which takes priority over everything else (§2.6). `maxSizeBytes` and `allowedExtensions` are the
+two config fields published to clients, read-only, by `GET /api/v1/sources/limits` (§6.1): an
+upload is refused against them server-side, so a client that cannot read them can only guess what
+it is allowed to send.
 
 ### 2.4 `settings`
 
@@ -212,9 +237,9 @@ which takes priority over everything else (§2.6).
 | `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
 The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
-config-only for the same reason `duckdb.maxSizeBytes` is (§2.2): they sit on `PATCH
-/api/v1/settings`, an unauthenticated route (`limitations.md` LIM-1), and a guard whose own limit is
-edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
+config-only for the same reason `duckdb.maxSizeBytes` is (§2.2), and the same reason the `auth`
+block is (§2.7): they sit on `PATCH /api/v1/settings`, a route every authorized writer reaches
+(§6.7), and a guard whose own limit is edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
 cap (`routes.go`'s `maxBodyBytes` middleware; the upload carries its own, §6.3) and
 `requestTimeoutSec` the same group's request
 timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
@@ -289,6 +314,61 @@ once emitted, applied after the CRS84 transform in every GeoJSON-producing route
 | `--config`  | `config.yaml` | path of the configuration file                  |
 | `--workdir` | empty         | overrides `sources.workDir` after the full load |
 
+### 2.7 `auth`
+
+The block that decides who may write. Its type, **`config.AuthConfig`, is declared by this package
+itself** — unlike the model it replaced, it names no forward-auth gateway of its own: it is the
+settings `github.com/amauryval/goauth` needs (`goauth.NewSettings`) to verify OIDC bearer tokens
+itself and decide the two application roles, `types.RoleAdmin` and `types.RoleGuest`.
+
+| Field       | Default | Env variable      | Constraint                                        |
+| ----------- | ------- | ------------------ | -------------------------------------------------- |
+| `enabled`   | `false` | `AUTH_DEMO`         | —                                                   |
+| `provider`  | empty   | `AUTH_PROVIDER`     | `zitadel` or `pocketid`, required when `enabled`    |
+| `issuer`    | empty   | `AUTH_ISSUER`       | not empty when `enabled`                            |
+| `audience`  | empty   | `AUTH_AUDIENCE`     | not empty when `enabled`                            |
+| `adminRole` | empty   | `AUTH_ADMIN_ROLE`   | —, falls back to `admin`                            |
+| `guestRole` | empty   | `AUTH_GUEST_ROLE`   | —, falls back to `guest`                            |
+
+**The environment variables break the `GEOAPI_` prefix every other override in this file carries.**
+That is not an oversight: they are the module's own exported constants (`goauth.DemoEnv`,
+`ProviderEnv`, `IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`), read by
+`applyEnvOverrides` through the constant rather than the literal it currently holds, so a rename
+inside the module cannot silently stop being read here — the module's contract, not a choice left to
+this file. `enabled` is this field's own name and **the inverse of the module's `AUTH_DEMO`**: the
+value `applyEnvOverrides` reads off that variable is negated on the way into `cfg.Auth.Enabled`, so
+`AUTH_DEMO=true` clears `enabled` and vice versa.
+
+**Two mutually exclusive shapes.** `enabled: false` (the default) is demo mode: it authorizes every
+visitor as an administrator without verifying a token at all — meant for local development, and
+refused outright by `goauth.New` unless this binary was built with the `authdemo` build tag
+(`goauth.DemoBuildTag`); a production binary carries no such tag, so a deployment that forgets to
+configure a real provider **fails at startup** rather than opening. `enabled: true` demands
+`provider`, `issuer` and `audience` all set: `provider` names which of the supported identity
+providers issued the token (`zitadel` or `pocketid` — each reads its roles from a different claim,
+`github.com/amauryval/goauth/provider`), `issuer` is that provider's base URL, `audience` is this
+application's client Id. `goauth.New` contacts the issuer for its public keys at startup, so an
+unreachable or mistyped `issuer` is a startup failure, never a caller's problem.
+
+`adminRole` and `guestRole` are the **provider's own names** for the two application roles, mapped by
+the module rather than compiled in — a Zitadel project role or a Pocket ID group named however the
+installation likes, defaulting to the literal strings `admin`/`guest` when left empty. They never
+reach the browser: `GET /api/v1/auth/session` (§6.1) answers with this application's own role names
+only.
+
+**Config-only, like §2.4's guards and for the same reason.** The block never reaches the `settings`
+table and never appears on `PATCH /api/v1/settings` — a guard editable through the surface it guards
+is not a guard, and that route is precisely one of the surfaces being guarded. Turning the provider
+on or off, or changing it, costs a restart.
+
+**A half-configured block is fatal at startup**, collected with every other violation by
+`config.Load` (§2), and the same refusal `goauth.New` would make on its own — reported here so it
+surfaces with the rest of the configuration rather than one step later, at bootstrap: `enabled: false`
+beside a declared `provider`, `issuer` or `audience`; `enabled: true` with an unknown `provider`, an
+empty `issuer` or an empty `audience`. An authentication that loads but verifies nothing, or that
+silently falls back to demo mode, would leave the API open while reading as closed — worse than
+none.
+
 ---
 
 ## 3. Sources (`workDir`)
@@ -298,9 +378,10 @@ once emitted, applied after the CRS84 transform in every GeoJSON-producing route
 
 ### 3.1 Model
 
-A `Source` carries: file name, extension, size, modification date, loaded state, `tableId` if
-loaded, and for a multi-layer format the list of its layers (each with its own loaded state and its
-`tableId`).
+A `Source` carries: file name, extension, size, modification date, and for a multi-layer format the
+names of its layers. Nothing more: **a source knows nothing of the tables loaded from it.** A load
+copies the file's data into a table (rule 13), and that table lives on its own from then on — it is
+never listed, tracked or deleted through its source.
 
 Recognized formats (`internal/service/formats.go`): Multi-layer decides whether `Load` requires a
 `layer` and whether `Refresh` populates `Source.Layers` via `ListLayers`. Introspectable decides
@@ -330,24 +411,25 @@ A file whose extension is not in `allowedExtensions`, or whose size exceeds `max
 
 | Operation           | Behaviour                                                                                                                                                                                                                                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Refresh`           | rescans `workDir`, cross-references the already loaded tables, replaces the cache. Called at startup and through `POST /sources/refresh`.                                                                                                                                                                                                                          |
-| `List`              | paginates and sorts a **copy** of the cache, without ever touching the disk again. Sorting validated against an allowlist (`name`, `sizeBytes`, `modTime`, `loaded`).                                                                                                                                                                                              |
+| `Refresh`           | rescans `workDir` and replaces the cache. Called at startup and through `POST /sources/refresh`.                                                                                                                                                                                                                                                                   |
+| `List`              | paginates and sorts a **copy** of the cache, without ever touching the disk again. Sorting validated against an allowlist (`name`, `sizeBytes`, `modTime`).                                                                                                                                                                                                        |
 | `Upload`            | writes into `workDir` after reducing the name to its base (traversal protection), checking extension and size. Refuses to overwrite an existing file.                                                                                                                                                                                                              |
-| `Load`              | imports a source (or one of its layers) into a table. `name` must exist in the cache (rule 15).                                                                                                                                                                                                                                                                    |
+| `Load`              | imports a source (or one of its layers) into a **new** table. `name` must exist in the cache (rule 15). The caller names that table; without a name it takes the source's own. A source may be loaded any number of times — each load is its own table, and nothing refuses a second one.                                                        |
+| `Reload`            | replaces an **existing** table's data with a fresh import of a cached source, resolved exactly as `Load` resolves it. The table keeps its `tableId`, its name, its settings and its stored filters — only its rows and its provenance move.                                                                                                                                                  |
 | `DetectCRS`         | reads the CRS declared by the file, importing nothing — lets the UI show and correct it before loading.                                                                                                                                                                                                                                                            |
 | `SourceHasGeometry` | reports whether the file carries a geometry field at all, importing nothing — what decides whether a CRS has to be asked for.                                                                                                                                                                                                                                      |
-| `Delete`            | removes the table(s) derived from the source and its cache entry. **The file itself is never deleted.**                                                                                                                                                                                                                                                            |
-| `UnmarkLoaded`      | drops the loaded state of whichever source or layer entry matches the given `storage.Metadata`'s `SourceName`/`SourceLayer`, a no-op if none does. Registered onto `MetadataService`'s removed-table observer by `core.NewServices` (§5.1) — the fix for a table deleted through `DELETE /tables/{tableId}` otherwise leaving its source cached as loaded and pointing at a `tableId` that no longer exists. |
+| `Delete`            | erases the file from `workDir` and drops its cache entry. The tables loaded from it are **not** touched — they hold their own copy of the data. A file already gone from the disk is not an error: the outcome asked for is the one already there.                                                                                                                  |
 
-**Locking.** `Load` holds the lock for its whole check-then-import, not just around the cache read:
-two concurrent `Load`s on the same source cannot both pass the "not loaded yet" test. `Delete`
-removes the cache entry only after all table deletions have succeeded, so that a partial failure
-leaves the source visible and retryable.
+**Locking.** `mu` only ever guards the cache itself: every method reads a **copy** of the entry it
+works on and releases the lock before touching the disk or importing. There is no cross-request
+invariant left to hold — no operation depends on another's outcome.
 
-**Loaded/not-loaded tracking.** The source ↔ table link relies on the `sourceName` and
-`sourceLayer` fields of `metadata`, **never** on `tableName` — which `PATCH /tables/{id}` may rename
-freely. Renaming a table therefore does not detach it from its source, and no unrelated table can
-pass for a source by a coincidence of names.
+**Provenance.** `metadata` records the `sourceName`/`sourceLayer` a table was imported from, and
+survives both a rename (`PATCH /tables/{id}`) and the deletion of the file itself. A table is never
+*resolved* by it — `tableId` alone identifies one — but the catalogue is listable by it:
+`Catalog.ListProvenance` projects every imported table's origin (`GET /tables/provenance`), which is
+how a client tells a source already loaded from one not yet loaded, and offers to reload a table
+rather than create a second of the same name.
 
 **Multi-layer naming.** A layer loaded from `file.gpkg` produces a table named
 `file.gpkg::layer_name`; `sourceName` receives `file.gpkg` and `sourceLayer` receives `layer_name`.
@@ -466,10 +548,10 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 
 | Interface           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `CreateFromFile`, `CreateFromQuery`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
-| `TableRepository`   | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `ListProvenance` (every imported table's `sourceName`/`sourceLayer`, §3.2), `CreateFromFile`, `CreateFromQuery`, `ReloadFromFile`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
+| `TableRepository`   | `Schema`, `Types`, `AddColumn`, `RenameColumn`, `DropColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `RowRepository`     | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete`                                                                                                                                                                                                                       |
-| `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
+| `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `CountFeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
 | `TableMaterializer` | `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. The materialization itself (CTAS, indexing, clustering, from a source file or a derived SELECT) is not on this interface — it runs transactionally through `Catalog.CreateFromFile`/`CreateFromQuery` (below) instead                                                                                                                                                                                          |
 
 Both the delete cascade and the create path are deliberately absent from these interfaces:
@@ -488,6 +570,11 @@ subset it actually calls. `core.storageAdapter` documents the full surface an ad
 `Catalog() storage.Catalog`, `Materializer() storage.TableMaterializer`, and
 `Table(meta) (TableRepository, error)`, plus `Filters() storage.FilterStore` — four accessors rather
 than a flattened union of every storage method.
+
+`Catalog.ReloadFromFile` follows the same shape as the create path: it drops the physical table
+through the same `Dropper` and rematerializes it under the **same** `physicalName` through the same
+`FileCreator`, in one transaction. No `Attachment` is touched — a reload keeps the table, so
+everything attached to its `tableId` stays valid.
 
 **Naming.** `Catalog.Remove` deletes a whole table (metadata and physical table, in a single
 transaction), `Catalog.CreateFromFile`/`CreateFromQuery` create one (metadata and physical table,
@@ -588,7 +675,8 @@ constructions run in that order rather than through a deferred closure.
 -   **Opening**: `INSTALL spatial; LOAD spatial;` once, pool sized by `duckdb.maxOpenConns` (§2.2),
     creation of the parent directory, then schema migration, then `RefreshMissingBbox` — every geo
     table left without a bbox has its derived metadata recomputed, `bbox` being derived and never
-    stored truth (rule 9). Best-effort: a failure is logged and the server still opens.
+    stored truth (rule 9), then the spatial-index repair (§4.6.1). Both are best-effort: a failure
+    is logged and the server still opens.
 -   **Readiness**: `Ping` is the connection ping **plus** the assertion that `spatial` is loaded
     (§4.8) — the extension is loaded once at open (rule 3) and every geo route depends on it.
 -   **Write serialization**: `Exec` and `WithTx` each name a `storage.WriteScope` and take that
@@ -607,10 +695,11 @@ constructions run in that order rather than through a deferred closure.
     globally is what keeps a transaction conflict off every caller without a retry path (rule 21,
     LIM-3). Across processes the choice is not the server's: DuckDB holds the database file under
     an exclusive lock, so one instance at a time serves a given database (LIM-15).
--   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error invalidates the whole
-    instance, not just the query that raised it. Every call that reaches the connection (`Query`,
-    `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError` and, on a
-    match, reopens the pool — a fresh `sql.Open` plus `INSTALL`/`LOAD spatial` — through
+-   **Fatal-instance recovery**: an `INTERNAL` or `FATAL` DuckDB error *may* invalidate the whole
+    instance, not just the query that raised it — it does not always, and a spatial index the
+    planner crashes on (§4.6.1) leaves it perfectly usable. Every call that reaches the connection
+    (`Query`, `QueryRow`, `Exec`, `WithTx`, `Ping`) checks its error against `isFatalDuckDBError`
+    and, on a match **whose pool no longer answers a ping**, reopens it — a fresh `sql.Open` plus `INSTALL`/`LOAD spatial` — through
     `recoverIfFatal`, guarded by `reopenMu` so two callers hitting the same dead instance at once
     reopen it only once. `db` itself is guarded by `dbMu`, read through `conn()`, so the swap never
     races a concurrent reader.
@@ -631,6 +720,37 @@ constructions run in that order rather than through a deferred closure.
 > **`OGC:CRS84`, never `EPSG:4326`.** EPSG:4326's official axis order is (lat, lon): using it as the
 > target CRS silently swaps X and Y. This rule applies to the four places that transform: `bbox`
 > computation, `FilteredExtent`, `GetGeometryGeoJSON`, `GetFeatures`.
+
+### 4.6.1 Spatial-index repair at open
+
+`repairSpatialIndexes` (`adapter.go`, `duckdb/tables/repair.go`) probes every geo table at open and
+rebuilds the RTREE indexes the engine cannot plan against. It exists because of one observed failure
+mode: an index whose state came back from a **replayed write-ahead log** made the spatial
+extension's own optimizer rule raise `INTERNAL Error: Operation requires a flat vector…` while
+*planning* — so every tile and every WFS read answered `500` while the rest of the server kept
+working, and the map hung on *Chargement…* (retired blocker BLK-5).
+
+-   The **probe** is the cheapest query shaped like a tile's — a constant `ST_MakeEnvelope` against
+    the geometry column — since only that shape is rewritten into an index scan and only the rewrite
+    crashes. It costs one planned query per geo table at open.
+-   Only `IsEngineError` (DuckDB's `INTERNAL`/`FATAL`) triggers a rebuild. Any other failure is
+    returned: a table that is merely missing or misnamed must not have its index silently rewritten.
+-   The **rebuild** drops every RTREE index the table carries — read from DuckDB's catalogue, never
+    rebuilt from the naming convention, an older database may name it otherwise — and recreates the
+    single one rule 19 requires, then probes again.
+-   `DropTableIndexes`/`RebuildIndexes` are what every structural `ALTER` goes through
+    (`table.alterAroundIndexes`, feeding `RenameColumn` and `DropColumn`). DuckDB refuses to alter a
+    table **any** index depends on — `Dependency Error: Cannot alter entry …` on a rename,
+    `Cannot drop this column: an index depends on a column after it!` on a drop — and that includes
+    the unique `__pkey` index every table carries, not only the RTREE one. So both come off before
+    the statement and are rebuilt after it, failure path included. It is cheap — 24 ms to rebuild
+    the RTREE index of a 35 k-multipolygon table — so no structural write is deferred because of it.
+
+Two repairs were measured and rejected. A `CHECKPOINT` at open raises the same error as a **FATAL**
+one on such a database, which invalidates the instance outright — it turns a broken map into a dead
+server. A tile predicate written without the index (four scalar comparisons on the geometry's own
+extent) plans and answers correctly, but took over 150 s for a single z2 tile on a 35 k-multipolygon
+table, against 0.4 s once the index is rebuilt.
 
 ### 4.7 Rendering an MVT tile
 
@@ -768,22 +888,19 @@ need no invalidation of their own.
 same access contract §4.2 states for storage-touching calls), and after deleting it notifies it to
 `removed`, an `*observer.Observer[storage.Metadata]` (`internal/observer`) injected through the
 constructor. `core.NewServices` builds the observer, passes it to `NewMetadataService`, and
-registers `SchemaService.InvalidateSchema` and `SourceService.UnmarkLoaded` onto it — deleting a
-table changes its structure just as surely as `AddColumn` does, and would otherwise leave a stale
-entry in `SchemaService`'s cache until its TTL, and a deleted table's source displayed as loaded
-otherwise. Registration happens once, at construction, in `core.NewServices`: `Observer[T]` is not
+registers `SchemaService.InvalidateSchema` and `TableSettingsService.InvalidateOverride` onto it —
+deleting a table changes its structure just as surely as `AddColumn` does, and would otherwise leave
+a stale entry in `SchemaService`'s cache until its TTL. Registration happens once, at construction, in `core.NewServices`: `Observer[T]` is not
 safe for concurrent registration, only for the fan-out itself, which runs after the delete has
 already committed and never returns an error — nothing a cache eviction could fail at is left to
 report by then. This is `MetadataService`'s only dependency on another service's behaviour, and it
-only goes that way — neither `SchemaService` nor `SourceService` knows `MetadataService`, only the
-observer both `MetadataService` and they hold a reference to.
+only goes that way — neither `SchemaService` nor `TableSettingsService` knows `MetadataService`,
+only the observer both `MetadataService` and they hold a reference to.
 
 -   `ListTables` paginates over `TableIds`'s deterministic order and also returns the total.
 -   `CreateFromFile`/`CreateFromQuery` thinly wrap `storage.Catalog`'s methods of the same name
     (§5.4): the transaction that guarantees a catalogue row never survives without a physical table
     is owned by `duckdb/catalog`, not by this service.
--   `LoadedSourceNames` builds the source → `tableId` lookup used by `SourceService.Refresh`, keyed
-    on `sourceName`(`::sourceLayer`).
 
 ### 5.2 `RowService` — typed row CRUD
 
@@ -837,6 +954,18 @@ never produce the second geometry column the rest of the domain assumes cannot e
 `colType` into the `ALTER TABLE` statement, checks it again with the same function — the repository
 never trusts a caller other than this service to have validated first.
 
+`RenameColumn` and `DropColumn` are the two other structural writes, invalidating the cache the same
+way. Both read the real schema first: an unknown column, a **hidden** column (§4.4) and the
+**geometry column** are refused as a `ValidationError` before the table is opened, and a rename
+additionally refuses an empty or already-taken target name. `duckdb/tables`' `table.RenameColumn`/
+`table.DropColumn` refuse the hidden and geometry columns again before quoting — the same
+belt-and-braces `AddColumn` applies to `colType`: `__pkey` and the geometry column the rest of the
+domain assumes exist must survive any caller. Neither touches `MetadataService`: no derived field
+moves, and the other columns' values do not change, so the tile cache (rule 20) stays correct.
+Both writes drop and rebuild the table's indexes (§4.6.1), DuckDB refusing to alter a table any
+index depends on. A **stored filter** (§4.5.1) or a per-table override naming the
+column is left as it is and simply stops applying — dropping a column has no undo, exactly like a transform (§5.11).
+
 ### 5.4 `DeriveService` and `ImportService` — creating a table, transactionally
 
 Neither service owns the create transaction: each calls one method on `MetadataService`
@@ -848,7 +977,8 @@ SRID / source, and cascade to every registered `Attachment`'s `CreateAttached`, 
 transaction (§4.4): a failure at any step leaves neither a metadata row nor a physical table
 behind, rolled back together — the create path's counterpart to `Catalog.Remove`'s cascade.
 `ImportService` additionally computes `sourceName`/`sourceLayer` (§3.2) from the layer suffix before
-calling `CreateFromFile`.
+calling `CreateFromFile`, and offers `ReloadFromFile` — the same import against an existing
+`tableId`, size guard included (§7).
 
 `DeriveService` applies a cheap fail-fast on the query's shape (a single statement, starting with
 `SELECT`) before ever calling `CreateFromQuery` — **this is not the authoritative check**: the real
@@ -866,9 +996,15 @@ The only service that caches a rendering result. The cache key includes: `tableI
 since all of them change the tile's contents for a given table version.
 
 Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
-`GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single row's geometry in both
+`GetFeaturesTile`, `CountFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single
+row's geometry in both
 encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
-§5.8.1), `NeighbourFeatures` (the rows within a buffer of a
+§5.8.1, and both come back in the CRS the caller asked for, `service.ResolveCRS` answering the
+`srid` there exactly as it does for an export: reprojecting a **read** changes nothing stored, and
+the CRS actually applied is reported alongside so a caller displays it rather than assumes it. A
+CRS PROJ cannot resolve is refused by the same `validateCRS` probe the export runs, before the read,
+and reaches the caller **unwrapped** — a generic "unable to fetch the geometry" over "unknown
+coordinate reference system" would hide the one thing they can fix), `NeighbourFeatures` (the rows within a buffer of a
 geometry — the query an edit session runs, unbounded in its key space like every other filtered
 read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
 tile's z/x/y.
@@ -888,9 +1024,10 @@ whose file is then streamed to the caller and removed — the escaping of a CSV,
     everywhere else it is hidden (`storage.IsHiddenColumn`, §4.4). The other two carry the geometry,
     aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other column
     becoming a property.
--   **Output CRS**: `?srid=` pins it exactly as it pins an import's source CRS; without one the
-    table goes back out in the CRS it came in (`Metadata.Srid`), and only a table whose source CRS
-    was never recorded falls back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
+-   **Output CRS** (`service.ResolveCRS`, shared with the per-row geometry read, §5.5): `?srid=`
+    pins it exactly as it pins an import's source CRS; without one the table goes back out in the
+    CRS it came in (`Metadata.Srid`), and only a table whose source CRS was never recorded falls
+    back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
     A CRS PROJ cannot resolve is refused before any file is written. A table with no geometry
     reprojects nothing.
 -   The file being complete before its first byte reaches the response, a failure to produce it is
@@ -928,7 +1065,10 @@ each method checks against live as constants in `internal/settings/constants.go`
 field's default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
 replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
 (`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
-constructor.
+constructor. It also logs one `INFO` line per field the accepted change actually moved —
+`setting changed`, with `field`, `from` and `to` — the request line saying only that a settings
+change was accepted, and `UpdatedAt` only when: after an incident, that is what tells a limit that
+was always wrong from one raised an hour earlier.
 
 `core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
 and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
@@ -1058,22 +1198,26 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path                              | Description                                                                                                                                                                                          |
 | ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/sources`                 | paginated, sortable listing of the cache (`offset`, `limit`, `sort`)                                                                                                                                 |
+| GET    | `/api/v1/sources/limits`          | the constraints an upload has to satisfy: `sources.maxSizeBytes` and `sources.allowedExtensions`, config-only (§2.3) and read-only here — published so a client states them before an attempt instead of assuming the default configuration |
 | POST   | `/api/v1/sources/refresh`         | rescans `workDir` then returns the same paginated envelope                                                                                                                                           |
-| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table, `{loaded: true, tableId}`. `?srid=` optional. A multi-layer source is left unloaded, `{loaded: false, source}` — the layer choice is the caller's |
-| POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly                                                                           |
+| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` and returns the rescanned entry, `{source}` — loading it into a table is a separate, explicit `POST /sources/{name}/load`                              |
+| POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly. `?tableName=` names the created table (default: the source's own name), `201`. `?replace=<tableId>` reloads that table's data in place instead of creating a second one, `200` |
 | GET    | `/api/v1/sources/{name}/metadata` | the file's detected CRS, without importing. `srid` is `null` if undetectable                                                                                                                         |
-| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**; `200` with the source's name                                                                                             |
+| DELETE | `/api/v1/sources/{name}`          | erases the file from `workDir`; the tables loaded from it are **kept**; `200` with the source's name                                                                                                 |
 
 **Tables**
 
 | Method | Path                                              | Description                                                                                                                                  |
 | ------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/tables`                                  | paginated, sortable listing of the metadata                                                                                                  |
+| GET    | `/api/v1/tables/provenance`                       | every imported table's origin (`tableId`, `tableName`, `sourceName`, `sourceLayer`) in one unpaginated projection; a derived table has no entry (§3.2)                                        |
 | GET    | `/api/v1/tables/{tableId}`                        | a table's metadata                                                                                                                           |
 | PATCH  | `/api/v1/tables/{tableId}`                        | rename (`tableName` only)                                                                                                                    |
 | DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data, `200` with the deleted table's id and name                                                                   |
 | GET    | `/api/v1/tables/{tableId}/schema`                 | columns and types, geometry included                                                                                                         |
 | POST   | `/api/v1/tables/{tableId}/columns`                | adds a column                                                                                                                                |
+| PATCH  | `/api/v1/tables/{tableId}/columns/{col}`          | renames `{col}`, `{name: <newName>}`                                                                                                         |
+| DELETE | `/api/v1/tables/{tableId}/columns/{col}`          | drops `{col}` and the values it held                                                                                                         |
 | GET    | `/api/v1/tables/{tableId}/columns/{col}/distinct` | distinct values of a non-geometry column, paginated (`offset`, `limit`, capped like the rows') and narrowed by an optional `search`          |
 | POST   | `/api/v1/tables/{tableId}/columns/{col}/transform` | rewrites `{col}`'s values in place, on the rows a filter names, `{written: <rowCount>}` (§8.3, §5.11)                                       |
 | POST   | `/api/v1/tables/{tableId}/columns/{col}/transform/preview` | how many rows a transform would touch and a bounded before/after sample, writing nothing (§8.3, §5.11)                             |
@@ -1098,7 +1242,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | PATCH  | `/api/v1/tables/{tableId}/rows`                 | updates several rows, each with its own values, in **one transaction**; `?crs=` as on the insert, and every row that set a geometry gets the stored one back                                                    |
 | POST   | `/api/v1/tables/{tableId}/rows/batch`           | fetches several rows by pkeys                                                                                                                                                                                   |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
-| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1) and in `OGC:CRS84`; `404` on a scalar table or an unknown row              |
+| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1). `?srid=` names the EPSG code they are read in — the table's own by default, lon/lat failing that — and the response carries the `crs` applied. A CRS PROJ cannot resolve is a `400` naming it, never a failed read; `404` on a scalar table or an unknown row |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
 | DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 
@@ -1107,11 +1251,18 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path                                                  | Description                                                                                                                                                                          |
 | ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution). `404` if `z`/`x`/`y` falls outside the WebMercatorQuad tile matrix (§4.7) |
-| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation                         |
+| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation. `numberMatched` is counted over the tile's own envelope (`CountFeaturesInTile`, §4.4), never the page's length, and it alone decides the `next` link |
 | GET    | `/api/v1/tables/{tableId}/geometry-types`             | the distinct geometry types present                                                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/bbox`                       | pkeys of the rows intersecting an extent                                                                                                                                             |
 | POST   | `/api/v1/tables/{tableId}/neighbours`                 | the features within `buffer` meters of a GeoJSON geometry (`ST_Intersects` against `ST_Buffer`), minus the rows named by `exclude` — what an edit session snaps to and carries along |
 | GET    | `/api/v1/tables/{tableId}/filtered-extent`            | extent of the rows matching a filter, to recentre a map                                                                                                                              |
+
+**Auth**
+
+| Method | Path                     | Description                                                                                             |
+| ------ | ------------------------ | --------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/auth/config`    | which identity provider the browser should sign in against — `issuer_url`, `client_id`, `scopes`, every field empty in demo mode. A **read**: it answers an anonymous caller, since it is what a browser needs before it has a token at all |
+| GET    | `/api/v1/auth/session`   | the caller a bearer token (or its absence) resolves to: `logged_in`, `authorized`, `roles`, `user` — for any token, valid or not. A **read** too, and the only pair of routes this repository does not implement: both are `github.com/amauryval/goauth`'s own (`Auth.RegisterRoutes`), mounted by `cmd/server` above every write group (§6.3, §6.7). Field names and Swagger annotations are the module's, not this repository's (§6.6) |
 
 **Settings**
 
@@ -1169,8 +1320,20 @@ consistent with the all-JSON style of the rest of the API.
 
 File: `internal/router/routes.go`.
 
-The global chain, in order: `RequestID` → structured `slog` logging → `Recoverer` → request body
-cap.
+The global chain, in order: `RequestID` → `stripUntrustedForwarded` → structured `slog` logging →
+`Recoverer` → request body cap.
+
+-   **Forwarded-header stripping** (`stripUntrustedForwarded`, `middleware.go`): clears
+    `Forwarded`/`X-Forwarded-For`/`X-Forwarded-Host`/`X-Forwarded-Proto` off any request whose peer
+    does not fall inside `server.trustedProxies` (§2.1) — a link-integrity guard for
+    `FeaturesHandler`'s OGC links (§6.2), no longer an identity source since TODO-27 replaced the
+    header-based auth model. Applied globally, every route covered.
+-   There is **no global authentication middleware** any more: `goauth`'s verifier runs inside the
+    write guard alone (§6.7), on the write routes it guards, and `/auth/session` (§6.1) runs its own
+    verification for the one anonymous-or-not read that needs it. A public read resolves no caller at
+    all — there is nothing to log for it (`middleware_log.go`'s `slogLogger` carries no `user` field
+    any more, since it sits **above** the write guard and cannot see a context value the guard sets
+    below it).
 
 Every table/row/geo/source handler holds `SettingsService` through the same narrow
 `Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
@@ -1199,6 +1362,16 @@ restart, not a `PATCH`.
     to `200`. The handler additionally neutralizes the server's `WriteTimeout` just before
     streaming, for the same reason.
 
+**Auth wiring.** `NewRouter` takes `guards.Guards` (`internal/guards`) and a `MountAuth` closure —
+`func(chi.Router)` — rather than importing `goauth` itself (§1, §6.7): `cmd/server` builds both from
+the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles(types.RoleAdmin)`
+and `MountAuth` by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the
+`/api/v1` group that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so
+`/auth/config` and `/auth/session` (§6.1) answer before any write group's guard could apply.
+`rt.guards.AdminScope()` is used on every write route's own `Group` (§6.7); `rt.guards.GuestScope()`
+exists but is unused today (`improvements.md` IMP-18) — every read stays fully public, with no guard
+of any kind.
+
 **Table resolution.** `TableResolver` (`router/validation/resolver.go`) resolves `{tableId}` once
 per request, served from the cache in the common case, and writes a `404` if the table does not
 exist. Every table handler embeds it.
@@ -1212,17 +1385,25 @@ geometry through a generic path). Used by `/filter`, `/distinct`, the rows' `sor
 
 A single error body: `{"error", "message", "code", "requestId"}` (`router/response/response.go`).
 `error` is a stable, coarse, machine-readable discriminator (`errorCode`, e.g. `not_found`,
-`bad_request`, `timeout`, `internal_error`) a client can switch on without matching on prose;
+`bad_request`, `unauthorized`, `forbidden`, `timeout`, `internal_error`) a client can switch on
+without matching on prose;
 `message` is the human-readable detail; `requestId` is the same identifier `middleware.RequestID`
 attaches to the request and the server log line, so a caller can quote it and an operator can find
 the matching entry.
 
-**A 5xx carries the same underlying message a 4xx does** — `err.Error()`, unmasked. This is a
-deliberate trade-off, not an oversight: the server is designed for a trusted network, never exposed
-directly on the Internet (§6.7, `LIM-1`), so the diagnostic value of the raw message (which may name
-a `physicalName` or quote a DuckDB error verbatim) outweighs what masking it behind the status's
-generic text would buy on this deployment model. A 5xx is still logged server-side with the request
-identifier, for the case where the caller doesn't relay what they saw.
+**A 4xx carries its underlying message; a 5xx carries it only to an authenticated caller.** The raw
+text may name a `physicalName` or quote a DuckDB error verbatim, which is diagnostic to an operator
+and an internal detail to everyone else — and every read is open to everyone (§6.7). So `WriteError`
+sends `err.Error()` on a 5xx only when `guards.Authenticated(req.Context())` reports a user the auth
+module verified, which is exactly a request that passed a guard (§6.7); otherwise it sends the
+status's own generic text (`http.StatusText`). A write route is guarded, so its caller always sees
+the detail; a public read never does. The full error is logged server-side either way, with the
+request identifier the anonymous caller still receives and can quote. A read route traverses no
+guard, so its `5xx` is generic even for an operator holding an `admin` token
+(`limitations.md` LIM-25).
+
+A `service.DisplayError` is the one message that crosses that line unchanged: it is authored to be
+shown, not a cause leaking through, so an anonymous caller reads it as-is.
 
 A service showing a clean message instead of an internal cause's raw text — a DuckDB error too far
 into the engine's own vocabulary, a multi-step rollback — wraps the cause in `service.DisplayError`
@@ -1258,30 +1439,119 @@ overrun budget from a genuine internal failure.
 | `context.Canceled`              | 499 (non-standard, nginx's "client closed request") |
 | everything else                 | 500                                                 |
 
+The write guard's own `401`/`403`/`503` (§6.7) are **not** in this table: `goauth` writes them
+itself, before any handler in this table's dispatch runs, and they do not carry this envelope at all
+— see §6.7's own note on that gap.
+
 ### 6.5 HTTP tile caching
 
 On top of the application cache (rule 20), `GET /tiles/{z}/{x}/{y}` emits an `ETag` derived from
-`UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60` —
-nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
+`UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60`.
+`public` is correct because a tile is a read and every read is open to everyone (§6.7): no shared
+cache can serve one caller a tile another was not entitled to. It stops being correct the day
+authorization goes finer than global (`improvements.md` IMP-18), and would become `private` then.
+Nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
 touching storage.
 
 ### 6.6 Swagger documentation
 
 Generated by `swag init` from the handler annotations (`mise run docs`). `docs/docs.go`,
 `docs/swagger.json` and `docs/swagger.yaml` are **generated**: never edit them by hand. Served under
-`/swagger/`.
+`/swagger/`. `swag` walks this repository's source tree, not the module graph, so `/auth/config` and
+`/auth/session` (§6.1) — `github.com/amauryval/goauth`'s own handlers — carry no annotation and are
+absent from the generated definition; that gap is described here in prose rather than in generated
+output, and the generation command itself is unchanged by their existence.
 
-### 6.7 Security — current state
+### 6.7 Security — reads are public, writes are authenticated
 
-**There is no authentication, no authorization, no CORS and no rate limiting.** Every write route
-(`POST /rows`, `DELETE /tables/{id}`, `POST /derive`, `POST /sources/upload`,
-`DELETE /sources/{name}`) is open. This is consistent with the scope (rule 16): the server is
-designed for deployment on a trusted network or behind a reverse proxy carrying those functions.
-**It is not an oversight, it is a decision** — but it rules out direct exposure on the Internet.
+**Every read is open to everyone; every route that changes state demands a bearer token whose holder
+is granted the `admin` application role.** That is the whole authorization model, and it is stated
+once here rather than route by route:
 
-The protections in place are: request body cap, pagination caps, per-request timeout, systematic
-whitelisting of identifiers and columns, restriction of `/derive` to registered tables, and
-confinement of file paths to the `workDir` cache.
+-   **Read** — every `GET`, plus the `POST`s that only query: `/tables/{tableId}/filter`, `/bbox`,
+    `/neighbours`, `/rows/batch`, `/columns/{col}/transform/preview`, `/sources/refresh` (a rescan
+    of `workDir` writes nothing), and the whole `/ogc` group. The ops routes `/healthz` and
+    `/readyz` are reads too, and must stay reachable without traversing any gateway: an
+    orchestrator's probe carries no credentials, and a readiness check behind authentication turns
+    an authentication outage into a rolling restart. `/diagnostics`, `/swagger/*`, `/ui/*` and
+    `/api/v1/auth/config`/`/api/v1/auth/session` (§6.1) are reads as well, deliberately — the same
+    decision, not an oversight of where they were registered.
+-   **Write** — everything else: row create/update/delete, `/columns`, `/columns/{col}` (rename,
+    drop) and `/columns/{col}/transform`, table rename and delete, the `/filters` writes, per-table
+    and global settings writes, `/derive`, `/derive-from-table`, `/aggregate-from-table`,
+    `/sources/upload`, `/sources/{name}/load` and `DELETE /sources/{name}`.
+
+**The identity model.** `github.com/amauryval/goauth` (`pkg/auth`'s replacement, TODO-27) verifies
+OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and
+`types.RoleGuest`. Every write demands a verified token whose bearer holds `admin` — one middleware,
+`RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on the
+very `Group`s that carried the old `Authenticated`/`CanWrite` pair. **`guest` stands exactly where an
+anonymous caller stands**: it reads everything, which everyone already may, and writes nothing — say
+that plainly rather than leaving it to be inferred, because a role that grants no privilege reads as
+a bug otherwise. The role exists to be *named*: the provider grants it to identify a reader, and this
+server can later hang a private read on it (`improvements.md` IMP-18). This is also why
+`RequireRoles` is the right middleware and `RequireAnyRole` the wrong one even for a single required
+role: the first states "this role", the second states "one of these", and a second role added to a
+`RequireAnyRole` list would silently become a writer.
+
+**Statuses.** `401` (`unauthorized`) with no bearer token or an invalid one; `403` (`forbidden`) for
+a verified token granted no role, or one granted `guest` alone; `503` if the authorization policy
+itself is unavailable. `goauth` writes all three **itself**, before any handler in §6.4's dispatch
+table runs, in its **own** body (`{error, message}`) — it offers no hook to reshape that body, so
+none of the three carries this repository's envelope: no `code`, no `requestId`. That is accepted and
+recorded as a limitation rather than worked around: wrapping the guard to re-shape a refusal it
+already wrote means buffering every guarded response for two fields, and the front only ever reads
+`error`/`message` on these three statuses (`spec/front/spec.md`). `routes_test.go` holds the
+inventory of every write route and asserts each answers `401` with no credentials, `403` for a
+verified token holding no role and for one holding `guest` alone, and its own success status for an
+`admin` token — so a route added later without a thought for authorization fails the build rather
+than shipping open.
+
+**Where the guard is mounted.** `guards.Guards.AdminScope()` is mounted with `Use` on **one `Group`
+per level of the route tree**, never once over a subtree: reads and writes share every path, and a
+route registered outside a group to escape that group's other middlewares would escape this one with
+it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for its own body cap
+(§6.3) and carrying the guard on its own group.
+
+**Trust and `trustedProxies` — no longer the same question.** Before TODO-27, `trustedProxies` (then
+part of the `auth` block) decided whose request headers this server would read as an identity.
+`goauth` verifies a bearer token itself and trusts no upstream to vouch for a caller, so
+`trustedProxies` moved to the `server` block (§2.1) and kept **only** its second, narrower purpose:
+`FeaturesHandler`'s OGC links (§6.2) are built off `Forwarded`/`X-Forwarded-*`, and those headers are
+stripped off any request whose peer falls outside it (`stripUntrustedForwarded`, §6.3) — a guard on
+the host this API prints in a link, not on who may write. Dropping it instead would mean an
+unauthenticated caller choosing the host every OGC link points at, which is worth recording rather
+than leaving as a silent consequence of the identity model changing underneath it.
+
+**What a client is told.** `GET /api/v1/auth/session` (§6.1) is `goauth`'s own answer to "who am I
+and what may I do", for any bearer token, valid or not — a **read**, answering an anonymous caller
+`logged_in: false` rather than `401`. `GET /api/v1/auth/config` (§6.1) is what a browser needs
+*before* it has a token at all: which provider to redirect to, and with which scopes, empty in demo
+mode. Both exist because the alternative is a client guessing — a browser application cannot
+evaluate a bearer token's roles itself, and discovering the answer through a failed write costs the
+user the work they had just done.
+
+**Both handlers are `goauth`'s own, mounted by `cmd/server`, not written in this repository** — the
+one pair of endpoints of this API whose body, field names and Swagger annotations (§6.6) are the
+module's rather than this repository's. `internal/router` only decides where they hang: inside the
+`/api/v1` group, above every write group, so both answer an anonymous caller (§6.3).
+
+**Accountability.** There is no longer a request-scoped identity resolved for every request the way
+the old `Authenticate` middleware built one (§6.3): `slogLogger` sits **above** the write guard, so a
+context value the guard sets is invisible to it, and a public read has no caller to name in the first
+place. A write's caller is available only inside the guard itself, through `goauth.UserFrom(ctx)` —
+this repository does not add a logging line there today (`limitations.md` LIM-22), relying instead on
+the guard's own denial warnings (`path`, `granted`, `required` roles) logged by the module on every
+`403`.
+
+**Not done, on purpose** (`limitations.md` LIM-19): no CORS and no rate limiting, both delegated to
+whatever fronts this server. Authorization is global, never per table or per row
+(`improvements.md` IMP-18) — `guards.Guards.GuestScope()` exists for that day but guards no route
+today, `guest` being equivalent to anonymous everywhere reads already are.
+
+The protections around all of this are unchanged: request body cap, pagination caps, per-request
+timeout, systematic whitelisting of identifiers and columns, restriction of `/derive` to registered
+tables, and confinement of file paths to the `workDir` cache.
 
 ---
 
@@ -1319,10 +1589,15 @@ process outright on one, so a Parquet source is never routed through either.
    through `duckdb_indexes()` that both are really there** (§4.2, §4.8) — the load fails if either
    is missing.
 
+**Reloading.** `POST /sources/{name}/load?replace=<tableId>` runs the very same sequence, in one
+transaction, against a table that already exists: its physical table is dropped and recreated under
+its own `physicalName`, its `srid`/`sourceName`/`sourceLayer` are rewritten from the load, and its
+derived metadata is refreshed. A failure rolls the whole thing back, table and metadata alike.
+
 ### 7.1 Multi-layer sources
 
-A `.gpkg` is **never** loaded as a whole. `ListLayers` enumerates its layers, each loads
-independently into its own table, and its loaded state is tracked individually (§3.2).
+A `.gpkg` is **never** loaded as a whole. `ListLayers` enumerates its layers and each loads
+independently into its own table, named `file.gpkg::layer` (§3.2).
 
 ### 7.2 Parquet and GeoParquet
 
@@ -1489,9 +1764,10 @@ read-only `SELECT __pkey, <col> AS before, (<assignment>) AS after ... LIMIT n`)
 ## 9. Project structure
 
 ```
-cmd/server/            entrypoint
+cmd/server/            entrypoint; the only package importing github.com/amauryval/goauth (§1, §6.7)
 internal/
-  config/              bootstrap-only configuration loading and validation (§2.1-2.4)
+  config/              bootstrap-only configuration loading and validation (§2.1-2.4), including AuthConfig (§2.7)
+  guards/              maps goauth's two roles to this API's two authorization scopes (§1, §6.7)
   settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
@@ -1537,12 +1813,13 @@ test files build on — sits in `fixtures_test.go`, which tests nothing itself; 
 
 | Level             | Approach                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config`          | loading with/without a file, environment overrides, invalid cases                                                                                                                                                                                                                                                                                                                                                                                             |
+| `config`          | loading with/without a file, environment overrides, invalid cases, including the `auth` block's own validation matrix (§2.7)                                                                                                                                                                                                                                                                                                                                 |
+| `guards`          | the role-to-scope mapping alone — `AdminScope`/`GuestScope` built on a fake `RoleMiddlewares`, no OIDC involved                                                                                                                                                                                                                                                                                                                                               |
 | `storage`         | unit tests of the primitives (`BuildFilter`, identifiers, sorting)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` and `write_locks.go` alone (opening, pool, per-scope write locks, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
 | `service`         | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it                                                                                   |
 | `router/handlers` | `httptest` + light doubles of the ports declared in `ports.go`                                                                                                                                                                                                                                                                                                                                                                                                |
-| `router`          | route and middleware wiring                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `router`          | route and middleware wiring, plus the inventory of every write route against the write guard, on a fake `goauth.TokenVerifier` (`fixtures_test.go`) driven with four bearer tokens — none, no role, `guest`, `admin` (§6.7)                                                                                                                                                                                                                                                                                                                  |
 
 Rule 17: a struct, method or handler delivered without its test is not finished.
 
@@ -1555,7 +1832,9 @@ _tested and vetted_, never linked — the binary is made only of `cmd/server`'s 
 `internal/webui` embeds `dist/` alone — but that is CI time spent on third-party code and a
 potential `gofmt` failure on code we do not control. Since the go tool has no exclusion mechanism,
 the package list is filtered explicitly (`go list ./... | grep -v /web/`) and `gofmt` only sweeps
-`cmd internal docs`.
+`cmd internal docs` — `pkg` is gone from that list along with `pkg/auth` itself (TODO-27); a stale
+reference to a second module here was one of TODO-27's own findings, closed by the same change that
+removed the module.
 
 ---
 

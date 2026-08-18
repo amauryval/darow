@@ -79,34 +79,6 @@ func Test_MetadataService_ListTables(t *testing.T) {
 // PATCH /tables/{id} → UpdateMetadata) must not detach it from that
 // source — LoadedSourceNames keys on SourceName, which a rename never
 // touches, not on TableName.
-func Test_MetadataService_LoadedSourceNames_SurvivesRename(t *testing.T) {
-	svc, m, _ := setupMetadataService(t)
-
-	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
-		{SourceName: "communes.geojson"}: "id-1",
-	}, nil).Once()
-
-	names, err := svc.LoadedSourceNames(context.Background())
-
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"communes.geojson": "id-1"}, names)
-}
-
-// A multi-layer source's key composes SourceName and SourceLayer with
-// layerSeparator, matching how SourceService.Refresh looks tables up.
-func Test_MetadataService_LoadedSourceNames_ComposesLayerKey(t *testing.T) {
-	svc, m, _ := setupMetadataService(t)
-
-	m.On("BySource", mock.Anything).Return(map[storage.SourceKey]string{
-		{SourceName: "regions.gpkg", SourceLayer: "communes"}: "id-1",
-	}, nil).Once()
-
-	names, err := svc.LoadedSourceNames(context.Background())
-
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"regions.gpkg::communes": "id-1"}, names)
-}
-
 func Test_MetadataService_RemoveTable(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -246,4 +218,73 @@ func Test_MetadataService_ResetCache(t *testing.T) {
 	meta, err := svc.GetMetadata(context.Background(), "id-1")
 	require.NoError(t, err)
 	assert.Equal(t, "id-1", meta.TableId)
+}
+
+func Test_MetadataService_ListProvenance(t *testing.T) {
+	cases := []struct {
+		name        string
+		failStorage bool
+		wantErr     bool
+	}{
+		{name: "returns every imported table"},
+		{name: "storage failure is wrapped", failStorage: true, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, _ := setupMetadataService(t)
+			want := []storage.TableProvenance{{TableId: "id-1", SourceName: "a.geojson"}}
+			var storageErr error
+			if c.failStorage {
+				want, storageErr = nil, errors.New("duckdb down")
+			}
+			m.On("ListProvenance", mock.Anything).Return(want, storageErr).Once()
+
+			items, err := svc.ListProvenance(context.Background())
+
+			if c.wantErr {
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, want, items)
+		})
+	}
+}
+
+func Test_MetadataService_ReloadFromFile(t *testing.T) {
+	cases := []struct {
+		name        string
+		failStorage bool
+		wantErr     bool
+	}{
+		{name: "reloads and drops the cached metadata"},
+		{name: "leaves the cache alone when storage fails", failStorage: true, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, m, _ := setupMetadataService(t)
+			svc.cache.Load().Add("id-1", storage.Metadata{TableId: "id-1"})
+
+			var storageErr error
+			if c.failStorage {
+				storageErr = errors.New("corrupt file")
+			}
+			m.On("ReloadFromFile", mock.Anything, "id-1", "a.geojson", "/data/a.geojson", "", 2154).Return(storageErr).Once()
+
+			err := svc.ReloadFromFile(context.Background(), "id-1", "a.geojson", "/data/a.geojson", "", 2154)
+
+			_, cached := svc.cache.Load().Get("id-1")
+			if c.wantErr {
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr)
+				assert.True(t, cached)
+				return
+			}
+			require.NoError(t, err)
+			assert.False(t, cached)
+		})
+	}
 }

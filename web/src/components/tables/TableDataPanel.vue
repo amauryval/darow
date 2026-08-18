@@ -10,14 +10,17 @@ import { useRowFilter } from '../../composables/useRowFilter'
 import { useToast } from '../../composables/useToast'
 import { useRowGeometry } from '../../composables/useRowGeometry'
 import { useTableSettings } from '../../composables/useTableSettings'
-import { PAGE_SIZE, useTableRows } from '../../composables/useTableRows'
+import { useSelectionView } from '../../composables/useSelectionView'
+import { useTableRows } from '../../composables/useTableRows'
 import FilteredRowsPanel from '../filters/FilteredRowsPanel.vue'
 import GeometryModal from './GeometryModal.vue'
 import TableEditBar from './TableEditBar.vue'
 import TableMapPanel from './TableMapPanel.vue'
 import TableRowsPanel from './TableRowsPanel.vue'
+import TableSelectionBar from './TableSelectionBar.vue'
 import TableToolbar from './TableToolbar.vue'
 import TransformColumnModal from './TransformColumnModal.vue'
+import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
 const props = defineProps<{
     tableId: string
@@ -27,9 +30,12 @@ const props = defineProps<{
     visibleColumns: string[]
     columns: ColumnSchema[]
     geometryColumn?: string
-    // Owned by the view: what is selected is one of the table's counters, and
-    // it is stated with the others (TableHeader). One instance, so the map and
-    // the grid share the single selection they are supposed to (§8.8).
+    // The table's own CRS: what a geometry read falls back to, and what the
+    // geometry modal's EPSG field opens on.
+    srid?: number | null
+    // Owned by the view, so it survives what this panel reloads. One instance,
+    // so the map, the grid and the selection bar share the single selection
+    // they are supposed to (§8.8).
     selection: ReturnType<typeof useFeatureSelection>
     // The applied filter and the grid's sort are the view's state, carried in
     // the URL (§9) — read once at creation (initialSort) or controlled
@@ -62,14 +68,9 @@ const toast = useToast()
 const filter = useRowFilter(tableId, columns, isGeo)
 const selection = props.selection
 
-// The table's own effective row limit (TODO-F43) — PAGE_SIZE only until it
-// has loaded, so a raised per-table or global limit is what the grid pages
-// on rather than the client's own constant.
 // rowlimit LIMITATION if high value could decrease front performance...
 const tableSettings = useTableSettings(tableId)
-const rowLimit = computed(
-    () => tableSettings.settings.value?.defaultRowLimit.effective ?? PAGE_SIZE
-)
+const rowLimit = tableSettings.rowLimit
 
 const rowsState = useTableRows(
     tableId,
@@ -84,6 +85,11 @@ const rowsState = useTableRows(
 )
 watch(rowsState.sorting, (sort) => emit('update:sort', sort), { deep: true })
 const rowEdits = useRowEdits(columns, toRef(props, 'rowColumns'))
+
+// How the selection is arranged in the grid — in place by default, pinned on
+// top or shown alone on demand (§8.6). The two arrangements are the only way a
+// row selected on the map, outside the loaded pages, is reachable in the grid.
+const selectionView = useSelectionView(rowsState.rows, rowEdits.draftRows, selection.selectedRows)
 const rowGeometry = useRowGeometry(tableId)
 const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
     dataVersion.value += 1
@@ -107,10 +113,37 @@ function toggleEditing() {
     if (props.isGeo) layerEditing.start()
 }
 
-// Leaving the mode drops both halves at once — the reshapes and the retyped
-// cells are one session. Cancelling says what it drops: a session opened to
-// give a new row its geometry loses that row (useLayerEditing.cancel).
+// The geometry half of what the session holds. The grid can count its own
+// retyped cells and its own drafts; a reshape only exists on the layer, so
+// the map reports it (MapView's `changed-count`).
+const changedGeometries = ref(0)
+
+// Everything one *Annuler* would drop, both halves at once — what the exit
+// has to be confirmed against (§8.3).
+const unsavedCount = computed(
+    () => rowEdits.dirtyCount.value + rowEdits.draftCount.value + changedGeometries.value
+)
+const confirmingCancel = ref(false)
+
+// Every way out of the mode goes through here — the *Éditer* toggle, the
+// bar's *Annuler*, the map's — so the session's work is protected once
+// rather than at each of them. An empty session is left with no question to
+// answer: the confirmation is a barrier in front of losing work, and there
+// is nothing to lose (§8.3).
 function cancelEditing() {
+    if (unsavedCount.value > 0) {
+        confirmingCancel.value = true
+        return
+    }
+    discardEditing()
+}
+
+// Drops both halves at once — the reshapes and the retyped cells are one
+// session. It says what it drops: a session opened to give a new row its
+// geometry loses that row (useLayerEditing.cancel).
+function discardEditing() {
+    confirmingCancel.value = false
+    changedGeometries.value = 0
     layerEditing.cancel()
     rowEdits.stop()
 }
@@ -136,8 +169,10 @@ async function saveEditing(changes: LayerChanges = NO_GEOMETRY_CHANGES) {
             rowEdits.pendingUpdates.value,
             rowEdits.pendingInserts.value
         )
-    )
+    ) {
+        changedGeometries.value = 0
         rowEdits.stop()
+    }
 }
 
 // The tools the map owns are rendered into the bar above both panels: they
@@ -165,24 +200,10 @@ function addDraftRow() {
     rowEdits.addDraft()
 }
 
-const displayRows = computed(() => {
-    // The rows the session is about to create come first: they are empty, and
-    // a row that has no value to sort on has no place among the sorted ones.
-    const drafts = rowEdits.draftRows.value
-    if (selection.selectedRows.value.length === 0) return [...drafts, ...rowsState.rows.value]
-    const selectedSet = new Set(selection.selectedRows.value.map((row) => row.pkey))
-    return [
-        ...drafts,
-        ...selection.selectedRows.value,
-        ...rowsState.rows.value.filter((row) => !selectedSet.has(row.pkey))
-    ]
-})
-
 function rowClassFor(row: { original: Row }) {
     // Violet, the colour a shape that belongs to no row yet is drawn in on the
     // map: the same object, the same state, on both halves of the screen.
     if (isDraft(row.original.pkey)) return 'row-draft'
-    if (!props.isGeo) return ''
     return selection.selectedPkeys.value.includes(row.original.pkey)
         ? 'row-selected cursor-pointer'
         : 'cursor-pointer'
@@ -191,14 +212,31 @@ function rowClassFor(row: { original: Row }) {
 // One click on a row toggles it in and out of the selection, exactly as one
 // click on its feature does — map selection and table selection are the same
 // selection, so the gesture that reverses it has to be the same too (§8.8).
+// A table without geometry selects the same way: the selection is what
+// duplicating and deleting act on, and those apply to every table (§8.6).
 // A click that landed in a cell's field belongs to the field, not to the row:
 // DataTable has already filtered those out, so what reaches here is a click on
 // the row itself.
 function onRowClick(row: { original: Row }) {
-    // A row that does not exist yet cannot be selected: there is nothing on the
-    // map to show, and its own geometry is the shape being drawn.
-    if (!props.isGeo || isDraft(row.original.pkey)) return
+    // A row that does not exist yet cannot be selected: it is written by the
+    // session's *Enregistrer*, and nothing acts on it before that.
+    if (isDraft(row.original.pkey)) return
     selection.toggle(row.original.pkey)
+}
+
+// What the selection bar acts on: the selection's own hydrated rows, not the
+// grid's page — a selection made on the map holds rows the grid has never
+// loaded (§8.8). Both are immediate writes, outside what a session's
+// *Enregistrer* commits (LIM-F10).
+function duplicateSelection() {
+    rowsState.duplicateRows(selection.selectedRows.value)
+}
+
+async function deleteSelection() {
+    await rowsState.deleteRows([...selection.selectedPkeys.value])
+    // Those pkeys name nothing now: left selected, they would be rehydrated
+    // against rows that no longer exist.
+    selection.clear()
 }
 
 // Opened from the grid's own column header, not from TableHeader: it acts on
@@ -248,7 +286,7 @@ async function onColumnTransformed() {
             @cancel="cancelEditing"
         />
 
-        <div class="flex min-h-0 flex-1 gap-4">
+        <div class="relative flex min-h-0 flex-1 gap-4">
             <div
                 v-if="!isGeo || focusPanel !== 'map'"
                 class="flex min-h-0 flex-col"
@@ -277,7 +315,8 @@ async function onColumnTransformed() {
                     :edits="rowEdits"
                     :editable-columns="rowColumns"
                     :columns="columns"
-                    :display-rows="displayRows"
+                    :display-rows="selectionView.displayRows.value"
+                    :selection-only="selectionView.view.value === 'only'"
                     :visible-columns="visibleColumns"
                     :is-geo="isGeo"
                     :geometry-column="geometryColumn"
@@ -307,21 +346,57 @@ async function onColumnTransformed() {
                 @request-feature="layerEditing.reach"
                 @release-features="layerEditing.release"
                 @drawn-count="rowEdits.syncDrafts"
+                @changed-count="changedGeometries = $event"
                 @save="saveEditing"
                 @cancel="cancelEditing"
             />
+
+            <!-- Floating over both panels, never inserted between them: a bar
+               that comes and goes in the layout resizes the grid and the map
+               under the pointer, mid-selection. The wrapper lets clicks through
+               so it never steals the map's or the grid's own. -->
+            <div
+                class="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4"
+            >
+                <TableSelectionBar
+                    v-if="selection.selectedPkeys.value.length > 0"
+                    :count="selection.selectedPkeys.value.length"
+                    :is-geo="isGeo"
+                    :zooming="selection.zooming.value"
+                    :duplicating="rowsState.duplicating.value"
+                    :deleting="rowsState.deleting.value"
+                    :view="selectionView.view.value"
+                    @view="selectionView.toggle"
+                    @clear="selection.clear"
+                    @zoom="selection.zoomToSelection"
+                    @duplicate="duplicateSelection"
+                    @delete="deleteSelection"
+                />
+            </div>
         </div>
     </div>
+
+    <ConfirmDialog
+        v-if="confirmingCancel"
+        title="Abandonner les modifications ?"
+        :message="`${unsavedCount} modification(s) non enregistrée(s) — géométries reprises et cellules retapées — seront perdues.`"
+        confirm-label="Abandonner"
+        @confirm="discardEditing"
+        @close="confirmingCancel = false"
+    />
 
     <GeometryModal
         v-if="rowGeometry.pkey.value"
         :pkey="rowGeometry.pkey.value"
         :geometry="rowGeometry.geometry.value"
         :wkt="rowGeometry.wkt.value"
+        :crs="rowGeometry.crs.value"
+        :table-srid="srid"
         :loading="rowGeometry.loading.value"
         :error="rowGeometry.error.value"
         @close="rowGeometry.close"
         @retry="rowGeometry.retry"
+        @reproject="rowGeometry.reproject"
         @copy="rowGeometry.copy"
     />
 

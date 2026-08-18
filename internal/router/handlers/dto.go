@@ -27,6 +27,8 @@ type metadataDTO struct {
 	RowCount       int64  `json:"rowCount"`
 	Bbox           string `json:"bbox,omitempty"`
 	Srid           *int   `json:"srid,omitempty"`
+	SourceName     string `json:"sourceName,omitempty"`
+	SourceLayer    string `json:"sourceLayer,omitempty"`
 }
 
 func toMetadataDTO(m storage.Metadata) metadataDTO {
@@ -40,12 +42,32 @@ func toMetadataDTO(m storage.Metadata) metadataDTO {
 		GeometryColumn: m.GeometryColumn,
 		RowCount:       m.RowCount,
 		Bbox:           m.Bbox,
+		SourceName:     m.SourceName,
+		SourceLayer:    m.SourceLayer,
 	}
 	if m.Srid != 0 {
 		srid := m.Srid
 		dto.Srid = &srid
 	}
 	return dto
+}
+
+// provenanceDTO names the source a table was imported from, the projection
+// the sources screen reads to tell which files already have a table.
+type provenanceDTO struct {
+	TableId     string `json:"tableId"`
+	TableName   string `json:"tableName"`
+	SourceName  string `json:"sourceName"`
+	SourceLayer string `json:"sourceLayer,omitempty"`
+}
+
+func toProvenanceDTO(p storage.TableProvenance) provenanceDTO {
+	return provenanceDTO{
+		TableId:     p.TableId,
+		TableName:   p.TableName,
+		SourceName:  p.SourceName,
+		SourceLayer: p.SourceLayer,
+	}
 }
 
 // linkDTO is an OGC API - Features / RFC 8288 link, the navigation element
@@ -259,21 +281,15 @@ type deletedDTO struct {
 	RowsRemoved int64  `json:"rowsRemoved,omitempty"`
 }
 
-// uploadResultDTO is POST /sources/upload's response. Loaded discriminates
-// its two outcomes explicitly instead of a client probing which fields are
-// set: a multi-layer source is left unloaded (Source carries its layers for
-// the caller to pick one), anything else is loaded immediately (TableId is
-// the new table).
+// uploadResultDTO is POST /sources/upload's response: the freshly scanned
+// source, its layers included, so the caller can pick what to load next.
 type uploadResultDTO struct {
-	Loaded  bool            `json:"loaded"`
-	TableId string          `json:"tableId,omitempty"`
-	Source  *service.Source `json:"source,omitempty"`
+	Source *service.Source `json:"source,omitempty"`
 }
 
-// fieldDescriptorDTO is one setting's operational range, served alongside
-// the values so a client constrains an input against the bounds the server
-// enforces instead of retyping them. A bound the field does not have is
-// absent, never a placeholder number.
+// fieldDescriptorDTO is one setting's operational range, served with the
+// values so a client constrains an input against the bounds the server
+// enforces. A bound the field does not have is absent, never a placeholder.
 type fieldDescriptorDTO struct {
 	Unit             string   `json:"unit"`
 	Minimum          *float64 `json:"minimum,omitempty"`

@@ -6,30 +6,38 @@ import {
     getExpandedRowModel,
     useVueTable
 } from '@tanstack/vue-table'
-import { layerKey, useSources } from '../../composables/useSources'
+import { useSources } from '../../composables/useSources'
+import type { useTableProvenance } from '../../composables/useTableProvenance'
 import { toSourceRows } from '../../utils/sourceRows'
 import type { SourceRow } from '../../utils/sourceRows'
-import Badge from '../ui/Badge.vue'
 import DataTable from '../ui/DataTable.vue'
 import ErrorState from '../ui/ErrorState.vue'
 import ListFooter from '../ui/ListFooter.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import SourceActionsCell from './SourceActionsCell.vue'
 import SourceNameCell from './SourceNameCell.vue'
+import SourceTablesCell from './SourceTablesCell.vue'
 import SourceSizeCell from './SourceSizeCell.vue'
 
 // The files/layers tree: column definitions, the TanStack instance and the
-// four states (§8.1). Takes the whole useSources instance rather than a
-// narrower prop set — its action functions (startLoad, remove…) are already
-// the single owner of that state, so the cell definitions call them directly
-// the way TableRowsPanel calls into useTableRows.
-const props = defineProps<{ state: ReturnType<typeof useSources> }>()
+// four states (§8.1). Takes the whole useSources instance — it already owns
+// that state, so the cell definitions call its actions directly.
+const props = defineProps<{
+    state: ReturnType<typeof useSources>
+    provenance: ReturnType<typeof useTableProvenance>
+}>()
+
+const emit = defineEmits<{ startLoad: [row: SourceRow] }>()
+
+// A file row lists what the file itself produced; a layer row only what that
+// layer did — the two never mix (§3.2 back).
+function tablesOf(row: SourceRow) {
+    return row.layerCount === undefined
+        ? props.provenance.tablesOf(row.source.name, row.layerName)
+        : []
+}
 
 const rows = computed<SourceRow[]>(() => toSourceRows(props.state.sources.value))
-
-function rowKey(row: SourceRow): string {
-    return row.layerName ? layerKey(row.source, row.layerName) : row.source.name
-}
 
 const columnHelper = createColumnHelper<SourceRow>()
 const columnDefs = [
@@ -54,15 +62,9 @@ const columnDefs = [
             })
     }),
     columnHelper.display({
-        id: 'status',
-        header: 'Statut',
-        enableSorting: true,
-        cell: ({ row }) =>
-            row.original.layerCount !== undefined
-                ? null
-                : h(Badge, { tone: row.original.loaded ? 'success' : 'neutral' }, () =>
-                      row.original.loaded ? 'Chargée' : 'Non chargée'
-                  )
+        id: 'tables',
+        header: 'Tables chargées',
+        cell: ({ row }) => h(SourceTablesCell, { tables: tablesOf(row.original) })
     }),
     columnHelper.display({
         id: 'actions',
@@ -71,18 +73,9 @@ const columnDefs = [
         cell: ({ row }) =>
             h(SourceActionsCell, {
                 row: row.original,
-                editingEpsg: props.state.epsgEditingKey.value === rowKey(row.original),
-                epsg: props.state.epsgInput.value,
-                detecting: props.state.epsgDetecting.value,
-                epsgApplies: props.state.epsgApplies.value,
-                loadingRow: props.state.loadingKey.value === rowKey(row.original),
+                loadedCount: tablesOf(row.original).length,
                 deleting: props.state.deletingName.value === row.original.source.name,
-                'onUpdate:epsg': (value: string) => (props.state.epsgInput.value = value),
-                onStartLoad: () =>
-                    props.state.startLoad(row.original.source, row.original.layerName),
-                onCancelLoad: props.state.cancelLoad,
-                onConfirmLoad: () =>
-                    props.state.confirmLoad(row.original.source, row.original.layerName),
+                onStartLoad: () => emit('startLoad', row.original),
                 onRemove: () => props.state.remove(row.original.source.name)
             })
     })
@@ -118,7 +111,12 @@ const table = useVueTable({
         empty-message="Aucune source détectée — importez un fichier pour commencer."
     >
         <template #footer>
-            <ListFooter :sentinel="state.sentinel" :loading="state.loading.value" />
+            <ListFooter
+                :sentinel="state.sentinel"
+                :loading="state.loading.value"
+                :loaded="state.sources.value.length"
+                :total="state.total.value"
+            />
         </template>
     </DataTable>
 </template>

@@ -73,6 +73,45 @@ func Test_tablesHandler_listTables(t *testing.T) {
 	}
 }
 
+func Test_tablesHandler_listTableProvenance(t *testing.T) {
+	cases := []struct {
+		name       string
+		listErr    error
+		wantStatus int
+		wantLen    int
+	}{
+		{name: "returns every imported table", wantStatus: http.StatusOK, wantLen: 2},
+		{name: "storage failure returns 500", listErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			th := &TablesHandler{metadataService: metadataSvc, settings: defaultTestSettings}
+
+			items := []storage.TableProvenance{
+				{TableId: "t1", TableName: "a.geojson", SourceName: "a.geojson"},
+				{TableId: "t2", TableName: "b.gpkg::roads", SourceName: "b.gpkg", SourceLayer: "roads"},
+			}
+			if c.listErr != nil {
+				items = nil
+			}
+			metadataSvc.On("ListProvenance", mock.Anything).Return(items, c.listErr).Once()
+
+			rec := doHandlerRequest(th.ListTableProvenance, http.MethodGet, "/api/v1/tables/provenance", nil, nil)
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				body := decodeJSON[map[string][]provenanceDTO](rec)
+				if assert.Len(t, body["tables"], c.wantLen) {
+					assert.Equal(t, "roads", body["tables"][1].SourceLayer)
+				}
+			}
+			metadataSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_tablesHandler_listPaginationParams(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -268,24 +307,108 @@ func Test_tablesHandler_addColumn(t *testing.T) {
 	}
 }
 
+func Test_tablesHandler_renameColumn(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		renameErr  error
+		wantStatus int
+	}{
+		{name: "renames the column", wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "validation error returns 400", renameErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", renameErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				schemaSvc.On("RenameColumn", mock.Anything, meta, "age", "years").Return(c.renameErr).Once()
+			}
+
+			body := map[string]string{"name": "years"}
+			rec := doHandlerRequest(th.RenameColumn, http.MethodPatch, "/api/v1/tables/t1/columns/age", body, map[string]string{"tableId": "t1", "col": "age"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_tablesHandler_dropColumn(t *testing.T) {
+	cases := []struct {
+		name       string
+		lookupErr  error
+		dropErr    error
+		wantStatus int
+	}{
+		{name: "drops the column", wantStatus: http.StatusOK},
+		{name: "unknown table returns 404", lookupErr: storage.NewNotFoundError("not found"), wantStatus: http.StatusNotFound},
+		{name: "validation error returns 400", dropErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
+		{name: "unclassified failure returns 500", dropErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			schemaSvc := &mockSchemaAPI{}
+			th := &TablesHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings,
+				TableResolver:   validation.NewTableResolver(metadataSvc),
+				ColumnValidator: validation.NewColumnValidator(schemaSvc),
+				schemaService:   schemaSvc,
+			}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
+			if c.lookupErr == nil {
+				schemaSvc.On("DropColumn", mock.Anything, meta, "age").Return(c.dropErr).Once()
+			}
+
+			rec := doHandlerRequest(th.DropColumn, http.MethodDelete, "/api/v1/tables/t1/columns/age", nil, map[string]string{"tableId": "t1", "col": "age"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			metadataSvc.AssertExpectations(t)
+			schemaSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_tablesHandler_deriveTable(t *testing.T) {
 	cases := []struct {
 		name            string
 		deriveErr       error
+		authenticated   bool
 		wantStatus      int
 		wantBodyExcerpt string
 	}{
 		{name: "derives a new table", wantStatus: http.StatusCreated},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
-			// The server is never exposed on the Internet (LIM-1), so a raw
-			// storage failure (a DuckDB "Binder Error" here) is still
-			// reported to the caller rather than masked behind a generic
-			// 500 — see response.WriteError.
+			// A raw storage failure (a DuckDB "Binder Error" here) reaches
+			// the authenticated caller a write route always has, and never
+			// an anonymous one — see response.WriteError.
 			name:            "storage failure returns 500 with the underlying detail",
 			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
+			authenticated:   true,
 			wantStatus:      http.StatusInternalServerError,
 			wantBodyExcerpt: "Binder Error",
+		},
+		{
+			name:            "storage failure hides the underlying detail from an unauthenticated caller",
+			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
+			wantStatus:      http.StatusInternalServerError,
+			wantBodyExcerpt: http.StatusText(http.StatusInternalServerError),
 		},
 	}
 
@@ -297,7 +420,13 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 			deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 
 			body := map[string]string{"query": "SELECT 1", "newTableName": "derived"}
-			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
+			doRequest := doHandlerRequest
+			if c.authenticated {
+				doRequest = func(handlerFunc http.HandlerFunc, method, target string, body any, params map[string]string) *httptest.ResponseRecorder {
+					return doAdminHandlerRequest(t, handlerFunc, method, target, body, params)
+				}
+			}
+			rec := doRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {

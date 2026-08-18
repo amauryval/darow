@@ -8,10 +8,9 @@ import (
 )
 
 // txQuerier adapts an externally-owned *sql.Tx to Querier and TxRunner, so
-// Materializer's existing methods — including clusterByHilbert's own WithTx
-// call — join a caller-managed transaction instead of nesting a second one,
-// which would deadlock: the outer transaction already holds its scope's
-// lock for its whole duration, which is why the scope is ignored here.
+// Materializer's methods join a caller-managed transaction instead of nesting
+// a second one, which would deadlock. The scope is ignored here: the outer
+// transaction already holds its lock.
 type txQuerier struct{ tx *sql.Tx }
 
 func (q txQuerier) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
@@ -35,10 +34,9 @@ func (q txQuerier) WithTx(ctx context.Context, _ storage.WriteScope, fn func(tx 
 // table the transaction has created but not yet committed.
 func NewTxQuerier(tx *sql.Tx) Querier { return txQuerier{tx} }
 
-// NewTxMaterializer builds a Materializer that reads and writes entirely
-// against tx — the tx-scoped counterpart wired into duckdb.New's
-// FileCreator/QueryCreator closures, so a table's materialization joins the
-// same transaction its catalogue row and derived metadata are written in.
+// NewTxMaterializer builds a Materializer reading and writing entirely
+// against tx, so a table's materialization joins the same transaction its
+// catalogue row and derived metadata are written in.
 func NewTxMaterializer(tx *sql.Tx, names physicalNamesReader) *Materializer {
 	q := txQuerier{tx: tx}
 	return &Materializer{conn: q, tx: q, names: names}

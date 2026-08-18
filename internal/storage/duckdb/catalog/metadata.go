@@ -12,13 +12,9 @@ import (
 	"darow/internal/storage"
 )
 
-// metadataSchema is the DDL applied on every startup — already at the
-// latest column set (LIM-7: a fresh database gets it directly, an existing
-// one catches up through schemaMigrations below). isGeo/geometryColumn are
-// not columns here: they are derived from the
-// physical table's own catalogue entry at read time (TODO-10), never
-// stored, so they can never drift from what the physical table actually
-// has.
+// metadataSchema is the DDL applied on every startup, already at the latest
+// column set: an existing database catches up through schemaMigrations.
+// isGeo/geometryColumn are absent, being derived at read time (TODO-10).
 const metadataSchema = `
 CREATE TABLE IF NOT EXISTS metadata (
     tableId TEXT PRIMARY KEY,
@@ -37,17 +33,14 @@ CREATE INDEX IF NOT EXISTS idx_metadata_name ON metadata(tableName);
 `
 
 // schemaMigrations are ALTER statements applied in order, once each, to an
-// existing metadata table whose recorded version trails this list. The
-// first non-empty entry this package has had (LIM-7): isGeo/geometryColumn
-// move from stored columns to a value derived at read time (TODO-10).
+// existing metadata table whose recorded version trails this list.
 var schemaMigrations = []string{
 	`DROP INDEX IF EXISTS idx_metadata_geo`,
 	`ALTER TABLE metadata DROP COLUMN IF EXISTS isGeo`,
 	`ALTER TABLE metadata DROP COLUMN IF EXISTS geometryColumn`,
-	// srid loses its DEFAULT 4326: that default made every scalar table and
-	// every derived geo table (CreateFromQuery never sets it) report a CRS
-	// it does not have. A row already carrying the old default keeps that
-	// concrete value — the migration only stops new rows from getting one.
+	// srid loses its DEFAULT 4326, which made every scalar and derived table
+	// report a CRS it does not have. A row already carrying it keeps that
+	// value: only new rows are affected.
 	`ALTER TABLE metadata ALTER COLUMN srid DROP DEFAULT`,
 }
 
@@ -161,9 +154,8 @@ func (r *Repository) GetMetadata(ctx context.Context, tableId string) (storage.M
 	return r.deriveGeometry(ctx, m)
 }
 
-// metadataColumns lists the columns GetMetadata/List scan, in scan order.
-// srid coalesces to 0 — no known CRS, same "unset" sentinel
-// SourceService.DetectCRS already uses for an undetectable one — rather
+// metadataColumns lists the columns GetMetadata/List scan, in scan order. srid
+// coalesces to 0, the same unset sentinel an undetectable CRS uses, rather
 // than a NULL a scalar or derived table has no reason to carry.
 const metadataColumns = `
     tableId, physicalName, tableName, createdAt, updatedAt,
@@ -234,35 +226,34 @@ func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset,
 	return tables, total, nil
 }
 
-// BySource maps every loaded table's source key to its tableId in a single
-// query. A table with no sourceName (e.g. created via /derive) is excluded.
-func (r *Repository) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
+// ListProvenance returns every table imported from a source file, ordered by
+// tableName. A derived table, having no source, is left out.
+func (r *Repository) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
 	rows, err := r.conn.Query(ctx, `
-        SELECT tableId, sourceName, COALESCE(sourceLayer, '')
-        FROM metadata WHERE sourceName IS NOT NULL AND sourceName != ''
+        SELECT tableId, tableName, sourceName, COALESCE(sourceLayer, '')
+        FROM metadata
+        WHERE COALESCE(sourceName, '') <> ''
+        ORDER BY tableName, tableId
     `)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	bySource := map[storage.SourceKey]string{}
+	items := []storage.TableProvenance{}
 	for rows.Next() {
-		var tableId string
-		var key storage.SourceKey
-		if err := rows.Scan(&tableId, &key.SourceName, &key.SourceLayer); err != nil {
+		var p storage.TableProvenance
+		if err := rows.Scan(&p.TableId, &p.TableName, &p.SourceName, &p.SourceLayer); err != nil {
 			return nil, err
 		}
-		bySource[key] = tableId
+		items = append(items, p)
 	}
-	return bySource, rows.Err()
+	return items, rows.Err()
 }
 
-// Create registers a new logical table in metadata and returns its
-// generated tableId. It does not create the underlying physical table —
-// callers use TableCreator for that; isGeo/geometryColumn need no
-// persisting afterward, GetMetadata derives them once the physical table
-// exists (TODO-10).
+// Create registers a new logical table in metadata and returns its generated
+// tableId. It does not create the physical table, and persists no geometry
+// info: GetMetadata derives that once the table exists.
 func (r *Repository) Create(ctx context.Context, tableName string) (string, error) {
 	tableId := uuid.NewString()
 	if err := r.CreateWithId(ctx, tableId, tableName); err != nil {
@@ -358,9 +349,8 @@ func (r *Repository) UpdateMetadata(ctx context.Context, tableId string, patch s
 }
 
 // RefreshDerivedMetadata recomputes rowCount and bumps updatedAt from the
-// underlying table. Bbox is only recomputed when touchesGeometry — an
-// aggregation over the whole geometry column — otherwise the existing bbox
-// is left untouched.
+// underlying table. Bbox costs an aggregation over the whole geometry column,
+// so it is only recomputed when touchesGeometry.
 func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string, touchesGeometry bool) error {
 	meta, err := r.GetMetadata(ctx, tableId)
 	if err != nil {
@@ -383,15 +373,11 @@ func (r *Repository) RefreshDerivedMetadata(ctx context.Context, tableId string,
 		}
 		var minX, minY, maxX, maxY sql.NullFloat64
 		// Count and extent are aggregated in a single scan: MIN/MAX skip the
-		// NULL geometries COUNT(*) still counts, so no WHERE clause has to
-		// split them into two passes over the same table.
+		// NULL geometries COUNT(*) still counts.
 		//
-		// The geometry column is stored reprojected to EPSG:3857 (section 7
-		// of spec/back/spec.md), but bbox is reported in lon/lat order so API
-		// consumers — notably map clients, whose camera/bounds APIs take
-		// WGS84 degrees — never have to reproject it themselves. Target
-		// CRS must be OGC:CRS84, not EPSG:4326: the latter's official axis
-		// order is (lat, lon), which would silently swap X/Y here.
+		// bbox is reported in lon/lat so that map clients never reproject it
+		// themselves. The target must be OGC:CRS84, not EPSG:4326, whose axis
+		// order would silently swap X and Y.
 		query := fmt.Sprintf(`
             SELECT COUNT(*), MIN(ST_XMin(g)), MIN(ST_YMin(g)), MAX(ST_XMax(g)), MAX(ST_YMax(g))
             FROM (

@@ -5,12 +5,9 @@ import (
 	"time"
 )
 
-// TableSettings is one table's departure from the global Settings row: every
-// field is nullable, nil meaning "inherit the global value," non-nil an
-// explicit per-table override. DefaultRowLimit applies to every table;
-// DefaultFeaturesLimit, MaxSimplifyTolerance, MaxPrecision, TileCacheMaxAgeSec
-// and CoordinateDecimals only mean anything for a geo table (Metadata.IsGeo)
-// and are never set on any other.
+// TableSettings is one table's departure from the global Settings row: a nil
+// field inherits the global value, a non-nil one overrides it. Only
+// DefaultRowLimit means anything for a table that is not geo.
 type TableSettings struct {
 	TableId string
 
@@ -24,18 +21,16 @@ type TableSettings struct {
 	UpdatedAt time.Time
 }
 
-// HasOverride reports whether any field of s carries an override — the line
-// between "a row worth storing" and "nothing to store," since TableSettings
-// is sparse: a table with no override has no row at all.
+// HasOverride reports whether any field of s carries an override: the store is
+// sparse, so a table with none has no row at all.
 func (s TableSettings) HasOverride() bool {
 	return s.DefaultRowLimit != nil || s.DefaultFeaturesLimit != nil || s.MaxSimplifyTolerance != nil ||
 		s.MaxPrecision != nil || s.TileCacheMaxAgeSec != nil || s.CoordinateDecimals != nil
 }
 
-// TableSettingsPatch carries a partial update to a TableSettings row, field
-// by field: a nil field leaves that override unchanged, a non-nil field
-// pointing to nil clears it back to "inherit," and a non-nil field pointing
-// to a value sets that override.
+// TableSettingsPatch carries a partial update to a TableSettings row: a nil
+// field leaves that override unchanged, a non-nil one pointing to nil clears
+// it back to inherited, and one pointing to a value sets it.
 type TableSettingsPatch struct {
 	DefaultRowLimit      **int
 	DefaultFeaturesLimit **int

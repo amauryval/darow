@@ -1,19 +1,16 @@
 # syntax=docker/dockerfile:1
 
+# Stage 1: Build UI (Node.js)
 FROM node:22-bookworm AS ui
 WORKDIR /app
 COPY web/package.json web/package-lock.json ./web/
 RUN cd web && npm ci
 COPY web ./web
-# Vite's outDir (../internal/webui/dist, see web/vite.config.ts) lands one
-# level up from web/, so the build needs internal/webui to exist first.
 COPY internal/webui ./internal/webui
 RUN cd web && npm run build
 
+# Stage 2: Build Go (with CGO)
 FROM golang:1.26-bookworm AS build
-# duckdb-go links against libstdc++ via cgo — build-essential provides the
-# C++ toolchain needed at link time (règle 21 concerns the app's own write
-# lock, not this: this is purely a build-time linker dependency).
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -23,17 +20,11 @@ COPY . .
 COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
     && swag init -g cmd/server/main.go -o docs
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server ./cmd/server
-RUN mkdir -p /out/data/sources
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
 
-# distroless/cc ships glibc, libstdc++ and ca-certificates (duckdb-go links
-# against libstdc++ via cgo; the spatial extension is fetched over HTTPS at
-# first run) with no shell or package manager — a smaller, narrower runtime
-# than debian-slim. The nonroot tag runs as uid/gid 65532 already.
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Stage 3: final image (glibc compatible)
+FROM gcr.io/distroless/cc-debian12:latest
 WORKDIR /app
-COPY --from=build /out/server ./server
-COPY config.yaml ./config.yaml
-COPY --from=build --chown=nonroot:nonroot /out/data ./data
-EXPOSE 8080
-ENTRYPOINT ["./server"]
+COPY --from=build /out/server.run ./server.run
+COPY --from=build /out/data /data
+ENTRYPOINT ["./server.run"]

@@ -11,6 +11,7 @@ import FilterEditorModal from './FilterEditorModal.vue'
 import ActiveFilterPill from './ActiveFilterPill.vue'
 import SavedFilterMenu from './SavedFilterMenu.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import { useWriteGuard } from '../../composables/useWriteGuard'
 
 // activeFilterId is owned by the view (TableDetailView, §9 — the URL carries
 // the applied filter) and controlled here through the usual prop/emit pair,
@@ -20,11 +21,9 @@ const props = defineProps<{
     columns: ColumnSchema[]
     activeFilterId: string | null
 }>()
-// The tree the parent filters on is *derived* here, never held in two places:
-// every filter is persisted, so the catalogue is the single source of truth
-// and the bar only tracks which of its filters is applied. Keeping a parallel
-// draft tree is what let an edit save a second filter instead of updating the
-// one it came from.
+// The tree the parent filters on is derived here, never held twice: every
+// filter is persisted, so the catalogue is the single source of truth and the
+// bar only tracks which of its filters is applied.
 const emit = defineEmits<{
     'update:nodes': [nodes: DraftNode[]]
     'update:activeFilterId': [id: string | null]
@@ -32,6 +31,7 @@ const emit = defineEmits<{
 
 const toast = useToast()
 const saved = useSavedFilters(toRef(props, 'tableId'))
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // Only one filter applies at a time: a second one would silently AND with the
 // first, which the toolbar cannot show.
@@ -126,7 +126,13 @@ async function onRemove(filter: SavedFilter) {
 
 <template>
     <div class="flex min-w-0 flex-wrap items-center gap-2">
-        <BaseButton variant="primary" size="sm" :icon="Filter" @click="openCreate"
+        <BaseButton
+            variant="primary"
+            size="sm"
+            :icon="Filter"
+            :disabled="writeDisabled"
+            :title="writeDisabled ? writeGuardReason : undefined"
+            @click="openCreate"
             >Filtrer</BaseButton
         >
 

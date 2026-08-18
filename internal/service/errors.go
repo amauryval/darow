@@ -2,38 +2,27 @@ package service
 
 import "fmt"
 
-// ValidationError marks a service failure caused by the request itself
-// (malformed input, an unsupported option) rather than a storage or
-// internal failure, so the router can map it to 400 instead of the 500
-// default — the same role ExportValidationError already plays
-// for Export.
+// ValidationError marks a service failure caused by the request itself,
+// rather than by storage, so the router maps it to 400 instead of 500.
 type ValidationError struct{ msg string }
 
 func (e *ValidationError) Error() string { return e.msg }
 
-// NotFoundError marks a service failure caused by a missing entity (an
-// unknown source, layer, or table) so the router can map it to 404 instead
-// of the 500 default.
+// NotFoundError marks a service failure caused by a missing entity, so the
+// router maps it to 404 instead of 500.
 type NotFoundError struct{ msg string }
 
 func (e *NotFoundError) Error() string { return e.msg }
 
-// ConflictError marks a service failure caused by state that already
-// exists (e.g. a source already loaded into a table) so the router can map
-// it to 409 instead of the 500 default.
+// ConflictError marks a service failure caused by state that already exists,
+// so the router maps it to 409 instead of 500.
 type ConflictError struct{ msg string }
 
 func (e *ConflictError) Error() string { return e.msg }
 
 // DisplayError wraps an internal failure with a message meant to be shown
-// as-is, for the case where a service builds a clean, deliberate message
-// about an otherwise messy underlying cause (a multi-step rollback, a
-// DuckDB error whose own text is too internal to show) and wants that
-// message displayed instead of the cause's raw text. It carries no status
-// of its own: response.WriteError still classifies the wrapped cause
-// through MapServiceError's normal dispatch (Unwrap keeps errors.As/
-// errors.Is working through it), and only substitutes DisplayMessage for
-// what reaches the client.
+// as-is instead of the cause's raw text. It carries no status of its own:
+// the wrapped cause still decides it, through Unwrap.
 type DisplayError struct {
 	message string
 	cause   error

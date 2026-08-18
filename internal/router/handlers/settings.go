@@ -20,10 +20,8 @@ func NewSettingsHandler(settingsSvc settingsAPI) *SettingsHandler {
 	return &SettingsHandler{settingsService: settingsSvc}
 }
 
-// settingsField is one setting as the read routes serve it: the value
-// applied, and the bounds and unit it is constrained by — one object per
-// field, so a client never has to hold a value and its bounds as two
-// structures kept in step.
+// settingsField is one setting as the read routes serve it: the value applied
+// and the bounds it is constrained by, kept together.
 type settingsField[T int | float64] struct {
 	Value T `json:"value"`
 	fieldDescriptorDTO
@@ -33,10 +31,8 @@ func settingsFieldOf[T int | float64](field string, value T) settingsField[T] {
 	return settingsField[T]{Value: value, fieldDescriptorDTO: fieldDescriptorOf(field)}
 }
 
-// settingsDTO is the JSON representation of the settings row — every field
-// editable and every field the value actually applied, the three
-// default*Limit page sizes included: the server holds no second, hidden
-// limit a client would have to be told about.
+// settingsDTO is the JSON representation of the settings row: every field
+// editable, and every value the one actually applied.
 type settingsDTO struct {
 	DefaultRowLimit      settingsField[int]     `json:"defaultRowLimit"`
 	DefaultListLimit     settingsField[int]     `json:"defaultListLimit"`
@@ -63,9 +59,8 @@ func toSettingsDTO(s storage.Settings) settingsDTO {
 	}
 }
 
-// settingsPatchDTO is the JSON body PATCH /settings accepts — every field
-// optional, a nil field leaving that setting unchanged, mirroring
-// storage.SettingsPatch — one accepted field per field of settingsDTO.
+// settingsPatchDTO is the JSON body PATCH /settings accepts, mirroring
+// storage.SettingsPatch: a nil field leaves that setting unchanged.
 type settingsPatchDTO struct {
 	DefaultRowLimit      *int     `json:"defaultRowLimit"`
 	DefaultListLimit     *int     `json:"defaultListLimit"`
@@ -106,9 +101,8 @@ func (sh *SettingsHandler) GetSettings(w http.ResponseWriter, req *http.Request)
 	response.WriteJSON(w, http.StatusOK, toSettingsDTO(current))
 }
 
-// UpdateSettings handles PATCH /settings. Every field is optional; a value
-// out of its bounds (e.g. defaultRowLimit above the server's ceiling) is rejected
-// as a whole, with nothing persisted.
+// UpdateSettings handles PATCH /settings. Every field is optional; a value out
+// of its bounds is rejected as a whole, with nothing persisted.
 //
 // @Summary Update the runtime-editable settings
 // @Tags settings

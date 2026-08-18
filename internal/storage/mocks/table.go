@@ -32,6 +32,14 @@ func (m *TableRepository) AddColumn(ctx context.Context, colName, colType string
 	return m.Called(ctx, colName, colType).Error(0)
 }
 
+func (m *TableRepository) RenameColumn(ctx context.Context, oldName, newName string) error {
+	return m.Called(ctx, oldName, newName).Error(0)
+}
+
+func (m *TableRepository) DropColumn(ctx context.Context, colName string) error {
+	return m.Called(ctx, colName).Error(0)
+}
+
 func (m *TableRepository) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	return m.Called(ctx, req).Error(0)
 }
@@ -171,6 +179,12 @@ func (m *GeoRepository) FeaturesInTile(ctx context.Context, zoom, x, y int, q st
 	return features, callArgs.Error(1)
 }
 
+func (m *GeoRepository) CountFeaturesInTile(ctx context.Context, zoom, x, y int, q storage.FeatureQuery) (int64, error) {
+	callArgs := m.Called(ctx, zoom, x, y, q)
+	count, _ := callArgs.Get(0).(int64)
+	return count, callArgs.Error(1)
+}
+
 func (m *GeoRepository) PkeysInBbox(ctx context.Context, bbox [4]float64, offset, limit int) ([]string, error) {
 	callArgs := m.Called(ctx, bbox, offset, limit)
 	pkeys, _ := callArgs.Get(0).([]string)
@@ -182,14 +196,14 @@ func (m *GeoRepository) Extent(ctx context.Context, q storage.GeoQuery) (string,
 	return callArgs.String(0), callArgs.Error(1)
 }
 
-func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
-	callArgs := m.Called(ctx, pkeys, decimals)
+func (m *GeoRepository) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys, decimals, targetCRS)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)
 }
 
-func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
-	callArgs := m.Called(ctx, pkeys, decimals)
+func (m *GeoRepository) WKTByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error) {
+	callArgs := m.Called(ctx, pkeys, decimals, targetCRS)
 	result, _ := callArgs.Get(0).(map[string]string)
 	return result, callArgs.Error(1)
 }

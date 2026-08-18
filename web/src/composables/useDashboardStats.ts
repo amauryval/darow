@@ -5,17 +5,12 @@ import { errorMessage } from '../client/http'
 import { computeDashboardStats, type DashboardStats } from '../utils/dashboardStats'
 import { useSettings } from './useSettings'
 
-// Fallback page size when /settings hasn't resolved yet — matches the
-// server's own default cap (internal/config's MaxListLimit), so the first
-// page this fires never gets clamped down mid-loop.
-const FALLBACK_PAGE_SIZE = 500
-
 // Data-overview section's source: unlike every other list in the app, the
 // dashboard needs the *whole* catalogue to sum/aggregate, not one displayed
 // page — so this is the one place allowed to page a listing to completion
 // instead of going through usePaginatedList's infinite scroll.
 export function useDashboardStats() {
-    const settings = useSettings()
+    const { listLimit } = useSettings()
     const stats = ref<DashboardStats | null>(null)
     const loading = ref(false)
     const loadedOnce = ref(false)
@@ -25,12 +20,11 @@ export function useDashboardStats() {
         loading.value = true
         error.value = ''
         try {
-            const limit = settings.current.value?.defaultListLimit.value ?? FALLBACK_PAGE_SIZE
             const tables: Metadata[] = []
             let offset = 0
             let total = Infinity
             while (offset < total) {
-                const page = await listTables(offset, limit)
+                const page = await listTables(offset, listLimit.value)
                 tables.push(...page.tables)
                 total = page.total
                 offset += page.tables.length

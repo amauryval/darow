@@ -8,33 +8,20 @@ import (
 	"darow/internal/storage"
 )
 
-// physicalNamesReader is the subset of storage.Catalog CreateFromQuery
-// needs to validate that a derived query only references already
-// registered tables.
+// physicalNamesReader is the subset of storage.Catalog CreateFromQuery needs
+// to check that a derived query only references registered tables.
 type physicalNamesReader interface {
 	PhysicalNames(ctx context.Context) (map[string]bool, error)
 }
 
 // CreateFromQuery materializes physicalName from a caller-provided SELECT
-// query — the query itself must already be restricted to SELECT by the
-// caller. __pkey is always freshly generated here, wrapping the
-// caller's query exactly like CreateFromFile generates one around an
-// imported file: the caller's SELECT is free to project any
-// columns — including a partial projection, a GROUP BY, or a join —
-// without having to know about __pkey itself. A query that already
-// projects a __pkey column (e.g. a plain "SELECT * FROM t" over an
-// already-imported table, which naturally carries its own __pkey through
-// the wildcard) has that column excluded from the wrapper's own wildcard
-// rather than colliding with the new one — checked via DESCRIBE rather
-// than assumed, since DuckDB's "* EXCLUDE (__pkey)" errors if no such
-// column exists in the source query at all. A derived table is always
-// materialized, never a view, and is a frozen snapshot: no sync
-// with its source in either direction.
+// query, always wrapping it in a freshly generated __pkey so the query itself
+// never has to know about one. The result is a frozen snapshot, never a view.
 //
-// args binds sourceQuery's placeholders. DuckDB carries them through all
-// three stages unchanged — json_serialize_sql parses a "?" as part of the
-// grammar, DESCRIBE and the CTAS bind them — so a server-assembled query
-// keeps its filter values as parameters instead of interpolating them.
+// A source query already projecting a __pkey has it excluded from the
+// wrapper's wildcard rather than colliding — checked via DESCRIBE, since
+// "* EXCLUDE (__pkey)" errors when no such column exists. args binds
+// sourceQuery's own placeholders, which DuckDB carries through every stage.
 func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, sourceQuery string, args ...any) (string, bool, error) {
 	if err := storage.ValidateIdentifier(physicalName); err != nil {
 		return "", false, err
@@ -78,24 +65,20 @@ func (l *Materializer) CreateFromQuery(ctx context.Context, physicalName, source
 }
 
 // parsedQuery is the subset of DuckDB's json_serialize_sql output needed to
-// validate a /derive query structurally, rather than by keyword blacklist —
-// a blacklist can never enumerate every DuckDB table function that reads
-// files or system state (read_csv, read_text, duckdb_settings, ...).
+// validate a /derive query structurally: a keyword blacklist could never
+// enumerate every table function reading files or system state.
 type parsedQuery struct {
 	Error        bool   `json:"error"`
 	ErrorMessage string `json:"error_message"`
 	Statements   []any  `json:"statements"`
 }
 
-// validateDeriveQuery parses query with DuckDB's own SQL parser
-// (json_serialize_sql) and walks the resulting AST, rejecting anything that
-// isn't a single SELECT over already-registered tables. json_serialize_sql
-// itself rejects any non-SELECT statement, so this also enforces the
-// SELECT-only rule with the engine's own grammar rather than a regex
-// approximation of it. Package-level so both the materializer (a /derive
-// query) and the row-transform write path (an assignment expression probed
-// as a SELECT) go through the exact same gate — a second, weaker validator
-// for the write path is what this shape prevents.
+// validateDeriveQuery parses query with DuckDB's own parser and walks the AST,
+// rejecting anything that is not a single SELECT over registered tables — the
+// engine's grammar rather than a regex approximation of it.
+//
+// It is package-level so that the materializer and the row-transform write
+// path go through this exact gate, never a second, weaker one.
 func validateDeriveQuery(ctx context.Context, conn Querier, names physicalNamesReader, query string) error {
 	var raw string
 	if err := conn.QueryRow(ctx, `SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR)) AS VARCHAR)`, query).Scan(&raw); err != nil {
@@ -148,10 +131,9 @@ func collectCTENames(node any, into map[string]bool) {
 	}
 }
 
-// validateSelectNode walks every node of a parsed SELECT statement,
-// rejecting table functions (no arbitrary DuckDB function may back
-// a derived table — that includes file/system readers like read_csv or
-// duckdb_settings) and any base table not in allowed.
+// validateSelectNode walks every node of a parsed SELECT statement, rejecting
+// every table function — no DuckDB function may back a derived table — and any
+// base table absent from allowed.
 func validateSelectNode(node any, allowed map[string]bool) error {
 	switch v := node.(type) {
 	case map[string]any:

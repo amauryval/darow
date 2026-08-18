@@ -12,37 +12,26 @@ import (
 	"darow/internal/storage"
 )
 
-// ExportValidationError marks an Export failure caused by the request
-// itself (an unsupported format, an unknown CRS, or a geometry format asked
-// of a table that has none) rather than a storage failure, so the router can
-// map it to 400 instead of 500.
+// ExportValidationError marks an Export failure caused by the request itself,
+// rather than by storage, so the router maps it to 400 instead of 500.
 type ExportValidationError struct{ msg string }
 
 func (e *ExportValidationError) Error() string { return e.msg }
 
-// defaultExportCRS is what an export without an explicit CRS is written in
-// — the same lon/lat every other geometry output uses.
+// defaultExportCRS is what a read without an explicit CRS is written in —
+// the same lon/lat every other geometry output uses.
 const defaultExportCRS = "OGC:CRS84"
 
-// tableResolverForExport is what ExportService needs to reach the table
-// whose rows DuckDB copies out.
-type tableResolverForExport interface {
-	Table(meta storage.Metadata) (storage.TableRepository, error)
-}
-
-// ExportService writes a table out in one of storage.ExportFormats. Every
-// format goes through DuckDB's own COPY into a temporary file, which is then
-// streamed to the caller: the escaping of a CSV, the shape of a
-// FeatureCollection and the GeoParquet metadata are the engine's business,
-// and none of them is rebuilt here. The file is complete before its first
-// byte reaches the response, so a failure to produce it is still answerable
-// as a normal error rather than a truncated download.
+// ExportService writes a table out in one of storage.ExportFormats, through
+// DuckDB's own COPY into a temporary file streamed to the caller. That file is
+// complete before its first byte ships, so a failure is never a truncated
+// download.
 type ExportService struct {
-	tables tableResolverForExport
+	tables tableResolver
 }
 
 // NewExportService builds an ExportService copying tables out through tables.
-func NewExportService(tables tableResolverForExport) *ExportService {
+func NewExportService(tables tableResolver) *ExportService {
 	return &ExportService{tables: tables}
 }
 
@@ -65,13 +54,12 @@ func (s *ExportService) ContentType(meta storage.Metadata, format storage.Export
 	}
 }
 
-// ExportCRS resolves the CRS an export is written in, in the "AUTH:CODE"
-// form ST_Transform expects. requested is the caller's EPSG code and wins
-// when set; without one the table goes back out in the CRS it came in
-// (meta.Srid), and only a table whose source CRS was never recorded falls
-// back to lon/lat. EPSG:4326 is always named OGC:CRS84 — the axis order of
-// the former would silently swap X and Y.
-func ExportCRS(requested int, meta storage.Metadata) string {
+// ResolveCRS resolves the CRS a geometry leaves the server in, in the
+// "AUTH:CODE" form ST_Transform expects: the requested EPSG code, else the
+// table's own, else lon/lat. EPSG:4326 is always named OGC:CRS84, whose axis
+// order is X then Y. Shared by the export and by a single row's geometry
+// read, so both answer the same code the same way.
+func ResolveCRS(requested int, meta storage.Metadata) string {
 	srid := requested
 	if srid == 0 {
 		srid = meta.Srid
@@ -83,9 +71,8 @@ func ExportCRS(requested int, meta storage.Metadata) string {
 }
 
 // FileName is what the exported file is called. A file carrying geometry
-// always names its CRS, because no format states it reliably — GeoParquet's
-// metadata omits it and GeoJSON is read as lon/lat whatever it holds — and
-// because the default is the table's own CRS rather than one fixed value.
+// always names its CRS, since no format states it reliably and the default is
+// the table's own.
 func FileName(meta storage.Metadata, format storage.ExportFormat, targetCRS string) string {
 	if !format.IsGeoFormat() || !meta.IsGeo {
 		return fmt.Sprintf("%s.%s", meta.TableName, format.Extension())

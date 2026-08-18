@@ -12,6 +12,7 @@ import type {
     RowsPage,
     RowValue,
     SchemaResponse,
+    TableProvenance,
     TablesPage,
     TransformPreview,
     TransformResult,
@@ -21,6 +22,12 @@ import type {
 export function listTables(offset: number, limit: number, sort?: string): Promise<TablesPage> {
     const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : ''
     return get(`/tables?offset=${offset}&limit=${limit}${sortParam}`)
+}
+
+// The whole catalogue's provenance in one call, so the sources screen can tell
+// which files already have a table without paging through /tables.
+export function listTableProvenance(): Promise<{ tables: TableProvenance[] }> {
+    return get('/tables/provenance')
 }
 
 export function getTable(tableId: string): Promise<Metadata> {
@@ -43,6 +50,20 @@ export function addColumn(tableId: string, name: string, type: string): Promise<
     return post(`/tables/${tableId}/columns`, { name, type })
 }
 
+// Renaming and dropping act on the structure, not on what is displayed: the
+// caller reloads the schema afterwards, as it does after addColumn.
+export function renameColumn(
+    tableId: string,
+    col: string,
+    name: string
+): Promise<{ name: string }> {
+    return patch(`/tables/${tableId}/columns/${encodeURIComponent(col)}`, { name })
+}
+
+export function dropColumn(tableId: string, col: string): Promise<{ name: string }> {
+    return del(`/tables/${tableId}/columns/${encodeURIComponent(col)}`)
+}
+
 export function listRows(
     tableId: string,
     offset: number,
@@ -60,18 +81,16 @@ export function getRowsByPkey(tableId: string, pkeys: string[]): Promise<{ rows:
     return post(`/tables/${tableId}/rows/batch`, { pkeys })
 }
 
-// A geometry is written in the CRS the map itself speaks (lon/lat), which
-// is also what every geometry read emits — the server reprojects to what it
-// stores. Naming another CRS is the caller's business, never a conversion
-// done here.
+// A geometry is written in the CRS the map speaks (lon/lat), which is what
+// every read emits too — the server reprojects to what it stores. Naming
+// another CRS is the caller's business, never a conversion done here.
 function crsParam(crs?: string): string {
     return crs ? `?crs=${encodeURIComponent(crs)}` : ''
 }
 
-// Inserts one or more rows in a single request; returns the new rows'
-// primary keys in insertion order. A single insert that sets the geometry
-// echoes back what the server actually stored, to be drawn instead of the
-// draft that was sent.
+// Inserts one or more rows in a single request, returning the new pkeys in
+// insertion order. A single insert setting the geometry echoes back what was
+// stored, to be drawn instead of the draft that was sent.
 export function addRows(
     tableId: string,
     rows: Array<Record<string, unknown>>,
@@ -89,10 +108,9 @@ export function updateRow(
     return patch(`/tables/${tableId}/rows/${pkey}${crsParam(crs)}`, updates)
 }
 
-// Several rows in one transaction: every row lands or none does. This is
-// what a topological edit writes through — moving a shared boundary changes
-// the edited row and each neighbour carrying the same vertex, and half of
-// that landing is a corrupted boundary.
+// Several rows in one transaction: all land or none. This is what a
+// topological edit writes through — a shared boundary moves in every row
+// carrying the vertex, and half of that landing is a corrupted boundary.
 export function updateRows(
     tableId: string,
     updates: Array<{ pkey: string; values: Record<string, unknown> }>,
@@ -104,8 +122,15 @@ export function updateRows(
 // A single row's geometry, in both encodings: GeoJSON to draw or edit it,
 // WKT to read and copy it. Full resolution, lon/lat — the geometry is
 // deliberately absent from every other row read.
-export function getRowGeometry(tableId: string, pkey: string): Promise<RowGeometry> {
-    return get(`/tables/${tableId}/rows/${pkey}/geometry`)
+// srid reprojects what is read, exactly as it does for an export, and is left
+// out to get the table's own CRS. Nothing stored changes either way.
+export function getRowGeometry(
+    tableId: string,
+    pkey: string,
+    srid?: number | null
+): Promise<RowGeometry> {
+    const qs = srid ? `?srid=${srid}` : ''
+    return get(`/tables/${tableId}/rows/${pkey}/geometry${qs}`)
 }
 
 export function deleteRow(tableId: string, pkey: string): Promise<Deleted> {
@@ -137,12 +162,9 @@ export function aggregateTableFromTable(
     return post(`/tables/${tableId}/aggregate-from-table`, spec)
 }
 
-// Streams a table export and triggers a browser download through this
-// client (getBlob), instead of a plain <a href> that bypasses it entirely:
-// that left a failure to show up as a bare JSON error tab, or a truncated
-// file with no indication anything went wrong. Rejects like any other
-// client call — the caller turns that into the same errorMessage/toast
-// every other action uses.
+// Streams an export and triggers the download through this client (getBlob),
+// not a plain <a href> that bypasses it: a failure would otherwise land as a
+// bare JSON tab. Rejects like any other call, for the caller's usual toast.
 export async function exportTable(
     tableId: string,
     format: ExportFormat,
@@ -175,10 +197,9 @@ export function filterRows(
     return post(`/tables/${tableId}/filter`, { conditions, limit })
 }
 
-// Lists a column's distinct values, paginated server-side. `search` keeps
-// only the values containing it (case-insensitive, wildcards literal), which
-// is what makes this usable as a value-suggestion source on a high-cardinality
-// column: the server returns the first `limit` matches, never everything.
+// A column's distinct values, paginated server-side. `search` keeps only the
+// values containing it (case-insensitive, wildcards literal), which is what
+// makes this a suggestion source on a high-cardinality column.
 export function getDistinctValues(
     tableId: string,
     col: string,

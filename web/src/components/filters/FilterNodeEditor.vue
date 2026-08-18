@@ -24,10 +24,8 @@ import Typography from '../ui/Typography.vue'
 const OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']
 
 // The boolean connector is a left-hand column, not a sentence above the list:
-// the first row reads "Où", the second carries the one editable ET/OU (a list
-// joins with a single connector), the rest repeat it as plain text. The whole
-// predicate then reads straight down, and a nested group indents under that
-// same column instead of nesting a second bordered box.
+// "Où", then the one editable ET/OU, then that word repeated as plain text.
+// The predicate reads straight down, a nested group indenting under it.
 const props = defineProps<{
     tableId: string
     columns: ColumnSchema[]

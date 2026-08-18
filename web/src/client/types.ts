@@ -18,39 +18,51 @@ export interface Metadata {
     rowCount: number
     bbox?: string
     srid: number
+    // The workDir file the table was imported from, absent for a derived one.
+    sourceName?: string
+    sourceLayer?: string
 }
 
-interface SourceLayer {
-    name: string
-    loaded: boolean
-    tableId?: string
+// One entry of the provenance index: which table came from which source file.
+// A derived table has no entry at all.
+export interface TableProvenance {
+    tableId: string
+    tableName: string
+    sourceName: string
+    sourceLayer?: string
 }
 
+// A file found in workDir. It says nothing of the tables loaded from it: a
+// load copies the data, and the table lives on its own from then on.
 export interface Source {
     name: string
     ext: string
     sizeBytes: number
     modTime: string
-    loaded: boolean
-    tableId?: string
-    layers?: SourceLayer[]
+    layers?: string[]
 }
 
-// Matches deletedDTO: what a delete route confirms happened. Id is the
-// deleted object's identifier (a table/source name, a row's pkey); Name is
-// only present when it differs from Id; RowsRemoved only on a row-level
-// delete.
+// Matches deletedDTO: what a delete route confirms happened. id is the deleted
+// object's identifier (a table/source name, a row's pkey); name only when it
+// differs from id; rowsRemoved only on a row-level delete.
 export interface Deleted {
     id: string
     name?: string
     rowsRemoved?: number
 }
 
-// Matches uploadResultDTO — POST /sources/upload's response, discriminated
-// by loaded rather than probed for a tableId: a multi-layer GeoPackage
-// comes back unloaded, with its source (layers included) for the caller to
-// pick one, anything else loads straight into a new table.
-export type UploadResult = { loaded: true; tableId: string } | { loaded: false; source: Source }
+// Matches uploadResultDTO — POST /sources/upload's response: the freshly
+// scanned source, layers included. Loading it is a separate, explicit step.
+export interface UploadResult {
+    source?: Source
+}
+
+// Matches sourceLimitsDTO of /sources/limits: what an upload has to satisfy,
+// read from the running deployment's config.yaml rather than assumed.
+export interface SourceLimits {
+    maxSizeBytes: number
+    allowedExtensions: string[]
+}
 
 export interface SourceCRS {
     srid: number | null
@@ -83,11 +95,14 @@ export interface Row {
 }
 
 // A row's geometry, as served by the per-row geometry route: GeoJSON to
-// draw it, WKT to read it. Both at full resolution, in lon/lat.
+// draw it, WKT to read it. crs is what they are actually expressed in — the
+// requested EPSG, else the table's own, else lon/lat — and is displayed
+// rather than assumed.
 export interface RowGeometry {
     pkey: string
     geometry: GeoJSON.Geometry | null
     wkt: string
+    crs: string
 }
 
 export interface RowsPage {
@@ -106,11 +121,9 @@ export interface SchemaResponse {
     columns: ColumnSchema[]
 }
 
-// Matches storage.FilterCondition — a node is either a leaf
-// (column/operator/value) or a boolean group (bool + conditions), never
-// both. Column and operator are validated server-side against the table's
-// real schema and a fixed operator whitelist, so no enum is enforced
-// client-side.
+// Matches storage.FilterCondition — a node is either a leaf (column/operator/
+// value) or a boolean group (bool + conditions), never both. Both are
+// validated server-side, so no enum is enforced client-side.
 export interface FilterCondition {
     column?: string
     operator?: string
@@ -121,19 +134,17 @@ export interface FilterCondition {
     conditions?: FilterCondition[]
 }
 
-// One column a guided derivation computes rather than carries over: a free
-// SQL scalar expression over the source table's columns, under a chosen
-// name. The expression is validated server-side (DuckDB's own parser), so
-// nothing checks it here beyond it being non-empty.
+// One column a guided derivation computes rather than carries over: a free SQL
+// scalar expression over the source table, under a chosen name. It is
+// validated server-side, so nothing checks it here beyond being non-empty.
 export interface ComputedColumn {
     alias: string
     expression: string
 }
 
 // Matches service.DeriveSpec — a derivation from one source table, described
-// structurally instead of as SQL. Every field but newTableName is optional:
-// an empty spec derives the whole source table. The SQL is assembled
-// server-side, which is why no query string appears here.
+// structurally instead of as SQL. Every field but newTableName is optional.
+// The SQL is assembled server-side, hence no query string here.
 export interface DeriveSpec {
     newTableName: string
     columns?: string[]
@@ -149,10 +160,9 @@ export interface AggregateColumn {
     expression: string
 }
 
-// Matches service.AggregateSpec — a GROUP BY derivation from one source
-// table, distinct from DeriveSpec: an empty groupBy aggregates the whole
-// table into one row, never "every column" (invalid under GROUP BY unless
-// grouped or aggregated).
+// Matches service.AggregateSpec — a GROUP BY derivation from one source table,
+// distinct from DeriveSpec: an empty groupBy aggregates the whole table into
+// one row, never "every column".
 export interface AggregateSpec {
     newTableName: string
     groupBy?: string[]
@@ -160,10 +170,9 @@ export interface AggregateSpec {
     conditions?: FilterCondition[]
 }
 
-// A filter saved against a table, server-side. Its conditions are the same
-// tree an ad-hoc filter posts, validated against the table's real schema at
-// save time — so a stored filter is always applicable. Deleting the table
-// deletes its filters.
+// A filter saved against a table, server-side. Its conditions are the tree an
+// ad-hoc filter posts, validated against the real schema at save time — so a
+// stored filter is always applicable. Deleting the table deletes its filters.
 export interface SavedFilter {
     filterId: string
     tableId: string
@@ -190,17 +199,10 @@ export interface ErrorResponse {
     requestId: string
 }
 
-// Matches storage.Settings — every server parameter an operator legitimately
-// retunes while the process is serving, without a restart. What Config keeps
-// instead (TODO-17): the listen port, the DuckDB file path, sources.workDir,
-// and the memory/availability guards that sit on this table's own
-// unauthenticated PATCH route (the request body cap, the per-request
-// timeout, every LRU cache's size) — none of that appears here, so it has no
-// place on a screen of *editable* settings.
-// The three default*Limit fields are one page size per family of pages: how
-// many items the server returns when a request asks for no limit, and the
-// most it returns when a request asks for more. They are stored, never
-// derived, so what is read here is what the server applies.
+// Matches storage.Settings — every server parameter an operator retunes while
+// the process is serving. What stays in Config (port, DuckDB path, workDir,
+// the memory guards) is absent here, so it has no place on a settings screen.
+// The three default*Limit fields are one stored page size per family of pages.
 export interface Settings {
     defaultRowLimit: SettingsField
     defaultListLimit: SettingsField
@@ -213,11 +215,9 @@ export interface Settings {
     updatedAt: string
 }
 
-// FieldBounds is what the server enforces on a setting, published beside it:
-// the unit its value is expressed in, and the range internal/settings.Validate
-// refuses outside of. A bound the field does not have is absent — never 0
-// standing in for "none". minimum is inclusive, exclusiveMinimum is not, and
-// a field states one of the two, never both.
+// What the server enforces on a setting, published beside it: its unit and the
+// range internal/settings.Validate refuses outside of. An absent bound means
+// none, never 0; a field states minimum or exclusiveMinimum, never both.
 export interface FieldBounds {
     unit: string
     minimum?: number
@@ -242,20 +242,17 @@ export type SettingsFieldKey = keyof Omit<Settings, SettingsReadOnlyKey>
 // with the read, never back with the write.
 export type SettingsPatch = Partial<Record<SettingsFieldKey, number>>
 
-// OverrideField is a per-table-overridable field: override is the operator's
-// own value for this table, null when inherited from the global row, and
-// effective is the value the server applies to it either way. Its bounds are
-// the global row's own — an override is validated against them too.
+// A per-table-overridable field: override is this table's own value, null when
+// inherited from the global row, and effective is what the server applies
+// either way. Its bounds are the global row's — an override is checked too.
 export interface OverrideField extends FieldBounds {
     override: number | null
     effective: number
 }
 
-// Matches the tableSettingsDTO the server returns from GET/PATCH/DELETE
-// /tables/{tableId}/settings and GET /settings/tables: a table's departure
-// from the global row, field by field. defaultRowLimit applies to every
-// table; the rest are present only on a geo table (isGeo) — absent, not
-// disabled, on a table the fields could never apply to.
+// Matches the tableSettingsDTO of /tables/{tableId}/settings: a table's
+// departure from the global row, field by field. defaultRowLimit applies to
+// every table; the rest are present only on a geo table — absent, not disabled.
 export interface TableSettings {
     tableId: string
     isGeo: boolean
@@ -352,4 +349,30 @@ export interface TransformSample {
 export interface TransformPreview {
     matched: number
     sample: TransformSample[]
+}
+
+// Matches goauth's own config and session DTOs — the only two here that are
+// NOT camelCase: AuthSession.user is a bare Go struct with no JSON tags, so
+// its fields keep their Go casing. Renaming a key is a silent `undefined`.
+
+// All three empty strings means demo mode: no provider is configured, so
+// there is no login control to show at all (auth/oidc.ts skips building a
+// UserManager entirely).
+export interface AuthConfig {
+    issuer_url: string
+    client_id: string
+    scopes: string
+}
+
+export interface AuthUser {
+    Provider: string
+    ID: string
+    Roles: string[]
+}
+
+export interface AuthSession {
+    logged_in: boolean
+    authorized: boolean
+    roles?: string[]
+    user?: AuthUser
 }

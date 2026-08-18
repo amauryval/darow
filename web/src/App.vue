@@ -6,17 +6,17 @@ import {
     FolderOpen,
     LayoutDashboard,
     LayoutGrid,
-    LogIn,
-    MapPinned,
     PanelLeftClose,
     PanelLeftOpen,
     Settings as SettingsIcon
 } from '@lucide/vue'
 import { useServerStatus, type ServerStatus } from './composables/useServerStatus'
 import { useSettings } from './composables/useSettings'
+import SessionMenu from './components/session/SessionMenu.vue'
 import Toast from './components/ui/Toast.vue'
 import Badge from './components/ui/Badge.vue'
 import BaseButton from './components/ui/BaseButton.vue'
+import Logo from './components/ui/Logo.vue'
 import Typography from './components/ui/Typography.vue'
 
 const route = useRoute()
@@ -80,17 +80,7 @@ const links = [
                     </BaseButton>
                     <Typography variant="h4" class="ml-1">{{ route.meta.title }}</Typography>
                 </div>
-                <!-- No auth backend yet — placeholder for when the API gains one -->
-                <BaseButton
-                    variant="secondary"
-                    size="sm"
-                    class="gap-1.5"
-                    disabled
-                    title="Authentification bientôt disponible"
-                >
-                    <LogIn :size="14" />
-                    Se connecter
-                </BaseButton>
+                <SessionMenu />
             </header>
 
             <RouterView class="flex min-h-0 flex-1 flex-col" />
@@ -111,7 +101,7 @@ const links = [
                     <span
                         class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-content"
                     >
-                        <MapPinned :size="16" />
+                        <Logo :size="18" />
                     </span>
                     <div v-show="!collapsed" class="leading-tight whitespace-nowrap">
                         <Typography variant="h4">Darow</Typography>
