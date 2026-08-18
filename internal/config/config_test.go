@@ -32,7 +32,7 @@ func Test_Load(t *testing.T) {
 		{
 			name:        "file absent falls back to defaults",
 			useNoFile:   true,
-			wantPort:    8080,
+			wantPort:    3000,
 			wantWorkDir: "./data",
 		},
 		{

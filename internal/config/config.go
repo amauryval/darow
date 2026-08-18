@@ -121,7 +121,7 @@ func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
 			Host:               "0.0.0.0",
-			Port:               8080,
+			Port:               3000,
 			ReadTimeoutSec:     15,
 			WriteTimeoutSec:    30,
 			IdleTimeoutSec:     60,
