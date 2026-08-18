@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -45,17 +44,6 @@ func geometryCRS(req *http.Request) string {
 	return storage.DefaultGeometryCRS
 }
 
-func (rh *RowsHandler) paginationParams(req *http.Request, tableId string) (offset, limit int64) {
-	offset = 0
-	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
-		offset = v
-	}
-
-	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = rh.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
-	return offset, limit
-}
-
 // ListRows handles GET /tables/{tableId}/rows.
 //
 // @Summary List rows
@@ -73,7 +61,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	offset, limit := rh.paginationParams(req, meta.TableId)
+	offset, limit, _ := paginationParams(req, rh.tableSettings.Resolve(meta.TableId).DefaultRowLimit, false)
 
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	sortColumns := make([]string, len(sort))
@@ -87,7 +75,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rh.rowService.ListRows(req.Context(), meta, sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -117,11 +105,10 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Rows []map[string]any `json:"rows"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Rows) == 0 {
@@ -133,7 +120,7 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 	if len(body.Rows) > 1 {
 		pkeys, err := rh.rowService.BulkInsertRows(req.Context(), meta, body.Rows, crs)
 		if err != nil {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 		response.WriteJSON(w, http.StatusCreated, map[string]any{"pkeys": pkeys})
@@ -142,7 +129,7 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 
 	written, err := rh.rowService.InsertRow(req.Context(), meta, body.Rows[0], crs)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -172,7 +159,7 @@ func (rh *RowsHandler) GetRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if row == nil {
@@ -199,11 +186,10 @@ func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Pkeys []string `json:"pkeys"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Pkeys) == 0 {
@@ -213,7 +199,7 @@ func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
 
 	rows, err := rh.rowService.GetRowsByPkey(req.Context(), meta, body.Pkeys)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -242,9 +228,8 @@ func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
 	}
 	pkey := chi.URLParam(req, "pkey")
 
-	var updates map[string]any
-	if err := json.NewDecoder(req.Body).Decode(&updates); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	updates, ok := DecodeBody[map[string]any](w, req)
+	if !ok {
 		return
 	}
 
@@ -252,14 +237,14 @@ func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
 	if len(updates) > 0 {
 		var err error
 		if written, err = rh.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates, geometryCRS(req)); err != nil {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 	}
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if row == nil {
@@ -291,14 +276,13 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Updates []struct {
 			Pkey   string         `json:"pkey"`
 			Values map[string]any `json:"values"`
 		} `json:"updates"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Updates) == 0 {
@@ -317,7 +301,7 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 
 	written, err := rh.rowService.UpdateRows(req.Context(), meta, updates, geometryCRS(req))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -347,7 +331,7 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 	pkey := chi.URLParam(req, "pkey")
 
 	if err := rh.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: pkey, RowsRemoved: 1})
@@ -383,7 +367,7 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 	decimals := rh.tableSettings.Resolve(meta.TableId).CoordinateDecimals
 	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, service.ResolveCRS(srid, meta))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if geometry == nil {

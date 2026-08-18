@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"darow/internal/storage"
 )
@@ -57,18 +56,7 @@ func (s *DeriveService) buildAggregateQuery(ctx context.Context, meta storage.Me
 		return "", nil, err
 	}
 
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return "", nil, err
-	}
-
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(projection, ", "), meta.PhysicalName)
-	if where != "" {
-		query += " WHERE " + where
-	}
-	if len(groupBy) > 0 {
-		query += " GROUP BY " + strings.Join(groupBy, ", ")
-	}
-	return query, args, nil
+	return renderSelect(meta, projection, where, args, groupBy)
 }
 
 // groupProjectionFor builds the SELECT list and the GROUP BY list: the

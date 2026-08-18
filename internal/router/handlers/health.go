@@ -86,7 +86,7 @@ func toDiagnosticsDTO(d storage.Diagnostics, maxSizeBytes int64) diagnosticsDTO 
 func (oh *OpsHandler) Diagnostics(w http.ResponseWriter, req *http.Request) {
 	d, err := oh.diagnostics.Diagnostics(req.Context())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toDiagnosticsDTO(d, oh.maxSizeBytes))

@@ -115,7 +115,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	resolved := gh.tableSettings.Resolve(meta.TableId)
@@ -142,7 +142,7 @@ func (gh *GeoHandler) GetTile(w http.ResponseWriter, req *http.Request) {
 
 	mvt, err := gh.geoService.GetTile(req.Context(), meta, z, x, y, attrs, q)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -195,7 +195,7 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	resolved := gh.tableSettings.Resolve(meta.TableId)
@@ -216,13 +216,13 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 
 	features, err := gh.geoService.GetFeaturesTile(req.Context(), meta, z, x, y, attrs, q, limit, offset)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
 	numberMatched, err := gh.geoService.CountFeaturesTile(req.Context(), meta, z, x, y, q)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -259,7 +259,7 @@ func (gh *GeoHandler) GetGeometryTypes(w http.ResponseWriter, req *http.Request)
 
 	types, err := gh.geoService.GeometryTypes(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string][]string{"types": types})
@@ -283,7 +283,7 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 
 	schema, err := gh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	resolved := gh.tableSettings.Resolve(meta.TableId)
@@ -295,7 +295,7 @@ func (gh *GeoHandler) GetFilteredExtent(w http.ResponseWriter, req *http.Request
 
 	bbox, err := gh.geoService.FilteredExtent(req.Context(), meta, q)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]string{"bbox": bbox})
@@ -318,14 +318,13 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Geometry json.RawMessage `json:"geometry"`
 		Buffer   float64         `json:"buffer"`
 		Exclude  []string        `json:"exclude"`
 		Limit    int             `json:"limit"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Geometry) == 0 {
@@ -345,7 +344,7 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 	}
 	features, err := gh.geoService.NeighbourFeatures(req.Context(), meta, near, body.Exclude, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), nil))
@@ -370,13 +369,12 @@ func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Bbox   [4]float64 `json:"bbox"`
 		Offset int        `json:"offset"`
 		Limit  int        `json:"limit"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
@@ -388,7 +386,7 @@ func (gh *GeoHandler) FilterByBbox(w http.ResponseWriter, req *http.Request) {
 
 	pkeys, err := gh.geoService.FilterByBbox(req.Context(), meta, body.Bbox, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"pkeys": pkeys, "limit": limit, "offset": offset})

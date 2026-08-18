@@ -12,7 +12,6 @@ import (
 
 	"darow/internal/router/response"
 	"darow/internal/router/validation"
-	"darow/internal/service"
 	"darow/internal/storage"
 )
 
@@ -137,7 +136,7 @@ func (fh *FeaturesHandler) ListCollections(w http.ResponseWriter, req *http.Requ
 	listLimit := fh.settings.Current().DefaultListLimit
 	tables, _, err := fh.metadataService.ListTables(req.Context(), nil, 0, int64(listLimit))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -205,7 +204,7 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := fh.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	resolved := fh.tableSettings.Resolve(meta.TableId)
@@ -216,7 +215,7 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 	}
 	q.CoordinateDecimals = &resolved.CoordinateDecimals
 
-	offset, limit, err := fh.featuresPaginationParams(req, resolved)
+	offset, limit, err := paginationParams(req, resolved.DefaultFeaturesLimit, true)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
@@ -224,12 +223,12 @@ func (fh *FeaturesHandler) GetItems(w http.ResponseWriter, req *http.Request) {
 
 	features, err := fh.geoService.GetFeatures(req.Context(), meta, nil, bbox, nil, q, int(limit), int(offset))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	numberMatched, err := fh.geoService.CountFeatures(req.Context(), meta, nil, bbox, q)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -263,7 +262,7 @@ func (fh *FeaturesHandler) GetItem(w http.ResponseWriter, req *http.Request) {
 	featureId := chi.URLParam(req, "featureId")
 	features, err := fh.geoService.GetFeatures(req.Context(), meta, []string{featureId}, nil, nil, storage.GeoQuery{}, 1, 0)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if len(features) == 0 {
@@ -304,27 +303,6 @@ func (fh *FeaturesHandler) resolveGeoTable(w http.ResponseWriter, req *http.Requ
 		return storage.Metadata{}, false
 	}
 	return meta, true
-}
-
-// featuresPaginationParams reads offset/limit query params, resolved through
-// the features limits. An unparseable or out-of-range value is an error,
-// never a silent fallback: Core requires a 400 there.
-func (fh *FeaturesHandler) featuresPaginationParams(req *http.Request, resolved service.TableSettingsResolved) (offset, limit int64, err error) {
-	offset = 0
-	if raw := req.URL.Query().Get("offset"); raw != "" {
-		offset, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || offset < 0 {
-			return 0, 0, fmt.Errorf("invalid offset: %q", raw)
-		}
-	}
-
-	if raw := req.URL.Query().Get("limit"); raw != "" {
-		limit, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || limit < 1 {
-			return 0, 0, fmt.Errorf("invalid limit: %q", raw)
-		}
-	}
-	return offset, resolved.DefaultFeaturesLimit.Resolve64(limit), nil
 }
 
 // featureDTO is a GeoJSON Feature — geometry embedded as a raw (already

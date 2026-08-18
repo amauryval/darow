@@ -65,17 +65,7 @@ func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadat
 		return "", nil, err
 	}
 
-	// physicalName is server-generated, so it is validated rather than
-	// quoted: the AST validator matches it unquoted.
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return "", nil, err
-	}
-
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(projection, ", "), meta.PhysicalName)
-	if where != "" {
-		query += " WHERE " + where
-	}
-	return query, args, nil
+	return renderSelect(meta, projection, where, args, nil)
 }
 
 // projectionFor builds the SELECT list: the carried columns, in the caller's

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -95,7 +94,7 @@ func (dto settingsPatchDTO) toPatch() storage.SettingsPatch {
 func (sh *SettingsHandler) GetSettings(w http.ResponseWriter, req *http.Request) {
 	current, err := sh.settingsService.GetSettings(req.Context())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toSettingsDTO(current))
@@ -112,15 +111,14 @@ func (sh *SettingsHandler) GetSettings(w http.ResponseWriter, req *http.Request)
 // @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/settings [patch]
 func (sh *SettingsHandler) UpdateSettings(w http.ResponseWriter, req *http.Request) {
-	var body settingsPatchDTO
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[settingsPatchDTO](w, req)
+	if !ok {
 		return
 	}
 
 	updated, err := sh.settingsService.UpdateSettings(req.Context(), body.toPatch())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toSettingsDTO(updated))

@@ -201,9 +201,8 @@ func (tsh *TableSettingsHandler) UpdateTableSettings(w http.ResponseWriter, req 
 		return
 	}
 
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[map[string]json.RawMessage](w, req)
+	if !ok {
 		return
 	}
 
@@ -224,7 +223,7 @@ func (tsh *TableSettingsHandler) UpdateTableSettings(w http.ResponseWriter, req 
 
 	updated, err := tsh.tableSettingsService.UpdateOverride(req.Context(), meta.TableId, patch)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toTableSettingsDTO(meta, updated, tsh.tableSettingsService.Resolve(meta.TableId)))
@@ -245,7 +244,7 @@ func (tsh *TableSettingsHandler) DeleteTableSettings(w http.ResponseWriter, req 
 		return
 	}
 	if err := tsh.tableSettingsService.DeleteOverride(req.Context(), meta.TableId); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toTableSettingsDTO(meta, storage.TableSettings{TableId: meta.TableId}, tsh.tableSettingsService.Resolve(meta.TableId)))
@@ -263,7 +262,7 @@ func (tsh *TableSettingsHandler) DeleteTableSettings(w http.ResponseWriter, req 
 func (tsh *TableSettingsHandler) ListOverriddenTables(w http.ResponseWriter, req *http.Request) {
 	overridden, err := tsh.tableSettingsService.ListOverridden(req.Context())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
