@@ -1300,6 +1300,30 @@ paths:
             tags:
                 - geo
     /api/v1/tables/{tableId}/rows:
+        delete:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete several rows in one request
+            tags:
+                - rows
         get:
             parameters:
                 - description: Table ID
