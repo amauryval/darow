@@ -166,6 +166,52 @@ export function postForm<T>(path: string, form: FormData): Promise<T> {
     )
 }
 
+function parseErrorBody(text: string): ErrorResponse | null {
+    try {
+        return text ? (JSON.parse(text) as ErrorResponse) : null
+    } catch {
+        return null
+    }
+}
+
+// postForm's counterpart with upload progress (§8.2's "an upload shows
+// progress"): fetch has no portable way to observe request-body upload
+// progress, so this one goes through XMLHttpRequest instead, which reports it
+// natively via xhr.upload.onprogress.
+export function postFormWithProgress<T>(
+    path: string,
+    form: FormData,
+    onProgress: (fraction: number) => void
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', apiUrl(path))
+        if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`)
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) onProgress(event.loaded / event.total)
+        }
+        xhr.onload = () => {
+            if (xhr.status === 401) onUnauthorized?.()
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(
+                    (xhr.status === 204 || !xhr.responseText
+                        ? undefined
+                        : JSON.parse(xhr.responseText)) as T
+                )
+                return
+            }
+            const body = parseErrorBody(xhr.responseText)
+            reject(
+                new ApiError(
+                    body ?? { error: 'request_error', message: '', code: xhr.status, requestId: '' }
+                )
+            )
+        }
+        xhr.onerror = () => reject(new Error('Network error'))
+        xhr.send(form)
+    })
+}
+
 // get's counterpart for a non-JSON body (tables.ts's exportTable): a failure
 // still becomes the same ApiError every other call throws. The file name comes
 // back with the body — it carries the export's CRS (back LIM-16).

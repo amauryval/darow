@@ -64,13 +64,17 @@ export function useSources(initialSorting?: SortingState) {
 
     // Writes the file into workDir; loading it is the user's next, explicit
     // step. Rethrows so the caller can word the error with the file name.
+    const uploadProgress = ref<number | null>(null)
+
     async function upload(file: File): Promise<void> {
         uploading.value = true
+        uploadProgress.value = 0
         try {
-            await uploadSource(file)
+            await uploadSource(file, (fraction) => (uploadProgress.value = fraction))
             await list.reload()
         } finally {
             uploading.value = false
+            uploadProgress.value = null
         }
     }
 
@@ -103,6 +107,7 @@ export function useSources(initialSorting?: SortingState) {
         reload: list.reload,
         refresh,
         uploading,
+        uploadProgress,
         upload,
         limits,
         deletingName,

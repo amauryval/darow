@@ -1,4 +1,4 @@
-import { del, get, post, postForm } from './http'
+import { del, get, post, postFormWithProgress } from './http'
 import type { Deleted, SourceCRS, SourceLimits, SourcesPage, UploadResult } from './types'
 
 export function listSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
@@ -46,11 +46,16 @@ export function getSourceMetadata(name: string, layer?: string): Promise<SourceC
 }
 
 // Writes file into workDir and returns the rescanned Source, layers included.
-// Loading it into a table is a separate call to loadSource.
-export function uploadSource(file: File): Promise<UploadResult> {
+// Loading it into a table is a separate call to loadSource. onProgress reports
+// the upload's fraction sent (0..1), for a file large enough that §8.2 asks
+// for feedback before the server even answers.
+export function uploadSource(
+    file: File,
+    onProgress: (fraction: number) => void
+): Promise<UploadResult> {
     const form = new FormData()
     form.append('file', file)
-    return postForm('/sources/upload', form)
+    return postFormWithProgress('/sources/upload', form, onProgress)
 }
 
 // Erases the source file from workDir. The tables already loaded from it are

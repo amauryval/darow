@@ -158,10 +158,13 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   authentication) — replaces the old gateway-era `session.ts`.
 - `http.ts` also carries the bearer token every request attaches: a module-level `authToken` set and
   cleared by `useAuth` (`setAuthToken`), merged into every request's headers (`get`/`post`/`patch`/
-  `del`/`postForm`/`getBlob`) alongside any header the call already sets — `postForm`'s FormData
-  keeps its browser-set multipart `Content-Type`. A `401` on any call fires an `onUnauthorized`
-  callback (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual
-  `ApiError` — never an import of the auth composable into the transport.
+  `del`/`postForm`/`postFormWithProgress`/`getBlob`) alongside any header the call already sets —
+  `postForm`'s FormData keeps its browser-set multipart `Content-Type`. A `401` on any call fires an
+  `onUnauthorized` callback (`setUnauthorizedHandler`) the auth layer registers, in addition to
+  throwing the usual `ApiError` — never an import of the auth composable into the transport.
+  `postFormWithProgress` is `postForm`'s counterpart for an upload that reports its own fraction sent
+  (§8.2): built on `XMLHttpRequest` rather than `fetch`, the one portable way to observe request-body
+  upload progress, and the only caller here that is not `fetch`-based.
 
 The endpoint contracts (pagination, sorting, filter DSL, formats) are described on the server side —
 `spec.md` §6. This document does not restate them.

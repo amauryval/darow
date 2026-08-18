@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { FileUp, UploadCloud } from '@lucide/vue'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import ProgressBar from '../ui/ProgressBar.vue'
 import Typography from '../ui/Typography.vue'
 import type { SourceLimits } from '../../client/types'
 import { formatSize } from '../../utils/sourceRows'
@@ -11,7 +12,11 @@ import { validateUploadSize } from '../../utils/uploadValidation'
 // The running deployment's own upload constraints (GET /sources/limits),
 // loaded by the view: stated before the attempt rather than only in an error
 // response (§8.5), and never guessed from the default config.yaml.
-const props = defineProps<{ uploading?: boolean; limits: SourceLimits | null }>()
+const props = defineProps<{
+    uploading?: boolean
+    progress?: number | null
+    limits: SourceLimits | null
+}>()
 const emit = defineEmits<{ close: []; upload: [file: File] }>()
 
 const accept = computed(() => props.limits?.allowedExtensions.join(',') ?? '')
@@ -79,6 +84,7 @@ function onDrop(event: DragEvent) {
             >
                 {{ uploading ? 'Envoi…' : 'Parcourir' }}
             </BaseButton>
+            <ProgressBar v-if="typeof progress === 'number'" :fraction="progress" />
             <Typography v-if="constraintsLabel" variant="caption">{{
                 constraintsLabel
             }}</Typography>
