@@ -1,4 +1,4 @@
-import { watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type Map from 'ol/Map'
 import type Feature from 'ol/Feature'
 import type Geometry from 'ol/geom/Geometry'
@@ -47,6 +47,11 @@ export function useWfsLayer(
     // longer shows. Each load carries the generation it started under and
     // stops as soon as that generation is over.
     let generation = 0
+    // How many tile queries are in flight, so the map can say it is working
+    // instead of leaving a pan silent until its first page lands (§8.8). A
+    // count, not a flag: the strategy asks for several tiles at once and the
+    // indicator has to stay on until the last of them answers.
+    const pending = ref(0)
 
     // A feature straddling a tile boundary is returned by every tile's bbox
     // query; adding it twice would draw it twice and let one click select it
@@ -75,6 +80,21 @@ export function useWfsLayer(
             return
         }
 
+        pending.value += 1
+        try {
+            await loadPages(source, bbox, resolution, success, failure)
+        } finally {
+            pending.value -= 1
+        }
+    }
+
+    async function loadPages(
+        source: VectorSource,
+        bbox: [number, number, number, number],
+        resolution: number,
+        success: (features: Feature<Geometry>[]) => void,
+        failure: () => void
+    ) {
         // The zoom is still the grid's, since the simplification tolerance is
         // a function of it — but it says nothing about which rows are asked
         // for any more, only how finely they come back.
@@ -163,5 +183,11 @@ export function useWfsLayer(
         if (layer) refreshData()
     })
 
-    return { activate, deactivate, refreshData, pkeyAt: picked.pkeyAt }
+    return {
+        activate,
+        deactivate,
+        refreshData,
+        pkeyAt: picked.pkeyAt,
+        loading: computed(() => pending.value > 0)
+    }
 }

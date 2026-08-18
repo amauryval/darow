@@ -11,42 +11,44 @@ export function refreshSources(offset: number, limit: number, sort?: string): Pr
     return post(`/sources/refresh?offset=${offset}&limit=${limit}${sortParam}`)
 }
 
-// layer is required for a multi-layer (.gpkg) source — omit it otherwise.
-// srid pins the source CRS explicitly, overriding auto-detection —
-// required if getSourceMetadata reports a null srid.
-export function loadSource(
-    name: string,
-    layer?: string,
+// layer is required for a multi-layer (.gpkg) source, omitted otherwise. srid
+// pins the source CRS, required if getSourceMetadata reports a null srid.
+// tableName names the created table; replaceTableId reloads that table's data
+// in place instead of creating a second one.
+export interface LoadOptions {
+    layer?: string
     srid?: number
-): Promise<{ tableId: string }> {
+    tableName?: string
+    replaceTableId?: string
+}
+
+export function loadSource(name: string, options: LoadOptions = {}): Promise<{ tableId: string }> {
     const params = new URLSearchParams()
-    if (layer) params.set('layer', layer)
-    if (srid) params.set('srid', String(srid))
+    if (options.layer) params.set('layer', options.layer)
+    if (options.srid) params.set('srid', String(options.srid))
+    if (options.tableName) params.set('tableName', options.tableName)
+    if (options.replaceTableId) params.set('replace', options.replaceTableId)
     const query = params.toString() ? `?${params.toString()}` : ''
     return post(`/sources/${encodeURIComponent(name)}/load${query}`)
 }
 
-// Previews a not-yet-loaded source's detected CRS, so the caller can show
-// it to the user (with an editable override) before Load.
+// Previews a source's detected CRS, so the caller can show it to the user
+// (with an editable override) before loading.
 export function getSourceMetadata(name: string, layer?: string): Promise<SourceCRS> {
     const query = layer ? `?layer=${encodeURIComponent(layer)}` : ''
     return get(`/sources/${encodeURIComponent(name)}/metadata${query}`)
 }
 
-// Uploads file into workDir and immediately loads it into a new table, in
-// one round trip (POST /sources/upload) — unless the file is a GeoPackage
-// with more than one layer, in which case no layer is auto-selected and the
-// refreshed Source (with its layers) is returned instead, so the caller can
-// load a specific layer via loadSource.
+// Writes file into workDir and returns the rescanned Source, layers included.
+// Loading it into a table is a separate call to loadSource.
 export function uploadSource(file: File): Promise<UploadResult> {
     const form = new FormData()
     form.append('file', file)
     return postForm('/sources/upload', form)
 }
 
-// Removes the source file from workDir. If it (or one of its layers) was
-// loaded, the associated table(s) are removed too. Explicit replacement is
-// delete then re-upload.
+// Erases the source file from workDir. The tables already loaded from it are
+// kept — they hold their own copy of the data.
 export function deleteSource(name: string): Promise<Deleted> {
     return del(`/sources/${encodeURIComponent(name)}`)
 }

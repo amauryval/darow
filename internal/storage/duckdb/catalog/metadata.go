@@ -226,28 +226,29 @@ func (r *Repository) List(ctx context.Context, sort []storage.SortField, offset,
 	return tables, total, nil
 }
 
-// BySource maps every loaded table's source key to its tableId in a single
-// query. A table with no sourceName (e.g. created via /derive) is excluded.
-func (r *Repository) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
+// ListProvenance returns every table imported from a source file, ordered by
+// tableName. A derived table, having no source, is left out.
+func (r *Repository) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
 	rows, err := r.conn.Query(ctx, `
-        SELECT tableId, sourceName, COALESCE(sourceLayer, '')
-        FROM metadata WHERE sourceName IS NOT NULL AND sourceName != ''
+        SELECT tableId, tableName, sourceName, COALESCE(sourceLayer, '')
+        FROM metadata
+        WHERE COALESCE(sourceName, '') <> ''
+        ORDER BY tableName, tableId
     `)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	bySource := map[storage.SourceKey]string{}
+	items := []storage.TableProvenance{}
 	for rows.Next() {
-		var tableId string
-		var key storage.SourceKey
-		if err := rows.Scan(&tableId, &key.SourceName, &key.SourceLayer); err != nil {
+		var p storage.TableProvenance
+		if err := rows.Scan(&p.TableId, &p.TableName, &p.SourceName, &p.SourceLayer); err != nil {
 			return nil, err
 		}
-		bySource[key] = tableId
+		items = append(items, p)
 	}
-	return bySource, rows.Err()
+	return items, rows.Err()
 }
 
 // Create registers a new logical table in metadata and returns its generated

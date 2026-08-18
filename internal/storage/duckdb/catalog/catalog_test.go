@@ -217,6 +217,52 @@ func Test_Catalog_CreateFromFile(t *testing.T) {
 	assert.Equal(t, "widgets.geojson", meta.SourceName)
 }
 
+func Test_Catalog_ReloadFromFile(t *testing.T) {
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.CreateFromFile(ctx, "widgets", "widgets.geojson", "/data/widgets.geojson", "", 0)
+	require.NoError(t, err)
+	before, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+
+	require.NoError(t, c.ReloadFromFile(ctx, tableId, "gadgets.gpkg", "/data/gadgets.gpkg", "roads", 0))
+
+	after, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	assert.Equal(t, before.PhysicalName, after.PhysicalName, "a reload keeps the table's identity")
+	assert.Equal(t, "widgets", after.TableName, "a reload never renames the table")
+	assert.Equal(t, "gadgets.gpkg", after.SourceName)
+	assert.Equal(t, "roads", after.SourceLayer)
+}
+
+func Test_Catalog_ReloadFromFile_UnknownTable(t *testing.T) {
+	c := newTestCatalog(t)
+
+	err := c.ReloadFromFile(context.Background(), "no-such-id", "widgets.geojson", "/data/widgets.geojson", "", 0)
+
+	var notFound *storage.NotFoundError
+	assert.ErrorAs(t, err, &notFound)
+}
+
+func Test_Catalog_ReloadFromFile_RollsBackOnMaterializationFailure(t *testing.T) {
+	failing := errors.New("materialization failed")
+	c := newTestCatalog(t)
+	ctx := context.Background()
+
+	tableId, err := c.CreateFromFile(ctx, "widgets", "widgets.geojson", "/data/widgets.geojson", "", 0)
+	require.NoError(t, err)
+	c.fileCreator = fakeFileCreator(failing)
+
+	require.ErrorIs(t, c.ReloadFromFile(ctx, tableId, "widgets.geojson", "/data/widgets.geojson", "", 0), failing)
+
+	existing, err := dbExistingTablesOf(c)(ctx)
+	require.NoError(t, err)
+	meta, err := c.GetMetadata(ctx, tableId)
+	require.NoError(t, err)
+	assert.True(t, existing[meta.PhysicalName], "a rolled-back reload must leave the physical table in place")
+}
+
 func Test_Catalog_CreateFromFile_RollsBackOnMaterializationFailure(t *testing.T) {
 	failing := errors.New("materialization failed")
 	c := newTestCatalogWithCreators(t, fakeFileCreator(failing), fakeQueryCreator(nil))

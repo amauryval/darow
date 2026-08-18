@@ -14,6 +14,7 @@ import (
 type metadataAPI interface {
 	GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error)
 	ListTables(ctx context.Context, sort []storage.SortField, offset, limit int64) ([]storage.Metadata, int64, error)
+	ListProvenance(ctx context.Context) ([]storage.TableProvenance, error)
 	RemoveTable(ctx context.Context, meta storage.Metadata) error
 	UpdateMetadata(ctx context.Context, tableId string, patch storage.MetadataPatch) error
 }
@@ -105,8 +106,9 @@ type sourceAPI interface {
 	List(sort []storage.SortField, offset, limit int) ([]service.Source, int, error)
 	Refresh(ctx context.Context) ([]service.Source, error)
 	Upload(filename string, content io.Reader) (string, error)
-	Load(ctx context.Context, name, layer string, srid int) (string, error)
-	Delete(ctx context.Context, name string) error
+	Load(ctx context.Context, name, layer, tableName string, srid int) (string, error)
+	Reload(ctx context.Context, tableId, name, layer string, srid int) error
+	Delete(name string) error
 	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
 	SourceHasGeometry(ctx context.Context, name, layer string) (bool, error)
 	MaxUploadBytes() int64

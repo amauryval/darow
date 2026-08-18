@@ -46,6 +46,8 @@ the domains and their files. Nothing about the code is restated here; it would d
 -   Front-end changes need no vitest test unless explicitly asked for.
 -   Git commands that change state (`commit`, `push`, `checkout`, `merge`, `rebase`, `reset`,
     `stash`, `worktree add/remove`, `branch -D`, ...) are forbidden unless explicitly requested.
+-   **No comment is longer than 3 lines** — Go as well as Vue/TS. If the explanation does not fit,
+    either the code is not explicit enough or the explanation belongs in `spec/`.
 -   Be concise in your answers.
 
 ## Commands

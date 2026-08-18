@@ -173,6 +173,38 @@ func (c *Catalog) createTable(
 	return tableId, nil
 }
 
+// ReloadFromFile drops tableId's physical table and rematerializes it from a
+// source file under the same physicalName, in one transaction. Its settings,
+// filters and identity are untouched: only the data and its provenance move.
+func (c *Catalog) ReloadFromFile(ctx context.Context, tableId, sourceName, sourcePath, layer string, sridOverride int) error {
+	meta, err := c.GetMetadata(ctx, tableId)
+	if err != nil {
+		return err
+	}
+
+	return c.tx.WithTx(ctx, storage.TableWriteScope(tableId), func(tx *sql.Tx) error {
+		repo := newTxRepository(tx, c.existing, c.geometryInfoTx)
+
+		if err := c.dropper(ctx, tx, meta.PhysicalName); err != nil {
+			return err
+		}
+
+		_, isGeo, srid, err := c.fileCreator(ctx, tx, meta.PhysicalName, sourcePath, layer, sridOverride)
+		if err != nil {
+			return err
+		}
+
+		patch := storage.MetadataPatch{SourceName: &sourceName, SourceLayer: &layer}
+		if isGeo {
+			patch.Srid = &srid
+		}
+		if err := repo.UpdateMetadata(ctx, tableId, patch); err != nil {
+			return err
+		}
+		return repo.RefreshDerivedMetadata(ctx, tableId, true)
+	})
+}
+
 // CreateFromQuery registers tableName and materializes it from sourceQuery,
 // both inside one transaction.
 func (c *Catalog) CreateFromQuery(ctx context.Context, tableName, sourceQuery string, args ...any) (string, error) {

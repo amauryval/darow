@@ -4,9 +4,8 @@ import { scaleBand, scaleLinear } from 'd3-scale'
 import { max } from 'd3-array'
 
 // Presentational: props in, no network, no store. Horizontal magnitude
-// comparison across categories — one hue throughout, since color here
-// doesn't encode a second dimension (dataviz skill: a bar-per-category
-// chart needs no categorical palette or legend).
+// comparison across categories — one hue throughout, since colour here encodes
+// no second dimension, hence no categorical palette and no legend.
 const props = withDefaults(
     defineProps<{
         data: { label: string; value: number }[]

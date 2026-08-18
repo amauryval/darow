@@ -1,8 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"darow/internal/observer"
+	"darow/internal/settings"
 	"darow/internal/storage"
 	"darow/internal/storage/mocks"
 )
@@ -131,6 +136,78 @@ func Test_SettingsService_UpdateSettings(t *testing.T) {
 			if c.wantNotify {
 				require.Len(t, notified, 1)
 				assert.Equal(t, updated, notified[0])
+			}
+		})
+	}
+}
+
+func captureSettingsLog(t *testing.T, before, after storage.Settings) []map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	logSettingsChange(before, after)
+
+	var lines []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		lines = append(lines, entry)
+	}
+	return lines
+}
+
+func Test_logSettingsChange(t *testing.T) {
+	cases := []struct {
+		name       string
+		mutate     func(*storage.Settings)
+		wantFields []string
+		wantFrom   []any
+		wantTo     []any
+	}{
+		{
+			name:   "an unchanged value logs nothing",
+			mutate: func(s *storage.Settings) {},
+		},
+		{
+			name:       "a changed field names itself with both sides",
+			mutate:     func(s *storage.Settings) { s.DefaultRowLimit = 200 },
+			wantFields: []string{settings.FieldDefaultRowLimit},
+			wantFrom:   []any{float64(1000)},
+			wantTo:     []any{float64(200)},
+		},
+		{
+			name: "every changed field gets its own line, the untouched ones none",
+			mutate: func(s *storage.Settings) {
+				s.CacheTTLSec = 900
+				s.MaxPrecision = 5
+			},
+			wantFields: []string{settings.FieldMaxPrecision, settings.FieldCacheTTLSec},
+			wantFrom:   []any{float64(1000), float64(300)},
+			wantTo:     []any{float64(5), float64(900)},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := validTestSettings()
+			after := validTestSettings()
+			c.mutate(&after)
+
+			lines := captureSettingsLog(t, before, after)
+
+			require.Len(t, lines, len(c.wantFields))
+			for i, field := range c.wantFields {
+				assert.Equal(t, slog.LevelInfo.String(), lines[i]["level"])
+				assert.Equal(t, "setting changed", lines[i]["msg"])
+				assert.Equal(t, field, lines[i]["field"])
+				assert.Equal(t, c.wantFrom[i], lines[i]["from"])
+				assert.Equal(t, c.wantTo[i], lines[i]["to"])
 			}
 		})
 	}

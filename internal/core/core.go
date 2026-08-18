@@ -117,7 +117,6 @@ func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, e
 	tableRemoved.On(func(meta storage.Metadata) {
 		schemaSvc.InvalidateSchema(meta.TableId)
 		tableSettingsSvc.InvalidateOverride(meta.TableId)
-		sourceSvc.UnmarkLoaded(meta)
 	})
 
 	// Who reacts to a settings update, stated in one place: the metadata and

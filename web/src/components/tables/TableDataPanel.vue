@@ -18,6 +18,7 @@ import TableMapPanel from './TableMapPanel.vue'
 import TableRowsPanel from './TableRowsPanel.vue'
 import TableToolbar from './TableToolbar.vue'
 import TransformColumnModal from './TransformColumnModal.vue'
+import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
 const props = defineProps<{
     tableId: string
@@ -107,10 +108,37 @@ function toggleEditing() {
     if (props.isGeo) layerEditing.start()
 }
 
-// Leaving the mode drops both halves at once — the reshapes and the retyped
-// cells are one session. Cancelling says what it drops: a session opened to
-// give a new row its geometry loses that row (useLayerEditing.cancel).
+// The geometry half of what the session holds. The grid can count its own
+// retyped cells and its own drafts; a reshape only exists on the layer, so
+// the map reports it (MapView's `changed-count`).
+const changedGeometries = ref(0)
+
+// Everything one *Annuler* would drop, both halves at once — what the exit
+// has to be confirmed against (§8.3).
+const unsavedCount = computed(
+    () => rowEdits.dirtyCount.value + rowEdits.draftCount.value + changedGeometries.value
+)
+const confirmingCancel = ref(false)
+
+// Every way out of the mode goes through here — the *Éditer* toggle, the
+// bar's *Annuler*, the map's — so the session's work is protected once
+// rather than at each of them. An empty session is left with no question to
+// answer: the confirmation is a barrier in front of losing work, and there
+// is nothing to lose (§8.3).
 function cancelEditing() {
+    if (unsavedCount.value > 0) {
+        confirmingCancel.value = true
+        return
+    }
+    discardEditing()
+}
+
+// Drops both halves at once — the reshapes and the retyped cells are one
+// session. It says what it drops: a session opened to give a new row its
+// geometry loses that row (useLayerEditing.cancel).
+function discardEditing() {
+    confirmingCancel.value = false
+    changedGeometries.value = 0
     layerEditing.cancel()
     rowEdits.stop()
 }
@@ -136,8 +164,10 @@ async function saveEditing(changes: LayerChanges = NO_GEOMETRY_CHANGES) {
             rowEdits.pendingUpdates.value,
             rowEdits.pendingInserts.value
         )
-    )
+    ) {
+        changedGeometries.value = 0
         rowEdits.stop()
+    }
 }
 
 // The tools the map owns are rendered into the bar above both panels: they
@@ -307,11 +337,21 @@ async function onColumnTransformed() {
                 @request-feature="layerEditing.reach"
                 @release-features="layerEditing.release"
                 @drawn-count="rowEdits.syncDrafts"
+                @changed-count="changedGeometries = $event"
                 @save="saveEditing"
                 @cancel="cancelEditing"
             />
         </div>
     </div>
+
+    <ConfirmDialog
+        v-if="confirmingCancel"
+        title="Abandonner les modifications ?"
+        :message="`${unsavedCount} modification(s) non enregistrée(s) — géométries reprises et cellules retapées — seront perdues.`"
+        confirm-label="Abandonner"
+        @confirm="discardEditing"
+        @close="confirmingCancel = false"
+    />
 
     <GeometryModal
         v-if="rowGeometry.pkey.value"

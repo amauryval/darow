@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -104,10 +105,10 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 }
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field
-// "file"), writing it into workDir via SourceService.Upload. A multi-layer
-// source is left unloaded, same as a normal Load.
+// "file"), writing it into workDir and returning the rescanned entry. Loading
+// it into a table is a separate, explicit step.
 //
-// @Summary Upload a file and load it into a new table
+// @Summary Upload a file into workDir
 // @Tags sources
 // @Accept multipart/form-data
 // @Produce json
@@ -150,38 +151,48 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 			break
 		}
 	}
-	if uploaded != nil && len(uploaded.Layers) > 1 {
-		response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: false, Source: uploaded})
-		return
-	}
-	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, Source: uploaded})
+	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Source: uploaded})
 }
 
 // LoadSource handles POST /sources/{name}/load. name is validated against the
-// cache by SourceService.Load itself. layer is required for a multi-layer
-// source, rejected otherwise; ?srid= overrides auto-detection, required if
-// none can be detected.
+// cache by SourceService itself. layer is required for a multi-layer source,
+// rejected otherwise; ?srid= overrides auto-detection, required if none can be
+// detected. ?tableName= names the new table, ?replace= reloads an existing one
+// in place instead of creating a second.
 //
-// @Summary Load a source file into a new table
+// @Summary Load a source file into a table
 // @Tags sources
 // @Produce json
 // @Param name path string true "Source file name"
 // @Param layer query string false "Layer name (required for multi-layer sources)"
 // @Param srid query int false "Explicit source EPSG code, overriding auto-detection"
+// @Param tableName query string false "Name of the created table, defaulting to the source name"
+// @Param replace query string false "Id of an existing table to reload in place instead of creating one"
+// @Success 200 {object} map[string]string
 // @Success 201 {object} map[string]string
-// @Failure 409 {object} response.ErrorResponse
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/{name}/load [post]
 func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 	layer := req.URL.Query().Get("layer")
+	tableName := strings.TrimSpace(req.URL.Query().Get("tableName"))
+	replaceId := req.URL.Query().Get("replace")
 	srid, err := parseSrid(req)
 	if err != nil {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
 
-	tableId, err := sh.sourceService.Load(req.Context(), name, layer, srid)
+	if replaceId != "" {
+		if err := sh.sourceService.Reload(req.Context(), replaceId, name, layer, srid); err != nil {
+			response.WriteError(w, req, err, response.MapServiceError(err))
+			return
+		}
+		response.WriteJSON(w, http.StatusOK, map[string]string{"tableId": replaceId})
+		return
+	}
+
+	tableId, err := sh.sourceService.Load(req.Context(), name, layer, tableName, srid)
 	if err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
@@ -233,8 +244,8 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 	response.WriteJSON(w, http.StatusOK, body)
 }
 
-// DeleteSource handles DELETE /sources/{name}, cascading to remove any
-// table(s) loaded from it. Replacing a source is delete then re-upload.
+// DeleteSource handles DELETE /sources/{name}, erasing the file from workDir.
+// The tables already loaded from it are untouched.
 //
 // @Summary Delete a source file
 // @Tags sources
@@ -245,7 +256,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request) {
 	name := chi.URLParam(req, "name")
 
-	if err := sh.sourceService.Delete(req.Context(), name); err != nil {
+	if err := sh.sourceService.Delete(name); err != nil {
 		response.WriteError(w, req, err, response.MapServiceError(err))
 		return
 	}

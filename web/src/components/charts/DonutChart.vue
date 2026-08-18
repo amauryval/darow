@@ -2,11 +2,9 @@
 import { computed } from 'vue'
 import { pie, arc } from 'd3-shape'
 
-// Presentational: props in, no network, no store. Identity encoding (which
-// category a slice belongs to) needs the app's fixed categorical order,
-// never a generated hue — see spec/front/spec.md §5. Beyond the three
-// available hues, the smallest remaining slices fold into a neutral
-// "Autres" bucket instead of inventing a fourth hue.
+// Presentational: props in, no network, no store. Which category a slice
+// belongs to needs the app's fixed categorical order, never a generated hue
+// (§5); past the three hues, the smallest slices fold into "Autres".
 const props = withDefaults(
     defineProps<{
         data: { label: string; value: number }[]

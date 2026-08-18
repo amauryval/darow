@@ -72,12 +72,6 @@ func (m *Adapter) List(ctx context.Context, sort []storage.SortField, offset, li
 	return tables, total, callArgs.Error(2)
 }
 
-func (m *Adapter) BySource(ctx context.Context) (map[storage.SourceKey]string, error) {
-	callArgs := m.Called(ctx)
-	bySource, _ := callArgs.Get(0).(map[storage.SourceKey]string)
-	return bySource, callArgs.Error(1)
-}
-
 func (m *Adapter) GetMetadata(ctx context.Context, tableId string) (storage.Metadata, error) {
 	callArgs := m.Called(ctx, tableId)
 	meta, _ := callArgs.Get(0).(storage.Metadata)
@@ -103,6 +97,16 @@ func (m *Adapter) Table(meta storage.Metadata) (storage.TableRepository, error) 
 	callArgs := m.Called(meta)
 	repo, _ := callArgs.Get(0).(storage.TableRepository)
 	return repo, callArgs.Error(1)
+}
+
+func (m *Adapter) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
+	callArgs := m.Called(ctx)
+	items, _ := callArgs.Get(0).([]storage.TableProvenance)
+	return items, callArgs.Error(1)
+}
+
+func (m *Adapter) ReloadFromFile(ctx context.Context, tableId, sourceName, sourcePath, layer string, sridOverride int) error {
+	return m.Called(ctx, tableId, sourceName, sourcePath, layer, sridOverride).Error(0)
 }
 
 func (m *Adapter) CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (string, error) {

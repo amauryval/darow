@@ -267,7 +267,13 @@ One module per subject, no module state, no side effect:
   them under the plain dots of the geometry carrying them.
 - `sourceRows.ts` — the `SourceRow` view model of the sources tree (`toSourceRows`: a multi-layer
   file becomes a parent row over its layers, a single-layer one stays flat) and `formatSize`. The
-  shape the cells read is defined once here, not rebuilt in the view and in each cell.
+  shape the cells read is defined once here, not rebuilt in the view and in each cell. A row carries
+  no loaded state: a `Source` is a file, and says nothing of the tables loaded from it (back §3.1) —
+  what a file already produced comes from the catalogue's provenance index instead
+  (`useTableProvenance`).
+- `tableNames.ts` — `suggestTableName(base, taken)`: the free name a load is proposed, `base` or
+  `base (n)`. Table names are not unique server-side, so this suggests rather than enforces — a
+  deliberate duplicate is still allowed, an accidental one is not the default.
 
 ---
 
@@ -307,7 +313,10 @@ module level and documents it; that is the exception, not the rule.
 | `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
 | `useMvtLayer` / `useWfsLayer` | the layer of a render mode (`activate`/`deactivate`), symmetric add/remove; both delegate selection to `useMapSelection`, both relay its `pkeyAt` so an edit session can ask which row is drawn under a pixel, and both refetch on a bump of the data version the caller passes. MVT is one vector-tile layer styled per feature — nothing has to be asked of the server to know which geometry types the column holds; the layer read out of a tile is named from the `tableId` the URL is built from, never from a fixed name (back Â§4.7). WFS is a vector source reading the OGC API - Features items endpoint, one bbox query per tile of the loading grid — the engine deciding which tiles the view is missing and remembering the ones already loaded across a pan, the grid's zoom surviving only as the simplification tolerance. Each bbox is paged and its pages are added to the source as they arrive (§8.8), a load whose generation was ended by a refresh dropping the pages still in flight rather than injecting them into the emptied source | present |
-| `useSources` | source list, upload, load with EPSG, deletion — built on `usePaginatedList` | present |
+| `useSources` | source list, refresh, upload, deletion of the file — built on `usePaginatedList`. Loading one into a table is not here: it is its own flow, `useSourceLoad` | present |
+| `useSourceLoad` | the load flow of a single source: which source (or layer) the form is open on, the CRS read from `/sources/{name}/metadata` before anything is imported, and the confirmation — a new table, or a reload of an existing one in place. Reports whether the write landed, so the caller refreshes the provenance index it holds | present |
+| `useTableProvenance` | the catalogue's provenance index (`GET /tables/provenance`), one unpaginated read: which table came from which file, so the sources screen shows what is already loaded and proposes a free name for the next load. Never the table catalogue paged and filtered client-side — the index is a projection the server builds for exactly this | present |
+| `useTablesCatalog` | the table catalogue and the two actions a row offers: rename and delete. Both patch the loaded list in place (the renamed row replaced, the deleted one dropped and the total decremented) rather than reloading it — a mutation from this page must not lose the operator's scroll position, page or search (§8.6). Which row is in edition, whose rename is in flight and whose rename failed live here too, since the list is the owner of that state | present |
 | `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery` | present |
 | `useDeriveFromQuery` | the free-SQL derivation: busy state, inline error, submission of a bare query against every registered table. Scoped to no table — opened from the catalogue screen, not one table's page | present |
 | `useSqlSchemaReference` | the free-SQL form's schema reference panel: the registered tables, infinite-scrolled like `TablesView`, and each one's columns loaded only once expanded and cached from then on — never every table's columns up front, the same restraint `useTableSettingsOverrides` applies to a table-wide sweep | present |
@@ -332,7 +341,7 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 |---|---|
 | `Spinner` | the busy indicator, wherever something is in flight and the content around it stays on screen — a `Skeleton` is for a first load, this is for a refresh happening next to what it refreshes |
 | `ButtonGroup` | a row of buttons welded into one control (daisyUI `join`). Each child carries `BaseButton`'s `joined` prop: daisyUI needs the modifier on the items, and a wrapper cannot put it there without reaching into the slot |
-| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`). The caller says where, never how |
+| `FloatingPanel` | a panel floating over the content behind it — the map's chrome: the render toggle in a corner (`top-left`), what is in flight in the opposite one (`top-right`). The caller says where, never how |
 | `BaseButton` | variants (primary, secondary, danger, ghost — named after the matching daisyUI `btn-*` modifier; `danger` is the **filled** `btn-error`, never outlined: the theme draws a button's border and shadow on the solid variants only, so an outlined red button loses both and reads as a foreign control next to the ones it stands with), sizes (xs, sm, md), an optional `icon` component with an `icon-only` mode (label kept for `aria-label`, hidden visually), `square` for a slot-driven icon-only button, busy/disabled state |
 | `BaseInput` / `BaseSelect` / `BaseTextarea` / `BaseCheckbox` | field + label + error message, `v-model`. `BaseInput`'s optional `label` renders above the control; both it and `BaseSelect` take `ariaLabel` for a field whose meaning is carried by its position rather than a visible label (a filter row's value box), since the accessible name must land on the control and not on the wrapping `<label>`. `BaseTextarea` exposes `insertAtCursor` (`defineExpose`) — replacing the current selection at the caret, which plain `v-model` cannot express since it only ever replaces the whole value — for a caller that inserts text from outside the field itself (`DeriveSqlForm`'s schema reference, `TransformColumnModal`'s column reference) |
 | `BaseAutocomplete` | free-text field that suggests without constraining: the caller loads `options` in reaction to the `search` event (on focus and on every keystroke), keyboard navigation (↑/↓/Entrée/Échap), selection on `mousedown` so `blur` never wins the race. The list is absolutely positioned, so it never lengthens what contains it; a container that scrolls its own content has to let it spill over (`Modal`'s `overflowVisible`) |
@@ -347,8 +356,9 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
 | `DataTable` | generic rendering of a TanStack Table instance: sortable headers, rows, empty state, `footer` and `row-after` slots. A column's `meta.pinned` (a Tailwind left offset) makes it stay put while the grid scrolls sideways, header included; the caller gives the offset because only it knows the widths before. Every row carries an **opaque** background of its own — the grid stripes itself rather than through daisyUI's `table-zebra`, and a selected row is `.row-selected`, an unlayered rule in `style.css` so it wins over the striping variant — because a pinned cell takes the row's background (`bg-inherit`) and a translucent one would let the scrolled columns show through it. A row-wide click is emitted only when it did not land on a control inside the row — a click on *Modifier* or *Supprimer* belongs to that button, and the row shortcut must not also fire on it |
 | `ErrorState` / `Skeleton` | error states (message + retry) and first-load placeholders, worded once |
-| `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`) plus its "Chargement…" indicator, dropped into `DataTable`'s `footer` slot — worded and styled once rather than repeated per paginated list |
+| `ListFooter` | the infinite-scroll sentinel (`usePaginatedList.sentinel`), its "Chargement…" indicator and, once a page has landed, `loaded` against `total` ("50 sur 1 240") — what tells a complete list from its first screen (§8.6). Dropped into `DataTable`'s `footer` slot, worded and styled once rather than repeated per paginated list |
 | `StatTile` | a single-number KPI card, on daisyUI's own `stats`/`stat` component — `label`, `value`, optional `hint` and `icon` |
+| `Logo` | the product's mark — a duck sat on its rows, the idiom the name comes from — drawn in `currentColor` so the one mark serves wherever it is put (the sidebar's badge today). Its standalone, coloured twin is `web/public/favicon.svg`, which a browser reads as a file and so cannot share this markup (project §1) |
 
 **`components/<feature>/` — presentational domain components.** They know the domain types
 (`Metadata`, `Source`, `Row`) but stay mute: they receive data and emit intentions. A `DataTable`'s
@@ -387,9 +397,9 @@ single, link-less entry naming the page.
 | Route | View | Role |
 |---|---|---|
 | `/dashboard` | `DashboardView` | landing route (`/` redirects here). Server diagnostics (`GET /diagnostics`, including a disk-quota donut against `maxSizeBytes` when it is set) and data stats aggregated client-side from every page of `GET /tables` — table count, row totals, geo/non-geo split, SRID distribution, top tables by row count |
-| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, inline rename (`components/tables/TableNameCell.vue`) — patches the renamed row in the already-loaded list instead of reloading it — and free-SQL derivation (`DeriveSqlModal`), navigating to the created table on success |
+| `/tables` | `TablesView` | table catalogue, search, sorting, infinite scroll, per-row rename and delete (`components/tables/TableActionsCell.vue`, the inline editor being `TableNameCell.vue`) — both patch the already-loaded list instead of reloading it — and free-SQL derivation (`DeriveSqlModal`), navigating to the created table on success |
 | `/tables/:tableId` | `TableDetailView` | the table's header and its actions, then composition of the sub-views below |
-| `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading, deletion |
+| `/sources` | `SourcesView` | `workDir` files, upload, per-layer loading (naming the table, or reloading an existing one), file deletion |
 | `/settings` | `SettingsView` | the server's runtime-editable settings (`storage.Settings`), grouped by family, one input per field through `components/settings/SettingsField.vue`, saved as a diff-only patch, per-field refusals attached to their own input. A page size is one plain number per family (§back 2.5): what the input holds is what the server serves, so nothing is shown under it. An input's `min`/`max` and a field's unit come from the payload the value was read in (§back 2.5's descriptor), never from `utils/settingsFields.ts` — which carries what the server has no opinion on: the label, the description, the input `step`, the meaning of `0`, and whether the field is per-table. `inputRange` is the one place the server's bounds become an `<input>`'s, an exclusive minimum becoming the first value the step grid allows |
 
 **`DashboardView`** composes two independent sections, each owning its own four-state load
@@ -553,23 +563,34 @@ per page (the server's own live cap) until the reported `total` is reached.
   states of §8.1) before the write, invalidating it on every further edit — the confirmation step
   must never count a stale number.
 
-**`SourcesView`**: the view holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the
-TanStack instance over `toSourceRows`; `components/sources/` holds the rest — `SourceUploadModal`
-(the drag-and-drop zone, in a modal opened by the import button rather than a permanent panel: the
-page is a catalogue, and an import is an occasional act that should not cost a third of the screen),
-`SourceNameCell` (file/layer icon, extension badge, layer indentation) and `SourceActionsCell`
-(load with its EPSG prompt, link to the loaded table, deletion). The EPSG is asked **only of a
-source that carries a geometry**: the load's first step reads `/sources/{name}/metadata`, and a file
-of plain columns — a CSV of attributes, a non-geo Parquet — has nothing to project, so it is loaded
-straight away rather than held behind a code the user would have to invent. `SourceActionsCell` stays
-presentational: which row is being edited, loaded or deleted is decided by the view comparing
-`useSources`' keys, the cell only renders the state it is handed and emits intentions.
+**`SourcesView`**: the screen is a **file** catalogue, and states it — loading a file makes an
+independent table, so a file may be loaded again and may be deleted without touching what was loaded
+from it (back §3). A file has no single table, so the *Tables chargées* column lists **every** table
+it produced (`SourceTablesCell`, each a link) rather than a loaded/not-loaded flag; the data comes
+from `useTableProvenance`, never from the `Source` itself. `components/sources/` holds
+`SourceUploadModal` (the drag-and-drop zone, in a modal opened by the import button rather than a
+permanent panel: the page is a catalogue, and an import is an occasional act that should not cost a
+third of the screen), `SourceNameCell` (file/layer icon, extension badge, layer indentation),
+`SourceTablesCell`, `SourceActionsCell` (icon-only load and delete, the same language as every other
+row's actions) and `SourceLoadModal` (the load form itself).
 
-`SourcesView` holds the header (counts, `Rafraîchir`, `Importer un fichier`) and the upload modal's
-open state; `SourcesTable` (`components/sources/`) holds the files/layers tree — column definitions,
-the TanStack instance and its four states — taking the whole `useSources` instance rather than a
-narrower prop set, since its action functions (`startLoad`, `remove`…) are already the single owner
-of that state.
+The load form is a modal, not an inline prompt: it asks three things at once — the source CRS, the
+name the table takes (pre-filled with a free one, `utils/tableNames.ts`), and, when this source
+already has tables, whether the load **replaces** one instead of creating a second table of the same
+name. Replacing keeps the table's id, name, settings and stored filters and only swaps its data
+(back §7); creating is still allowed, which is why the choice is stated rather than decided. The
+EPSG is asked **only of a source that carries a geometry**: the form's first step reads
+`/sources/{name}/metadata`, and a file of plain columns — a CSV of attributes, a non-geo Parquet —
+has nothing to project, so the field is not shown at all. A load **creates or reloads the table and
+stops there** — the screen never navigates away, the toast being the whole confirmation.
+
+`SourcesView` holds the header (count, `Rafraîchir`, `Importer un fichier`), the upload modal's open
+state and the load modal — the load form needs both the provenance index and the source it is open
+on, and the view is the one place holding both. `SourcesTable` (`components/sources/`) holds the
+files/layers tree — column definitions, the TanStack instance and its four states — taking the whole
+`useSources` and `useTableProvenance` instances rather than a narrower prop set, since their action
+functions and lookups are already the single owner of that state; opening the load form is the one
+thing it emits rather than calls.
 
 The title shown by the banner comes from `route.meta.title`, whose type is declared once
 (augmentation of `vue-router`'s `RouteMeta`) rather than read untyped.
@@ -633,10 +654,18 @@ height jump.
   `confirm()`) — `ConfirmButton` opens it uniformly, whether the action is rare (a table, a source)
   or frequent (a row): the friction of an extra step is deliberate for all of them.
 - The confirmation message names what is about to disappear, and mentions cascade effects where
-  there are any (deleting a source deletes the tables derived from it).
+  there are any. It also names what **survives**, where that is the surprise: deleting a source file
+  keeps the tables loaded from it.
 - **No input is lost by accident.** A modal holding a modified form does not close on a backdrop
   click; `Escape` asks for confirmation. A schema reload does not reset the visible columns the user
   chose, nor the filter in progress.
+- **Leaving the edit session is confirmed while it holds work.** Every way out — the *Éditer*
+  toggle, the bar's *Annuler*, the map's — goes through `TableDataPanel.cancelEditing`, so the
+  barrier stands once rather than at each of them. What it counts is both halves at once: the
+  retyped cells and the drafts the grid holds (`useRowEdits.dirtyCount`/`draftCount`) and the
+  reshapes, which only exist on the layer and are reported up by `MapView`'s `changed-count`
+  (`useEditLayer`'s own `changedCount`). Zero is left unasked — the confirmation is a barrier in
+  front of losing work, and there is none.
 - No undo: the server does not offer it. That is precisely why confirmation is the barrier.
 
 ### 8.4 Messages: what goes where
@@ -731,7 +760,13 @@ This is the product's main screen; it follows fixed rules.
   and never the query's: it is what decides which extents are missing and remembers those already
   loaded, while the zoom it yields survives only as the simplification tolerance — how finely the
   features come back, not which ones.
-- A loading indicator visible while tiles are in flight; a failed tile does not break the map.
+- A loading indicator visible while tiles are in flight, in the map's own top-right corner
+  (`FloatingPanel`): each rendering counts the requests it has outstanding and exposes it as its own
+  `loading` (`useMvtLayer` off the source's `tileloadstart`/`tileloadend`/`tileloaderror`,
+  `useWfsLayer` around each tile's paging), and only the mode actually on the map is read — the
+  other one's layer is torn down, not hidden. A failed tile counts as answered there, since what the
+  indicator reports is that requests are outstanding, not that they succeeded; a failed tile does not
+  break the map.
 - `pointer` cursor on queryable features, highlighting of selected features, and selection reversible
   in one click — with no modifier key, to stay usable on a trackpad.
 - Map selection and table selection are **the same** selection, always synchronized both ways, with
@@ -1040,6 +1075,7 @@ type-checks, and the human looks.
 
 ```
 web/
+  public/           static files served as-is under /ui/ — favicon.svg, the mark's standalone twin
   src/
     client/           HTTP transport + one module per endpoint family + types.ts
     auth/             oidc.ts — the UserManager and its storage/broadcast plumbing, non-reactive

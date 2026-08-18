@@ -43,10 +43,15 @@ same change.**
 | npm package (UI) | `darow-web` |
 | API title (Swagger) | Darow |
 | UI title and header | Darow |
+| Mark | a duck sat on its rows — `web/src/components/ui/Logo.vue` (in `currentColor`) and `web/public/favicon.svg` (on the brand cyan `#40a9bf`) |
+| Banner | `img/darow_logo.png`, the illustrated wordmark, in the `README` |
 | Licence | BSD 3-Clause, © 2026 amauryval |
 
 The name is **Darow** — from "ducks in a row": DuckDB putting your tabular and spatial data *in a
-row*. It never ships bare: wherever it first appears to a reader — the `README` title, the
+row*. The mark draws exactly that, and it is drawn twice rather than shared: a browser reads a
+favicon as a file, so the Vue component and the SVG file carry the same shapes independently, the
+component in `currentColor` so the one mark serves wherever it is put. The `README`'s banner is the
+illustrated wordmark, which says the same thing at a size that can afford to. It never ships bare: wherever it first appears to a reader — the `README` title, the
 Swagger description, the UI header — it carries the tagline "Darow — get your Ducks in A ROW",
 immediately followed by the statement that the server is backed by DuckDB. The git remote still
 carries the previous name; renaming it is out of scope for the repository itself.

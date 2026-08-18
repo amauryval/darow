@@ -90,6 +90,10 @@ definitions:
                 type: string
             rowCount:
                 type: integer
+            sourceLayer:
+                type: string
+            sourceName:
+                type: string
             srid:
                 type: integer
             tableId:
@@ -211,12 +215,8 @@ definitions:
         type: object
     handlers.uploadResultDTO:
         properties:
-            loaded:
-                type: boolean
             source:
                 $ref: '#/definitions/service.Source'
-            tableId:
-                type: string
         type: object
     response.ErrorResponse:
         properties:
@@ -235,27 +235,14 @@ definitions:
                 type: string
             layers:
                 items:
-                    $ref: '#/definitions/service.SourceLayer'
+                    type: string
                 type: array
-            loaded:
-                type: boolean
             modTime:
                 type: string
             name:
                 type: string
             sizeBytes:
                 type: integer
-            tableId:
-                type: string
-        type: object
-    service.SourceLayer:
-        properties:
-            loaded:
-                type: boolean
-            name:
-                type: string
-            tableId:
-                type: string
         type: object
     storage.FilterCondition:
         properties:
@@ -571,24 +558,34 @@ paths:
                   in: query
                   name: srid
                   type: integer
+                - description: Name of the created table, defaulting to the source name
+                  in: query
+                  name: tableName
+                  type: string
+                - description: Id of an existing table to reload in place instead of creating one
+                  in: query
+                  name: replace
+                  type: string
             produces:
                 - application/json
             responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties:
+                            type: string
+                        type: object
                 '201':
                     description: Created
                     schema:
                         additionalProperties:
                             type: string
                         type: object
-                '409':
-                    description: Conflict
-                    schema:
-                        $ref: '#/definitions/response.ErrorResponse'
                 '507':
                     description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
-            summary: Load a source file into a new table
+            summary: Load a source file into a table
             tags:
                 - sources
     /api/v1/sources/{name}/metadata:
@@ -672,7 +669,7 @@ paths:
                     description: Insufficient Storage
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
-            summary: Upload a file and load it into a new table
+            summary: Upload a file into workDir
             tags:
                 - sources
     /api/v1/tables:
@@ -1633,6 +1630,26 @@ paths:
             summary: Get features intersecting an MVT-style tile, as GeoJSON
             tags:
                 - geo
+    /api/v1/tables/provenance:
+        get:
+            description:
+                Compact index of every table's origin, for a client to tell which sources are
+                already loaded
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '500':
+                    description: Internal Server Error
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: List the tables imported from a source file
+            tags:
+                - tables
     /diagnostics:
         get:
             produces:

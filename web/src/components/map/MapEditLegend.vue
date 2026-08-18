@@ -3,10 +3,9 @@ import { EDIT_LEGEND } from '../../utils/drawStyles'
 import FloatingPanel from '../ui/FloatingPanel.vue'
 import Typography from '../ui/Typography.vue'
 
-// What the session's colours mean, stated on the map that carries them rather
-// than in the bar above it: a legend read next to the shapes it names costs
-// nothing to find, and the bar stays one row of controls (§8.7 — none of it
-// rests on colour alone).
+// What the session's colours mean, stated on the map carrying them rather than
+// in the bar above: a legend next to the shapes it names costs nothing to
+// find, and the bar stays one row of controls (§8.7).
 </script>
 
 <template>

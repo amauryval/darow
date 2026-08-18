@@ -174,6 +174,12 @@ func (m *mockMetadataAPI) ListTables(ctx context.Context, sort []storage.SortFie
 	return tables, total, args.Error(2)
 }
 
+func (m *mockMetadataAPI) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
+	args := m.Called(ctx)
+	items, _ := args.Get(0).([]storage.TableProvenance)
+	return items, args.Error(1)
+}
+
 func (m *mockMetadataAPI) RemoveTable(ctx context.Context, meta storage.Metadata) error {
 	args := m.Called(ctx, meta)
 	return args.Error(0)
@@ -377,13 +383,17 @@ func (m *mockSourceAPI) Upload(filename string, content io.Reader) (string, erro
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockSourceAPI) Load(ctx context.Context, name, layer string, srid int) (string, error) {
-	args := m.Called(ctx, name, layer, srid)
+func (m *mockSourceAPI) Reload(ctx context.Context, tableId, name, layer string, srid int) error {
+	return m.Called(ctx, tableId, name, layer, srid).Error(0)
+}
+
+func (m *mockSourceAPI) Load(ctx context.Context, name, layer, tableName string, srid int) (string, error) {
+	args := m.Called(ctx, name, layer, tableName, srid)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockSourceAPI) Delete(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *mockSourceAPI) Delete(name string) error {
+	args := m.Called(name)
 	return args.Error(0)
 }
 

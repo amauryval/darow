@@ -73,6 +73,45 @@ func Test_tablesHandler_listTables(t *testing.T) {
 	}
 }
 
+func Test_tablesHandler_listTableProvenance(t *testing.T) {
+	cases := []struct {
+		name       string
+		listErr    error
+		wantStatus int
+		wantLen    int
+	}{
+		{name: "returns every imported table", wantStatus: http.StatusOK, wantLen: 2},
+		{name: "storage failure returns 500", listErr: assert.AnError, wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			th := &TablesHandler{metadataService: metadataSvc, settings: defaultTestSettings}
+
+			items := []storage.TableProvenance{
+				{TableId: "t1", TableName: "a.geojson", SourceName: "a.geojson"},
+				{TableId: "t2", TableName: "b.gpkg::roads", SourceName: "b.gpkg", SourceLayer: "roads"},
+			}
+			if c.listErr != nil {
+				items = nil
+			}
+			metadataSvc.On("ListProvenance", mock.Anything).Return(items, c.listErr).Once()
+
+			rec := doHandlerRequest(th.ListTableProvenance, http.MethodGet, "/api/v1/tables/provenance", nil, nil)
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				body := decodeJSON[map[string][]provenanceDTO](rec)
+				if assert.Len(t, body["tables"], c.wantLen) {
+					assert.Equal(t, "roads", body["tables"][1].SourceLayer)
+				}
+			}
+			metadataSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_tablesHandler_listPaginationParams(t *testing.T) {
 	cases := []struct {
 		name       string

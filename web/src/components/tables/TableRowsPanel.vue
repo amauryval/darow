@@ -177,7 +177,12 @@ const table = useVueTable({
         @row-click="emit('rowClick', $event)"
     >
         <template #footer>
-            <ListFooter :sentinel="state.sentinel" :loading="state.loading.value" />
+            <ListFooter
+                :sentinel="state.sentinel"
+                :loading="state.loading.value"
+                :loaded="state.rows.value.length"
+                :total="state.total.value"
+            />
         </template>
     </DataTable>
 </template>

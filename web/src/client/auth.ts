@@ -8,10 +8,9 @@ export function getAuthConfig(): Promise<AuthConfig> {
     return get('/auth/config')
 }
 
-// The current caller's verdict. Answers for any bearer token, valid or not
-// — http.ts attaches it automatically once one is set — which is what lets
-// the UI offer a sign-in rather than discover the refusal on the first
-// write.
+// The current caller's verdict, answered for any bearer token, valid or not
+// (http.ts attaches it once set) — which is what lets the UI offer a sign-in
+// rather than discover the refusal on the first write.
 export function getAuthSession(): Promise<AuthSession> {
     return get('/auth/session')
 }

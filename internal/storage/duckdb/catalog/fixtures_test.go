@@ -159,6 +159,12 @@ func newTestCatalog(t *testing.T) *Catalog {
 	return newTestCatalogWithCreators(t, fakeFileCreator(nil), fakeQueryCreator(nil))
 }
 
+// dbExistingTablesOf reaches the ExistingTables a test catalogue was built
+// with, the only way a test reads back what physically survived.
+func dbExistingTablesOf(c *Catalog) ExistingTables {
+	return c.existing
+}
+
 func newTestCatalogWithCreators(t *testing.T, fileCreator FileCreator, queryCreator QueryCreator) *Catalog {
 	db := openTestDB(t, ":memory:")
 	require.NoError(t, Migrate(db))

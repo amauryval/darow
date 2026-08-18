@@ -12,6 +12,7 @@ import type { ColumnSchema, Metadata } from '../client/types'
 export function useSqlSchemaReference() {
     const {
         items: tables,
+        total,
         loading,
         error,
         loadedOnce,
@@ -45,6 +46,7 @@ export function useSqlSchemaReference() {
 
     return {
         tables,
+        total,
         loading,
         error,
         loadedOnce,

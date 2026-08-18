@@ -22,18 +22,11 @@ type Metadata struct {
 	// derived table, which has none to report.
 	Srid int
 	// SourceName is the workDir file a table was imported from, empty for a
-	// derived one. It is independent of the renamable TableName, so the
-	// loaded/not-loaded tracking survives a rename.
+	// derived one. It records provenance only: the table is a copy of the
+	// data and outlives the file.
 	SourceName string
 	// SourceLayer is the layer a table was imported from, for a multi-layer
 	// source; empty otherwise.
-	SourceLayer string
-}
-
-// SourceKey identifies the workDir file (and, for a multi-layer source, the
-// layer) a table was imported from.
-type SourceKey struct {
-	SourceName  string
 	SourceLayer string
 }
 
@@ -47,6 +40,15 @@ type MetadataPatch struct {
 	SourceLayer *string
 }
 
+// TableProvenance is the compact projection of an imported table's origin,
+// listed so a caller can tell which sources already have a table.
+type TableProvenance struct {
+	TableId     string
+	TableName   string
+	SourceName  string
+	SourceLayer string
+}
+
 // Catalog is the catalogue aggregate: the metadata table describing every
 // logical table, plus the registered-table allowlist /derive validates
 // against. Implemented by duckdb/catalog, declared here for its consumers.
@@ -58,9 +60,9 @@ type Catalog interface {
 	// List returns one page of metadata ordered by sort, or by tableId when
 	// empty, plus the total number of registered tables, in a single query.
 	List(ctx context.Context, sort []SortField, offset, limit int64) ([]Metadata, int64, error)
-	// BySource maps every loaded table's source key to its tableId in a
-	// single query, for SourceService to tell loaded sources from new ones.
-	BySource(ctx context.Context) (map[SourceKey]string, error)
+	// ListProvenance returns every table imported from a source file, ordered
+	// by tableName, leaving out the derived ones that have no source.
+	ListProvenance(ctx context.Context) ([]TableProvenance, error)
 	// PhysicalNames lists every physicalName currently registered — the
 	// only tables a /derive query is allowed to reference.
 	PhysicalNames(ctx context.Context) (map[string]bool, error)
@@ -73,6 +75,10 @@ type Catalog interface {
 	// file, in a single transaction. sourceName and layer are recorded as the
 	// table's source whether or not it carries geometry.
 	CreateFromFile(ctx context.Context, tableName, sourceName, sourcePath, layer string, sridOverride int) (tableId string, err error)
+	// ReloadFromFile drops tableId's physical table and rematerializes it from
+	// a source file under the same tableId, in a single transaction: the
+	// table's settings, filters and identity survive its data being replaced.
+	ReloadFromFile(ctx context.Context, tableId, sourceName, sourcePath, layer string, sridOverride int) error
 	// Remove deletes a logical table's metadata, drops its physical table and
 	// cascades to every attached repository, in a single transaction.
 	Remove(ctx context.Context, tableId string) error

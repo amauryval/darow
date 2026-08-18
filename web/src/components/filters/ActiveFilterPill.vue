@@ -4,10 +4,9 @@ import type { SavedFilter } from '../../client/types'
 import Badge from '../ui/Badge.vue'
 import { useWriteGuard } from '../../composables/useWriteGuard'
 
-// Only the applied filter, not the whole catalogue: a single filter applies at
-// a time, and SavedFilterMenu already lists them all — a pill row repeating it
-// showed every filter twice. The ✕ un-applies, it never deletes: destroying a
-// stored filter belongs to the menu, a click away from the toolbar.
+// Only the applied filter, not the catalogue: one filter applies at a time and
+// SavedFilterMenu lists them all. The ✕ un-applies and never deletes —
+// destroying a stored filter belongs to the menu.
 defineProps<{ filter: SavedFilter }>()
 const emit = defineEmits<{ clear: []; edit: [] }>()
 

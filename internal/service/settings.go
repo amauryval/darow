@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"darow/internal/observer"
@@ -58,7 +59,8 @@ func (s *SettingsService) GetSettings(ctx context.Context) (storage.Settings, er
 // persists it, refreshes the in-memory value, and notifies changed with the
 // result — so a cache-affecting field takes effect without a restart.
 func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.SettingsPatch) (storage.Settings, error) {
-	merged := mergeSettings(s.Current(), patch)
+	before := s.Current()
+	merged := mergeSettings(before, patch)
 	result := settings.Validate(merged)
 	if result.Err != nil {
 		return storage.Settings{}, &ValidationError{msg: result.Err.Error()}
@@ -73,6 +75,7 @@ func (s *SettingsService) UpdateSettings(ctx context.Context, patch storage.Sett
 	s.current = updated
 	s.mu.Unlock()
 
+	logSettingsChange(before, updated)
 	s.changed.Notify(updated)
 	return updated, nil
 }
@@ -107,4 +110,25 @@ func mergeSettings(current storage.Settings, patch storage.SettingsPatch) storag
 		merged.CoordinateDecimals = *patch.CoordinateDecimals
 	}
 	return merged
+}
+
+// logSettingsChange traces every field an accepted update moved, with the
+// value on both sides: the request line alone says that the process-wide
+// limits changed, never which one nor from what.
+func logSettingsChange(before, after storage.Settings) {
+	logFieldChange(settings.FieldDefaultRowLimit, before.DefaultRowLimit, after.DefaultRowLimit)
+	logFieldChange(settings.FieldDefaultListLimit, before.DefaultListLimit, after.DefaultListLimit)
+	logFieldChange(settings.FieldDefaultFeaturesLimit, before.DefaultFeaturesLimit, after.DefaultFeaturesLimit)
+	logFieldChange(settings.FieldMaxSimplifyTolerance, before.MaxSimplifyTolerance, after.MaxSimplifyTolerance)
+	logFieldChange(settings.FieldMaxPrecision, before.MaxPrecision, after.MaxPrecision)
+	logFieldChange(settings.FieldTileCacheMaxAgeSec, before.TileCacheMaxAgeSec, after.TileCacheMaxAgeSec)
+	logFieldChange(settings.FieldCacheTTLSec, before.CacheTTLSec, after.CacheTTLSec)
+	logFieldChange(settings.FieldCoordinateDecimals, before.CoordinateDecimals, after.CoordinateDecimals)
+}
+
+func logFieldChange[T comparable](field string, before, after T) {
+	if before == after {
+		return
+	}
+	slog.Info("setting changed", "field", field, "from", before, "to", after)
 }

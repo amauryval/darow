@@ -100,9 +100,10 @@ reordered — code comments describe the code itself and do not refer to these n
     by default, what every read emits) to the EPSG:3857 the column stores, the exact mirror of the
     read. The CRS is a bound parameter. The write triggers `RefreshDerived` through the service,
     never from the storage layer.
-24. **`context.Context` is the first parameter of every method that touches DuckDB or the disk**,
-    received from `req.Context()` and propagated without derivation. Purely in-memory methods
-    (`SourceService.List`, `MaxUploadBytes`) do not take one.
+24. **`context.Context` is the first parameter of every method that touches DuckDB**, received from
+    `req.Context()` and propagated without derivation. Methods that touch neither DuckDB nor
+    anything cancellable do not take one — `SourceService.List`/`MaxUploadBytes`, and the plain
+    filesystem calls of `SourceService.Upload`/`Delete`.
 25. **Every application cache is a bounded LRU with expiry** (`hashicorp/golang-lru/v2/expirable`),
     never unbounded, with TTL and size configurable.
 
@@ -374,9 +375,10 @@ none.
 
 ### 3.1 Model
 
-A `Source` carries: file name, extension, size, modification date, loaded state, `tableId` if
-loaded, and for a multi-layer format the list of its layers (each with its own loaded state and its
-`tableId`).
+A `Source` carries: file name, extension, size, modification date, and for a multi-layer format the
+names of its layers. Nothing more: **a source knows nothing of the tables loaded from it.** A load
+copies the file's data into a table (rule 13), and that table lives on its own from then on — it is
+never listed, tracked or deleted through its source.
 
 Recognized formats (`internal/service/formats.go`): Multi-layer decides whether `Load` requires a
 `layer` and whether `Refresh` populates `Source.Layers` via `ListLayers`. Introspectable decides
@@ -406,24 +408,25 @@ A file whose extension is not in `allowedExtensions`, or whose size exceeds `max
 
 | Operation           | Behaviour                                                                                                                                                                                                                                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Refresh`           | rescans `workDir`, cross-references the already loaded tables, replaces the cache. Called at startup and through `POST /sources/refresh`.                                                                                                                                                                                                                          |
-| `List`              | paginates and sorts a **copy** of the cache, without ever touching the disk again. Sorting validated against an allowlist (`name`, `sizeBytes`, `modTime`, `loaded`).                                                                                                                                                                                              |
+| `Refresh`           | rescans `workDir` and replaces the cache. Called at startup and through `POST /sources/refresh`.                                                                                                                                                                                                                                                                   |
+| `List`              | paginates and sorts a **copy** of the cache, without ever touching the disk again. Sorting validated against an allowlist (`name`, `sizeBytes`, `modTime`).                                                                                                                                                                                                        |
 | `Upload`            | writes into `workDir` after reducing the name to its base (traversal protection), checking extension and size. Refuses to overwrite an existing file.                                                                                                                                                                                                              |
-| `Load`              | imports a source (or one of its layers) into a table. `name` must exist in the cache (rule 15).                                                                                                                                                                                                                                                                    |
+| `Load`              | imports a source (or one of its layers) into a **new** table. `name` must exist in the cache (rule 15). The caller names that table; without a name it takes the source's own. A source may be loaded any number of times — each load is its own table, and nothing refuses a second one.                                                        |
+| `Reload`            | replaces an **existing** table's data with a fresh import of a cached source, resolved exactly as `Load` resolves it. The table keeps its `tableId`, its name, its settings and its stored filters — only its rows and its provenance move.                                                                                                                                                  |
 | `DetectCRS`         | reads the CRS declared by the file, importing nothing — lets the UI show and correct it before loading.                                                                                                                                                                                                                                                            |
 | `SourceHasGeometry` | reports whether the file carries a geometry field at all, importing nothing — what decides whether a CRS has to be asked for.                                                                                                                                                                                                                                      |
-| `Delete`            | removes the table(s) derived from the source and its cache entry. **The file itself is never deleted.**                                                                                                                                                                                                                                                            |
-| `UnmarkLoaded`      | drops the loaded state of whichever source or layer entry matches the given `storage.Metadata`'s `SourceName`/`SourceLayer`, a no-op if none does. Registered onto `MetadataService`'s removed-table observer by `core.NewServices` (§5.1) — the fix for a table deleted through `DELETE /tables/{tableId}` otherwise leaving its source cached as loaded and pointing at a `tableId` that no longer exists. |
+| `Delete`            | erases the file from `workDir` and drops its cache entry. The tables loaded from it are **not** touched — they hold their own copy of the data. A file already gone from the disk is not an error: the outcome asked for is the one already there.                                                                                                                  |
 
-**Locking.** `Load` holds the lock for its whole check-then-import, not just around the cache read:
-two concurrent `Load`s on the same source cannot both pass the "not loaded yet" test. `Delete`
-removes the cache entry only after all table deletions have succeeded, so that a partial failure
-leaves the source visible and retryable.
+**Locking.** `mu` only ever guards the cache itself: every method reads a **copy** of the entry it
+works on and releases the lock before touching the disk or importing. There is no cross-request
+invariant left to hold — no operation depends on another's outcome.
 
-**Loaded/not-loaded tracking.** The source ↔ table link relies on the `sourceName` and
-`sourceLayer` fields of `metadata`, **never** on `tableName` — which `PATCH /tables/{id}` may rename
-freely. Renaming a table therefore does not detach it from its source, and no unrelated table can
-pass for a source by a coincidence of names.
+**Provenance.** `metadata` records the `sourceName`/`sourceLayer` a table was imported from, and
+survives both a rename (`PATCH /tables/{id}`) and the deletion of the file itself. A table is never
+*resolved* by it — `tableId` alone identifies one — but the catalogue is listable by it:
+`Catalog.ListProvenance` projects every imported table's origin (`GET /tables/provenance`), which is
+how a client tells a source already loaded from one not yet loaded, and offers to reload a table
+rather than create a second of the same name.
 
 **Multi-layer naming.** A layer loaded from `file.gpkg` produces a table named
 `file.gpkg::layer_name`; `sourceName` receives `file.gpkg` and `sourceLayer` receives `layer_name`.
@@ -542,7 +545,7 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 
 | Interface           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `BySource`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `CreateFromFile`, `CreateFromQuery`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
+| `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `ListProvenance` (every imported table's `sourceName`/`sourceLayer`, §3.2), `CreateFromFile`, `CreateFromQuery`, `ReloadFromFile`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
 | `TableRepository`   | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `RowRepository`     | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete`                                                                                                                                                                                                                       |
 | `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
@@ -564,6 +567,11 @@ subset it actually calls. `core.storageAdapter` documents the full surface an ad
 `Catalog() storage.Catalog`, `Materializer() storage.TableMaterializer`, and
 `Table(meta) (TableRepository, error)`, plus `Filters() storage.FilterStore` — four accessors rather
 than a flattened union of every storage method.
+
+`Catalog.ReloadFromFile` follows the same shape as the create path: it drops the physical table
+through the same `Dropper` and rematerializes it under the **same** `physicalName` through the same
+`FileCreator`, in one transaction. No `Attachment` is touched — a reload keeps the table, so
+everything attached to its `tableId` stays valid.
 
 **Naming.** `Catalog.Remove` deletes a whole table (metadata and physical table, in a single
 transaction), `Catalog.CreateFromFile`/`CreateFromQuery` create one (metadata and physical table,
@@ -844,22 +852,19 @@ need no invalidation of their own.
 same access contract §4.2 states for storage-touching calls), and after deleting it notifies it to
 `removed`, an `*observer.Observer[storage.Metadata]` (`internal/observer`) injected through the
 constructor. `core.NewServices` builds the observer, passes it to `NewMetadataService`, and
-registers `SchemaService.InvalidateSchema` and `SourceService.UnmarkLoaded` onto it — deleting a
-table changes its structure just as surely as `AddColumn` does, and would otherwise leave a stale
-entry in `SchemaService`'s cache until its TTL, and a deleted table's source displayed as loaded
-otherwise. Registration happens once, at construction, in `core.NewServices`: `Observer[T]` is not
+registers `SchemaService.InvalidateSchema` and `TableSettingsService.InvalidateOverride` onto it —
+deleting a table changes its structure just as surely as `AddColumn` does, and would otherwise leave
+a stale entry in `SchemaService`'s cache until its TTL. Registration happens once, at construction, in `core.NewServices`: `Observer[T]` is not
 safe for concurrent registration, only for the fan-out itself, which runs after the delete has
 already committed and never returns an error — nothing a cache eviction could fail at is left to
 report by then. This is `MetadataService`'s only dependency on another service's behaviour, and it
-only goes that way — neither `SchemaService` nor `SourceService` knows `MetadataService`, only the
-observer both `MetadataService` and they hold a reference to.
+only goes that way — neither `SchemaService` nor `TableSettingsService` knows `MetadataService`,
+only the observer both `MetadataService` and they hold a reference to.
 
 -   `ListTables` paginates over `TableIds`'s deterministic order and also returns the total.
 -   `CreateFromFile`/`CreateFromQuery` thinly wrap `storage.Catalog`'s methods of the same name
     (§5.4): the transaction that guarantees a catalogue row never survives without a physical table
     is owned by `duckdb/catalog`, not by this service.
--   `LoadedSourceNames` builds the source → `tableId` lookup used by `SourceService.Refresh`, keyed
-    on `sourceName`(`::sourceLayer`).
 
 ### 5.2 `RowService` — typed row CRUD
 
@@ -924,7 +929,8 @@ SRID / source, and cascade to every registered `Attachment`'s `CreateAttached`, 
 transaction (§4.4): a failure at any step leaves neither a metadata row nor a physical table
 behind, rolled back together — the create path's counterpart to `Catalog.Remove`'s cascade.
 `ImportService` additionally computes `sourceName`/`sourceLayer` (§3.2) from the layer suffix before
-calling `CreateFromFile`.
+calling `CreateFromFile`, and offers `ReloadFromFile` — the same import against an existing
+`tableId`, size guard included (§7).
 
 `DeriveService` applies a cheap fail-fast on the query's shape (a single statement, starting with
 `SELECT`) before ever calling `CreateFromQuery` — **this is not the authoritative check**: the real
@@ -1004,7 +1010,10 @@ each method checks against live as constants in `internal/settings/constants.go`
 field's default. On success `UpdateSettings` persists through `SettingsStore.UpdateSettings`,
 replaces the in-memory value, and notifies an `*observer.Observer[storage.Settings]`
 (`internal/observer`, the same generic type §5.1's removed-table observer uses) injected through the
-constructor.
+constructor. It also logs one `INFO` line per field the accepted change actually moved —
+`setting changed`, with `field`, `from` and `to` — the request line saying only that a settings
+change was accepted, and `UpdatedAt` only when: after an incident, that is what tells a limit that
+was always wrong from one raised an hour earlier.
 
 `core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
 and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
@@ -1135,16 +1144,17 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/sources`                 | paginated, sortable listing of the cache (`offset`, `limit`, `sort`)                                                                                                                                 |
 | POST   | `/api/v1/sources/refresh`         | rescans `workDir` then returns the same paginated envelope                                                                                                                                           |
-| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` **then loads immediately** into a table, `{loaded: true, tableId}`. `?srid=` optional. A multi-layer source is left unloaded, `{loaded: false, source}` — the layer choice is the caller's |
-| POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly                                                                           |
+| POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` and returns the rescanned entry, `{source}` — loading it into a table is a separate, explicit `POST /sources/{name}/load`                              |
+| POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly. `?tableName=` names the created table (default: the source's own name), `201`. `?replace=<tableId>` reloads that table's data in place instead of creating a second one, `200` |
 | GET    | `/api/v1/sources/{name}/metadata` | the file's detected CRS, without importing. `srid` is `null` if undetectable                                                                                                                         |
-| DELETE | `/api/v1/sources/{name}`          | deletes the table(s) derived from the source; **does not delete the file**; `200` with the source's name                                                                                             |
+| DELETE | `/api/v1/sources/{name}`          | erases the file from `workDir`; the tables loaded from it are **kept**; `200` with the source's name                                                                                                 |
 
 **Tables**
 
 | Method | Path                                              | Description                                                                                                                                  |
 | ------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/tables`                                  | paginated, sortable listing of the metadata                                                                                                  |
+| GET    | `/api/v1/tables/provenance`                       | every imported table's origin (`tableId`, `tableName`, `sourceName`, `sourceLayer`) in one unpaginated projection; a derived table has no entry (§3.2)                                        |
 | GET    | `/api/v1/tables/{tableId}`                        | a table's metadata                                                                                                                           |
 | PATCH  | `/api/v1/tables/{tableId}`                        | rename (`tableName` only)                                                                                                                    |
 | DELETE | `/api/v1/tables/{tableId}`                        | deletes the table and its data, `200` with the deleted table's id and name                                                                   |
@@ -1515,10 +1525,15 @@ process outright on one, so a Parquet source is never routed through either.
    through `duckdb_indexes()` that both are really there** (§4.2, §4.8) — the load fails if either
    is missing.
 
+**Reloading.** `POST /sources/{name}/load?replace=<tableId>` runs the very same sequence, in one
+transaction, against a table that already exists: its physical table is dropped and recreated under
+its own `physicalName`, its `srid`/`sourceName`/`sourceLayer` are rewritten from the load, and its
+derived metadata is refreshed. A failure rolls the whole thing back, table and metadata alike.
+
 ### 7.1 Multi-layer sources
 
-A `.gpkg` is **never** loaded as a whole. `ListLayers` enumerates its layers, each loads
-independently into its own table, and its loaded state is tracked individually (§3.2).
+A `.gpkg` is **never** loaded as a whole. `ListLayers` enumerates its layers and each loads
+independently into its own table, named `file.gpkg::layer` (§3.2).
 
 ### 7.2 Parquet and GeoParquet
 

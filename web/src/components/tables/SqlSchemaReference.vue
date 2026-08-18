@@ -78,6 +78,8 @@ const list = useSqlSchemaReference()
                 <ListFooter
                     :sentinel="list.sentinel"
                     :loading="list.loadedOnce.value && list.loading.value"
+                    :loaded="list.tables.value.length"
+                    :total="list.total.value"
                 />
             </template>
         </div>

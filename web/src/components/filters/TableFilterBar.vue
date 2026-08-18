@@ -21,11 +21,9 @@ const props = defineProps<{
     columns: ColumnSchema[]
     activeFilterId: string | null
 }>()
-// The tree the parent filters on is *derived* here, never held in two places:
-// every filter is persisted, so the catalogue is the single source of truth
-// and the bar only tracks which of its filters is applied. Keeping a parallel
-// draft tree is what let an edit save a second filter instead of updating the
-// one it came from.
+// The tree the parent filters on is derived here, never held twice: every
+// filter is persisted, so the catalogue is the single source of truth and the
+// bar only tracks which of its filters is applied.
 const emit = defineEmits<{
     'update:nodes': [nodes: DraftNode[]]
     'update:activeFilterId': [id: string | null]

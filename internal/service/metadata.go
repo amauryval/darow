@@ -64,6 +64,16 @@ func (s *MetadataService) ListTables(ctx context.Context, sort []storage.SortFie
 	return tables, total, nil
 }
 
+// ListProvenance returns every table imported from a source file, so a caller
+// can tell which sources already have one.
+func (s *MetadataService) ListProvenance(ctx context.Context) ([]storage.TableProvenance, error) {
+	items, err := s.storage.ListProvenance(ctx)
+	if err != nil {
+		return nil, NewDisplayError("unable to list the tables' sources", err)
+	}
+	return items, nil
+}
+
 // invalidateMetadataCache must be called after any write that changes
 // metadata: UpdateMetadata, RefreshDerived, RemoveTable.
 func (s *MetadataService) invalidateMetadataCache(tableId string) {
@@ -88,6 +98,17 @@ func (s *MetadataService) CreateFromFile(ctx context.Context, tableName, sourceN
 		return "", NewDisplayError(fmt.Sprintf("unable to import %q", tableName), err)
 	}
 	return tableId, nil
+}
+
+// ReloadFromFile replaces tableId's data with a fresh import of a source
+// file, keeping the table's identity, settings and filters, then invalidates
+// the cache.
+func (s *MetadataService) ReloadFromFile(ctx context.Context, tableId, sourceName, sourcePath, layer string, sridOverride int) error {
+	if err := s.storage.ReloadFromFile(ctx, tableId, sourceName, sourcePath, layer, sridOverride); err != nil {
+		return NewDisplayError(fmt.Sprintf("unable to reload table %q from %q", tableId, sourceName), err)
+	}
+	s.invalidateMetadataCache(tableId)
+	return nil
 }
 
 // UpdateMetadata patches tableId's metadata and invalidates the cache.
@@ -118,24 +139,4 @@ func (s *MetadataService) RefreshDerived(ctx context.Context, tableId string, to
 	}
 	s.invalidateMetadataCache(tableId)
 	return nil
-}
-
-// LoadedSourceNames maps each loaded source file name, or "file::layer", to
-// its tableId. It is keyed on SourceName/SourceLayer rather than the renamable
-// TableName; a table with no source is excluded.
-func (s *MetadataService) LoadedSourceNames(ctx context.Context) (map[string]string, error) {
-	bySource, err := s.storage.BySource(ctx)
-	if err != nil {
-		return nil, NewDisplayError("unable to list tables loaded from a source", err)
-	}
-
-	names := make(map[string]string, len(bySource))
-	for key, tableId := range bySource {
-		name := key.SourceName
-		if key.SourceLayer != "" {
-			name = key.SourceName + layerSeparator + key.SourceLayer
-		}
-		names[name] = tableId
-	}
-	return names, nil
 }

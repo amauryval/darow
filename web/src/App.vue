@@ -6,7 +6,6 @@ import {
     FolderOpen,
     LayoutDashboard,
     LayoutGrid,
-    MapPinned,
     PanelLeftClose,
     PanelLeftOpen,
     Settings as SettingsIcon
@@ -17,6 +16,7 @@ import SessionMenu from './components/session/SessionMenu.vue'
 import Toast from './components/ui/Toast.vue'
 import Badge from './components/ui/Badge.vue'
 import BaseButton from './components/ui/BaseButton.vue'
+import Logo from './components/ui/Logo.vue'
 import Typography from './components/ui/Typography.vue'
 
 const route = useRoute()
@@ -101,7 +101,7 @@ const links = [
                     <span
                         class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-content"
                     >
-                        <MapPinned :size="16" />
+                        <Logo :size="18" />
                     </span>
                     <div v-show="!collapsed" class="leading-tight whitespace-nowrap">
                         <Typography variant="h4">Darow</Typography>

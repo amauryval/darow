@@ -141,6 +141,7 @@ func (rt *Router) Setup() http.Handler {
 
 			v1.Route("/tables", func(sub chi.Router) {
 				sub.Get("/", rt.tables.ListTables)
+				sub.Get("/provenance", rt.tables.ListTableProvenance)
 
 				sub.Route("/{tableId}", func(sub chi.Router) {
 					sub.Get("/", rt.tables.GetTableMetadata)

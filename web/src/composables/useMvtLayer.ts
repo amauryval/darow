@@ -1,4 +1,4 @@
-import { watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type Map from 'ol/Map'
 import MVT from 'ol/format/MVT'
 import { intersects } from 'ol/extent'
@@ -24,6 +24,10 @@ export function useMvtLayer(
     version: Ref<number>
 ) {
     let layer: VectorTileLayer | null = null
+    // How many tiles are in flight, so a pan says it is working rather than
+    // filling in silently (§8.8). A count, not a flag: a view is several
+    // tiles and the indicator stays on until the last of them answers.
+    const pending = ref(0)
     // Canvas: the style function is re-run per feature on every frame, so the
     // layer only has to be told to repaint.
     const picked = useMapSelection(map, selection, () => layer?.changed())
@@ -45,6 +49,12 @@ export function useMvtLayer(
             tileGrid: grid,
             url: tileUrl(tableId.value, conditions.value, version.value)
         })
+
+        src.on('tileloadstart', () => (pending.value += 1))
+        // A tile that fails is a tile that answered, as far as the indicator
+        // is concerned: what it reports is that requests are outstanding, not
+        // that they succeeded — a failed tile does not break the map (§8.8).
+        src.on(['tileloadend', 'tileloaderror'], () => (pending.value -= 1))
 
         // Outside the table's own extent there is nothing to draw, so a tile that
         // could only come back empty is never asked for. The bound is put on the
@@ -80,6 +90,9 @@ export function useMvtLayer(
     // holds; both come back as a new URL, which is the only thing a tile cache
     // keyed by URL reacts to.
     function refreshTiles() {
+        // The old source is dropped whole, its outstanding tiles with it: they
+        // will never fire an end event, so what they counted goes with them.
+        pending.value = 0
         layer?.setSource(source())
     }
 
@@ -88,6 +101,7 @@ export function useMvtLayer(
         picked.deactivate()
         if (m && layer) m.removeLayer(layer)
         layer = null
+        pending.value = 0
     }
 
     // bbox is in the list because it bounds which tiles are asked for: a table
@@ -101,5 +115,10 @@ export function useMvtLayer(
     // geometry the pointer rests over (§8.8). What it answers is an identifier,
     // never a geometry: a tile's copy is simplified for its zoom and is never
     // what gets edited.
-    return { activate, deactivate, pkeyAt: picked.pkeyAt }
+    return {
+        activate,
+        deactivate,
+        pkeyAt: picked.pkeyAt,
+        loading: computed(() => pending.value > 0)
+    }
 }

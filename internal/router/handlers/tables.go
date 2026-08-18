@@ -97,6 +97,29 @@ func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusOK, map[string]any{"tables": dtos, "total": total, "limit": limit, "offset": offset})
 }
 
+// ListTableProvenance handles GET /tables/provenance.
+//
+// @Summary List the tables imported from a source file
+// @Description Compact index of every table's origin, for a client to tell which sources are already loaded
+// @Tags tables
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} response.ErrorResponse
+// @Router /api/v1/tables/provenance [get]
+func (th *TablesHandler) ListTableProvenance(w http.ResponseWriter, req *http.Request) {
+	items, err := th.metadataService.ListProvenance(req.Context())
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+
+	dtos := make([]provenanceDTO, 0, len(items))
+	for _, item := range items {
+		dtos = append(dtos, toProvenanceDTO(item))
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{"tables": dtos})
+}
+
 // GetTableMetadata handles GET /tables/{tableId}.
 //
 // @Summary Get table metadata
