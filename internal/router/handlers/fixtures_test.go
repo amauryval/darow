@@ -10,10 +10,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/amauryval/goauth/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/guards"
 	"darow/internal/service"
 	"darow/internal/settings"
 	"darow/internal/storage"
@@ -361,6 +364,11 @@ func (m *mockGeoAPI) GetFeaturesTile(ctx context.Context, meta storage.Metadata,
 	return features, args.Error(1)
 }
 
+func (m *mockGeoAPI) CountFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, q storage.GeoQuery) (int64, error) {
+	args := m.Called(ctx, meta, zoom, x, y, q)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 type mockSourceAPI struct{ mock.Mock }
 
 var _ sourceAPI = (*mockSourceAPI)(nil)
@@ -436,6 +444,30 @@ func doHandlerRequest(handlerFunc http.HandlerFunc, method, target string, body 
 	req := newHandlerRequest(method, target, body, params)
 	rec := httptest.NewRecorder()
 	handlerFunc(rec, req)
+	return rec
+}
+
+// adminVerifier answers every request as an authorized administrator, so a
+// handler test can drive a write route the way a guarded one is reached.
+type adminVerifier struct{}
+
+func (adminVerifier) Verify(_ context.Context, _ string) (types.SessionInfo, error) {
+	return types.SessionInfo{
+		LoggedIn: true, Authorized: true,
+		Roles: []types.Role{types.RoleAdmin},
+		User:  &types.UserInfo{Provider: "fake", ID: "alice"},
+	}, nil
+}
+
+func doAdminHandlerRequest(t *testing.T, handlerFunc http.HandlerFunc, method, target string, body any, params map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	authApp, err := goauth.NewWithVerifier(adminVerifier{}, nil)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	guards.New(authApp).AdminScope()(handlerFunc).ServeHTTP(rec, newHandlerRequest(method, target, body, params))
+
 	return rec
 }
 

@@ -297,6 +297,28 @@ func Test_GeoRepository_CountFeatures(t *testing.T) {
 	assert.EqualValues(t, 1, filtered)
 }
 
+func Test_GeoRepository_CountFeaturesInTile(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	world, err := geo.CountFeaturesInTile(ctx, 0, 0, 0, storage.FeatureQuery{Limit: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, world)
+
+	filtered, err := geo.CountFeaturesInTile(ctx, 0, 0, 0, storage.FeatureQuery{
+		Query: storage.GeoQuery{Filter: "__pkey = ?", Args: []any{"1"}},
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, filtered)
+
+	elsewhere, err := geo.CountFeaturesInTile(ctx, 2, 0, 0, storage.FeatureQuery{})
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, elsewhere)
+}
+
 // PkeysInBbox is paginated over a deterministic pkey order, so two limit-1
 // pages of a bbox holding both points cover both, in order.
 func Test_GeoRepository_PkeysInBboxPagination(t *testing.T) {

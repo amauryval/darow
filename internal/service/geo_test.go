@@ -191,6 +191,39 @@ func Test_GeoService_GetFeaturesTile_ProxiesToStorage(t *testing.T) {
 	assert.Equal(t, features, got)
 }
 
+func Test_GeoService_CountFeaturesTile_ProxiesToStorage(t *testing.T) {
+	cases := []struct {
+		name      string
+		repoErr   error
+		wantCount int64
+		wantErr   bool
+	}{
+		{name: "returns the tile's total", wantCount: 42},
+		{name: "a storage failure is wrapped for display", repoErr: assert.AnError, wantErr: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			geoSvc, geoRepo := setupGeoService(t)
+			q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}
+
+			geoRepo.On("CountFeaturesInTile", context.Background(), 3, 4, 5, storage.FeatureQuery{Query: q}).
+				Return(c.wantCount, c.repoErr).Once()
+
+			got, err := geoSvc.CountFeaturesTile(context.Background(), storage.Metadata{TableId: "id-1"}, 3, 4, 5, q)
+
+			if c.wantErr {
+				require.Error(t, err)
+				var displayErr *DisplayError
+				require.ErrorAs(t, err, &displayErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.EqualValues(t, c.wantCount, got)
+		})
+	}
+}
+
 func Test_GeoService_FilteredExtent_ProxiesToStorage(t *testing.T) {
 	geoSvc, geoRepo := setupGeoService(t)
 	q := storage.GeoQuery{Filter: "name = ?", Args: []any{"a"}}

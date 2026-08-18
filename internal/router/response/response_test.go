@@ -9,10 +9,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	goauth "github.com/amauryval/goauth"
+	"github.com/amauryval/goauth/types"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"darow/internal/guards"
 	"darow/internal/service"
 	"darow/internal/storage"
 )
@@ -72,13 +75,49 @@ func Test_MapServiceError(t *testing.T) {
 	}
 }
 
+type staticVerifier struct{}
+
+func (staticVerifier) Verify(_ context.Context, rawToken string) (types.SessionInfo, error) {
+	if rawToken == "" {
+		return types.SessionInfo{}, errors.New("no bearer token")
+	}
+
+	return types.SessionInfo{
+		LoggedIn: true, Authorized: true,
+		Roles: []types.Role{types.RoleAdmin},
+		User:  &types.UserInfo{Provider: "fake", ID: "alice"},
+	}, nil
+}
+
+func setupErrorRequest(t *testing.T, authenticated bool) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/tables/id-1", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.RequestIDKey, "req-42"))
+	if !authenticated {
+		return req
+	}
+
+	authApp, err := goauth.NewWithVerifier(staticVerifier{}, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer admin-token")
+
+	guarded := req
+	guards.New(authApp).AdminScope()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		guarded = r
+	})).ServeHTTP(httptest.NewRecorder(), req)
+
+	return guarded
+}
+
 func Test_WriteError(t *testing.T) {
 	cases := []struct {
-		name        string
-		code        int
-		err         error
-		wantMessage string
-		wantErrCode string
+		name          string
+		code          int
+		err           error
+		authenticated bool
+		wantMessage   string
+		wantErrCode   string
 	}{
 		{
 			name:        "4xx keeps the underlying error detail",
@@ -88,28 +127,37 @@ func Test_WriteError(t *testing.T) {
 			wantErrCode: "bad_request",
 		},
 		{
-			name:        "5xx keeps the underlying error detail too (IMP-17)",
+			name:        "5xx hides the underlying error from an anonymous caller",
 			code:        http.StatusInternalServerError,
 			err:         errors.New("duckdb: table t_a1b2c3 not found"),
-			wantMessage: "duckdb: table t_a1b2c3 not found",
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 			wantErrCode: "internal_error",
 		},
 		{
-			name:        "504 gets its own discriminator",
+			name:          "5xx keeps the underlying error detail for an authenticated caller",
+			code:          http.StatusInternalServerError,
+			err:           errors.New("duckdb: table t_a1b2c3 not found"),
+			authenticated: true,
+			wantMessage:   "duckdb: table t_a1b2c3 not found",
+			wantErrCode:   "internal_error",
+		},
+		{
+			name:        "504 gets its own discriminator, and its generic text anonymously",
 			code:        http.StatusGatewayTimeout,
 			err:         context.DeadlineExceeded,
-			wantMessage: context.DeadlineExceeded.Error(),
+			wantMessage: http.StatusText(http.StatusGatewayTimeout),
 			wantErrCode: "timeout",
 		},
 		{
-			name:        "507 gets its own discriminator",
-			code:        http.StatusInsufficientStorage,
-			err:         errors.New("database size is at the configured limit"),
-			wantMessage: "database size is at the configured limit",
-			wantErrCode: "quota_exceeded",
+			name:          "507 gets its own discriminator, with its detail for an authenticated caller",
+			code:          http.StatusInsufficientStorage,
+			err:           errors.New("database size is at the configured limit"),
+			authenticated: true,
+			wantMessage:   "database size is at the configured limit",
+			wantErrCode:   "quota_exceeded",
 		},
 		{
-			name:        "a wrapped service.DisplayError sends its DisplayMessage instead of the cause's raw text",
+			name:        "a wrapped service.DisplayError sends its DisplayMessage to an anonymous caller too",
 			code:        http.StatusInternalServerError,
 			err:         fmt.Errorf("import: %w", service.NewDisplayError("impossible de charger la source", errors.New("duckdb: unexpected EOF in ST_Read"))),
 			wantMessage: "impossible de charger la source",
@@ -119,8 +167,7 @@ func Test_WriteError(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/tables/id-1", nil)
-			req = req.WithContext(context.WithValue(req.Context(), middleware.RequestIDKey, "req-42"))
+			req := setupErrorRequest(t, c.authenticated)
 			rec := httptest.NewRecorder()
 
 			WriteError(rec, req, c.err, c.code)

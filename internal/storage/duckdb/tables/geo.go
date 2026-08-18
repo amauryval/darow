@@ -395,6 +395,37 @@ func (g *tableGeo) CountFeatures(ctx context.Context, q storage.FeatureQuery) (i
 	return count, err
 }
 
+// tileWhereClause builds the WHERE clause and bound args restricting a query
+// to the tile envelope, appending the filter's args to baseArgs.
+func tileWhereClause(quotedGeom string, q storage.FeatureQuery, baseArgs []any) (string, []any) {
+	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
+	args := baseArgs
+	if q.Query.Filter != "" {
+		where += " AND (" + q.Query.Filter + ")"
+		args = append(args, q.Query.Args...)
+	}
+
+	return where, args
+}
+
+// CountFeaturesInTile returns how many rows intersect the z/x/y envelope and
+// match q.Query.Filter, ignoring q.Limit/q.Offset.
+func (g *tableGeo) CountFeaturesInTile(ctx context.Context, zoom, x, y int, q storage.FeatureQuery) (int64, error) {
+	where, args := tileWhereClause(g.ref.QuotedGeometryColumn, q, []any{zoom, x, y})
+
+	query := fmt.Sprintf(`
+        WITH tile AS (
+            SELECT ST_TileEnvelope(CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER)) AS envelope
+        )
+        SELECT COUNT(*) FROM %s, tile %s
+    `, g.ref.PhysicalName, where)
+
+	var count int64
+	err := g.conn.QueryRow(ctx, query, args...).Scan(&count)
+
+	return count, err
+}
+
 // FeaturesInTile is Features scoped to a single MVT-style z/x/y tile, its
 // envelope taken from ST_TileEnvelope so a GeoJSON tile and its MVT
 // counterpart always agree on boundaries. Both work in EPSG:3857.
@@ -408,11 +439,7 @@ func (g *tableGeo) FeaturesInTile(ctx context.Context, zoom, x, y int, q storage
 
 	transformExpr, args := geometryProjection(quotedGeom, q.Query, []any{zoom, x, y})
 
-	where := "WHERE ST_Intersects_Extent(" + quotedGeom + ", tile.envelope)"
-	if q.Query.Filter != "" {
-		where += " AND (" + q.Query.Filter + ")"
-		args = append(args, q.Query.Args...)
-	}
+	where, args := tileWhereClause(quotedGeom, q, args)
 	args = append(args, q.Limit, q.Offset)
 
 	query := fmt.Sprintf(`

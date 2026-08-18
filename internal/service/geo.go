@@ -111,6 +111,20 @@ func (g *GeoService) GetFeaturesTile(ctx context.Context, meta storage.Metadata,
 	return features, nil
 }
 
+// CountFeaturesTile returns how many features intersect the given z/x/y tile
+// and match q, ignoring limit/offset — GetFeaturesTile's numberMatched.
+func (g *GeoService) CountFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, q storage.GeoQuery) (int64, error) {
+	geo, err := g.geoRepo(meta)
+	if err != nil {
+		return 0, err
+	}
+	count, err := geo.CountFeaturesInTile(ctx, zoom, x, y, storage.FeatureQuery{Query: q})
+	if err != nil {
+		return 0, NewDisplayError(fmt.Sprintf("unable to count features of tile %d/%d/%d of table %q", zoom, x, y, meta.TableId), err)
+	}
+	return count, nil
+}
+
 // FilterByBbox returns a page of up to limit pkeys of rows whose geometry
 // intersects bbox (lon/lat in OGC:CRS84, the same CRS Metadata.Bbox is
 // reported in), skipping offset matches first.

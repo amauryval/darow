@@ -220,7 +220,14 @@ func (gh *GeoHandler) GetTileFeatures(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, int64(len(features)), itemsLinks(req, int64(offset), int64(limit), len(features) == limit)))
+	numberMatched, err := gh.geoService.CountFeaturesTile(req.Context(), meta, z, x, y, q)
+	if err != nil {
+		response.WriteError(w, req, err, response.MapServiceError(err))
+		return
+	}
+
+	links := itemsLinks(req, int64(offset), int64(limit), int64(offset+limit) < numberMatched)
+	response.WriteJSON(w, http.StatusOK, toFeatureCollectionDTO(features, numberMatched, links))
 }
 
 // tileETag derives an ETag from the table's UpdatedAt, attrs and q, hashed

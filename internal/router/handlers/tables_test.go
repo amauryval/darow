@@ -311,19 +311,27 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 	cases := []struct {
 		name            string
 		deriveErr       error
+		authenticated   bool
 		wantStatus      int
 		wantBodyExcerpt string
 	}{
 		{name: "derives a new table", wantStatus: http.StatusCreated},
 		{name: "derive failure maps to 400", deriveErr: &service.ValidationError{}, wantStatus: http.StatusBadRequest},
 		{
-			// A raw storage failure (a DuckDB "Binder Error" here) is
-			// still reported to the caller rather than masked behind a
-			// generic 500 — see response.WriteError.
+			// A raw storage failure (a DuckDB "Binder Error" here) reaches
+			// the authenticated caller a write route always has, and never
+			// an anonymous one — see response.WriteError.
 			name:            "storage failure returns 500 with the underlying detail",
 			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
+			authenticated:   true,
 			wantStatus:      http.StatusInternalServerError,
 			wantBodyExcerpt: "Binder Error",
+		},
+		{
+			name:            "storage failure hides the underlying detail from an unauthenticated caller",
+			deriveErr:       errors.New(`Binder Error: Table "t_2" does not have a column named "__pkey"`),
+			wantStatus:      http.StatusInternalServerError,
+			wantBodyExcerpt: http.StatusText(http.StatusInternalServerError),
 		},
 	}
 
@@ -335,7 +343,13 @@ func Test_tablesHandler_deriveTable(t *testing.T) {
 			deriveSvc.On("DeriveTable", mock.Anything, "SELECT 1", "derived").Return("t2", c.deriveErr).Once()
 
 			body := map[string]string{"query": "SELECT 1", "newTableName": "derived"}
-			rec := doHandlerRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
+			doRequest := doHandlerRequest
+			if c.authenticated {
+				doRequest = func(handlerFunc http.HandlerFunc, method, target string, body any, params map[string]string) *httptest.ResponseRecorder {
+					return doAdminHandlerRequest(t, handlerFunc, method, target, body, params)
+				}
+			}
+			rec := doRequest(th.DeriveTable, http.MethodPost, "/api/v1/derive", body, nil)
 
 			assert.Equal(t, c.wantStatus, rec.Code)
 			if c.wantBodyExcerpt != "" {

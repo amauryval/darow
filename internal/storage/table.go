@@ -134,6 +134,9 @@ type GeoRepository interface {
 	// FeaturesInTile is Features scoped to a single MVT-style z/x/y tile
 	// instead of an arbitrary bbox.
 	FeaturesInTile(ctx context.Context, zoom, x, y int, q FeatureQuery) ([]GeoFeature, error)
+	// CountFeaturesInTile is CountFeatures over the same z/x/y envelope
+	// FeaturesInTile pages through — that page's numberMatched.
+	CountFeaturesInTile(ctx context.Context, zoom, x, y int, q FeatureQuery) (int64, error)
 	// PkeysInBbox returns a page of up to limit pkeys of rows whose geometry
 	// intersects bbox, in OGC:CRS84, ordered by pkey.
 	PkeysInBbox(ctx context.Context, bbox [4]float64, offset, limit int) ([]string, error)

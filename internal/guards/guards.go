@@ -2,8 +2,10 @@
 package guards
 
 import (
+	"context"
 	"net/http"
 
+	goauth "github.com/amauryval/goauth"
 	"github.com/amauryval/goauth/types"
 )
 
@@ -38,4 +40,12 @@ func (g Guards) AdminScope() func(http.Handler) http.Handler {
 // GuestScope guards the routes reading the administration.
 func (g Guards) GuestScope() func(http.Handler) http.Handler {
 	return g.read
+}
+
+// Authenticated reports whether the request carries a user the auth module verified,
+// which only a request having passed one of these guards does.
+func Authenticated(ctx context.Context) bool {
+	user, ok := goauth.UserFrom(ctx)
+
+	return ok && user != nil
 }

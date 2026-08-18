@@ -171,6 +171,12 @@ func (m *GeoRepository) FeaturesInTile(ctx context.Context, zoom, x, y int, q st
 	return features, callArgs.Error(1)
 }
 
+func (m *GeoRepository) CountFeaturesInTile(ctx context.Context, zoom, x, y int, q storage.FeatureQuery) (int64, error) {
+	callArgs := m.Called(ctx, zoom, x, y, q)
+	count, _ := callArgs.Get(0).(int64)
+	return count, callArgs.Error(1)
+}
+
 func (m *GeoRepository) PkeysInBbox(ctx context.Context, bbox [4]float64, offset, limit int) ([]string, error) {
 	callArgs := m.Called(ctx, bbox, offset, limit)
 	pkeys, _ := callArgs.Get(0).([]string)

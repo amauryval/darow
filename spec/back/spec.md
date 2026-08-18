@@ -548,7 +548,7 @@ consumers off the concrete type and to be mockable (§10), not to make a second 
 | `Catalog`           | the catalogue aggregate: `TableIds` (sorted), `TableExists`, `GetMetadata`, `List`, `PhysicalNames` (the registered-table allowlist `/derive` validates against), `ListProvenance` (every imported table's `sourceName`/`sourceLayer`, §3.2), `CreateFromFile`, `CreateFromQuery`, `ReloadFromFile`, `Remove`, `UpdateMetadata`, `RefreshDerivedMetadata`. `TableExists` and `PhysicalNames` answer against **both** `metadata` and `duckdb_tables()` (§4.8): a metadata row whose physical table is gone reads as absent, instead of reading as an existing table until the first query against it returns a 500 |
 | `TableRepository`   | `Schema`, `Types`, `AddColumn`, `Count`, `Rows() RowRepository`, `Geo() (GeoRepository, bool)`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `RowRepository`     | `Pkeys`, `Page`, `ByPkey`, `Filtered`, `Distinct` (paginated, with an optional case-insensitive `search` matched against the value's text form, LIKE wildcards escaped so they match literally), `Insert`, `InsertMany`, `Update`, `UpdateMany` (its own values per row, all in one transaction), `Delete`                                                                                                                                                                                                                       |
-| `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
+| `GeoRepository`     | `Tile`, `Features`, `CountFeatures`, `FeaturesInTile`, `CountFeaturesInTile`, `PkeysInBbox`, `Extent`, `GeoJSONByPkey`, `WKTByPkey` (the same geometry as Well-Known Text, both reprojected to `OGC:CRS84`), `Types`                                                                                                                                                                                                                                                                                                                                    |
 | `TableMaterializer` | `ListLayers`, `DetectCRS`, `SourceHasGeometry` — answers questions about a source file before any table exists. The materialization itself (CTAS, indexing, clustering, from a source file or a derived SELECT) is not on this interface — it runs transactionally through `Catalog.CreateFromFile`/`CreateFromQuery` (below) instead                                                                                                                                                                                          |
 
 Both the delete cascade and the create path are deliberately absent from these interfaces:
@@ -948,7 +948,8 @@ The only service that caches a rendering result. The cache key includes: `tableI
 since all of them change the tile's contents for a given table version.
 
 Everything else is computed on demand and **never cached**: `GetFeatures`, `CountFeatures`,
-`GetFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single row's geometry in both
+`GetFeaturesTile`, `CountFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single
+row's geometry in both
 encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
 §5.8.1), `NeighbourFeatures` (the rows within a buffer of a
 geometry — the query an edit session runs, unbounded in its key space like every other filtered
@@ -1193,7 +1194,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path                                                  | Description                                                                                                                                                                          |
 | ------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}`          | MVT tile. `?attrs=` embeds non-geometry columns; `?filter=` restricts the rows. `simplify`/`precision` are ignored (a tile simplifies at its own zoom resolution). `404` if `z`/`x`/`y` falls outside the WebMercatorQuad tile matrix (§4.7) |
-| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation                         |
+| GET    | `/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features` | the **same** tile bounds, as a GeoJSON `FeatureCollection` — a client can split its GeoJSON loading over the MVT grid without redoing the extent computation. `numberMatched` is counted over the tile's own envelope (`CountFeaturesInTile`, §4.4), never the page's length, and it alone decides the `next` link |
 | GET    | `/api/v1/tables/{tableId}/geometry-types`             | the distinct geometry types present                                                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/bbox`                       | pkeys of the rows intersecting an extent                                                                                                                                             |
 | POST   | `/api/v1/tables/{tableId}/neighbours`                 | the features within `buffer` meters of a GeoJSON geometry (`ST_Intersects` against `ST_Buffer`), minus the rows named by `exclude` — what an edit session snaps to and carries along |
@@ -1333,13 +1334,19 @@ without matching on prose;
 attaches to the request and the server log line, so a caller can quote it and an operator can find
 the matching entry.
 
-**A 5xx carries the same underlying message a 4xx does** — `err.Error()`, unmasked. This is a
-deliberate trade-off, not an oversight: the diagnostic value of the raw message (which may name a
-`physicalName` or quote a DuckDB error verbatim) is judged to outweigh what masking it behind the
-status's generic text would buy. It rested on the server never being exposed at all, a premise §6.7
-has narrowed — `improvements.md` IMP-17 is the open question of whether a non-operator caller should
-still see it. A 5xx is still logged server-side with the request
-identifier, for the case where the caller doesn't relay what they saw.
+**A 4xx carries its underlying message; a 5xx carries it only to an authenticated caller.** The raw
+text may name a `physicalName` or quote a DuckDB error verbatim, which is diagnostic to an operator
+and an internal detail to everyone else — and every read is open to everyone (§6.7). So `WriteError`
+sends `err.Error()` on a 5xx only when `guards.Authenticated(req.Context())` reports a user the auth
+module verified, which is exactly a request that passed a guard (§6.7); otherwise it sends the
+status's own generic text (`http.StatusText`). A write route is guarded, so its caller always sees
+the detail; a public read never does. The full error is logged server-side either way, with the
+request identifier the anonymous caller still receives and can quote. A read route traverses no
+guard, so its `5xx` is generic even for an operator holding an `admin` token
+(`limitations.md` LIM-25).
+
+A `service.DisplayError` is the one message that crosses that line unchanged: it is authored to be
+shown, not a cause leaking through, so an anonymous caller reads it as-is.
 
 A service showing a clean message instead of an internal cause's raw text — a DuckDB error too far
 into the engine's own vocabulary, a multi-step rollback — wraps the cause in `service.DisplayError`

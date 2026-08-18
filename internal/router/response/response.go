@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"darow/internal/guards"
 	"darow/internal/service"
 	"darow/internal/storage"
 )
@@ -80,11 +81,11 @@ func errorCode(code int) string {
 	return "request_error"
 }
 
-// WriteError writes a JSON error response with the given status code. A 5xx
-// is additionally logged server-side, but the client gets the same
-// underlying message. If err wraps a *service.DisplayError, its
-// DisplayMessage is sent instead of the cause's own text, without changing
-// how MapServiceError classifies the failure.
+// WriteError writes a JSON error response with the given status code, and
+// logs a 5xx server-side. A 5xx answers an unauthenticated caller with the
+// status's generic text instead of the raw cause. If err wraps a
+// *service.DisplayError, its DisplayMessage is sent instead of the cause's
+// own text, without changing how MapServiceError classifies the failure.
 func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	requestId := middleware.GetReqID(req.Context())
 	if code >= 500 {
@@ -97,8 +98,11 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	}
 	message := err.Error()
 	var displayErr *service.DisplayError
-	if errors.As(err, &displayErr) {
+	switch {
+	case errors.As(err, &displayErr):
 		message = displayErr.DisplayMessage()
+	case code >= 500 && !guards.Authenticated(req.Context()):
+		message = http.StatusText(code)
 	}
 	WriteJSON(w, code, ErrorResponse{
 		Error:     errorCode(code),
