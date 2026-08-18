@@ -45,7 +45,7 @@ func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 
 	withGeometry := t.ref.Meta.IsGeo && req.Format != storage.ExportCSV
 	if withGeometry {
-		if err := t.validateCRS(ctx, req.TargetCRS); err != nil {
+		if err := validateCRS(ctx, t.conn, req.TargetCRS); err != nil {
 			return err
 		}
 	}
@@ -83,18 +83,4 @@ func (t *table) CopyTo(ctx context.Context, req storage.ExportRequest) error {
 	)
 	_, err = t.conn.Exec(ctx, storage.TableWriteScope(t.ref.Meta.TableId), query, args...)
 	return err
-}
-
-// validateCRS refuses a CRS PROJ cannot resolve before any file is written,
-// so a mistyped code is a rejected request rather than an export that fails
-// halfway through.
-func (t *table) validateCRS(ctx context.Context, targetCRS string) error {
-	var probe string
-	err := t.conn.QueryRow(ctx,
-		`SELECT ST_AsText(ST_Transform(ST_Point(0, 0), 'EPSG:3857', ?))`, targetCRS,
-	).Scan(&probe)
-	if err != nil {
-		return storage.NewValidationError(fmt.Sprintf("unknown coordinate reference system: %q", targetCRS))
-	}
-	return nil
 }

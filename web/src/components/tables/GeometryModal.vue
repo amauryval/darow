@@ -1,34 +1,84 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Copy } from '@lucide/vue'
 import { excerpt, formatGeoJSON } from '../../utils/geometry'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import BaseInput from '../ui/BaseInput.vue'
 import ErrorState from '../ui/ErrorState.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import Typography from '../ui/Typography.vue'
 
 // The geometry of a single row, in the two encodings it is read for. It is
-// presentational: what is loaded, retried or copied is decided by
-// useRowGeometry in the panel above.
+// presentational: what is loaded, retried, reprojected or copied is decided by
+// useRowGeometry in the panel above. The EPSG field changes what is displayed
+// and nothing else — the stored geometry never moves.
 const props = defineProps<{
     pkey: string
     geometry: GeoJSON.Geometry | null
     wkt: string
+    // What the values below are actually expressed in, as the server resolved
+    // it — never rebuilt from the field, which may hold a code not applied yet.
+    crs: string
+    // The table's own CRS: what the read falls back to and what the field
+    // opens on, exactly as for an export.
+    tableSrid?: number | null
     loading: boolean
     error: string
 }>()
-const emit = defineEmits<{ close: []; retry: []; copy: [text: string, label: string] }>()
+const emit = defineEmits<{
+    close: []
+    retry: []
+    reproject: [srid: number | null]
+    copy: [text: string, label: string]
+}>()
 
 const geoJSON = computed(() => formatGeoJSON(props.geometry))
 const hasGeometry = computed(() => props.geometry !== null || props.wkt !== '')
+
+const srid = ref(props.tableSrid ? String(props.tableSrid) : '')
+const sridError = ref<string | null>(null)
+
+function applyProjection() {
+    const raw = srid.value.trim()
+    if (!raw) {
+        sridError.value = null
+        emit('reproject', null)
+        return
+    }
+    const code = Number(raw)
+    if (!Number.isInteger(code) || code <= 0) {
+        sridError.value = 'Le code EPSG doit être un entier positif.'
+        return
+    }
+    sridError.value = null
+    emit('reproject', code)
+}
 </script>
 
 <template>
     <Modal title="Géométrie de la ligne" wide @close="emit('close')">
-        <Typography variant="caption"
-            >Ligne {{ pkey }} — coordonnées en longitude/latitude (OGC:CRS84).</Typography
-        >
+        <Typography variant="caption">
+            Ligne {{ pkey }} — coordonnées en {{ crs || 'OGC:CRS84' }}.
+        </Typography>
+
+        <div class="mt-3 flex items-end gap-2">
+            <BaseInput
+                v-model="srid"
+                label="Projection affichée (code EPSG)"
+                placeholder="2154, 3857, 4326…"
+                class="flex-1 font-mono"
+                @keyup.enter="applyProjection"
+            />
+            <BaseButton variant="secondary" :disabled="loading" @click="applyProjection">
+                Afficher
+            </BaseButton>
+        </div>
+        <p class="mt-1 text-xs opacity-70">
+            Laissez vide pour conserver la projection d’origine de la table. Rien n’est modifié en
+            base : seul l’affichage ci-dessous change.
+        </p>
+        <p v-if="sridError" class="mt-1 text-xs text-error">{{ sridError }}</p>
 
         <Skeleton v-if="loading" :rows="6" />
         <ErrorState v-else-if="error" :message="error" @retry="emit('retry')" />

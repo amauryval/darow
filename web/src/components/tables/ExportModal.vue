@@ -75,8 +75,8 @@ async function confirmExport() {
             class="font-mono"
         />
         <p v-if="carriesGeometry" class="mt-1 text-xs opacity-70">
-            Vide, la table ressort dans sa projection d’origine. Le code est écrit dans le nom du
-            fichier — aucun format ne le porte de façon fiable.
+            Laissez vide pour conserver la projection d’origine de la table. Le code EPSG choisi est
+            ajouté au nom du fichier, car la plupart des formats ne l’indiquent pas de façon fiable.
         </p>
 
         <p v-if="error" class="mt-3 text-xs text-error">{{ error }}</p>

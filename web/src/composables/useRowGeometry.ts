@@ -5,12 +5,16 @@ import { useToast } from './useToast'
 
 // One row's geometry, read on demand: the geometry column is deliberately
 // absent from every row listing, so this is the one path that shows it —
-// GeoJSON to read or reuse it, WKT to copy it into another tool.
+// GeoJSON to read or reuse it, WKT to copy it into another tool. The EPSG it
+// is read in is the caller's to change (reproject): it reprojects the read,
+// never anything stored, and an unset one is the table's own CRS.
 export function useRowGeometry(tableId: Ref<string>) {
     const toast = useToast()
     const pkey = ref<string | null>(null)
     const geometry = ref<GeoJSON.Geometry | null>(null)
     const wkt = ref('')
+    const crs = ref('')
+    const srid = ref<number | null>(null)
     const loading = ref(false)
     const error = ref('')
 
@@ -19,11 +23,12 @@ export function useRowGeometry(tableId: Ref<string>) {
         loading.value = true
         error.value = ''
         try {
-            const result = await getRowGeometry(tableId.value, rowPkey)
+            const result = await getRowGeometry(tableId.value, rowPkey, srid.value)
             // A later open() while this one was in flight already owns the modal.
             if (pkey.value !== rowPkey) return
             geometry.value = result.geometry
             wkt.value = result.wkt
+            crs.value = result.crs
         } catch (e) {
             if (pkey.value !== rowPkey) return
             error.value = errorMessage(e, 'Impossible de charger la géométrie de cette ligne')
@@ -35,6 +40,8 @@ export function useRowGeometry(tableId: Ref<string>) {
     function open(rowPkey: string) {
         geometry.value = null
         wkt.value = ''
+        crs.value = ''
+        srid.value = null
         load(rowPkey)
     }
 
@@ -42,10 +49,22 @@ export function useRowGeometry(tableId: Ref<string>) {
         if (pkey.value) load(pkey.value)
     }
 
+    // Re-reads the same row in another projection. The previous rendering is
+    // dropped first: showing coordinates under a CRS they are not in, even
+    // for the length of one request, is worse than showing nothing.
+    function reproject(epsg: number | null) {
+        srid.value = epsg
+        geometry.value = null
+        wkt.value = ''
+        retry()
+    }
+
     function close() {
         pkey.value = null
         geometry.value = null
         wkt.value = ''
+        crs.value = ''
+        srid.value = null
         error.value = ''
     }
 
@@ -58,5 +77,5 @@ export function useRowGeometry(tableId: Ref<string>) {
         }
     }
 
-    return { pkey, geometry, wkt, loading, error, open, retry, close, copy }
+    return { pkey, geometry, wkt, crs, srid, loading, error, open, retry, reproject, close, copy }
 }

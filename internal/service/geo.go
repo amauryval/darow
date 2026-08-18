@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -162,7 +163,7 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 	if err != nil {
 		return nil, err
 	}
-	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys, nil)
+	geoJSON, err := geo.GeoJSONByPkey(ctx, pkeys, nil, "")
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to fetch geometries of table %q", meta.TableId), err)
 	}
@@ -185,37 +186,55 @@ func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 	return features, nil
 }
 
-// RowGeometry is one row's geometry in OGC:CRS84, in both encodings a caller
-// reads it for: GeoJSON to draw it, WKT to copy it.
+// RowGeometry is one row's geometry in the CRS it was asked for, in both
+// encodings a caller reads it for: GeoJSON to draw it, WKT to copy it. CRS is
+// what it is actually expressed in, which the caller displays rather than
+// assumes.
 type RowGeometry struct {
 	Pkey    string
 	GeoJSON string
 	WKT     string
+	CRS     string
 }
 
-// RowGeometry returns a single row's geometry rounded to coordinateDecimals,
-// or nil if the row does not exist — one of the three named exceptions to
-// never returning the geometry column.
-func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*RowGeometry, error) {
+// RowGeometry returns a single row's geometry rounded to coordinateDecimals
+// and reprojected to targetCRS ("" being lon/lat), or nil if the row does not
+// exist — one of the three named exceptions to never returning the geometry
+// column. Reprojecting here changes what is *displayed*, nothing stored.
+func (g *GeoService) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int, targetCRS string) (*RowGeometry, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
 
-	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey}, &coordinateDecimals)
+	geoJSON, err := geo.GeoJSONByPkey(ctx, []string{pkey}, &coordinateDecimals, targetCRS)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
+		return nil, geometryReadError(err, pkey, meta.TableId)
 	}
 	encoded, ok := geoJSON[pkey]
 	if !ok {
 		return nil, nil
 	}
 
-	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, &coordinateDecimals)
+	wkt, err := geo.WKTByPkey(ctx, []string{pkey}, &coordinateDecimals, targetCRS)
 	if err != nil {
-		return nil, NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, meta.TableId), err)
+		return nil, geometryReadError(err, pkey, meta.TableId)
 	}
-	return &RowGeometry{Pkey: pkey, GeoJSON: encoded, WKT: wkt[pkey]}, nil
+	if targetCRS == "" {
+		targetCRS = storage.DefaultGeometryCRS
+	}
+	return &RowGeometry{Pkey: pkey, GeoJSON: encoded, WKT: wkt[pkey], CRS: targetCRS}, nil
+}
+
+// geometryReadError keeps a refusal the caller can act on — a CRS that does
+// not exist is the one they typed — and only wraps what they cannot: a
+// generic message over "unknown coordinate reference system" hides the fix.
+func geometryReadError(err error, pkey, tableId string) error {
+	var validationErr *storage.ValidationError
+	if errors.As(err, &validationErr) {
+		return err
+	}
+	return NewDisplayError(fmt.Sprintf("unable to fetch the geometry of row %q in table %q", pkey, tableId), err)
 }
 
 // GeometryTypes returns every distinct geometry type present in meta's

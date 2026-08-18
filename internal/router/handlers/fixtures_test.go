@@ -339,8 +339,8 @@ func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadat
 	return features, args.Error(1)
 }
 
-func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int) (*service.RowGeometry, error) {
-	args := m.Called(ctx, meta, pkey, coordinateDecimals)
+func (m *mockGeoAPI) RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int, targetCRS string) (*service.RowGeometry, error) {
+	args := m.Called(ctx, meta, pkey, coordinateDecimals, targetCRS)
 	geometry, _ := args.Get(0).(*service.RowGeometry)
 	return geometry, args.Error(1)
 }

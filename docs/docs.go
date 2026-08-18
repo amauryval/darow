@@ -1899,6 +1899,12 @@ const docTemplate = `{
                         "name": "pkey",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "EPSG code the geometry is read in (default: the table's own)",
+                        "name": "srid",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1907,6 +1913,12 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
                         }
                     },
                     "404": {

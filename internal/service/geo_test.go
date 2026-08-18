@@ -256,22 +256,22 @@ func Test_GeoService_RowGeometry(t *testing.T) {
 	t.Run("returns both encodings", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
 		decimals := 6
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals).Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
-		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}, &decimals).Return(map[string]string{"pk-1": "POINT (1 2)"}, nil).Once()
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals, "").Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}, &decimals, "").Return(map[string]string{"pk-1": "POINT (1 2)"}, nil).Once()
 
-		geometry, err := svc.RowGeometry(ctx, meta, "pk-1", decimals)
+		geometry, err := svc.RowGeometry(ctx, meta, "pk-1", decimals, "")
 		require.NoError(t, err)
 		require.NotNil(t, geometry)
-		assert.Equal(t, RowGeometry{Pkey: "pk-1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)"}, *geometry)
+		assert.Equal(t, RowGeometry{Pkey: "pk-1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)", CRS: storage.DefaultGeometryCRS}, *geometry)
 		geoRepo.AssertExpectations(t)
 	})
 
 	t.Run("an unknown row reports nothing", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
 		decimals := 6
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"nope"}, &decimals).Return(map[string]string{}, nil).Once()
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"nope"}, &decimals, "").Return(map[string]string{}, nil).Once()
 
-		geometry, err := svc.RowGeometry(ctx, meta, "nope", decimals)
+		geometry, err := svc.RowGeometry(ctx, meta, "nope", decimals, "")
 		require.NoError(t, err)
 		assert.Nil(t, geometry)
 		geoRepo.AssertExpectations(t)
@@ -280,11 +280,47 @@ func Test_GeoService_RowGeometry(t *testing.T) {
 	t.Run("a storage failure is wrapped", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
 		decimals := 6
-		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals).Return(nil, errors.New("boom")).Once()
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals, "").Return(nil, errors.New("boom")).Once()
 
-		_, err := svc.RowGeometry(ctx, meta, "pk-1", decimals)
+		_, err := svc.RowGeometry(ctx, meta, "pk-1", decimals, "")
 		require.Error(t, err)
 	})
+
+	// The CRS a caller asks for is handed to the storage layer and reported
+	// back: what is reprojected is the read, never anything stored.
+	t.Run("reprojects to the requested CRS", func(t *testing.T) {
+		svc, geoRepo := setupGeoService(t)
+		decimals := 6
+		geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals, "EPSG:2154").Return(map[string]string{"pk-1": `{"type":"Point"}`}, nil).Once()
+		geoRepo.On("WKTByPkey", ctx, []string{"pk-1"}, &decimals, "EPSG:2154").Return(map[string]string{"pk-1": "POINT (652000 6862000)"}, nil).Once()
+
+		geometry, err := svc.RowGeometry(ctx, meta, "pk-1", decimals, "EPSG:2154")
+
+		require.NoError(t, err)
+		require.NotNil(t, geometry)
+		assert.Equal(t, "EPSG:2154", geometry.CRS)
+		geoRepo.AssertExpectations(t)
+	})
+}
+
+// A CRS the engine refuses is the caller's own typing: it reaches them as it
+// was raised, never behind the generic "unable to fetch the geometry" a
+// storage failure is wrapped in — that message would hide the fix.
+func Test_GeoService_RowGeometry_KeepsAnUnknownCRSRefusal(t *testing.T) {
+	svc, geoRepo := setupGeoService(t)
+	ctx := context.Background()
+	meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
+	decimals := 6
+	refusal := storage.NewValidationError(`unknown coordinate reference system: "EPSG:999999"`)
+	geoRepo.On("GeoJSONByPkey", ctx, []string{"pk-1"}, &decimals, "EPSG:999999").Return(nil, refusal).Once()
+
+	_, err := svc.RowGeometry(ctx, meta, "pk-1", decimals, "EPSG:999999")
+
+	var validationErr *storage.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Contains(t, err.Error(), "EPSG:999999")
+	var displayErr *DisplayError
+	assert.False(t, errors.As(err, &displayErr), "it must not be wrapped in a generic message")
 }
 
 // A neighbour search hands the storage layer the buffer and the exclusion

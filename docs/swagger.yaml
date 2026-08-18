@@ -1465,6 +1465,10 @@ paths:
                   name: pkey
                   required: true
                   type: string
+                - description: "EPSG code the geometry is read in (default: the table's own)"
+                  in: query
+                  name: srid
+                  type: integer
             produces:
                 - application/json
             responses:
@@ -1473,6 +1477,10 @@ paths:
                     schema:
                         additionalProperties: true
                         type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
                 '404':
                     description: Not Found
                     schema:

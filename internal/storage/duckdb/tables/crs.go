@@ -11,6 +11,23 @@ import (
 	"darow/internal/storage"
 )
 
+// validateCRS refuses a CRS PROJ cannot resolve, before anything is read or
+// written: a mistyped EPSG code is then a rejected request (400) rather than
+// an engine error surfacing as a failure of the read that carried it.
+func validateCRS(ctx context.Context, conn Querier, targetCRS string) error {
+	if targetCRS == "" || targetCRS == storage.DefaultGeometryCRS {
+		return nil
+	}
+
+	var probe string
+	if err := conn.QueryRow(ctx,
+		`SELECT ST_AsText(ST_Transform(ST_Point(0, 0), 'EPSG:3857', ?))`, targetCRS,
+	).Scan(&probe); err != nil {
+		return storage.NewValidationError(fmt.Sprintf("unknown coordinate reference system: %q", targetCRS))
+	}
+	return nil
+}
+
 // DetectCRS reports the authority and code of layer's declared CRS, via
 // ST_Read_Meta. An empty layer uses the source's first; authCode is 0 if the
 // source declares none.

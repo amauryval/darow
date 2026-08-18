@@ -150,13 +150,13 @@ type GeoRepository interface {
 	// no row matches.
 	Extent(ctx context.Context, q GeoQuery) (string, error)
 	// GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment,
-	// keyed by pkey. A non-nil decimals rounds the CRS84 coordinates to that
+	// keyed by pkey, reprojected to targetCRS ("" being OGC:CRS84, what every
+	// other read emits). A non-nil decimals rounds the coordinates to that
 	// many digits; nil is full resolution.
-	GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
+	GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error)
 	// WKTByPkey returns each row's geometry as Well-Known Text, keyed by
-	// pkey, in the same OGC:CRS84 lon/lat GeoJSONByPkey reports. decimals
-	// behaves as in GeoJSONByPkey.
-	WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error)
+	// pkey. targetCRS and decimals behave as in GeoJSONByPkey.
+	WKTByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error)
 	// Types returns every distinct geometry type present in the column.
 	Types(ctx context.Context) ([]string, error)
 	// ValidateGeometries reports, for each of values in order, whether

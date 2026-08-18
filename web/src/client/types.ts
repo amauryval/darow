@@ -88,11 +88,14 @@ export interface Row {
 }
 
 // A row's geometry, as served by the per-row geometry route: GeoJSON to
-// draw it, WKT to read it. Both at full resolution, in lon/lat.
+// draw it, WKT to read it. crs is what they are actually expressed in — the
+// requested EPSG, else the table's own, else lon/lat — and is displayed
+// rather than assumed.
 export interface RowGeometry {
     pkey: string
     geometry: GeoJSON.Geometry | null
     wkt: string
+    crs: string
 }
 
 export interface RowsPage {

@@ -182,13 +182,13 @@ func Test_GeoRepository_ExtentAndGeoJSONByPkey(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, extent)
 
-	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil)
+	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil, "")
 	require.NoError(t, err)
 	assert.Contains(t, geojson["1"], `"Point"`)
 
 	// An empty pkeys must no-op rather than build "IN ()", a SQL syntax
 	// error in DuckDB.
-	empty, err := geo.GeoJSONByPkey(ctx, nil, nil)
+	empty, err := geo.GeoJSONByPkey(ctx, nil, nil, "")
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
@@ -202,11 +202,11 @@ func Test_GeoRepository_GeoJSONByPkey_CoordinateDecimals(t *testing.T) {
 	geo, _ := repo.Geo()
 	ctx := context.Background()
 
-	full, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil)
+	full, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil, "")
 	require.NoError(t, err)
 
 	decimals := 2
-	rounded, err := geo.GeoJSONByPkey(ctx, []string{"1"}, &decimals)
+	rounded, err := geo.GeoJSONByPkey(ctx, []string{"1"}, &decimals, "")
 	require.NoError(t, err)
 
 	assert.NotEqual(t, full["1"], rounded["1"])
@@ -216,6 +216,46 @@ func Test_GeoRepository_GeoJSONByPkey_CoordinateDecimals(t *testing.T) {
 // WKT is read in the same lon/lat CRS GeoJSON is reported in, and a NULL
 // geometry reads as an empty string rather than the JSON literal GeoJSON
 // needs.
+// The target CRS is what the geometry comes back in: the same point read as
+// lon/lat and as EPSG:2154 must not carry the same coordinates. It is a read
+// concern only — the column keeps storing EPSG:3857 either way.
+func Test_GeoRepository_GeometryByPkey_ReprojectsToTheTargetCRS(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+	ctx := context.Background()
+
+	lonLat, err := geo.WKTByPkey(ctx, []string{"1"}, nil, "")
+	require.NoError(t, err)
+	lambert, err := geo.WKTByPkey(ctx, []string{"1"}, nil, "EPSG:2154")
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, lambert["1"])
+	assert.NotEqual(t, lonLat["1"], lambert["1"])
+
+	geojson, err := geo.GeoJSONByPkey(ctx, []string{"1"}, nil, "EPSG:2154")
+	require.NoError(t, err)
+	assert.Contains(t, geojson["1"], `"Point"`)
+	assert.NotEqual(t, lonLat["1"], geojson["1"])
+}
+
+// A CRS PROJ cannot resolve is a refusal naming the code, raised before the
+// read: a mistyped EPSG must reach the caller as a 400 they can act on, not
+// as a failure of the geometry read that carried it.
+func Test_GeoRepository_GeometryByPkey_RefusesAnUnknownCRS(t *testing.T) {
+	conn := openRepoTestDB(t)
+	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
+	require.NoError(t, err)
+	geo, _ := repo.Geo()
+
+	_, err = geo.WKTByPkey(context.Background(), []string{"1"}, nil, "EPSG:999999")
+
+	var validationErr *storage.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Contains(t, err.Error(), "EPSG:999999")
+}
+
 func Test_GeoRepository_WKTByPkey(t *testing.T) {
 	conn := openRepoTestDB(t)
 	repo, err := Open(conn, conn, nil, newGeoTestTable(t, conn))
@@ -223,17 +263,17 @@ func Test_GeoRepository_WKTByPkey(t *testing.T) {
 	geo, _ := repo.Geo()
 	ctx := context.Background()
 
-	wkt, err := geo.WKTByPkey(ctx, []string{"1"}, nil)
+	wkt, err := geo.WKTByPkey(ctx, []string{"1"}, nil, "")
 	require.NoError(t, err)
 	assertPointNear(t, wkt["1"], 0.8983, 0.8983, 1e-4)
 
 	pkey, err := repo.Rows().Insert(ctx, map[string]any{"name": "no geometry"})
 	require.NoError(t, err)
-	missing, err := geo.WKTByPkey(ctx, []string{pkey}, nil)
+	missing, err := geo.WKTByPkey(ctx, []string{pkey}, nil, "")
 	require.NoError(t, err)
 	assert.Empty(t, missing[pkey])
 
-	empty, err := geo.WKTByPkey(ctx, nil, nil)
+	empty, err := geo.WKTByPkey(ctx, nil, nil, "")
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
@@ -247,11 +287,11 @@ func Test_GeoRepository_WKTByPkey_CoordinateDecimals(t *testing.T) {
 	geo, _ := repo.Geo()
 	ctx := context.Background()
 
-	full, err := geo.WKTByPkey(ctx, []string{"1"}, nil)
+	full, err := geo.WKTByPkey(ctx, []string{"1"}, nil, "")
 	require.NoError(t, err)
 
 	decimals := 2
-	rounded, err := geo.WKTByPkey(ctx, []string{"1"}, &decimals)
+	rounded, err := geo.WKTByPkey(ctx, []string{"1"}, &decimals, "")
 	require.NoError(t, err)
 
 	assert.NotEqual(t, full["1"], rounded["1"])

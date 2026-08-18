@@ -77,7 +77,7 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 		response.WriteError(w, req, err, http.StatusBadRequest)
 		return
 	}
-	targetCRS := service.ExportCRS(srid, meta)
+	targetCRS := service.ResolveCRS(srid, meta)
 
 	contentType, err := eh.exportService.ContentType(meta, format)
 	if err != nil {

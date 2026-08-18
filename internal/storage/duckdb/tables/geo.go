@@ -165,30 +165,38 @@ func (g *tableGeo) Extent(ctx context.Context, q storage.GeoQuery) (string, erro
 }
 
 // GeoJSONByPkey returns each row's geometry as a raw GeoJSON fragment, keyed
-// by pkey. A non-nil decimals rounds the emitted CRS84 coordinates to that
-// many digits; export passes nil and stays at full resolution.
-func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
+// by pkey, in targetCRS. A non-nil decimals rounds the emitted coordinates to
+// that many digits; export passes nil and stays at full resolution.
+func (g *tableGeo) GeoJSONByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error) {
 	// A NULL geometry is a legal, geometry-less Feature, and must still yield
 	// valid JSON for the caller to embed: the literal null, not the empty
 	// string json.RawMessage cannot marshal.
-	return g.geometryByPkey(ctx, pkeys, decimals, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
+	return g.geometryByPkey(ctx, pkeys, decimals, targetCRS, "CAST(ST_AsGeoJSON(%s) AS VARCHAR)", "null")
 }
 
-// WKTByPkey returns each row's geometry as Well-Known Text, keyed by pkey,
-// in the lon/lat CRS every geometry read emits. decimals behaves as in
-// GeoJSONByPkey.
-func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string, decimals *int) (map[string]string, error) {
-	return g.geometryByPkey(ctx, pkeys, decimals, "ST_AsText(%s)", "")
+// WKTByPkey returns each row's geometry as Well-Known Text, keyed by pkey.
+// targetCRS and decimals behave as in GeoJSONByPkey.
+func (g *tableGeo) WKTByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS string) (map[string]string, error) {
+	return g.geometryByPkey(ctx, pkeys, decimals, targetCRS, "ST_AsText(%s)", "")
 }
 
 // geometryByPkey reads each named row's geometry through encoding, a format
 // string taking the reprojected geometry, with nullValue standing for a NULL
 // one. A non-nil decimals snaps the coordinates to a 10^-decimals grid.
-func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, decimals *int, encoding, nullValue string) (map[string]string, error) {
+func (g *tableGeo) geometryByPkey(ctx context.Context, pkeys []string, decimals *int, targetCRS, encoding, nullValue string) (map[string]string, error) {
 	pkeyIn, pkeyArgs := pkeyInClause(pkeys)
 
-	geometry := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', 'OGC:CRS84')", g.ref.QuotedGeometryColumn)
-	args := []any{}
+	// The target CRS is bound, never interpolated: it comes from a caller's
+	// EPSG code, and ST_Transform takes it as an ordinary value. It is checked
+	// first, so a mistyped code is a refusal naming it and not a failed read.
+	if err := validateCRS(ctx, g.conn, targetCRS); err != nil {
+		return nil, err
+	}
+	if targetCRS == "" {
+		targetCRS = storage.DefaultGeometryCRS
+	}
+	geometry := fmt.Sprintf("ST_Transform(%s, 'EPSG:3857', ?)", g.ref.QuotedGeometryColumn)
+	args := []any{targetCRS}
 	if decimals != nil {
 		geometry = fmt.Sprintf("ST_ReducePrecision(%s, ?)", geometry)
 		args = append(args, math.Pow(10, -float64(*decimals)))

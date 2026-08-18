@@ -18,7 +18,7 @@ type ExportValidationError struct{ msg string }
 
 func (e *ExportValidationError) Error() string { return e.msg }
 
-// defaultExportCRS is what an export without an explicit CRS is written in —
+// defaultExportCRS is what a read without an explicit CRS is written in —
 // the same lon/lat every other geometry output uses.
 const defaultExportCRS = "OGC:CRS84"
 
@@ -54,10 +54,12 @@ func (s *ExportService) ContentType(meta storage.Metadata, format storage.Export
 	}
 }
 
-// ExportCRS resolves the CRS an export is written in, in the "AUTH:CODE" form
-// ST_Transform expects: the requested EPSG code, else the table's own, else
-// lon/lat. EPSG:4326 is always named OGC:CRS84, whose axis order is X then Y.
-func ExportCRS(requested int, meta storage.Metadata) string {
+// ResolveCRS resolves the CRS a geometry leaves the server in, in the
+// "AUTH:CODE" form ST_Transform expects: the requested EPSG code, else the
+// table's own, else lon/lat. EPSG:4326 is always named OGC:CRS84, whose axis
+// order is X then Y. Shared by the export and by a single row's geometry
+// read, so both answer the same code the same way.
+func ResolveCRS(requested int, meta storage.Metadata) string {
 	srid := requested
 	if srid == 0 {
 		srid = meta.Srid

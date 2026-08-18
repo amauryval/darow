@@ -228,6 +228,7 @@ async function onColumnDropped(name: string) {
             :visible-columns="visibleColumns"
             :columns="columns"
             :geometry-column="table.geometryColumn"
+            :srid="table.srid"
             :selection="selection"
             :active-filter-id="activeFilterId"
             :initial-sort="initialSort"

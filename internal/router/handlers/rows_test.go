@@ -358,7 +358,7 @@ func Test_rowsHandler_getRowGeometry(t *testing.T) {
 			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, c.lookupErr).Once()
 			if c.lookupErr == nil {
-				geoSvc.On("RowGeometry", mock.Anything, meta, "1", mock.Anything).Return(c.geometry, c.geoErr).Once()
+				geoSvc.On("RowGeometry", mock.Anything, meta, "1", mock.Anything, mock.Anything).Return(c.geometry, c.geoErr).Once()
 			}
 
 			rec := doHandlerRequest(rh.GetRowGeometry, http.MethodGet, "/api/v1/tables/t1/rows/1/geometry", nil, map[string]string{"tableId": "t1", "pkey": "1"})

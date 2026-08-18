@@ -30,6 +30,9 @@ const props = defineProps<{
     visibleColumns: string[]
     columns: ColumnSchema[]
     geometryColumn?: string
+    // The table's own CRS: what a geometry read falls back to, and what the
+    // geometry modal's EPSG field opens on.
+    srid?: number | null
     // Owned by the view, so it survives what this panel reloads. One instance,
     // so the map, the grid and the selection bar share the single selection
     // they are supposed to (§8.8).
@@ -392,10 +395,13 @@ async function onColumnTransformed() {
         :pkey="rowGeometry.pkey.value"
         :geometry="rowGeometry.geometry.value"
         :wkt="rowGeometry.wkt.value"
+        :crs="rowGeometry.crs.value"
+        :table-srid="srid"
         :loading="rowGeometry.loading.value"
         :error="rowGeometry.error.value"
         @close="rowGeometry.close"
         @retry="rowGeometry.retry"
+        @reproject="rowGeometry.reproject"
         @copy="rowGeometry.copy"
     />
 

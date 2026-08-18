@@ -75,7 +75,7 @@ func Test_ExportService_ContentType(t *testing.T) {
 	}
 }
 
-func Test_ExportCRS(t *testing.T) {
+func Test_ResolveCRS(t *testing.T) {
 	cases := []struct {
 		name      string
 		requested int
@@ -92,7 +92,7 @@ func Test_ExportCRS(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			meta := storage.Metadata{Srid: c.tableSrid}
-			assert.Equal(t, c.want, ExportCRS(c.requested, meta))
+			assert.Equal(t, c.want, ResolveCRS(c.requested, meta))
 		})
 	}
 }

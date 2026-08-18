@@ -122,8 +122,15 @@ export function updateRows(
 // A single row's geometry, in both encodings: GeoJSON to draw or edit it,
 // WKT to read and copy it. Full resolution, lon/lat — the geometry is
 // deliberately absent from every other row read.
-export function getRowGeometry(tableId: string, pkey: string): Promise<RowGeometry> {
-    return get(`/tables/${tableId}/rows/${pkey}/geometry`)
+// srid reprojects what is read, exactly as it does for an export, and is left
+// out to get the table's own CRS. Nothing stored changes either way.
+export function getRowGeometry(
+    tableId: string,
+    pkey: string,
+    srid?: number | null
+): Promise<RowGeometry> {
+    const qs = srid ? `?srid=${srid}` : ''
+    return get(`/tables/${tableId}/rows/${pkey}/geometry${qs}`)
 }
 
 export function deleteRow(tableId: string, pkey: string): Promise<Deleted> {
