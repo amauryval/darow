@@ -22,40 +22,5 @@ search and stays true. What stays out is **code itself**: no snippet, no full si
 Write the instruction, not the patch — the code is written later, against the code as it is then.
 
 
-TODO-19 through TODO-26 — protecting the API — all shipped in one
-pass: `auth` (its own `README.md`), the `auth` configuration block, the trusted upstream and
-the header stripping, the caller in the context and in the log line, the read/write split enforced by
-the `Authenticated`/`CanWrite` pair and its route inventory in `routes_test.go`, and the
-`unauthorized`/`forbidden` codes in the error envelope — see `spec.md` §2.7, §6.3, §6.4, §6.7. TODO-26 (the tile
-`Cache-Control`) closed without a change: reads being public, `public` stays correct, and §6.5 now
-says why and when it would stop being. TODO-14 (guided aggregation, front counterpart [`../front/todo.md`](../front/todo.md)
-TODO-F37) and TODO-18 (in-place column transform, front counterpart TODO-F44) were both taken up and
-shipped — see `spec.md` §5.11, §8.2, §8.3. TODO-27 — replacing that whole forward-auth model with
-`github.com/amauryval/goauth` — shipped too: `pkg/auth` is gone, `internal/config.AuthConfig`
-declares the block itself (§2.7), `internal/guards` maps the module's two roles to `AdminScope`/
-`GuestScope`, and `cmd/server` is now the only package importing the module (§1, §6.7). Two points
-worth recording since they depart from the chantier as originally written: the config field is named
-`enabled` rather than `demo` and its sense is **inverted** — `enabled: true` is a real provider,
-`enabled: false` (the default) is demo mode — the module's own `AUTH_DEMO` environment variable is
-read and negated on the way into it (`applyEnvOverrides`); and step 6's accountability logging (a
-line naming the caller inside the write guard) was **not** implemented — accepted and recorded as
-`limitations.md` LIM-22 rather than built, the guard's own denial warnings being judged enough for
-now. TODO-28 through TODO-31 — one simplification pass collapsing four shapes written out at every
-call site into the one function each always was — shipped too: `response.WriteServiceError`
-(§6.4) is now the sixty-plus-site exit every handler routes a service error through;
-`handlers.DecodeBody` (§6.1, §6.4) is the generic body decoder every JSON-body handler calls;
-`paginationParams` (§2.5, §6.1, §6.2) is the one `offset`/`limit` parser every listing endpoint
-calls, `strict` carrying the OGC route's own refuse-rather-than-fallback requirement; and
-`renderSelect` (§8.1, §8.2) is the one `SELECT … FROM … [WHERE …] [GROUP BY …]` assembler both
-guided-derivation modes call. None of the four changed an endpoint's behaviour — the existing
-handler, router and service tests passed unmodified. A retired identifier is never reused, so the
-next chantier recorded here takes `TODO-32`.
-
-TODO-27 having shipped unblocks its dependant in front [`../front/todo.md`](../front/todo.md)
-TODO-F39 (the OIDC client, the bearer token, the session) and TODO-F40 (the account popup and the
-disabled write controls). Project [`../project/todo.md`](../project/todo.md) TODO-P2 (the second Go
-module leaving `mise.toml`, the `run-dev`/`authdemo` build tag, the image's environment, the
-`README`) has since shipped too: a bare `mise run run-dev` now carries `-tags authdemo` itself, which
-is what lets `goauth.New` accept demo mode against `config.yaml`'s `enabled: false` default (§2.7).
-
-No chantier is open today.
+No chantier is open today. The next identifier to use is `TODO-32` — a retired identifier is never
+reused.

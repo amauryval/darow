@@ -6,7 +6,7 @@ import Typography from '../ui/Typography.vue'
 // The four states of a column transform's preview (§8.1) — what stands in
 // for the undo the write does not have (spec.md §5.11): the row count and a
 // bounded before/after sample, or nothing yet asked for.
-const props = defineProps<{
+defineProps<{
     column: string
     loading: boolean
     error: string

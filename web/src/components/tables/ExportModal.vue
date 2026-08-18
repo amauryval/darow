@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { toRef } from 'vue'
 import type { ExportFormat, Metadata } from '../../client/types'
+import { useExportForm } from '../../composables/useExportForm'
 import Modal from '../ui/Modal.vue'
-import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseSelect from '../ui/BaseSelect.vue'
+import FormError from '../ui/FormError.vue'
+import ModalFormActions from '../ui/ModalFormActions.vue'
 
 const props = defineProps<{
     table: Metadata
@@ -19,46 +21,13 @@ const formats: { value: ExportFormat; label: string }[] = [
     { value: 'parquet', label: 'Parquet — colonnaire, compressé' }
 ]
 
-const format = ref<ExportFormat>(props.table.isGeo ? 'geojson' : 'csv')
-// Pre-filled with the table's own CRS, which is also what the server falls
-// back to: leaving the field untouched exports the table as it came in.
-const srid = ref(props.table.srid ? String(props.table.srid) : '')
-const error = ref<string | null>(null)
-
-// CSV carries no geometry (back rule 7), so nothing is reprojected for it.
-const carriesGeometry = computed(() => props.table.isGeo && format.value !== 'csv')
-
-const parsedSrid = computed(() => {
-    const raw = srid.value.trim()
-    if (!raw) return null
-    const code = Number(raw)
-    return Number.isInteger(code) && code > 0 ? code : NaN
-})
-
-// Parquet becomes GeoParquet by itself on a geometry column — same file,
-// same extension, geo metadata in addition.
-const formatHint = computed(() => {
-    if (format.value === 'parquet' && props.table.isGeo) {
-        return 'La géométrie fait de ce Parquet un GeoParquet.'
-    }
-    if (format.value === 'geojson' && !props.table.isGeo) {
-        return 'Cette table n’a pas de géométrie : le GeoJSON sera refusé.'
-    }
-    return null
-})
+const { format, srid, error, carriesGeometry, formatHint, confirm } = useExportForm(
+    toRef(props, 'table'),
+    props.onExport
+)
 
 async function confirmExport() {
-    if (Number.isNaN(parsedSrid.value)) {
-        error.value = 'Le code EPSG doit être un entier positif.'
-        return
-    }
-    error.value = null
-    try {
-        await props.onExport(format.value, carriesGeometry.value ? parsedSrid.value : null)
-        emit('close')
-    } catch (e) {
-        error.value = e instanceof Error ? e.message : "Impossible d'exporter la table"
-    }
+    if (await confirm()) emit('close')
 }
 </script>
 
@@ -79,13 +48,14 @@ async function confirmExport() {
             ajouté au nom du fichier, car la plupart des formats ne l’indiquent pas de façon fiable.
         </p>
 
-        <p v-if="error" class="mt-3 text-xs text-error">{{ error }}</p>
+        <FormError :message="error" />
 
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton :disabled="props.exporting" @click="confirmExport">
-                {{ props.exporting ? 'Export en cours…' : 'Exporter' }}
-            </BaseButton>
-        </div>
+        <ModalFormActions
+            :confirm-label="props.exporting ? 'Export en cours…' : 'Exporter'"
+            :busy="props.exporting"
+            :disabled="props.exporting"
+            @cancel="emit('close')"
+            @confirm="confirmExport"
+        />
     </Modal>
 </template>

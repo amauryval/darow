@@ -4,8 +4,9 @@ import type { ColumnSchema } from '../../client/types'
 import { describeDraft, draftOf, isComplete, nodeOf, type DraftNode } from '../../utils/filterTree'
 import Modal from '../ui/Modal.vue'
 import FilterNodeEditor from './FilterNodeEditor.vue'
-import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
+import FormError from '../ui/FormError.vue'
+import ModalFormActions from '../ui/ModalFormActions.vue'
 import Typography from '../ui/Typography.vue'
 
 // node null = creating a filter; otherwise the root node being edited.
@@ -97,22 +98,18 @@ function onSubmit() {
                 </Typography>
             </div>
 
-            <p v-if="props.error" class="text-xs text-error" role="alert">{{ props.error }}</p>
+            <FormError :message="props.error" />
         </div>
 
-        <div class="mt-5 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="props.saving"
-                :disabled="!canSubmit"
-                :title="
-                    complete ? undefined : 'Complétez chaque condition avant d’appliquer le filtre.'
-                "
-                @click="onSubmit"
-            >
-                {{ props.saving ? 'Enregistrement…' : 'Appliquer' }}
-            </BaseButton>
-        </div>
+        <ModalFormActions
+            :confirm-label="props.saving ? 'Enregistrement…' : 'Appliquer'"
+            :busy="props.saving"
+            :disabled="!canSubmit"
+            :reason="
+                complete ? undefined : 'Complétez chaque condition avant d’appliquer le filtre.'
+            "
+            @cancel="emit('close')"
+            @confirm="onSubmit"
+        />
     </Modal>
 </template>

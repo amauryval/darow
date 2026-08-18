@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import { Filter } from '@lucide/vue'
-import { errorMessage } from '../../client/http'
 import type { ColumnSchema, SavedFilter } from '../../client/types'
+import { useFilterBarActions } from '../../composables/useFilterBarActions'
 import { useSavedFilters } from '../../composables/useSavedFilters'
-import { useToast } from '../../composables/useToast'
 import { coerceByType, columnType } from '../../utils/columnTypes'
 import { fromConditions, nodeOf, pruneActive, type DraftNode } from '../../utils/filterTree'
 import FilterEditorModal from './FilterEditorModal.vue'
@@ -29,8 +28,8 @@ const emit = defineEmits<{
     'update:activeFilterId': [id: string | null]
 }>()
 
-const toast = useToast()
 const saved = useSavedFilters(toRef(props, 'tableId'))
+const filterActions = useFilterBarActions(saved)
 const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
 
 // Only one filter applies at a time: a second one would silently AND with the
@@ -67,7 +66,6 @@ function conditionsOf(node: DraftNode) {
 // editing.filter null = creating; otherwise the stored filter being edited,
 // which is what makes "Appliquer" update it rather than create a duplicate.
 const editing = ref<{ filter: SavedFilter | null } | null>(null)
-const editorError = ref('')
 
 const editedNode = computed(() =>
     editing.value?.filter
@@ -76,12 +74,12 @@ const editedNode = computed(() =>
 )
 
 function openCreate() {
-    editorError.value = ''
+    filterActions.editorError.value = ''
     editing.value = { filter: null }
 }
 
 function openEdit(filter: SavedFilter) {
-    editorError.value = ''
+    filterActions.editorError.value = ''
     editing.value = { filter }
 }
 
@@ -90,37 +88,19 @@ function toggleFilter(filter: SavedFilter) {
 }
 
 async function onSubmit(payload: { node: DraftNode; name: string }) {
-    editorError.value = ''
-    const target = editing.value?.filter
-    try {
-        const stored = target
-            ? await saved.update(target.filterId, {
-                  name: payload.name,
-                  conditions: conditionsOf(payload.node)
-              })
-            : await saved.create(payload.name, conditionsOf(payload.node))
-        activeFilterId.value = stored.filterId
-        editing.value = null
-        toast.success(
-            target
-                ? `Filtre « ${payload.name} » mis à jour.`
-                : `Filtre « ${payload.name} » enregistré.`
-        )
-    } catch (e) {
-        // The modal stays open on its own error rather than a toast: the user has
-        // to act on it, and their conditions are still in front of them (§8.4).
-        editorError.value = errorMessage(e, "Impossible d'enregistrer le filtre")
-    }
+    const stored = await filterActions.submit(
+        editing.value?.filter ?? null,
+        payload.name,
+        conditionsOf(payload.node)
+    )
+    if (stored === null) return
+    activeFilterId.value = stored.filterId
+    editing.value = null
 }
 
 async function onRemove(filter: SavedFilter) {
-    try {
-        await saved.remove(filter.filterId)
-        if (activeFilterId.value === filter.filterId) activeFilterId.value = null
-        toast.success(`Filtre « ${filter.name} » supprimé.`)
-    } catch (e) {
-        toast.error(errorMessage(e, 'Impossible de supprimer le filtre'))
-    }
+    if (!(await filterActions.remove(filter))) return
+    if (activeFilterId.value === filter.filterId) activeFilterId.value = null
 }
 </script>
 
@@ -163,7 +143,7 @@ async function onRemove(filter: SavedFilter) {
             :node="editedNode"
             :saved-name="editing.filter?.name"
             :saving="saved.saving.value"
-            :error="editorError"
+            :error="filterActions.editorError.value"
             @submit="onSubmit"
             @close="editing = null"
         />

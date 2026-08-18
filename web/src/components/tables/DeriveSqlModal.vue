@@ -5,8 +5,9 @@ import { useToast } from '../../composables/useToast'
 import { useWriteGuard } from '../../composables/useWriteGuard'
 import Modal from '../ui/Modal.vue'
 import DeriveSqlForm from './DeriveSqlForm.vue'
-import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
+import FormError from '../ui/FormError.vue'
+import ModalFormActions from '../ui/ModalFormActions.vue'
 import Typography from '../ui/Typography.vue'
 
 // The free-SQL mode alone, opened from the catalogue (`TablesView`) rather
@@ -66,19 +67,15 @@ async function onSubmit() {
             </Typography>
         </div>
 
-        <p v-if="error" class="mt-2 text-xs text-error" role="alert">{{ error }}</p>
+        <FormError :message="error" />
 
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="isLoading"
-                :disabled="!canSubmit || writeDisabled"
-                :title="writeDisabled ? writeGuardReason : undefined"
-                @click="onSubmit"
-            >
-                {{ isLoading ? 'Création…' : 'Créer' }}
-            </BaseButton>
-        </div>
+        <ModalFormActions
+            :confirm-label="isLoading ? 'Création…' : 'Créer'"
+            :busy="isLoading"
+            :disabled="!canSubmit || writeDisabled"
+            :reason="writeDisabled ? writeGuardReason : undefined"
+            @cancel="emit('close')"
+            @confirm="onSubmit"
+        />
     </Modal>
 </template>

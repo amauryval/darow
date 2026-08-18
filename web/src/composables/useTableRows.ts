@@ -5,6 +5,7 @@ import type { Row } from '../client/types'
 import { errorMessage } from '../client/http'
 import { inBatches } from '../utils/batch'
 import { cellValue } from '../utils/rows'
+import { useAsyncAction } from './useAsyncAction'
 import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
 
@@ -79,7 +80,7 @@ export function useTableRows(
         }
     }
 
-    const duplicating = ref(false)
+    const { isLoading: duplicating, error: duplicateError, run: runDuplicate } = useAsyncAction()
 
     // Copies under new primary keys: the attributes are taken from the rows
     // already on screen, but each geometry has to be read for it. The geometry
@@ -88,8 +89,7 @@ export function useTableRows(
     // grid and nowhere on the map.
     async function duplicateRows(rows: Row[]) {
         if (rows.length === 0) return
-        duplicating.value = true
-        try {
+        const copies = await runDuplicate(async () => {
             const geometries = new Map<string, unknown>()
             const column = geometryColumn.value
             if (column) {
@@ -113,14 +113,15 @@ export function useTableRows(
             // screen until the new ones arrive rather than flashing empty (§8.1).
             await list.reloadSorted()
             onMutated()
-            toast.success(
-                copies.length > 1 ? `${copies.length} lignes dupliquées.` : 'Ligne dupliquée.'
-            )
-        } catch (e) {
-            toast.error(errorMessage(e, 'Impossible de dupliquer la sélection'))
-        } finally {
-            duplicating.value = false
+            return copies
+        }, 'Impossible de dupliquer la sélection')
+        if (copies === null) {
+            toast.error(duplicateError.value)
+            return
         }
+        toast.success(
+            copies.length > 1 ? `${copies.length} lignes dupliquées.` : 'Ligne dupliquée.'
+        )
     }
 
     return {

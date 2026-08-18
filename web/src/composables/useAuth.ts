@@ -123,7 +123,10 @@ export function useAuth() {
             const user = await oidcManager().getUser()
             await oidcManager().removeUser()
             await oidcManager().signoutRedirect({ id_token_hint: user?.id_token })
-        } catch (err) {
+        } catch {
+            // The provider's own signout failed (network, misconfiguration) — the
+            // local session is already cleared above, so falling back to a plain
+            // redirect still logs the user out of this app.
             window.location.assign('/')
         }
     }

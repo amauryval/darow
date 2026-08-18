@@ -1,9 +1,11 @@
 import { computed, ref, type Ref } from 'vue'
 import { deriveTableFromTable } from '../client/tables'
-import { errorMessage } from '../client/http'
-import type { ColumnSchema, ComputedColumn, DeriveSpec } from '../client/types'
+import type { ColumnSchema, DeriveSpec } from '../client/types'
+import { useAsyncAction } from './useAsyncAction'
+import { useComputedColumnList } from './useComputedColumnList'
 import { coerceByType } from '../utils/columnTypes'
 import { pruneActive, type DraftNode } from '../utils/filterTree'
+import { toggleInList } from '../utils/lists'
 
 // The guided derivation from the table being viewed: a spec the server turns
 // into SQL. Free-SQL derivation is `useDeriveFromQuery` — a top-level route
@@ -14,14 +16,20 @@ import { pruneActive, type DraftNode } from '../utils/filterTree'
 // condition tree and coercing each value to the column's JSON type are
 // business rules, not rendering (§0.2).
 export function useDeriveTable(tableId: Ref<string>, columns: Ref<ColumnSchema[]>) {
-    const isLoading = ref(false)
-    const error = ref('')
+    const { isLoading, error, run } = useAsyncAction()
 
     // Guided draft. Empty selections mean "everything": the server reads an
     // empty column list as the whole table, so nothing has to be preselected
     // for the default derivation to be the obvious one.
     const selectedColumns = ref<string[]>([])
-    const computedColumns = ref<ComputedColumn[]>([])
+    const {
+        items: computedColumns,
+        add: addComputed,
+        update: updateComputed,
+        remove: removeComputed,
+        normalized: normalizedComputed,
+        incomplete: incompleteComputed
+    } = useComputedColumnList()
     const conditions = ref<DraftNode[]>([])
     const conditionsBool = ref<'AND' | 'OR'>('AND')
 
@@ -30,49 +38,12 @@ export function useDeriveTable(tableId: Ref<string>, columns: Ref<ColumnSchema[]
 
     const spec = computed<Omit<DeriveSpec, 'newTableName'>>(() => ({
         columns: selectedColumns.value,
-        computed: computedColumns.value
-            .filter((c) => c.alias.trim() !== '' || c.expression.trim() !== '')
-            .map((c) => ({ alias: c.alias.trim(), expression: c.expression.trim() })),
+        computed: normalizedComputed.value,
         conditions: pruneActive(conditions.value, coerce)
     }))
 
-    // A computed column half filled in is rejected by the server, so it is
-    // blocked here too — with the difference that here it can be pointed at.
-    const incompleteComputed = computed(() =>
-        (spec.value.computed ?? []).some((c) => c.alias === '' || c.expression === '')
-    )
-
     function toggleColumn(name: string) {
-        selectedColumns.value = selectedColumns.value.includes(name)
-            ? selectedColumns.value.filter((c) => c !== name)
-            : [...selectedColumns.value, name]
-    }
-
-    function addComputed() {
-        computedColumns.value = [...computedColumns.value, { alias: '', expression: '' }]
-    }
-
-    function updateComputed(index: number, patch: Partial<ComputedColumn>) {
-        computedColumns.value = computedColumns.value.map((c, i) =>
-            i === index ? { ...c, ...patch } : c
-        )
-    }
-
-    function removeComputed(index: number) {
-        computedColumns.value = computedColumns.value.filter((_, i) => i !== index)
-    }
-
-    async function run<T>(action: () => Promise<T>, fallback: string): Promise<T | null> {
-        isLoading.value = true
-        error.value = ''
-        try {
-            return await action()
-        } catch (e) {
-            error.value = errorMessage(e, fallback)
-            return null
-        } finally {
-            isLoading.value = false
-        }
+        selectedColumns.value = toggleInList(selectedColumns.value, name)
     }
 
     function submitSpec(newTableName: string) {
