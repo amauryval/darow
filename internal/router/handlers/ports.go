@@ -76,9 +76,8 @@ type filterAPI interface {
 }
 
 // settingsAPI is everything the router calls on *service.SettingsService:
-// Current for every handler sizing a page or bounding a body live off the
-// current settings, GetSettings/UpdateSettings for SettingsHandler's own
-// routes.
+// Current for every handler sizing a page live off it, and
+// GetSettings/UpdateSettings for SettingsHandler's own routes.
 type settingsAPI interface {
 	Current() storage.Settings
 	GetSettings(ctx context.Context) (storage.Settings, error)

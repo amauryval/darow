@@ -11,10 +11,8 @@ import (
 	"darow/internal/storage"
 )
 
-// parseGeoQuery decodes GetItems' "filter" (JSON-encoded
-// []storage.FilterCondition), "simplify" (tolerance override), and
-// "precision" (coordinate precision override) query params into a
-// storage.GeoQuery via storage.BuildFilter.
+// parseGeoQuery decodes the "filter", "simplify" and "precision" query params
+// into a storage.GeoQuery, the filter built via storage.BuildFilter.
 func parseGeoQuery(req *http.Request, validColumns []storage.ColumnInfo, maxTolerance, maxPrecision float64) (storage.GeoQuery, error) {
 	var conditions []storage.FilterCondition
 	if raw := req.URL.Query().Get("filter"); raw != "" {

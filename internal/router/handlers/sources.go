@@ -26,10 +26,8 @@ func NewSourcesHandler(sourceSvc sourceAPI, settings settingsAPI) *SourcesHandle
 	return &SourcesHandler{sourceService: sourceSvc, settings: settings}
 }
 
-// paginationParams reads offset/limit query params, resolved through the
-// list limits — same shape as TablesHandler's, kept as its own method rather
-// than shared, since coupling the two handlers together for ~10 lines isn't
-// worth it.
+// paginationParams reads offset/limit query params, resolved through the list
+// limits, the same shape as TablesHandler's own.
 func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int) {
 	offset = 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
@@ -78,9 +76,8 @@ func (sh *SourcesHandler) ListSources(w http.ResponseWriter, req *http.Request) 
 	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
 }
 
-// RefreshSources handles POST /sources/refresh. The rescanned list is
-// returned through the same paginated envelope as ListSources, offset/limit
-// applying to the freshly rescanned cache.
+// RefreshSources handles POST /sources/refresh, returning the rescanned list
+// through the same paginated envelope as ListSources.
 //
 // @Summary Rescan workDir
 // @Tags sources
@@ -107,10 +104,8 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 }
 
 // UploadSource handles POST /sources/upload (multipart/form-data, field
-// "file"). Not part of spec/back/spec.md's original endpoint table (section 6.1
-// only lists refresh/load TODO REMOVE IT) — added as an explicit extension. Writes the
-// file into workDir via SourceService.Upload
-// multi-layer upload stays unresolved regardless
+// "file"), writing it into workDir via SourceService.Upload. A multi-layer
+// source is left unloaded, same as a normal Load.
 //
 // @Summary Upload a file and load it into a new table
 // @Tags sources
@@ -122,12 +117,9 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/sources/upload [post]
 func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request) {
-	// http.Server.ReadTimeout is a hard deadline on reading the whole
-	// request, body included: a source file of any size takes longer than
-	// any value sized for a normal request, and would be cut off mid-body
-	// regardless of the caps. Clearing it here is the read-side mirror of
-	// what ExportTable does for the write deadline, and affects no other
-	// route.
+	// ReadTimeout would cut off a large source file mid-body regardless of
+	// the caps; clearing it here is the read-side mirror of what ExportTable
+	// does for the write deadline.
 	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil {
 		slog.Warn("could not clear read deadline for upload", "error", err)
 	}
@@ -165,12 +157,10 @@ func (sh *SourcesHandler) UploadSource(w http.ResponseWriter, req *http.Request)
 	response.WriteJSON(w, http.StatusCreated, uploadResultDTO{Loaded: true, Source: uploaded})
 }
 
-// LoadSource handles POST /sources/{name}/load. name is validated against
-// the cache by SourceService.Load itself — this handler does no
-// path validation of its own. layer selects one layer of a multi-layer
-// (.gpkg) source; required for those, rejected otherwise. An optional
-// ?srid= pins the source CRS explicitly, overriding auto-detection
-// — required if the source declares no CRS DetectCRS can resolve.
+// LoadSource handles POST /sources/{name}/load. name is validated against the
+// cache by SourceService.Load itself. layer is required for a multi-layer
+// source, rejected otherwise; ?srid= overrides auto-detection, required if
+// none can be detected.
 //
 // @Summary Load a source file into a new table
 // @Tags sources
@@ -201,14 +191,10 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 	response.WriteJSON(w, http.StatusCreated, map[string]string{"tableId": tableId})
 }
 
-// GetSourceMetadata handles GET /sources/{name}/metadata — a preview of a
-// not-yet-loaded source's detected CRS, so a client can show it to the
-// user before Load and let them override it. layer selects one layer
-// of a multi-layer source. hasGeometry says whether the source carries a
-// geometry field at all: a source that carries none needs no CRS, and Load
-// takes it with no ?srid=. srid is null if the source declares no CRS
-// DetectCRS can resolve — Load then requires an explicit ?srid= for a source
-// that does have a geometry.
+// GetSourceMetadata handles GET /sources/{name}/metadata, a preview of a
+// not-yet-loaded source's detected CRS, so a client can show and override it
+// before Load. hasGeometry false means no CRS applies; srid null means Load
+// will require an explicit ?srid=.
 //
 // @Summary Preview a source's detected CRS
 // @Tags sources
@@ -247,10 +233,8 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 	response.WriteJSON(w, http.StatusOK, body)
 }
 
-// DeleteSource handles DELETE /sources/{name}. name is validated against
-// the cache by SourceService.Delete itself. If the source (or
-// one of its layers) was loaded, its table(s) are removed too — explicit
-// replacement is delete then re-upload.
+// DeleteSource handles DELETE /sources/{name}, cascading to remove any
+// table(s) loaded from it. Replacing a source is delete then re-upload.
 //
 // @Summary Delete a source file
 // @Tags sources
