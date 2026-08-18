@@ -101,8 +101,8 @@ export function useWfsLayer(
         const z = grid.getZForResolution(resolution)
         const loadedUnder = generation
         const added: Feature<Geometry>[] = []
-        // No pageSize override: the client's own chunk size is a UI choice and
-        // the server clamps it to what the operator allows anyway.
+        // No pageSize override: the client's own chunk size is a UI choice
+        // and the server clamps it to what the operator allows anyway.
         const { complete } = await getAllItems(tableId.value, {
             bbox,
             simplify: tileSimplifyTolerance(z),

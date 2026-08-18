@@ -1,5 +1,5 @@
 import { del, get, post, postForm } from './http'
-import type { Deleted, SourceCRS, SourcesPage, UploadResult } from './types'
+import type { Deleted, SourceCRS, SourceLimits, SourcesPage, UploadResult } from './types'
 
 export function listSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
     const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : ''
@@ -9,6 +9,12 @@ export function listSources(offset: number, limit: number, sort?: string): Promi
 export function refreshSources(offset: number, limit: number, sort?: string): Promise<SourcesPage> {
     const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : ''
     return post(`/sources/refresh?offset=${offset}&limit=${limit}${sortParam}`)
+}
+
+// The size cap and the extension whitelist an upload is checked against
+// server-side, both config-only (sources.maxSizeBytes/allowedExtensions).
+export function getSourceLimits(): Promise<SourceLimits> {
+    return get('/sources/limits')
 }
 
 // layer is required for a multi-layer (.gpkg) source, omitted otherwise. srid

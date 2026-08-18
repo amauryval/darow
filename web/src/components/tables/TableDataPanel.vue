@@ -11,7 +11,7 @@ import { useToast } from '../../composables/useToast'
 import { useRowGeometry } from '../../composables/useRowGeometry'
 import { useTableSettings } from '../../composables/useTableSettings'
 import { useSelectionView } from '../../composables/useSelectionView'
-import { PAGE_SIZE, useTableRows } from '../../composables/useTableRows'
+import { useTableRows } from '../../composables/useTableRows'
 import FilteredRowsPanel from '../filters/FilteredRowsPanel.vue'
 import GeometryModal from './GeometryModal.vue'
 import TableEditBar from './TableEditBar.vue'
@@ -68,14 +68,9 @@ const toast = useToast()
 const filter = useRowFilter(tableId, columns, isGeo)
 const selection = props.selection
 
-// The table's own effective row limit (TODO-F43) — PAGE_SIZE only until it
-// has loaded, so a raised per-table or global limit is what the grid pages
-// on rather than the client's own constant.
 // rowlimit LIMITATION if high value could decrease front performance...
 const tableSettings = useTableSettings(tableId)
-const rowLimit = computed(
-    () => tableSettings.settings.value?.defaultRowLimit.effective ?? PAGE_SIZE
-)
+const rowLimit = tableSettings.rowLimit
 
 const rowsState = useTableRows(
     tableId,

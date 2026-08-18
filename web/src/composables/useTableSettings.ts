@@ -1,7 +1,8 @@
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { deleteTableSettings, getTableSettings, updateTableSettings } from '../client/tablesettings'
 import type { TableSettings, TableSettingsPatch } from '../client/types'
 import { errorMessage } from '../client/http'
+import { useSettings } from './useSettings'
 import { useToast } from './useToast'
 
 // A table's settings overrides: load, patch, reset, and its own four states
@@ -12,6 +13,7 @@ import { useToast } from './useToast'
 // across callers — each caller gets its own load.
 export function useTableSettings(tableId: Ref<string>) {
     const toast = useToast()
+    const global = useSettings()
     const settings = ref<TableSettings | null>(null)
     const loading = ref(false)
     const loadedOnce = ref(false)
@@ -63,7 +65,14 @@ export function useTableSettings(tableId: Ref<string>) {
         }
     }
 
+    // The page size this table is actually served at: its own override when
+    // it has one, the global row otherwise — the single place the two are
+    // resolved, so no caller re-derives it from a constant.
+    const rowLimit = computed(
+        () => settings.value?.defaultRowLimit.effective ?? global.rowLimit.value
+    )
+
     watch(tableId, load, { immediate: true })
 
-    return { settings, loading, loadedOnce, error, retry, saving, patch, resetAll }
+    return { settings, rowLimit, loading, loadedOnce, error, retry, saving, patch, resetAll }
 }

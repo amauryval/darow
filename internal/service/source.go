@@ -63,6 +63,12 @@ func (s *SourceService) MaxUploadBytes() int64 {
 	return s.sourcesCfg.MaxSizeBytes
 }
 
+// AllowedExtensions returns the file extensions Upload and Refresh accept,
+// as configured in sources.allowedExtensions.
+func (s *SourceService) AllowedExtensions() []string {
+	return slices.Clone(s.sourcesCfg.AllowedExtensions)
+}
+
 // Refresh rescans workDir and replaces the in-memory cache. Files beyond
 // MaxSizeBytes or with a non-whitelisted extension are silently excluded,
 // not reported as an error.

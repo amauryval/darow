@@ -1,3 +1,4 @@
+import { MAP_FEATURES_PAGE_SIZE } from '../utils/pageSizes'
 import { get } from './http'
 import type { FilterCondition } from './types'
 
@@ -49,16 +50,15 @@ export function getItems(
     return get(`/ogc/collections/${tableId}/items${qs ? `?${qs}` : ''}`, signal)
 }
 
-// What is asked for, never what is served: the server resolves it against the
-// operator's defaultFeaturesLimit and answers with the smaller of the two.
-const DEFAULT_ITEMS_PAGE_SIZE = 10_000
-
 // Pages of one collection are fetched several at a time, but a browser gives
 // one host few connections and every tile of the view pages at once — so the
 // bound is per call and small, leaving room for the tiles not yet started.
 const MAX_CONCURRENT_PAGES = 4
 
 export interface ItemsPagingOptions extends Omit<FeatureQueryOptions, 'limit' | 'offset'> {
+    // What is asked for, never what is served: this client's own chunk size
+    // (utils/pageSizes), which the server resolves against the operator's
+    // defaultFeaturesLimit and answers with the smaller of the two.
     pageSize?: number
     // Called once per page, with that page's features alone, as it arrives —
     // pages after the first come back out of order.
@@ -73,7 +73,7 @@ export async function getAllItems(
     tableId: string,
     opts: ItemsPagingOptions
 ): Promise<{ complete: boolean }> {
-    const { pageSize = DEFAULT_ITEMS_PAGE_SIZE, onPage, ...query } = opts
+    const { pageSize = MAP_FEATURES_PAGE_SIZE, onPage, ...query } = opts
 
     let first
     try {

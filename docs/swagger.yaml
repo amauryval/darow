@@ -180,6 +180,15 @@ definitions:
             value:
                 type: integer
         type: object
+    handlers.sourceLimitsDTO:
+        properties:
+            allowedExtensions:
+                items:
+                    type: string
+                type: array
+            maxSizeBytes:
+                type: integer
+        type: object
     handlers.spatialExtentDTO:
         properties:
             bbox:
@@ -613,6 +622,18 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Preview a source's detected CRS
+            tags:
+                - sources
+    /api/v1/sources/limits:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.sourceLimitsDTO'
+            summary: Read the upload constraints
             tags:
                 - sources
     /api/v1/sources/refresh:

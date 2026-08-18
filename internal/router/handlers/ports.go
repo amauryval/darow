@@ -115,6 +115,7 @@ type sourceAPI interface {
 	DetectCRS(ctx context.Context, name, layer string) (authName string, authCode int, err error)
 	SourceHasGeometry(ctx context.Context, name, layer string) (bool, error)
 	MaxUploadBytes() int64
+	AllowedExtensions() []string
 }
 
 var (

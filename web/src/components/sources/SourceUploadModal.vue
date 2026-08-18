@@ -1,28 +1,36 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { FileUp, UploadCloud } from '@lucide/vue'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import Typography from '../ui/Typography.vue'
+import type { SourceLimits } from '../../client/types'
 import { formatSize } from '../../utils/sourceRows'
-import { MAX_UPLOAD_BYTES, validateUploadSize } from '../../utils/uploadValidation'
+import { validateUploadSize } from '../../utils/uploadValidation'
 
-// Stated before the attempt, not only in an error response (§8.5). Static
-// text matching the server's default config.yaml (sources.maxSizeBytes /
-// sources.allowedExtensions) — there is no endpoint exposing the running
-// deployment's actual values, so a custom config drifts from this hint.
-const ACCEPTED_EXTENSIONS = ['.geojson', '.shp', '.csv', '.gpkg', '.parquet']
-const MAX_UPLOAD_LABEL = formatSize(MAX_UPLOAD_BYTES)
-
-defineProps<{ uploading?: boolean }>()
+// The running deployment's own upload constraints (GET /sources/limits),
+// loaded by the view: stated before the attempt rather than only in an error
+// response (§8.5), and never guessed from the default config.yaml.
+const props = defineProps<{ uploading?: boolean; limits: SourceLimits | null }>()
 const emit = defineEmits<{ close: []; upload: [file: File] }>()
+
+const accept = computed(() => props.limits?.allowedExtensions.join(',') ?? '')
+// Absent until the limits land — the server checks both anyway, so the hint
+// is skipped rather than shown wrong.
+const constraintsLabel = computed(() =>
+    props.limits
+        ? `${props.limits.allowedExtensions.join(', ')} — ${formatSize(
+              props.limits.maxSizeBytes
+          )} maximum`
+        : null
+)
 
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
 
 function handleFile(file: File) {
-    const message = validateUploadSize(file)
+    const message = props.limits ? validateUploadSize(file, props.limits.maxSizeBytes) : null
     error.value = message
     if (!message) emit('upload', file)
 }
@@ -58,7 +66,7 @@ function onDrop(event: DragEvent) {
                 ref="fileInput"
                 type="file"
                 class="hidden"
-                :accept="ACCEPTED_EXTENSIONS.join(',')"
+                :accept="accept"
                 @change="onFileSelected"
             />
             <BaseButton
@@ -71,9 +79,9 @@ function onDrop(event: DragEvent) {
             >
                 {{ uploading ? 'Envoi…' : 'Parcourir' }}
             </BaseButton>
-            <Typography variant="caption"
-                >{{ ACCEPTED_EXTENSIONS.join(', ') }} — {{ MAX_UPLOAD_LABEL }} maximum</Typography
-            >
+            <Typography v-if="constraintsLabel" variant="caption">{{
+                constraintsLabel
+            }}</Typography>
             <Typography v-if="error" variant="caption" class="text-error">{{ error }}</Typography>
         </div>
     </Modal>

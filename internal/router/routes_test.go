@@ -393,6 +393,7 @@ func readRoutes() [][2]string {
 		{http.MethodGet, "/diagnostics"},
 		{http.MethodGet, "/ui/"},
 		{http.MethodGet, "/api/v1/sources"},
+		{http.MethodGet, "/api/v1/sources/limits"},
 		{http.MethodPost, "/api/v1/sources/refresh"},
 		{http.MethodGet, "/api/v1/tables"},
 		{http.MethodGet, "/api/v1/tables/id-1"},

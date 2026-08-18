@@ -3,13 +3,9 @@ import type { SortingState } from '@tanstack/vue-table'
 import { deleteTable, listTables, renameTable } from '../client/tables'
 import type { Metadata } from '../client/types'
 import { errorMessage } from '../client/http'
+import { LIST_PAGE_SIZE } from '../utils/pageSizes'
 import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
-
-// The list's own page size — deliberately independent of the operator's
-// defaultListLimit setting, a REST API page size rather than a UI choice; see
-// useTableRows' PAGE_SIZE for why.
-const PAGE_SIZE = 50
 
 // The table catalogue and what can be done to a row from it: renaming one and
 // deleting one, the two actions a table's own page already offers.
@@ -17,7 +13,7 @@ export function useTablesCatalog(initialSorting?: SortingState) {
     const toast = useToast()
 
     const list = usePaginatedList<Metadata>({
-        limit: PAGE_SIZE,
+        limit: LIST_PAGE_SIZE,
         initialSorting,
         fetchPage: (offset, limit, sort) =>
             listTables(offset, limit, sort).then((page) => ({

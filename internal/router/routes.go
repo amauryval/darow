@@ -124,6 +124,7 @@ func (rt *Router) Setup() http.Handler {
 
 			v1.Route("/sources", func(sub chi.Router) {
 				sub.Get("/", rt.sources.ListSources)
+				sub.Get("/limits", rt.sources.SourceLimits)
 				sub.Post("/refresh", rt.sources.RefreshSources)
 				sub.Get("/{name}/metadata", rt.sources.GetSourceMetadata)
 

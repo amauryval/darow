@@ -57,6 +57,13 @@ export interface UploadResult {
     source?: Source
 }
 
+// Matches sourceLimitsDTO of /sources/limits: what an upload has to satisfy,
+// read from the running deployment's config.yaml rather than assumed.
+export interface SourceLimits {
+    maxSizeBytes: number
+    allowedExtensions: string[]
+}
+
 export interface SourceCRS {
     srid: number | null
     authName: string

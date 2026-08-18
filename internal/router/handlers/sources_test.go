@@ -65,6 +65,22 @@ func Test_sourcesHandler_listSources(t *testing.T) {
 	sourceSvc.AssertExpectations(t)
 }
 
+func Test_sourcesHandler_sourceLimits(t *testing.T) {
+	sourceSvc := &mockSourceAPI{}
+	sh := &SourcesHandler{sourceService: sourceSvc, settings: defaultTestSettings}
+
+	sourceSvc.On("MaxUploadBytes").Return(1024).Once()
+	sourceSvc.On("AllowedExtensions").Return([]string{".geojson", ".csv"}).Once()
+
+	rec := doHandlerRequest(sh.SourceLimits, http.MethodGet, "/api/v1/sources/limits", nil, nil)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := decodeJSON[sourceLimitsDTO](rec)
+	assert.EqualValues(t, 1024, body.MaxSizeBytes)
+	assert.Equal(t, []string{".geojson", ".csv"}, body.AllowedExtensions)
+	sourceSvc.AssertExpectations(t)
+}
+
 func Test_sourcesHandler_listSources_InvalidSort(t *testing.T) {
 	sourceSvc := &mockSourceAPI{}
 	sh := &SourcesHandler{sourceService: sourceSvc, settings: defaultTestSettings}

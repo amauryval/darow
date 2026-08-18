@@ -45,6 +45,27 @@ func (sh *SourcesHandler) MaxUploadBytes() int64 {
 	return sh.sourceService.MaxUploadBytes()
 }
 
+// sourceLimitsDTO is what an upload has to satisfy before it is attempted:
+// the config-only sources.maxSizeBytes and sources.allowedExtensions.
+type sourceLimitsDTO struct {
+	MaxSizeBytes      int64    `json:"maxSizeBytes"`
+	AllowedExtensions []string `json:"allowedExtensions"`
+}
+
+// SourceLimits handles GET /sources/limits.
+//
+// @Summary Read the upload constraints
+// @Tags sources
+// @Produce json
+// @Success 200 {object} sourceLimitsDTO
+// @Router /api/v1/sources/limits [get]
+func (sh *SourcesHandler) SourceLimits(w http.ResponseWriter, req *http.Request) {
+	response.WriteJSON(w, http.StatusOK, sourceLimitsDTO{
+		MaxSizeBytes:      sh.sourceService.MaxUploadBytes(),
+		AllowedExtensions: sh.sourceService.AllowedExtensions(),
+	})
+}
+
 // parseSrid reads an optional "srid" query param, 0 (auto-detect) if
 // absent.
 func parseSrid(req *http.Request) (int, error) {

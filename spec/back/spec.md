@@ -222,7 +222,10 @@ always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMax
 | `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
-which takes priority over everything else (§2.6).
+which takes priority over everything else (§2.6). `maxSizeBytes` and `allowedExtensions` are the
+two config fields published to clients, read-only, by `GET /api/v1/sources/limits` (§6.1): an
+upload is refused against them server-side, so a client that cannot read them can only guess what
+it is allowed to send.
 
 ### 2.4 `settings`
 
@@ -1195,6 +1198,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | Method | Path                              | Description                                                                                                                                                                                          |
 | ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/sources`                 | paginated, sortable listing of the cache (`offset`, `limit`, `sort`)                                                                                                                                 |
+| GET    | `/api/v1/sources/limits`          | the constraints an upload has to satisfy: `sources.maxSizeBytes` and `sources.allowedExtensions`, config-only (§2.3) and read-only here — published so a client states them before an attempt instead of assuming the default configuration |
 | POST   | `/api/v1/sources/refresh`         | rescans `workDir` then returns the same paginated envelope                                                                                                                                           |
 | POST   | `/api/v1/sources/upload`          | multipart, `file` field; writes into `workDir` and returns the rescanned entry, `{source}` — loading it into a table is a separate, explicit `POST /sources/{name}/load`                              |
 | POST   | `/api/v1/sources/{name}/load`     | loads a source into a table. `?layer=` required for a `.gpkg`, rejected otherwise. `?srid=` sets the source CRS explicitly. `?tableName=` names the created table (default: the source's own name), `201`. `?replace=<tableId>` reloads that table's data in place instead of creating a second one, `200` |

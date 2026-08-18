@@ -150,6 +150,7 @@ place an audit's findings are written — never a `spec.md`.
 | `## 0. Non-negotiable rules` | **always**, before any Vue change                          |
 | `## 1. Architecture` | layering, where a piece of code belongs                    |
 | `## 2. Client layer (src/client/)` | calling the REST API                                       |
+| `### 2.1 One client among others` | which figures are the front's own choice and which are read from the server |
 | `## 3. Pure functions (src/utils/)` | pure helpers                                               |
 | `## 4. Composables (src/composables/)` | business logic, state                                     |
 | `## 5. Components (src/components/)` | presentational components, `components/ui/` primitives     |

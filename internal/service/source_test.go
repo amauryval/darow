@@ -37,6 +37,12 @@ func sourcePathOf(dir, name string) string {
 	return filepath.Join(dir, "sources", name)
 }
 
+func Test_SourceService_AllowedExtensions(t *testing.T) {
+	svc, _ := setupSourceService(t, t.TempDir(), 150, ".geojson", ".csv")
+
+	assert.Equal(t, []string{".geojson", ".csv"}, svc.AllowedExtensions())
+}
+
 func Test_SourceService_Refresh(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "ok.geojson", 100)

@@ -1,15 +1,17 @@
 import { ref } from 'vue'
 import type { SortingState } from '@tanstack/vue-table'
-import { deleteSource, listSources, refreshSources, uploadSource } from '../client/sources'
-import type { Source } from '../client/types'
+import {
+    deleteSource,
+    getSourceLimits,
+    listSources,
+    refreshSources,
+    uploadSource
+} from '../client/sources'
+import type { Source, SourceLimits } from '../client/types'
 import { errorMessage } from '../client/http'
+import { LIST_PAGE_SIZE } from '../utils/pageSizes'
 import { usePaginatedList } from './usePaginatedList'
 import { useToast } from './useToast'
-
-// The list's own page size — deliberately independent of the operator's
-// defaultListLimit setting, a REST API page size rather than a UI choice; see
-// useTableRows' PAGE_SIZE for why.
-const PAGE_SIZE = 50
 
 // Display column ids that don't match the API's Source field names 1:1
 // ("size" formats sizeBytes+layerCount).
@@ -26,7 +28,7 @@ export function useSources(initialSorting?: SortingState) {
     const toast = useToast()
 
     const list = usePaginatedList<Source>({
-        limit: PAGE_SIZE,
+        limit: LIST_PAGE_SIZE,
         initialSorting,
         sortColumnMap: sourceSortColumnMap,
         fetchPage: (offset, limit, sort) =>
@@ -41,7 +43,7 @@ export function useSources(initialSorting?: SortingState) {
     // of just re-fetching the already-known list.
     async function refresh() {
         try {
-            const page = await refreshSources(0, PAGE_SIZE, list.sortQuery())
+            const page = await refreshSources(0, LIST_PAGE_SIZE, list.sortQuery())
             list.replace({ items: page.sources, total: page.total })
         } catch (e) {
             toast.error(errorMessage(e, 'Impossible de rafraîchir les sources'))
@@ -50,6 +52,15 @@ export function useSources(initialSorting?: SortingState) {
 
     // --- Upload ---
     const uploading = ref(false)
+
+    // The deployment's own cap and extension whitelist, read once: the modal
+    // states them and checks the file against them instead of assuming the
+    // default config.yaml. Best-effort — a failed read only costs the hint,
+    // the server refusing an oversized file either way (§0.13).
+    const limits = ref<SourceLimits | null>(null)
+    getSourceLimits()
+        .then((value) => (limits.value = value))
+        .catch(() => {})
 
     // Writes the file into workDir; loading it is the user's next, explicit
     // step. Rethrows so the caller can word the error with the file name.
@@ -93,6 +104,7 @@ export function useSources(initialSorting?: SortingState) {
         refresh,
         uploading,
         upload,
+        limits,
         deletingName,
         remove
     }

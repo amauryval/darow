@@ -404,6 +404,25 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/sources/limits": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Read the upload constraints",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.sourceLimitsDTO"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/sources/refresh": {
             "post": {
                 "produces": [
@@ -2538,6 +2557,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "value": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.sourceLimitsDTO": {
+            "type": "object",
+            "properties": {
+                "allowedExtensions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "maxSizeBytes": {
                     "type": "integer"
                 }
             }

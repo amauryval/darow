@@ -430,6 +430,12 @@ func (m *mockSourceAPI) MaxUploadBytes() int64 {
 	return int64(args.Int(0))
 }
 
+func (m *mockSourceAPI) AllowedExtensions() []string {
+	args := m.Called()
+	extensions, _ := args.Get(0).([]string)
+	return extensions
+}
+
 func newHandlerRequest(method, target string, body any, params map[string]string) *http.Request {
 	var reader *bytes.Reader
 	if body != nil {
