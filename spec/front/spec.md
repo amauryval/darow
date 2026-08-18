@@ -574,8 +574,9 @@ per page (the server's own live cap) until the reported `total` is reached.
   untouched exports the table as it came in. The downloaded file takes the name the server sends in
   `Content-Disposition` rather than one rebuilt here: for an export that name carries the CRS, which
   no format states reliably (back LIM-16). `GeometryModal` (`components/tables/`) also carries the EPSG code the row is
-  *displayed* in — same field, same default (the table's own CRS) and same fallback as
-  `ExportModal`'s, `useRowGeometry.reproject` re-reading the same row through the API's `srid`. It
+  *displayed* in — same field, opening on the table's own CRS as `ExportModal`'s does, though the
+  read behind it falls back to lon/lat rather than to the table's CRS (back §5.5),
+  `useRowGeometry.reproject` re-reading the same row through the API's `srid`. It
   is display only: nothing stored moves, and the caption states the CRS the **server** reports, not
   the code typed in the field, which may not be applied yet. `GeometryModal` shows one row's geometry in both
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the

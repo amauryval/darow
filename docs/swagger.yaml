@@ -1510,7 +1510,7 @@ paths:
                   name: pkey
                   required: true
                   type: string
-                - description: "EPSG code the geometry is read in (default: the table's own)"
+                - description: 'EPSG code the geometry is read in (default: OGC:CRS84)'
                   in: query
                   name: srid
                   type: integer

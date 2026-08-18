@@ -1957,7 +1957,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "EPSG code the geometry is read in (default: the table's own)",
+                        "description": "EPSG code the geometry is read in (default: OGC:CRS84)",
                         "name": "srid",
                         "in": "query"
                     }

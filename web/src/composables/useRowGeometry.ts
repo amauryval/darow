@@ -7,7 +7,7 @@ import { useToast } from './useToast'
 // absent from every row listing, so this is the one path that shows it —
 // GeoJSON to read or reuse it, WKT to copy it into another tool. The EPSG it
 // is read in is the caller's to change (reproject): it reprojects the read,
-// never anything stored, and an unset one is the table's own CRS.
+// never anything stored, and an unset one is lon/lat.
 export function useRowGeometry(tableId: Ref<string>) {
     const toast = useToast()
     const pkey = ref<string | null>(null)

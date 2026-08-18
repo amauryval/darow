@@ -20,8 +20,8 @@ const props = defineProps<{
     // What the values below are actually expressed in, as the server resolved
     // it — never rebuilt from the field, which may hold a code not applied yet.
     crs: string
-    // The table's own CRS: what the read falls back to and what the field
-    // opens on, exactly as for an export.
+    // The table's own CRS: what the field opens on, so the row is first shown
+    // in the CRS it was imported in.
     tableSrid?: number | null
     loading: boolean
     error: string

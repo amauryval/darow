@@ -998,8 +998,10 @@ Everything else is computed on demand and **never cached**: `GetFeatures`, `Coun
 `GetFeaturesTile`, `CountFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single
 row's geometry in both
 encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
-§5.8.1, and both come back in the CRS the caller asked for, `service.ResolveCRS` answering the
-`srid` there exactly as it does for an export: reprojecting a **read** changes nothing stored, and
+§5.8.1, and both come back in the CRS the caller asked for through `?srid=`, **lon/lat**
+(`OGC:CRS84`) failing that — the CRS a geometry-setting write takes back (`geometryCRS`), so a map
+posts the coordinates it was handed. Pinning a read to the table's own CRS is an export's default
+(§5.6), never this one: reprojecting a **read** changes nothing stored, and
 the CRS actually applied is reported alongside so a caller displays it rather than assumes it. A
 CRS PROJ cannot resolve is refused by the same `validateCRS` probe the export runs, before the read,
 and reaches the caller **unwrapped** — a generic "unable to fetch the geometry" over "unknown
@@ -1023,7 +1025,8 @@ whose file is then streamed to the caller and removed — the escaping of a CSV,
     everywhere else it is hidden (`storage.IsHiddenColumn`, §4.4). The other two carry the geometry,
     aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other column
     becoming a property.
--   **Output CRS** (`service.ResolveCRS`, shared with the per-row geometry read, §5.5): `?srid=`
+-   **Output CRS** (`service.ResolveCRS`, an export's own default and not the per-row read's, §5.5):
+    `?srid=`
     pins it exactly as it pins an import's source CRS; without one the table goes back out in the
     CRS it came in (`Metadata.Srid`), and only a table whose source CRS was never recorded falls
     back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
@@ -1241,7 +1244,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | DELETE | `/api/v1/tables/{tableId}/rows`                 | deletes several rows in one write (`pkeys` in the body), `200` with the pkeys and `rowsRemoved`                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/rows/batch`           | fetches several rows by pkeys                                                                                                                                                                                   |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
-| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1). `?srid=` names the EPSG code they are read in — the table's own by default, lon/lat failing that — and the response carries the `crs` applied. A CRS PROJ cannot resolve is a `400` naming it, never a failed read; `404` on a scalar table or an unknown row |
+| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1). `?srid=` names the EPSG code they are read in — lon/lat (`OGC:CRS84`) by default, the CRS a write takes back — and the response carries the `crs` applied. A CRS PROJ cannot resolve is a `400` naming it, never a failed read; `404` on a scalar table or an unknown row |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
 | DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 

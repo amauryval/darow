@@ -389,6 +389,39 @@ func Test_rowsHandler_getRowGeometry(t *testing.T) {
 	}
 }
 
+// A read without ?srid= comes back in lon/lat, whatever CRS the table was
+// imported in: it is the CRS a write takes back, so the map that draws a
+// geometry posts the same coordinates it was given.
+func Test_rowsHandler_getRowGeometry_ReadsInLonLatByDefault(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		wantCRS string
+	}{
+		{name: "no srid reads in lon/lat", query: "", wantCRS: storage.DefaultGeometryCRS},
+		{name: "srid pins the CRS", query: "?srid=2154", wantCRS: "EPSG:2154"},
+		{name: "srid 4326 is named CRS84", query: "?srid=4326", wantCRS: storage.DefaultGeometryCRS},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			geoSvc := &mockGeoAPI{}
+			rh := &RowsHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
+
+			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom", Srid: 2154}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			geoSvc.On("RowGeometry", mock.Anything, meta, "1", mock.Anything, c.wantCRS).
+				Return(&service.RowGeometry{Pkey: "1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)", CRS: c.wantCRS}, nil).Once()
+
+			rec := doHandlerRequest(rh.GetRowGeometry, http.MethodGet, "/api/v1/tables/t1/rows/1/geometry"+c.query, nil, map[string]string{"tableId": "t1", "pkey": "1"})
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			geoSvc.AssertExpectations(t)
+		})
+	}
+}
+
 // A geometry written on the map is echoed back as the server stored it, so
 // the client redraws what was kept rather than its own draft.
 func Test_rowsHandler_addRows_EchoesTheStoredGeometry(t *testing.T) {

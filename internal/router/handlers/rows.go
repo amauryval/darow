@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -42,6 +43,18 @@ func geometryCRS(req *http.Request) string {
 		return crs
 	}
 	return storage.DefaultGeometryCRS
+}
+
+// geometryReadCRS reports the CRS a row's geometry is read in: the EPSG code
+// asked for, and otherwise the one every read emits and every write expects
+// — a map draws in lon/lat and posts back what it drew, whatever the table
+// is stored in. Pinning it to the table's own CRS is an export's default, not
+// a read's.
+func geometryReadCRS(srid int) string {
+	if srid == 0 || srid == 4326 {
+		return storage.DefaultGeometryCRS
+	}
+	return "EPSG:" + strconv.Itoa(srid)
 }
 
 // ListRows handles GET /tables/{tableId}/rows.
@@ -376,14 +389,15 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 
 // GetRowGeometry handles GET /tables/{tableId}/rows/{pkey}/geometry?srid=.
 // srid reprojects what is read, exactly as it does for an export, and
-// defaults to the table's own CRS — nothing stored changes either way.
+// defaults to lon/lat — the CRS a write takes back. Nothing stored changes
+// either way.
 //
 // @Summary Get a row's geometry, as GeoJSON and as WKT
 // @Tags rows
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
-// @Param srid query int false "EPSG code the geometry is read in (default: the table's own)"
+// @Param srid query int false "EPSG code the geometry is read in (default: OGC:CRS84)"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
@@ -402,7 +416,7 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 	}
 
 	decimals := rh.tableSettings.Resolve(meta.TableId).CoordinateDecimals
-	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, service.ResolveCRS(srid, meta))
+	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, geometryReadCRS(srid))
 	if err != nil {
 		response.WriteServiceError(w, req, err)
 		return
