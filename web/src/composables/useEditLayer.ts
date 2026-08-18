@@ -58,10 +58,12 @@ const HIT_TOLERANCE = 8
 // and it has to be there for a new vertex to snap onto it — dropping every
 // geometry the user did not modify would take topology and snapping with it.
 // Past this, the ones reached longest ago are given back: they are weight in
-// the `Snap`'s index and in the `Modify`'s, and the user has moved on. What
-// was touched is never counted here and never released — it carries unsaved
-// work.
-const MAX_RESTING = 40
+// the `Snap`'s index and in the `Modify`'s, and the user has moved on. Held
+// several hovers deep, since one hover brings in a geometry *and* what
+// touches it (useEditFeatures) — a cap of one batch would evict the
+// neighbours of the parcel being worked on. What was touched is never counted
+// here and never released — it carries unsaved work.
+const MAX_RESTING = 120
 
 export function useEditLayer(map: Ref<OlMap | null>) {
     const source = new VectorSource()

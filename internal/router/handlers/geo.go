@@ -332,7 +332,8 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	limit := gh.tableSettings.Resolve(meta.TableId).DefaultFeaturesLimit.Resolve(body.Limit)
+	resolved := gh.tableSettings.Resolve(meta.TableId)
+	limit := resolved.DefaultFeaturesLimit.Resolve(body.Limit)
 
 	near := storage.NearQuery{
 		Geometry: storage.GeometryValue{
@@ -342,7 +343,7 @@ func (gh *GeoHandler) FindNeighbours(w http.ResponseWriter, req *http.Request) {
 		},
 		Buffer: body.Buffer,
 	}
-	features, err := gh.geoService.NeighbourFeatures(req.Context(), meta, near, body.Exclude, limit)
+	features, err := gh.geoService.NeighbourFeatures(req.Context(), meta, near, body.Exclude, limit, resolved.CoordinateDecimals)
 	if err != nil {
 		response.WriteServiceError(w, req, err)
 		return

@@ -173,13 +173,19 @@ func (g *GeoService) GetGeometryGeoJSON(ctx context.Context, meta storage.Metada
 // NeighbourFeatures returns the features intersecting a buffer (in meters) of
 // the given geometry, excluding the rows named by exclude — what a
 // topological edit and a snapping session both need.
-func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
+//
+// coordinateDecimals is the same rounding the per-row read applies, and it is
+// not an option: a neighbour emitted at full precision no longer holds the
+// coordinate its rounded neighbour holds, and a limit that is not shared to
+// the digit is not shared at all.
+func (g *GeoService) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit, coordinateDecimals int) ([]storage.GeoFeature, error) {
 	geo, err := g.geoRepo(meta)
 	if err != nil {
 		return nil, err
 	}
 
-	features, err := geo.Features(ctx, storage.FeatureQuery{Near: &near, Exclude: exclude, Limit: limit})
+	query := storage.GeoQuery{CoordinateDecimals: &coordinateDecimals}
+	features, err := geo.Features(ctx, storage.FeatureQuery{Query: query, Near: &near, Exclude: exclude, Limit: limit})
 	if err != nil {
 		return nil, NewDisplayError(fmt.Sprintf("unable to list the neighbours of table %q", meta.TableId), err)
 	}

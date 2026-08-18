@@ -1,5 +1,6 @@
-import { absoluteApiUrl, get } from './http'
+import { absoluteApiUrl, get, post } from './http'
 import type { FilterCondition } from './types'
+import type { OgcFeatureCollection } from './features'
 
 // filter, when non-empty, is JSON-encoded like getItems takes it and applied
 // server-side (rule 5). version is a parameter the server ignores: the tile
@@ -29,4 +30,18 @@ export function getFilteredExtent(
 // table refuses another family on write, so the editor stops offering it.
 export function getGeometryTypes(tableId: string): Promise<{ types: string[] }> {
     return get(`/tables/${tableId}/geometry-types`)
+}
+
+// The rows whose geometry lies within buffer meters of one geometry, at full
+// resolution and in OGC:CRS84 — what an edit session pulls in around the row
+// the pointer reached, so a shared limit has both its sides on the map.
+// exclude drops the rows the caller already holds.
+export function getNeighbours(
+    tableId: string,
+    geometry: GeoJSON.Geometry,
+    buffer: number,
+    exclude: string[],
+    limit: number
+): Promise<OgcFeatureCollection> {
+    return post(`/tables/${tableId}/neighbours`, { geometry, buffer, exclude, limit })
 }

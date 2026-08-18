@@ -331,8 +331,8 @@ func (m *mockGeoAPI) FilteredExtent(ctx context.Context, meta storage.Metadata, 
 	return bbox, args.Error(1)
 }
 
-func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
-	args := m.Called(ctx, meta, near, exclude, limit)
+func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit, coordinateDecimals int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, near, exclude, limit, coordinateDecimals)
 	features, _ := args.Get(0).([]storage.GeoFeature)
 	return features, args.Error(1)
 }

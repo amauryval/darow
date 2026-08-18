@@ -1007,7 +1007,10 @@ CRS PROJ cannot resolve is refused by the same `validateCRS` probe the export ru
 and reaches the caller **unwrapped** — a generic "unable to fetch the geometry" over "unknown
 coordinate reference system" would hide the one thing they can fix), `NeighbourFeatures` (the rows within a buffer of a
 geometry — the query an edit session runs, unbounded in its key space like every other filtered
-read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
+read. It emits its geometries under the **same** resolved `coordinateDecimals` as the per-row read,
+and that is not an option the caller has: a neighbour rounded differently from the row it surrounds
+no longer holds the same coordinate, and a limit shared to fewer digits on one side is a limit the
+editor moves on one side only). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
 tile's z/x/y.
 
 ### 5.6 `ExportService` — export is DuckDB's COPY, streamed back

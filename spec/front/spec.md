@@ -354,7 +354,7 @@ module level and documents it; that is the exception, not the rule.
 | `useEditLayer` | the one source an edit session works on, holding the geometries the pointer has reached, plus the second layer that draws the hovered geometry's vertices alone. One source is what makes editing topological — a vertex two geometries share is dragged in both at once. Owns what the session has touched (`changedCount`/`createdCount`, split the way the write is), whether anything on it can hold a hole at all (`hasAreal`), which single feature the pointer rests over (`trackPointer`/`blur` — at once the `solo` collection a non-topological `Modify` and the `Translate` follow, and the sole content of the second, vertex-drawing layer it owns; `trackPointer` also answers *whether* the session holds anything there at all, which is what tells the caller to go and fetch what it does not), which vertices a drag moved (`noteMoved`), the eviction of the untouched geometries the session no longer needs (`prune`), and answers it all as writes: the rows whose geometry moved, and the shapes that belong to no row yet | present |
 | `useMoveLeaders` | what each moved node has *done*: the leader drawn from where it stood before the user touched it to where it stands now. Its own layer above the edit layer and the vertices, for the same reason those are two — a leader is a whole annotation (line, origin ring, arrowhead) and drawing it out of the edited feature's style would rebuild it on every frame of every drag. Each leader carries its own pre-built style (`Feature.setStyle`), so the layer needs no style function at all. A node dragged twice extends its leader instead of getting a second one: the origin the user cares about is the one before they touched it, not the halfway point | present |
 | `useHoleTool` | drawing an interior ring and handing it to whichever polygon contains it (`utils/holes.ts`), rather than to a source: a hole is part of its polygon and is undone by editing its vertices, not by an opposite tool. A ring that belongs to no polygon is refused out loud | present |
-| `useEditFeatures` | the session's **working set**: the geometries the pointer has reached, one row per `reach`, at full resolution and under one session-wide row cap that the ordinary gesture never meets. Holds every pkey it has asked for, answered or not — a hover rests over the same row for many frames and that has to become one request — and gives a pkey back on `release` so a row the session let go of can be reached again. Nothing is loaded on entering the mode | present |
+| `useEditFeatures` | the session's **working set**: the geometries the pointer has reached and the rows those touch (`getNeighbours`, `NEIGHBOUR_BUFFER` meters, `MAX_NEIGHBOURS` per hover — what makes topology and snapping answer on the first hover instead of on the last), at full resolution and under one session-wide row cap that the ordinary gesture never meets. Holds every pkey it has asked for, answered or not — a hover rests over the same row for many frames and that has to become one request — and gives a pkey back on `release` so a row the session let go of can be reached again. Nothing is loaded on entering the mode | present |
 | `useLayerEditing` | the session itself and what leaving it writes. Its `save` takes both halves — the geometries the map committed and `useRowEdits`' payloads — and merges the updates by pkey into **one** update request, so a row whose limit moved and whose name changed is written once and never twice; what was drawn is a second, insert request, each shape carrying the attributes of the draft row it raised (in order — the nth shape is the nth draft). It answers whether the session ended, which is what closes the mode | present |
 | `useEditSession` | the table's edit session as one mode over both halves (§8.3): `active` (`useRowEdits.active \|\| useLayerEditing.active`), `unsavedCount` (dirty cells + drafts + `changedGeometries`, the reshapes `MapView`'s `changed-count` reports up), `confirmingCancel`, and the quartet that opens, cancels, discards and saves the session — `toggle` starts both halves on a geo table, `cancel` raises the confirmation only while `unsavedCount` holds work, `discard` drops both at once, `save` refuses on `useRowEdits.invalidCount` before handing the write to `useLayerEditing.save`. Built from `useRowEdits` and `useLayerEditing`, passed in rather than constructed, so `TableDataPanel` still owns their lifecycle | present |
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
@@ -904,12 +904,15 @@ This is the product's main screen; it follows fixed rules.
 - **The session grows by pointing, and entering it costs nothing.** Nothing is loaded on entering
   the mode, and nothing on panning. What the pointer rests over and the session does not already
   hold is a row of the rendering underneath: it is identified on that rendering (`pkeyAt`, the same
-  hit test selection uses, read while selection's own listeners are unbound) and its geometry alone
-  is then fetched at full resolution and becomes editable. Loading the whole view instead meant tens
+  hit test selection uses, read while selection's own listeners are unbound); its geometry is then
+  fetched at full resolution and becomes editable, **and the rows it touches come with it**
+  (`POST /neighbours`, a few meters of buffer, capped per hover): editing is topological, so a limit
+  only moves on both sides — and a vertex only snaps onto its neighbour — when both are in the
+  session, and asking the user to hover every side in turn is asking them to arm the tool by hand. Loading the whole view instead meant tens
   of megabytes of GeoJSON, thousands of engine features and a `Snap` index over every one of their
   vertices, all built before the user had said what they meant to touch — which froze the tab on
-  entering the mode and froze it again on leaving. The cost is now one geometry per geometry
-  pointed at, and the session accumulates exactly what was worked on. The hit test is throttled to
+  entering the mode and froze it again on leaving. The cost is now one geometry and the handful
+  around it per geometry pointed at, and the session accumulates exactly what was worked on. The hit test is throttled to
   at most one per frame and skipped mid-drag, and a hover that rests on the same row for a hundred
   frames is **one** request: the de-duplication belongs to whoever answers (`useEditFeatures`), not
   to the pointer.
@@ -1042,10 +1045,12 @@ This is the product's main screen; it follows fixed rules.
   not on one request: panning along a boundary is the gesture the mode exists for, so a cap counted
   per view would let a dozen pans pile up a dozen capfuls. One cap, in rows (`MAX_EDITABLE`), and
   the ordinary gesture never meets it — a session that grows one geometry at a time has to be
-  worked at for an afternoon to fill it. It is not a ratchet, and it is given back on two grounds
+  worked at for an afternoon to fill it. A reach brings in a geometry's neighbours as well as the
+  geometry, which is what fills the source topology and snapping read — and what the two caps then
+  bound like everything else. It is not a ratchet, and it is given back on two grounds
   (`useEditLayer.prune` → `useEditFeatures.release`): an untouched geometry the view has left, and —
   once those are gone — the untouched ones reached longest ago, past a second, smaller cap
-  (`MAX_RESTING`). The second is what bounds a session worked *in place*: reaching a geometry is a
+  (`MAX_RESTING`, held several hovers deep since one hover brings in a batch). The second is what bounds a session worked *in place*: reaching a geometry is a
   hover, hovering is cheap, and a session that never pans would otherwise pile up geometries nothing
   releases. That cap is not zero, and cannot be: a neighbour has to be in the source for a shared
   limit to move on both sides and for a new vertex to snap onto it, so dropping everything the user

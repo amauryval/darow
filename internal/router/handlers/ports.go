@@ -67,7 +67,7 @@ type geoAPI interface {
 	GetFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, attrs []string, q storage.GeoQuery, limit, offset int) ([]storage.GeoFeature, error)
 	CountFeaturesTile(ctx context.Context, meta storage.Metadata, zoom, x, y int, q storage.GeoQuery) (int64, error)
 	RowGeometry(ctx context.Context, meta storage.Metadata, pkey string, coordinateDecimals int, targetCRS string) (*service.RowGeometry, error)
-	NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error)
+	NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit, coordinateDecimals int) ([]storage.GeoFeature, error)
 }
 
 // filterAPI is everything the router calls on *service.FilterService. Like
