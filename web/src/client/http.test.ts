@@ -7,7 +7,6 @@ import {
     get,
     getRoot,
     post,
-    setAuthToken,
     setUnauthorizedHandler
 } from './http'
 
@@ -21,7 +20,6 @@ function jsonResponse(body: unknown, status: number): Response {
 describe('http client', () => {
     afterEach(() => {
         configureApiClient({})
-        setAuthToken(null)
         setUnauthorizedHandler(null)
     })
 
@@ -105,20 +103,7 @@ describe('http client', () => {
         expect(apiUrl('/tables/t1')).toBe('/api/v1/tables/t1')
     })
 
-    it('attaches the bearer token to a request once one is set', async () => {
-        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tableId: 't1' }, 200))
-        vi.stubGlobal('fetch', fetchMock)
-        setAuthToken('token-1')
-
-        await get('/tables/t1')
-
-        expect(fetchMock).toHaveBeenCalledWith(
-            '/api/v1/tables/t1',
-            expect.objectContaining({ headers: { Authorization: 'Bearer token-1' } })
-        )
-    })
-
-    it('sends no Authorization header when no token is set', async () => {
+    it('carries the session cookie on every request, same-origin only', async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tableId: 't1' }, 200))
         vi.stubGlobal('fetch', fetchMock)
 
@@ -126,7 +111,7 @@ describe('http client', () => {
 
         expect(fetchMock).toHaveBeenCalledWith(
             '/api/v1/tables/t1',
-            expect.objectContaining({ headers: {} })
+            expect.objectContaining({ credentials: 'same-origin' })
         )
     })
 

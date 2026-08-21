@@ -17,3 +17,4 @@ data/darow.db.wal
 config.yaml
 data/darow.db
 internal/webui/dist/index.html
+.env

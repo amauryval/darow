@@ -8,8 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	goauth "github.com/amauryval/goauth"
-
 	"darow/internal/settings"
 )
 
@@ -241,85 +239,6 @@ func Test_Load_ServerTrustedProxies(t *testing.T) {
 
 		assert.Error(t, err)
 	})
-}
-
-// Test_Load_AuthDefaultsToDisabled documents the only default that runs
-// with no provider declared: demo mode (goauth's own Settings.Demo, this
-// field's inverse), refused outright unless this binary was built with
-// -tags authdemo (goauth.DemoBuildTag) — a bare checkout can Load, but a
-// production binary without that tag still fails at goauth.New, never
-// opening silently.
-func Test_Load_AuthDefaultsToDisabled(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-
-	cfg, err := Load(path)
-
-	require.NoError(t, err)
-	assert.Equal(t, AuthConfig{Enabled: false}, cfg.Auth)
-}
-
-func Test_Load_AuthFromFile(t *testing.T) {
-	path := writeConfigFile(t, "auth:\n  enabled: true\n  provider: zitadel\n  issuer: https://issuer.example\n  audience: darow\n  adminRole: administrators\n  guestRole: viewers\n")
-
-	cfg, err := Load(path)
-
-	require.NoError(t, err)
-	assert.Equal(t, AuthConfig{
-		Enabled:   true,
-		Provider:  "zitadel",
-		Issuer:    "https://issuer.example",
-		Audience:  "darow",
-		AdminRole: "administrators",
-		GuestRole: "viewers",
-	}, cfg.Auth)
-}
-
-// Test_Load_AuthEnvOverride reads through goauth's own environment-variable
-// constants rather than GEOAPI_-prefixed literals: the module names them,
-// this package only resolves them (§2.7). AUTH_DEMO is the module's name
-// and sense; cfg.Auth.Enabled is this package's own, negated on the way in.
-func Test_Load_AuthEnvOverride(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	t.Setenv(goauth.DemoEnv, "false")
-	t.Setenv(goauth.ProviderEnv, "pocketid")
-	t.Setenv(goauth.IssuerEnv, "https://issuer.example")
-	t.Setenv(goauth.AudienceEnv, "darow")
-	t.Setenv(goauth.AdminRoleEnv, "administrators")
-	t.Setenv(goauth.GuestRoleEnv, "viewers")
-
-	cfg, err := Load(path)
-
-	require.NoError(t, err)
-	assert.Equal(t, AuthConfig{
-		Enabled:   true,
-		Provider:  "pocketid",
-		Issuer:    "https://issuer.example",
-		Audience:  "darow",
-		AdminRole: "administrators",
-		GuestRole: "viewers",
-	}, cfg.Auth)
-}
-
-func Test_Load_RejectsInvalidAuth(t *testing.T) {
-	cases := []struct {
-		name    string
-		content string
-	}{
-		{"enabled with no provider at all", "auth:\n  enabled: true\n"},
-		{"unknown provider", "auth:\n  enabled: true\n  provider: keycloak\n  issuer: https://issuer.example\n  audience: darow\n"},
-		{"provider with no issuer", "auth:\n  enabled: true\n  provider: zitadel\n  audience: darow\n"},
-		{"provider with no audience", "auth:\n  enabled: true\n  provider: zitadel\n  issuer: https://issuer.example\n"},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			path := writeConfigFile(t, c.content)
-
-			_, err := Load(path)
-
-			assert.Error(t, err)
-		})
-	}
 }
 
 // Test_ExampleConfigMatchesDefaults keeps config.example.yaml honest: it

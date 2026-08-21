@@ -1,9 +1,10 @@
 import { get } from './http'
 import type { AuthConfig, AuthSession } from './types'
 
-// The provider parameters the OIDC manager is built from (auth/oidc.ts). A
-// read like any other — it answers an anonymous request too, since the SPA
-// has to know how to log in before anyone has.
+// How the SPA signs in — the server-driven login/logout paths, or a demo
+// deployment's empty config (composables/useAuth.ts). A read like any
+// other — it answers an anonymous request too, since the SPA has to know
+// how to log in before anyone has.
 export function getAuthConfig(): Promise<AuthConfig> {
     return get('/auth/config')
 }

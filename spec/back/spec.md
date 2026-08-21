@@ -315,58 +315,74 @@ once emitted, applied after the CRS84 transform in every GeoJSON-producing route
 
 ### 2.7 `auth`
 
-The block that decides who may write. Its type, **`config.AuthConfig`, is declared by this package
-itself** — unlike the model it replaced, it names no forward-auth gateway of its own: it is the
+**Not part of `config.go` at all.** Unlike every other block in this file, authentication carries no
+`config.AuthConfig` and no `config.yaml` key: `cmd/server/main.go`'s `authSettings` resolves it
+entirely from the process environment, normally populated from a `.env` file at the repository root
+(`.env.example` states every variable) — never versioned, since every one of them is either a
+credential or a value that only makes sense for one deployment. `authSettings` is what builds the
 settings `github.com/amauryval/goauth` needs (`goauth.NewSettings`) to verify OIDC bearer tokens
 itself and decide the two application roles, `types.RoleAdmin` and `types.RoleGuest`.
 
-| Field       | Default | Env variable      | Constraint                                        |
-| ----------- | ------- | ------------------ | -------------------------------------------------- |
-| `enabled`   | `false` | `AUTH_DEMO`         | —                                                   |
-| `provider`  | empty   | `AUTH_PROVIDER`     | `zitadel` or `pocketid`, required when `enabled`    |
-| `issuer`    | empty   | `AUTH_ISSUER`       | not empty when `enabled`                            |
-| `audience`  | empty   | `AUTH_AUDIENCE`     | not empty when `enabled`                            |
-| `adminRole` | empty   | `AUTH_ADMIN_ROLE`   | —, falls back to `admin`                            |
-| `guestRole` | empty   | `AUTH_GUEST_ROLE`   | —, falls back to `guest`                            |
+**A `.env` file's mere presence is the switch.** No `.env` at all (`godotenv.Load` reporting
+`fs.ErrNotExist`) is demo mode: every visitor is authorized as an administrator, no token verified at
+all — meant for local development, and refused outright by `goauth.New` unless this binary was built
+with the `authdemo` build tag (`goauth.DemoBuildTag`, `mise run run-dev`'s `-tags authdemo`); a
+production binary carries no such tag, so a deployment that forgot its `.env` **fails at startup**
+rather than opening. A `.env` present and unreadable for any other reason is also fatal —
+`authSettings` never falls back to demo silently. There is no separate `enabled` flag: the file's
+presence **is** the flag.
 
-**The environment variables break the `GEOAPI_` prefix every other override in this file carries.**
-That is not an oversight: they are the module's own exported constants (`goauth.DemoEnv`,
-`ProviderEnv`, `IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`), read by
-`applyEnvOverrides` through the constant rather than the literal it currently holds, so a rename
-inside the module cannot silently stop being read here — the module's contract, not a choice left to
-this file. `enabled` is this field's own name and **the inverse of the module's `AUTH_DEMO`**: the
-value `applyEnvOverrides` reads off that variable is negated on the way into `cfg.Auth.Enabled`, so
-`AUTH_DEMO=true` clears `enabled` and vice versa.
+| Variable                 | Required          | Constraint                                       |
+| ------------------------- | ------------------ | -------------------------------------------------- |
+| `AUTH_PROVIDER`           | when `.env` present | `zitadel` or `pocketid`                            |
+| `AUTH_ISSUER`             | when `.env` present | not empty                                          |
+| `AUTH_AUDIENCE`           | when `.env` present | not empty                                          |
+| `AUTH_ADMIN_ROLE`         | —                  | falls back to `admin`                              |
+| `AUTH_GUEST_ROLE`         | —                  | falls back to `guest`                              |
+| `AUTH_REDIRECT_URL`       | when `.env` present | absolute URL                                       |
+| `AUTH_COOKIE_SECRET`      | when `.env` present | at least 32 bytes                                  |
+| `AUTH_CLIENT_SECRET`      | when `.env` present | not empty                                          |
 
-**Two mutually exclusive shapes.** `enabled: false` (the default) is demo mode: it authorizes every
-visitor as an administrator without verifying a token at all — meant for local development, and
-refused outright by `goauth.New` unless this binary was built with the `authdemo` build tag
-(`goauth.DemoBuildTag`); a production binary carries no such tag, so a deployment that forgets to
-configure a real provider **fails at startup** rather than opening. `enabled: true` demands
-`provider`, `issuer` and `audience` all set: `provider` names which of the supported identity
-providers issued the token (`zitadel` or `pocketid` — each reads its roles from a different claim,
-`github.com/amauryval/goauth/provider`), `issuer` is that provider's base URL, `audience` is this
-application's client Id. `goauth.New` contacts the issuer for its public keys at startup, so an
-unreachable or mistyped `issuer` is a startup failure, never a caller's problem.
+Every name above is the module's own exported constant where one exists (`goauth.ProviderEnv`,
+`IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`) — `authSettings` reads through the
+constant rather than the literal it currently holds, so a rename inside the module cannot silently
+stop being read here. `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_CLIENT_SECRET` carry no such
+constant, being secrets and deployment-specific values the module deliberately leaves to the host to
+name.
 
-`adminRole` and `guestRole` are the **provider's own names** for the two application roles, mapped by
-the module rather than compiled in — a Zitadel project role or a Pocket ID group named however the
-installation likes, defaulting to the literal strings `admin`/`guest` when left empty. They never
-reach the browser: `GET /api/v1/auth/session` (§6.1) answers with this application's own role names
-only.
+**`provider` names which of the supported identity providers issued the token** (`zitadel` or
+`pocketid` — each reads its roles from a different claim, `github.com/amauryval/goauth/provider`),
+`issuer` is that provider's base URL, `audience` is this application's client Id. `goauth.New`
+contacts the issuer for its public keys at startup, so an unreachable or mistyped `issuer` is a
+startup failure, never a caller's problem. `adminRole`/`guestRole` are the **provider's own names**
+for the two application roles, mapped by the module rather than compiled in — a Zitadel project role
+or a Pocket ID group named however the installation likes, defaulting to the literal strings
+`admin`/`guest` when left empty. They never reach the browser: `GET /api/v1/auth/session` (§6.1)
+answers with this application's own role names only.
 
-**Config-only, like §2.4's guards and for the same reason.** The block never reaches the `settings`
-table and never appears on `PATCH /api/v1/settings` — a guard editable through the surface it guards
-is not a guard, and that route is precisely one of the surfaces being guarded. Turning the provider
-on or off, or changing it, costs a restart.
+**A `.env` present also drives the login flow on the server** (`goauth.WithBrowser`, wired by
+`browserAuthOption`): the admin UI never obtains a token of its own. It signs in by following a
+redirect to the provider and back, and calls the API with the session cookie the module seals for
+it — `web/src/composables/useAuth.ts` holds no OIDC client, no PKCE dance and no token storage at
+all (`spec/front/spec.md`). `AUTH_REDIRECT_URL` must resolve to `router.APIRoot+goauth.CallbackPath`
+on this server and be registered as such at the provider; `AUTH_COOKIE_SECRET` seals the session
+cookie; `AUTH_CLIENT_SECRET` authenticates this application to the issuer for token introspection —
+without it a disabled account or an ended session keeps working until its access token expires on
+its own. Demo mode carries no provider, so it carries no browser option either: `goauth.New` refuses
+the two together, which is why `browserAuthOption` is only ever called once a `.env` was loaded.
 
-**A half-configured block is fatal at startup**, collected with every other violation by
-`config.Load` (§2), and the same refusal `goauth.New` would make on its own — reported here so it
-surfaces with the rest of the configuration rather than one step later, at bootstrap: `enabled: false`
-beside a declared `provider`, `issuer` or `audience`; `enabled: true` with an unknown `provider`, an
-empty `issuer` or an empty `audience`. An authentication that loads but verifies nothing, or that
-silently falls back to demo mode, would leave the API open while reading as closed — worse than
-none.
+**Never config-only in the usual sense — not config at all.** Where §2.4's guards and `duckdb`'s
+`maxSizeBytes` are kept out of the runtime-editable `settings` table on purpose, `auth` goes one step
+further and is kept out of `config.yaml` too: a credential belongs in the environment, not in a file
+this repository might one day track by mistake. Turning authentication on or off, or changing any of
+it, costs a restart either way.
+
+**A half-configured `.env` is fatal at startup**, the same refusal `goauth.New` would make on its
+own — reported by `authSettings` before `goauth.New` is even called, so it surfaces as one clear
+error rather than a handful of individually confusing ones: an unknown `AUTH_PROVIDER`, an empty
+`AUTH_ISSUER`/`AUTH_AUDIENCE`, or `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_CLIENT_SECRET` set
+only in part. An authentication that loads but verifies nothing, or that silently falls back to
+demo mode, would leave the API open while reading as closed — worse than none.
 
 ---
 

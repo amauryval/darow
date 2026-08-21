@@ -75,7 +75,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 2.5 Runtime-editable settings` | settings editable through the API/UI               |
 | `### 2.5.1 Per-table overrides` | a table's own departure from a global setting        |
 | `### 2.6 Command-line flags` | `--workdir` and friends                              |
-| `### 2.7 auth` | the auth block: demo vs. a real provider, the two application roles, why it is config-only |
+| `### 2.7 auth` | authentication: resolved from `.env`, never `config.yaml`; demo vs. a real provider; the two application roles; the server-driven login flow |
 
 ### Storage layer (`internal/storage`, `internal/storage/duckdb`)
 

@@ -52,23 +52,18 @@ settings:
 # caller stands: it reads everything, which everyone already may, and
 # writes nothing.
 #
-# Tokens are verified by this server itself, against the OIDC provider named
-# below — github.com/amauryval/goauth, the module backing this block; see
-# its own SETUP.md for standing up a provider. Two mutually exclusive
-# shapes:
-#
-#   enabled: false   demo mode (the default): every visitor is authorized as
-#                    an administrator, no provider involved, no token
-#                    checked at all. For local development only, and
-#                    refused outright unless this binary was built with
-#                    -tags authdemo (mise run run-dev does). Fatal at
-#                    startup beside a declared provider/issuer/audience.
-#   enabled: true    provider, issuer and audience are all required. The
-#                    server discovers the provider's key set at startup —
-#                    an unreachable or mistyped issuer is a fatal startup
-#                    error, not a runtime one.
-#
-# adminRole/guestRole are the PROVIDER's own role names, mapped to this
+# Authentication is not configured in this file at all: cmd/server resolves it
+# entirely from a .env file — see .env.example for every variable
+# (AUTH_PROVIDER, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_ADMIN_ROLE, AUTH_GUEST_ROLE,
+# AUTH_REDIRECT_URL, AUTH_COOKIE_SECRET, AUTH_CLIENT_SECRET — goauth's own
+# names, github.com/amauryval/goauth, the module backing this; see its own
+# SETUP.md for standing up a provider). No .env present is demo mode: every
+# visitor is authorized as an administrator, no token checked at all — for
+# local development only, and refused outright unless this binary was built
+# with -tags authdemo (mise run run-dev does). A .env present also drives the
+# login flow on the server (goauth.WithBrowser): the admin UI never obtains a
+# token of its own, it follows a redirect to sign in and calls the API with
+# its session cookie.
 # application's admin/guest — empty falls back to "admin"/"guest".
 #
 # The auth block's own environment variables break the GEOAPI_ prefix every

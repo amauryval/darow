@@ -11,9 +11,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	goauth "github.com/amauryval/goauth"
-	"github.com/amauryval/goauth/provider"
-
 	"darow/internal/settings"
 )
 
@@ -21,14 +18,15 @@ import (
 // GEOAPI_SERVER_PORT overrides server.port, and so on — one variable per YAML field.
 const envPrefix = "GEOAPI_"
 
-// Config holds the server parameters, storage settings, and auth config.
-// Runtime-editable settings live in the settings table instead.
+// Config holds the server parameters and storage settings. Runtime-editable settings live in the
+// settings table instead. Authentication is not part of this file at all: cmd/server resolves it
+// straight from the environment (goauth's own AUTH_* variables), never from config.yaml — see
+// spec/back/spec.md §2.7.
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	DuckDB   DuckDBConfig   `yaml:"duckdb"`
 	Sources  SourcesConfig  `yaml:"sources"`
 	Settings SettingsConfig `yaml:"settings"`
-	Auth     AuthConfig     `yaml:"auth"`
 }
 
 // ServerConfig holds HTTP server settings: host, port, timeouts, and trusted proxies.
@@ -71,34 +69,6 @@ type SettingsConfig struct {
 	TileMaxItems      int   `yaml:"tileMaxItems"`
 }
 
-// AuthConfig holds OIDC settings. Enabled=false is demo mode (no verification).
-type AuthConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Provider  string `yaml:"provider"`
-	Issuer    string `yaml:"issuer"`
-	Audience  string `yaml:"audience"`
-	AdminRole string `yaml:"adminRole"`
-	GuestRole string `yaml:"guestRole"`
-}
-
-// validate ensures AuthConfig is valid if enabled.
-func (c AuthConfig) validate() []error {
-	if !c.Enabled {
-		return nil
-	}
-	var errs []error
-	if _, err := provider.Parse(c.Provider); err != nil {
-		errs = append(errs, fmt.Errorf("auth.provider: %w", err))
-	}
-	if c.Issuer == "" {
-		errs = append(errs, errors.New("auth.issuer must not be empty"))
-	}
-	if c.Audience == "" {
-		errs = append(errs, errors.New("auth.audience must not be empty"))
-	}
-	return errs
-}
-
 // ParseTrustedProxies turns IP addresses or CIDR blocks into prefixes.
 func ParseTrustedProxies(entries []string) ([]netip.Prefix, error) {
 	prefixes := make([]netip.Prefix, 0, len(entries))
@@ -139,7 +109,6 @@ func defaultConfig() Config {
 			CacheMaxItems:     settings.CacheMaxItems,
 			TileMaxItems:      settings.TileMaxItems,
 		},
-		Auth: AuthConfig{}, // Enabled: false — demo mode, the zero value
 	}
 }
 
@@ -200,20 +169,6 @@ func applyEnvOverrides(cfg *Config) error {
 	check(envInt(&st.RequestTimeoutSec, envPrefix+"SETTINGS_REQUEST_TIMEOUT_SEC"))
 	check(envInt(&st.CacheMaxItems, envPrefix+"SETTINGS_CACHE_MAX_ITEMS"))
 	check(envInt(&st.TileMaxItems, envPrefix+"SETTINGS_TILE_MAX_ITEMS"))
-
-	a := &cfg.Auth
-	if v, ok := os.LookupEnv(goauth.DemoEnv); ok {
-		if demo, err := strconv.ParseBool(v); err == nil {
-			a.Enabled = !demo
-		} else {
-			check(fmt.Errorf("%s: %w", goauth.DemoEnv, err))
-		}
-	}
-	envString(&a.Provider, goauth.ProviderEnv)
-	envString(&a.Issuer, goauth.IssuerEnv)
-	envString(&a.Audience, goauth.AudienceEnv)
-	envString(&a.AdminRole, goauth.AdminRoleEnv)
-	envString(&a.GuestRole, goauth.GuestRoleEnv)
 
 	return errors.Join(errs...)
 }
@@ -296,8 +251,6 @@ func (cfg Config) validate() error {
 		fmt.Sprintf("settings.cacheMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
 	check(st.TileMaxItems > 0 && st.TileMaxItems <= settings.CacheMaxItemsCeiling,
 		fmt.Sprintf("settings.tileMaxItems must be between 1 and %d", settings.CacheMaxItemsCeiling))
-
-	errs = append(errs, cfg.Auth.validate()...)
 
 	return errors.Join(errs...)
 }

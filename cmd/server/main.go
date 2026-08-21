@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 
 	goauth "github.com/amauryval/goauth"
 	"github.com/go-chi/chi/v5"
+	"github.com/joho/godotenv"
 
 	"darow/internal/config"
 	"darow/internal/core"
@@ -61,13 +63,9 @@ func main() {
 	}
 
 	// New contacts the issuer for its key set here, so a failure is a provider
-	// problem, never a caller's. A disabled cfg.Auth is demo mode: it skips
+	// problem, never a caller's. authSettings resolving to demo mode skips
 	// discovery, and needs the authdemo build tag.
-	authApp, err := goauth.New(
-		context.Background(),
-		goauth.NewSettings(!cfg.Auth.Enabled, cfg.Auth.Provider, cfg.Auth.Issuer, cfg.Auth.Audience, cfg.Auth.AdminRole, cfg.Auth.GuestRole),
-		slog.Default(),
-	)
+	authApp, err := goauth.New(context.Background(), authSettings(), slog.Default())
 	if err != nil {
 		log.Fatalf("auth: %v", err)
 	}
@@ -110,4 +108,70 @@ func main() {
 			slog.Error("graceful shutdown timed out", "error", err)
 		}
 	}
+}
+
+// authSettings resolves the authentication settings entirely from the environment: config.yaml
+// carries none of it. A .env file's mere presence is what turns authentication on — absent, this
+// is demo mode, refused outright unless this binary was built with -tags authdemo
+// (goauth.DemoBuildTag), so a production deployment that forgot its .env fails at startup rather
+// than opening every route to everyone.
+func authSettings() goauth.Settings {
+	err := godotenv.Load()
+	if errors.Is(err, fs.ErrNotExist) {
+		return goauth.NewSettings(goauth.WithDemo(true))
+	}
+	if err != nil {
+		log.Fatalf("auth: .env: %v", err)
+	}
+
+	browserOption, err := browserAuthOption()
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+
+	return goauth.NewSettings(
+		goauth.WithProvider(os.Getenv(goauth.ProviderEnv)),
+		goauth.WithIssuer(os.Getenv(goauth.IssuerEnv)),
+		goauth.WithAudience(os.Getenv(goauth.AudienceEnv)),
+		goauth.WithAdminRole(os.Getenv(goauth.AdminRoleEnv)),
+		goauth.WithGuestRole(os.Getenv(goauth.GuestRoleEnv)),
+		goauth.WithClientSecret(os.Getenv("AUTH_CLIENT_SECRET")),
+		browserOption,
+	)
+}
+
+// browserAuthOption asks goauth to drive the login flow itself, so the admin UI never handles a
+// token: it signs in by following a redirect and calls the API with its session cookie alone.
+//
+// AUTH_REDIRECT_URL, AUTH_COOKIE_SECRET and AUTH_CLIENT_SECRET are required together: the admin UI
+// never obtains a token of its own, so a real deployment missing any of them would either have no
+// way to sign in at all, or start, sign users in, and report every session unavailable once
+// introspection is asked for with no client secret to authenticate it.
+func browserAuthOption() (goauth.Option, error) {
+	redirectURL := os.Getenv("AUTH_REDIRECT_URL")
+	cookieSecret := os.Getenv("AUTH_COOKIE_SECRET")
+
+	if redirectURL == "" || cookieSecret == "" {
+		return nil, errors.New("AUTH_REDIRECT_URL and AUTH_COOKIE_SECRET are required: the admin UI never obtains its own token, the server drives the login flow")
+	}
+
+	if os.Getenv("AUTH_CLIENT_SECRET") == "" {
+		return nil, errors.New("AUTH_CLIENT_SECRET is required to drive the login flow: without it token introspection is refused and every session is reported unavailable")
+	}
+
+	// Only the origin is read off the configured URL: a stale path cannot then send the provider
+	// somewhere nothing is served, and the origin is the one thing this server cannot work out for
+	// itself.
+	parsed, err := url.Parse(redirectURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, errors.New("AUTH_REDIRECT_URL must be an absolute URL")
+	}
+	origin := (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String()
+
+	return goauth.WithBrowser(
+		origin+router.APIRoot+goauth.CallbackPath,
+		[]byte(cookieSecret),
+		goauth.WithPostLogoutURL(origin+"/"),
+		goauth.WithInsecureCookies(parsed.Scheme == "http"),
+	), nil
 }

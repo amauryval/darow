@@ -10,7 +10,7 @@ COPY internal/webui ./internal/webui
 RUN cd web && npm run build
 
 # Stage 2: Build Go (with CGO)
-FROM golang:1.26-bookworm AS build
+FROM golang:1.27-bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

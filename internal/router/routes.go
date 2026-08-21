@@ -21,6 +21,12 @@ import (
 // goauth.Auth.RegisterRoutes, so this package never imports the module.
 type MountAuth func(chi.Router)
 
+// APIRoot is the subtree every versioned route, including the auth module's own, hangs from.
+// cmd/server reads it to build the absolute callback URL goauth.WithBrowser is given: that URL
+// must resolve to goauth.CallbackPath on the router the module's routes are mounted on, which is
+// this constant's business to name, not main's to guess.
+const APIRoot = "/api/v1"
+
 // Router wires the HTTP layer to the service layer. Each family of endpoints
 // is served by its own handler struct, holding only the service ports it
 // actually needs.
@@ -99,7 +105,7 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui", http.RedirectHandler("/ui/", http.StatusFound))
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
-	r.Route("/api/v1", func(v1 chi.Router) {
+	r.Route(APIRoot, func(v1 chi.Router) {
 		// An upload is registered outside the Group below, escaping both the
 		// global body cap (stacking always applies the smaller of two caps,
 		// never the more specific) and requestTimeout, since a large body

@@ -29,13 +29,7 @@ settings:
     cacheMaxItems: 1000 # shared by the metadata and schema LRU caches
     tileMaxItems: 5000
 
-# Public reads, authorized writes. Every field and the full explanation are in
-# config.example.yaml.
-#
-# enabled: false is demo mode: it authorizes every visitor as an
-# administrator and checks no token at all
-auth:
-    enabled: true
-    provider: 'pocketid'
-    issuer: 'https://auth.amyve.fr'
-    audience: '57d1fde3-55ab-4d01-8208-d2bb0b97dc9f'
+# Authentication is not configured here at all: cmd/server resolves it entirely from a .env file
+# (AUTH_PROVIDER, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_REDIRECT_URL, AUTH_COOKIE_SECRET,
+# AUTH_CLIENT_SECRET, ...) — see .env.example. No .env file present is demo mode: every visitor is
+# authorized as an administrator and no token is checked at all.

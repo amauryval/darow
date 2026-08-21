@@ -1,14 +1,15 @@
 module darow
 
-go 1.26.4
+go 1.27.0
 
 require (
-	github.com/amauryval/goauth v0.4.0
+	github.com/amauryval/goauth v0.5.2
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/stretchr/testify v1.11.1
+	github.com/joho/godotenv v1.5.1
+	github.com/stretchr/testify v1.12.1
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 	gopkg.in/yaml.v3 v3.0.1
@@ -18,7 +19,6 @@ require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
 	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/duckdb/duckdb-go-bindings v0.10505.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10505.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10505.0 // indirect
@@ -38,10 +38,10 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/stretchr/objx v0.5.2 // indirect
+	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/swaggo/files v0.0.0-20220610200504-28940afbdbfe // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.56.0 // indirect

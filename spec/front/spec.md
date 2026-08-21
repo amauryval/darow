@@ -141,11 +141,12 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-  `AuthConfig`/`AuthSession` are the **only** DTOs here that are not camelCase: they mirror goauth's
-  own serialization verbatim (`issuer_url`, `client_id`, `scopes`, `logged_in`, `authorized`,
-  `roles`, `user`), and `AuthSession.user`'s fields (`Provider`/`ID`/`Roles`) are bare Go struct
-  field names with no JSON tags at all — renaming any of these keys into house camelCase is a silent
-  runtime `undefined`, which reads as "nobody is logged in" rather than a type error.
+  `AuthConfig`/`AuthUser`/`AuthSession` are the **only** DTOs here that are not camelCase: they
+  mirror goauth's own serialization verbatim (`server_flow`, `login_path`, `logout_path`,
+  `logged_in`, `authorized`, `roles`, `user`, `profile`), and `AuthUser`'s fields (`Provider`/`ID`)
+  are bare Go struct field names with no JSON tags at all — renaming any of these keys into house
+  camelCase is a silent runtime `undefined`, which reads as "nobody is logged in" rather than a
+  type error.
 - `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `auth.ts`,
   `settings.ts`, `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
@@ -156,15 +157,16 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   like the rest. `auth.ts` — `getAuthConfig`/`getAuthSession` over `GET /auth/config` and
   `GET /auth/session`, both through `http.ts` like every other call (rule 0.1 has no exception for
   authentication) — replaces the old gateway-era `session.ts`.
-- `http.ts` also carries the bearer token every request attaches: a module-level `authToken` set and
-  cleared by `useAuth` (`setAuthToken`), merged into every request's headers (`get`/`post`/`patch`/
-  `del`/`postForm`/`postFormWithProgress`/`getBlob`) alongside any header the call already sets —
-  `postForm`'s FormData keeps its browser-set multipart `Content-Type`. A `401` on any call fires an
-  `onUnauthorized` callback (`setUnauthorizedHandler`) the auth layer registers, in addition to
-  throwing the usual `ApiError` — never an import of the auth composable into the transport.
-  `postFormWithProgress` is `postForm`'s counterpart for an upload that reports its own fraction sent
-  (§8.2): built on `XMLHttpRequest` rather than `fetch`, the one portable way to observe request-body
-  upload progress, and the only caller here that is not `fetch`-based.
+- **The login flow is driven entirely on the server** (back §2.7): this client holds no OIDC library,
+  no PKCE dance and no token of its own to carry. Every request instead rides the session cookie
+  goauth seals, via `credentials: 'same-origin'` on every `fetch` in `http.ts`
+  (`get`/`post`/`patch`/`del`/`postForm`/`getBlob`) and `xhr.withCredentials` on
+  `postFormWithProgress`'s `XMLHttpRequest`. A `401` on any call fires an `onUnauthorized` callback
+  (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual `ApiError` —
+  never an import of the auth composable into the transport. `postFormWithProgress` is `postForm`'s
+  counterpart for an upload that reports its own fraction sent (§8.2): built on `XMLHttpRequest`
+  rather than `fetch`, the one portable way to observe request-body upload progress, and the only
+  caller here that is not `fetch`-based.
 
 The endpoint contracts (pagination, sorting, filter DSL, formats) are described on the server side —
 `spec.md` §6. This document does not restate them.
@@ -334,7 +336,7 @@ module level and documents it; that is the exception, not the rule.
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` is required — a list states the size it asks for, whether that is this client's own (`utils/pageSizes`) or one it deliberately follows the server on (§2.1). It accepts a `Ref<number>` as well as a plain number, and a page size resolved asynchronously (a table's effective row limit, `useTableSettings.rowLimit`) reloads the list from page 1 the moment it changes, the same way a sort change does. `drop(predicate)` is the deletion counterpart of `replace`: a caller that has just deleted rows server-side removes exactly those from the list without a refetch — `total` and `offset` both follow, the latter because the server's remaining rows shifted up by as many and a stale offset would make the next page skip them | present |
 | `useAsyncAction` | the async-write shape a mutation call site needs: `isLoading`, `error` and `run(action, fallbackMessage)`, resolving to the action's own value or `null` on failure — the signal a caller branches on between an inline message and a toast (§8.4). The mapping to French text stays `errorMessage`'s, never assembled by a caller. Not for a list's own load: that is `usePaginatedList`'s four states, a different shape (loading/loadedOnce/error/items) that folding in here would give a second owner of its own error | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
-| `useAuth` | the OIDC lifecycle and its shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): the session read from `GET /auth/session`, cached a few tens of seconds and keyed by the current token so a re-render never refetches it; the display name from the **ID token**'s own profile (`user.profile.name`, then `preferred_username`, then `email` — the access token carries no name at all); `signIn`/`signOut` (`signOut` reads the user before clearing it, passing its `id_token` as `id_token_hint` to `signoutRedirect`, or the provider shows an account picker instead of logging anyone out); the OIDC event wiring (`addUserLoaded` refreshes the session, `addAccessTokenExpired`/`addSilentRenewError` drop it and warn through `useToast`); a `BroadcastChannel` every tab listens on to drop its user on a logout elsewhere; and the `http.ts` `onUnauthorized` registration that drops the token and asks for a re-check on any `401`. Built on `auth/oidc.ts`'s non-reactive `UserManager` | present |
+| `useAuth` | the session's shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): `enabled` from `GET /auth/config`'s `server_flow` (fetched once, cached — false in demo mode, where there is nothing to sign in or out of); the session itself from `GET /auth/session`, cached a few tens of seconds so a re-render never refetches it; the display name from the session's own `profile` (`profile.name`, then `username`, then `email` — the server drives the login flow, so this client never holds the ID token itself to read it from); `signIn` (a navigation to `GET /auth/login?return_to=`, never a `fetch` — the endpoint redirects cross-origin, which `fetch` cannot follow); `signOut` (builds and submits a `<form method="post">` to `/auth/logout` rather than fetching it, so a provider that also ends the session there can answer with a redirect `fetch` could not follow cross-origin); and the `http.ts` `onUnauthorized` registration that drops the session and asks for a re-check on any `401`. No OIDC library, no PKCE, no token storage — that all lives on the server (back §2.7) | present |
 | `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
 | `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions plus the two structural writes on a column (rename, drop), each reloading the schema (still toasted, per §8.4 — a mutation's result, not the load's) | present |
@@ -1139,23 +1141,19 @@ This is the product's main screen; it follows fixed rules.
 - **Pagination.** Since sorting and filtering are server-side, any change to either invalidates the
   pages already loaded: we start again from page 1, keeping the displayed rows until the new page
   arrives (no empty flicker).
-- **Boot order.** `main.ts` builds the OIDC manager (`auth/oidc.ts`'s `initOidc`) and runs the boot
-  recovery (`restoreBrowserSession`) **before** `createApp(...).mount(...)`: the first frame already
-  knows whether anyone is signed in, so no control flickers from enabled to disabled. A failed
-  `GET /auth/config` leaves the app usable with no login control rather than blocking the mount.
-  `router.ts` carries one extra route, `/auth/callback` → `views/AuthCallbackView.vue`, whose job is
-  the code exchange and nothing else — there is deliberately **no route guard** anywhere in this
-  app: every screen reads regardless of role, so guarding a route would lock a user out of a page
-  the API serves them anyway (the verdict gates controls, `useWriteGuard`, not navigation).
-- **The bearer token has one owner.** `http.ts`'s module-level `authToken`, set and cleared
-  exclusively by `useAuth` — on session load, on logout, on expiry (rule 0.12). No other module
-  reads or writes it.
-- **Per-tab storage.** `auth/oidc.ts`'s `UserManager` keeps both its user store (the tokens) and its
-  state store (the PKCE verifier across the redirect) on `sessionStorage` — a token never touches
-  `localStorage`. Two non-secret `localStorage` flags carry the cross-tab, cross-reload signal
-  instead: `darow.auth.signed-in` ("someone is signed in on this browser", read by the boot
-  recovery) and, in `sessionStorage`, `darow.auth.silent-attempted` (this tab already tried a silent
-  sign-in, so a user granted no role does not redirect forever).
+- **Boot order.** `main.ts` mounts the app directly — no OIDC manager to build, no boot recovery to
+  run before the first frame: the session cookie goauth seals **is** the persisted session, unlike a
+  per-tab token that had to be silently renewed on every fresh load. `useSession`'s `refreshSession`
+  fetches `GET /auth/session` the moment a screen first reads it, and the login control simply
+  starts disabled until that answers. The provider's own redirect lands on
+  `${origin}/api/v1/auth/callback` — served entirely by `goauth.CallbackHandler` on the Go side (back
+  §2.7) — so `router.ts` carries no callback route at all, and there is deliberately **no route
+  guard** anywhere in this app: every screen reads regardless of role, so guarding a route would
+  lock a user out of a page the API serves them anyway (the verdict gates controls, `useWriteGuard`,
+  not navigation).
+- **No token, so nothing to own.** Every request instead rides the session cookie on
+  `credentials: 'same-origin'` (client §2) — there is no `authToken` to set, clear or leak, and
+  nothing in this client ever reads or writes a token.
 
 ---
 
@@ -1185,7 +1183,6 @@ web/
   public/           static files served as-is under /ui/ — favicon.svg, the mark's standalone twin
   src/
     client/           HTTP transport + one module per endpoint family + types.ts
-    auth/             oidc.ts — the UserManager and its storage/broadcast plumbing, non-reactive
     utils/            pure functions (tile grid, filter tree, types, sorting)
     composables/      one composable per subject (§4)
     components/
@@ -1200,10 +1197,9 @@ web/
       SourcesView.vue / SourcesView/    sub-views and panels
       TableDetailView.vue / TableDetailView/
       SettingsView.vue
-      AuthCallbackView.vue             the OIDC redirect's landing page
-    router.ts         one route per view, plus /auth/callback
+    router.ts         one route per view — the provider's redirect lands on the API, never here
     App.vue           shell: navigation, server status, toasts
-    main.ts           builds the OIDC manager and runs boot recovery before mount (§9)
+    main.ts           mounts the app; no boot-time auth work (§9)
     style.css         Tailwind + daisyUI
 ```
 
