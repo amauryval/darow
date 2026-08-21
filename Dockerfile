@@ -21,10 +21,14 @@ COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
     && swag init -g cmd/server/main.go -o docs
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/server.run ./cmd/server
+# data/ is excluded from the build context (.dockerignore): server.workDir defaults to ./data, and
+# distroless carries no shell to mkdir it in the final stage, so an empty one is staged here instead,
+# owned by the :nonroot image's fixed uid/gid (65532) so the server can write to it without root.
+RUN mkdir -p /out/data && chown 65532:65532 /out/data
 
-# Stage 3: final image (glibc compatible)
-FROM gcr.io/distroless/cc-debian12:latest
+# Stage 3: final image (glibc compatible), running as the image's built-in nonroot user
+FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
-COPY --from=build /app/data /data
+COPY --from=build /out/data /data
 ENTRYPOINT ["./server.run"]
