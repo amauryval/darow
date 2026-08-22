@@ -39,6 +39,8 @@ const statusBadgeTone: Record<ServerStatus, 'neutral' | 'success' | 'error'> = {
 // the URL (§9).
 const collapsed = useStorage('darow-nav-collapsed', false)
 
+const copyrightYear = new Date().getFullYear()
+
 const links = [
     { to: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { to: '/tables', label: 'Tables disponibles', icon: LayoutGrid },
@@ -161,6 +163,14 @@ const links = [
                     <template v-else
                         >{{ version.version }} · {{ version.buildDate.slice(0, 10) }}</template
                     >
+                </div>
+
+                <div
+                    class="truncate px-4 pb-3 text-xs text-base-content/40"
+                    :class="collapsed && 'text-center'"
+                >
+                    <template v-if="collapsed">©</template>
+                    <template v-else>© {{ copyrightYear }} amauryval.</template>
                 </div>
             </aside>
         </div>

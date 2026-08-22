@@ -127,7 +127,8 @@ The router (`src/router.ts`) knows only the views. `src/App.vue` is the applicat
 to an icon-only width — the choice is persisted (`useStorage`) as a display preference, not screen
 state, so it stays out of the URL (§9) — a header carrying the page title and the collapse toggle,
 status banner, the running build's version (`useVersion`, always visible below the status banner —
-project spec §5 for how it is baked into the server), mounting of `RouterView` and of the toast
+project spec §5 for how it is baked into the server), a copyright line under it (the current year,
+read from the browser clock, never a server value), mounting of `RouterView` and of the toast
 queue.
 
 ---
