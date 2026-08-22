@@ -131,7 +131,7 @@ place an audit's findings are written — never a `spec.md`.
 | `### 6.4 Errors` | error → status mapping, error body                |
 | `### 6.5 HTTP tile caching` | tile cache headers                                |
 | `### 6.6 Swagger documentation` | `swag init` annotations                           |
-| `### 6.7 Security — reads are public, writes are authenticated` | the read/write split, how it is enforced, what is trusted |
+| `### 6.7 Security — reads are public, writes are authenticated, guests may edit data but never load it` | the read/write split, its two write scopes, how each is enforced, what is trusted |
 
 ### Domain model (`internal/service`, sources)
 

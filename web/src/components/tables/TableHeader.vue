@@ -52,7 +52,11 @@ const emit = defineEmits<{
     delete: []
 }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+// Two registers in the one menu: adding/reshaping a column is data a guest
+// may touch, renaming/deriving/aggregating/deleting the table itself is not
+// (back §6.7).
+const { disabled: manageDisabled, reason: manageGuardReason } = useWriteGuard('manage')
+const { disabled: dataDisabled, reason: dataGuardReason } = useWriteGuard('data')
 
 const nameInput = ref(props.table.tableName)
 
@@ -123,8 +127,8 @@ function submitRename() {
                 <MenuTitle>Structure</MenuTitle>
                 <MenuItem
                     :icon="Pencil"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="manageDisabled"
+                    :title="manageDisabled ? manageGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -135,8 +139,8 @@ function submitRename() {
                 >
                 <MenuItem
                     :icon="Plus"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="dataDisabled"
+                    :title="dataDisabled ? dataGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -147,8 +151,8 @@ function submitRename() {
                 >
                 <MenuItem
                     :icon="Columns3"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="dataDisabled"
+                    :title="dataDisabled ? dataGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -161,8 +165,8 @@ function submitRename() {
                 <MenuTitle>Produire</MenuTitle>
                 <MenuItem
                     :icon="GitBranch"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="manageDisabled"
+                    :title="manageDisabled ? manageGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -173,8 +177,8 @@ function submitRename() {
                 >
                 <MenuItem
                     :icon="Sigma"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="manageDisabled"
+                    :title="manageDisabled ? manageGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -202,8 +206,8 @@ function submitRename() {
                 <MenuTitle>Réglages</MenuTitle>
                 <MenuItem
                     :icon="Settings2"
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="manageDisabled"
+                    :title="manageDisabled ? manageGuardReason : undefined"
                     @click="
                         () => {
                             close()
@@ -217,8 +221,8 @@ function submitRename() {
                 <MenuItem
                     :icon="Trash2"
                     danger
-                    :disabled="writeDisabled"
-                    :title="writeDisabled ? writeGuardReason : undefined"
+                    :disabled="manageDisabled"
+                    :title="manageDisabled ? manageGuardReason : undefined"
                     @click="
                         () => {
                             close()

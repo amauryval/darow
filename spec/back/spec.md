@@ -128,7 +128,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, `goauth.New` (the only place this module is imported, §6.7), HTTP server, graceful shutdown                                                                      |
-| `internal/guards`            | maps the roles `github.com/amauryval/goauth/types` grants to the single authorization scope this API enforces — `Guards.AdminScope` (write), the only scope, since every read is public (§6.7). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
+| `internal/guards`            | maps the roles `github.com/amauryval/goauth/types` grants to the two authorization scopes this API enforces — `Guards.AdminScope` (administrator alone) and `Guards.DataScope` (administrator or guest), since every read is public (§6.7). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
 | `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4), and the `auth` block it declares itself (`AuthConfig`, §2.7)              |
 | `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
@@ -161,7 +161,7 @@ error alongside `*Services` for that settings load to fail into.
 
 A `config.yaml` file at the root, **optional** (defaults apply if it is absent);
 `config.example.yaml` beside it states every field at its default value, commented, and a test in
-`internal/config` fails if the two drift apart. Order of application: defaults → file → `GEOAPI_*`
+`internal/config` fails if the two drift apart. Order of application: defaults → file → `DAROW_*`
 environment variables → validation. A malformed file, an
 unparsable variable or an invalid value are fatal errors at startup, never silently ignored.
 Validation collects **all** violations before failing.
@@ -172,13 +172,13 @@ File: `internal/config/config.go`.
 
 | Field                | Default | Env variable                         | Constraint |
 | -------------------- | ------- | ------------------------------------ | ---------- |
-| `host`               | `0.0.0.0` | `GEOAPI_SERVER_HOST`               | not empty  |
-| `port`               | 8080    | `GEOAPI_SERVER_PORT`                 | 1..65535   |
-| `readTimeoutSec`     | 15      | `GEOAPI_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
-| `writeTimeoutSec`    | 30      | `GEOAPI_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
-| `idleTimeoutSec`     | 60      | `GEOAPI_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
-| `shutdownTimeoutSec` | 10      | `GEOAPI_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
-| `trustedProxies`     | empty   | `GEOAPI_SERVER_TRUSTED_PROXIES`      | each entry an IP or CIDR |
+| `host`               | `0.0.0.0` | `DAROW_SERVER_HOST`               | not empty  |
+| `port`               | 8080    | `DAROW_SERVER_PORT`                 | 1..65535   |
+| `readTimeoutSec`     | 15      | `DAROW_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
+| `writeTimeoutSec`    | 30      | `DAROW_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
+| `idleTimeoutSec`     | 60      | `DAROW_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
+| `shutdownTimeoutSec` | 10      | `DAROW_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
+| `trustedProxies`     | empty   | `DAROW_SERVER_TRUSTED_PROXIES`      | each entry an IP or CIDR |
 
 `host` is the interface the listener binds to, joined to `port` by `cmd/server`. The default accepts
 connections from every interface, which is what a containerized process behind a reverse proxy
@@ -199,9 +199,9 @@ claims. This is its only purpose: the server verifies bearer tokens itself (§6.
 
 | Field          | Default         | Env variable                   |
 | -------------- | --------------- | ------------------------------ |
-| `path`         | `./data/geo.db` | `GEOAPI_DUCKDB_PATH`           |
-| `maxOpenConns` | 4               | `GEOAPI_DUCKDB_MAX_OPEN_CONNS` |
-| `maxSizeBytes` | 0 (unlimited)   | `GEOAPI_DUCKDB_MAX_SIZE_BYTES` |
+| `path`         | `./data/geo.db` | `DAROW_DUCKDB_PATH`           |
+| `maxOpenConns` | 4               | `DAROW_DUCKDB_MAX_OPEN_CONNS` |
+| `maxSizeBytes` | 0 (unlimited)   | `DAROW_DUCKDB_MAX_SIZE_BYTES` |
 
 The parent directory is created if it does not exist — DuckDB refuses to open a file in a missing
 directory.
@@ -216,9 +216,9 @@ always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMax
 
 | Field               | Default                                         | Env variable                                          |
 | ------------------- | ----------------------------------------------- | ----------------------------------------------------- |
-| `workDir`           | `./data/sources`                                | `GEOAPI_SOURCES_WORKDIR`                              |
-| `maxSizeBytes`      | 104,857,600 (100 MiB)                           | `GEOAPI_SOURCES_MAX_SIZE_BYTES`                       |
-| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
+| `workDir`           | `./data/sources`                                | `DAROW_SOURCES_WORKDIR`                              |
+| `maxSizeBytes`      | 104,857,600 (100 MiB)                           | `DAROW_SOURCES_MAX_SIZE_BYTES`                       |
+| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `DAROW_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
 which takes priority over everything else (§2.6). `maxSizeBytes` and `allowedExtensions` are the
@@ -230,10 +230,10 @@ it is allowed to send.
 
 | Field               | Default               | Env variable                        | Constraint             |
 | ------------------- | ---------------------- | ------------------------------------ | ----------------------- |
-| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `GEOAPI_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
-| `requestTimeoutSec` | 30                      | `GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
-| `cacheMaxItems`     | 1000                    | `GEOAPI_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
-| `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
+| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `DAROW_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
+| `requestTimeoutSec` | 30                      | `DAROW_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
+| `cacheMaxItems`     | 1000                    | `DAROW_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
+| `tileMaxItems`      | 5000                    | `DAROW_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
 These memory/availability guards sit outside the runtime-editable settings table (§2.5),
 config-only for the same reason `duckdb.maxSizeBytes` is (§2.2), and the same reason the `auth`
@@ -1392,12 +1392,14 @@ restart, not a `PATCH`.
 
 **Auth wiring.** `NewRouter` takes `guards.Guards` (`internal/guards`) and a `MountAuth` closure —
 `func(chi.Router)` — rather than importing `goauth` itself (§1, §6.7): `cmd/server` builds both from
-the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles(types.RoleAdmin)`
-and `MountAuth` by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the
-`/api/v1` group that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so
-`/auth/config` and `/auth/session` (§6.1) answer before any write group's guard could apply.
-`rt.guards.AdminScope()` is used on every write route's own `Group` (§6.7), and it is the only scope
-`guards.Guards` carries — every read stays fully public, with no guard of any kind.
+the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles(types.RoleAdmin)`,
+`guards.Guards.DataScope()` from `RequireAnyRole(types.RoleAdmin, types.RoleGuest)`, and `MountAuth`
+by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the `/api/v1` group
+that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so `/auth/config` and
+`/auth/session` (§6.1) answer before any write group's guard could apply. `rt.guards.AdminScope()`
+is used on every write route reserved to an administrator, `rt.guards.DataScope()` on the
+rows/columns/filters routes a guest may reach too (§6.7) — the two scopes `guards.Guards` carries;
+every read stays fully public, with no guard of any kind.
 
 **Table resolution.** `TableResolver` (`router/validation/resolver.go`) resolves `{tableId}` once
 per request, served from the cache in the common case, and writes a `404` if the table does not
@@ -1489,11 +1491,11 @@ Generated by `swag init` from the handler annotations (`mise run docs`). `docs/d
 absent from the generated definition; that gap is described here in prose rather than in generated
 output, and the generation command itself is unchanged by their existence.
 
-### 6.7 Security — reads are public, writes are authenticated
+### 6.7 Security — reads are public, writes are authenticated, guests may edit data but never load it
 
-**Every read is open to everyone; every route that changes state demands a bearer token whose holder
-is granted the `admin` application role.** That is the whole authorization model, and it is stated
-once here rather than route by route:
+**Every read is open to everyone; every route that changes state demands a bearer token, and the
+role it holds decides which of the two write scopes it clears.** That is the whole authorization
+model, and it is stated once here rather than route by route:
 
 -   **Read** — every `GET`, plus the `POST`s that only query: `/tables/{tableId}/filter`, `/bbox`,
     `/neighbours`, `/rows/batch`, `/columns/{col}/transform/preview`, `/sources/refresh` (a rescan
@@ -1503,40 +1505,49 @@ once here rather than route by route:
     an authentication outage into a rolling restart. `/diagnostics`, `/swagger/*`, `/ui/*` and
     `/api/v1/auth/config`/`/api/v1/auth/session` (§6.1) are reads as well, deliberately — the same
     decision, not an oversight of where they were registered.
--   **Write** — everything else: row create/update/delete, `/columns`, `/columns/{col}` (rename,
-    drop) and `/columns/{col}/transform`, table rename and delete, the `/filters` writes, per-table
-    and global settings writes, `/derive`, `/derive-from-table`, `/aggregate-from-table`,
-    `/sources/upload`, `/sources/{name}/load` and `DELETE /sources/{name}`.
+-   **Write, data scope** (`admin` or `guest`) — row create/update/delete, `/columns`,
+    `/columns/{col}` (rename, drop) and `/columns/{col}/transform`, the `/filters` writes: a guest
+    is trusted to edit a table's rows, schema and stored filters, never to bring a table into
+    existence or to reshape the catalogue.
+-   **Write, admin scope** (`admin` alone) — everything that loads, creates or removes a table
+    outright, or touches configuration: `/sources/upload`, `/sources/{name}/load`,
+    `DELETE /sources/{name}`, `/derive`, table rename and delete, `/derive-from-table`,
+    `/aggregate-from-table`, per-table and global settings writes. Loading a source is the one
+    action a guest must never reach, whatever else it is trusted with — an unvetted file is a much
+    larger blast radius than a row edit, and this is the line the whole split exists to draw.
 
-**The identity model.** `github.com/amauryval/goauth` verifies OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and
-`types.RoleGuest`. Every write demands a verified token whose bearer holds `admin` — one middleware,
+**The identity model.** `github.com/amauryval/goauth` verifies OIDC bearer tokens itself and answers
+in exactly two application roles: `types.RoleAdmin` and `types.RoleGuest`. Every write demands a
+verified token holding a role the target scope accepts — the admin scope's one middleware,
 `RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on
-every `Group` carrying a write route. **`guest` stands exactly where an
-anonymous caller stands**: it reads everything, which everyone already may, and writes nothing — say
-that plainly rather than leaving it to be inferred, because a role that grants no privilege reads as
-a bug otherwise. The role exists to be *named*: the provider grants it to identify a reader, and this
-server can later hang a private read on it (`improvements.md` IMP-24). It is also why
-`guards.RoleMiddlewares` declares `RequireRoles` alone and not `goauth`'s `RequireAnyRole`, even for
-a single required role: the first states "this role", the second "one of these", and a second role
-added to a `RequireAnyRole` list would silently become a writer.
+every `Group` carrying an admin-only write route; the data scope's,
+`RequireAnyRole(types.RoleAdmin, types.RoleGuest)` (wrapped as `guards.Guards.DataScope()`), on
+every `Group` carrying a rows/columns/filters write route. `guards.RoleMiddlewares` declares both
+`RequireRoles` and `RequireAnyRole` precisely because the two scopes need to say different things:
+`RequireRoles(admin)` states "this role and no other", `RequireAnyRole(admin, guest)` states "one of
+these" — using the wrong one anywhere would either lock a guest out of data it now owns or admit it
+somewhere it must not reach.
 
 **Statuses.** `401` (`unauthorized`) with no bearer token or an invalid one; `403` (`forbidden`) for
-a verified token granted no role, or one granted `guest` alone; `503` if the authorization policy
+a verified token granted no role, or one granted a role the target scope does not accept (`guest` on
+an admin-scope route, or neither role on a data-scope route); `503` if the authorization policy
 itself is unavailable. `goauth` writes all three **itself**, before any handler in §6.4's dispatch
 table runs, in its **own** body (`{error, message}`) — it offers no hook to reshape that body, so
 none of the three carries this repository's envelope: no `code`, no `requestId`. That is accepted and
 recorded as a limitation rather than worked around: wrapping the guard to re-shape a refusal it
 already wrote means buffering every guarded response for two fields, and the front only ever reads
 `error`/`message` on these three statuses (`spec/front/spec.md`). `routes_test.go` holds the
-inventory of every write route and asserts each answers `401` with no credentials, `403` for a
-verified token holding no role and for one holding `guest` alone, and its own success status for an
-`admin` token — so a route added later without a thought for authorization fails the build rather
+inventory of every write route, split into admin-only and data-scope, and asserts each answers `401`
+with no credentials, `403` for a verified token holding no role, `403` for a `guest` token on an
+admin-only route, and its own success status for an `admin` token and (data-scope routes only) a
+`guest` token — so a route added later without a thought for authorization fails the build rather
 than shipping open.
 
-**Where the guard is mounted.** `guards.Guards.AdminScope()` is mounted with `Use` on **one `Group`
-per level of the route tree**, never once over a subtree: reads and writes share every path, and a
-route registered outside a group to escape that group's other middlewares would escape this one with
-it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for its own body cap
+**Where the guard is mounted.** `guards.Guards.AdminScope()`/`DataScope()` are mounted with `Use` on
+**one `Group` per level of the route tree**, never once over a subtree: reads and writes share every
+path, and a route registered outside a group to escape that group's other middlewares would escape
+this one with it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for
+its own body cap
 (§6.3) and carrying the guard on its own group.
 
 **Trust and `trustedProxies` — not the same question.** `goauth` verifies a bearer token itself and
@@ -1571,8 +1582,8 @@ the guard's own denial warnings (`path`, `granted`, `required` roles) logged by 
 
 **Not done, on purpose** (`limitations.md` LIM-19): no CORS and no rate limiting, both delegated to
 whatever fronts this server. Authorization is global, never per table or per row
-(`improvements.md` IMP-24) — `guards.Guards` carries the write scope alone, `guest` being equivalent
-to anonymous everywhere reads already are.
+(`improvements.md` IMP-24) — `guards.Guards` carries its two write scopes uniformly across every
+table, with no table- or row-level distinction within either scope.
 
 The protections around all of this are unchanged: request body cap, pagination caps, per-request
 timeout, systematic whitelisting of identifiers and columns, restriction of `/derive` to registered

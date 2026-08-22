@@ -41,12 +41,19 @@ func setupUserContext(t *testing.T, user *types.UserInfo) context.Context {
 
 type mockRoleMiddlewares struct {
 	allRoles []types.Role
+	anyRoles []types.Role
 }
 
 func (m *mockRoleMiddlewares) RequireRoles(roles ...types.Role) func(http.Handler) http.Handler {
 	m.allRoles = roles
 
 	return setupTaggingMiddleware("all")
+}
+
+func (m *mockRoleMiddlewares) RequireAnyRole(roles ...types.Role) func(http.Handler) http.Handler {
+	m.anyRoles = roles
+
+	return setupTaggingMiddleware("any")
 }
 
 func setupTaggingMiddleware(tag string) func(http.Handler) http.Handler {
@@ -77,6 +84,15 @@ func Test_New_AdminScopeRequiresTheAdminRole(t *testing.T) {
 
 	assert.Equal(t, "all", recorder.Header().Get("X-Guard"))
 	assert.Equal(t, []types.Role{types.RoleAdmin}, roles.allRoles)
+}
+
+func Test_New_DataScopeAdmitsAdminOrGuest(t *testing.T) {
+	roles := &mockRoleMiddlewares{}
+
+	recorder := setupGuardedRecorder(t, New(roles).DataScope())
+
+	assert.Equal(t, "any", recorder.Header().Get("X-Guard"))
+	assert.Equal(t, []types.Role{types.RoleAdmin, types.RoleGuest}, roles.anyRoles)
 }
 
 func Test_Authenticated(t *testing.T) {

@@ -7,10 +7,17 @@ import { useSession } from './useSession'
 // BaseButton/ConfirmButton keep taking a plain disabled/title prop, and stay
 // domain-free — the caller passes this composable's output down as those
 // props.
-export function useWriteGuard() {
-    const { authenticated, canWrite } = useSession()
+//
+// scope picks which of useSession's two privileges the button needs:
+// 'data' (rows, columns, filters — a guest holds it too) or 'manage'
+// (everything structural, source loading included — admin alone). Defaults
+// to 'manage', the stricter of the two, so a call site left unchanged keeps
+// its prior behaviour.
+export function useWriteGuard(scope: 'data' | 'manage' = 'manage') {
+    const { authenticated, canWrite, canManage } = useSession()
 
-    const disabled = computed(() => !authenticated.value || !canWrite.value)
+    const permitted = computed(() => (scope === 'data' ? canWrite.value : canManage.value))
+    const disabled = computed(() => !authenticated.value || !permitted.value)
 
     const reason = computed(() =>
         !authenticated.value

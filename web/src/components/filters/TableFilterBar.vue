@@ -30,7 +30,7 @@ const emit = defineEmits<{
 
 const saved = useSavedFilters(toRef(props, 'tableId'))
 const filterActions = useFilterBarActions(saved)
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 
 // Only one filter applies at a time: a second one would silently AND with the
 // first, which the toolbar cannot show.

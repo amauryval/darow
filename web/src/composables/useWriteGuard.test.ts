@@ -5,12 +5,16 @@ import { useSession } from './useSession'
 
 vi.mock('./useSession', () => ({ useSession: vi.fn() }))
 
-function session(authenticated: boolean, canWrite: boolean) {
-    const state = { authenticated: ref(authenticated), canWrite: ref(canWrite) }
+function session(authenticated: boolean, canWrite: boolean, canManage: boolean) {
+    const state = {
+        authenticated: ref(authenticated),
+        canWrite: ref(canWrite),
+        canManage: ref(canManage)
+    }
     vi.mocked(useSession).mockReturnValue({
         ...state,
         enabled: computed(() => true),
-        role: computed(() => (canWrite ? 'admin' : 'guest')),
+        role: computed(() => (canManage ? 'admin' : canWrite ? 'guest' : 'none')),
         displayName: computed(() => ''),
         signIn: vi.fn(),
         signOut: vi.fn()
@@ -18,14 +22,26 @@ function session(authenticated: boolean, canWrite: boolean) {
 }
 
 describe('useWriteGuard', () => {
-    it('arms a write control for a signed-in account holding the rights', () => {
-        session(true, true)
+    it('arms a manage control (the default scope) for an administrator', () => {
+        session(true, true, true)
 
         expect(useWriteGuard().disabled.value).toBe(false)
     })
 
+    it('disables a manage control for a guest, who holds canWrite but not canManage', () => {
+        session(true, true, false)
+
+        expect(useWriteGuard('manage').disabled.value).toBe(true)
+    })
+
+    it('arms a data control for a guest', () => {
+        session(true, true, false)
+
+        expect(useWriteGuard('data').disabled.value).toBe(false)
+    })
+
     it('disables it for a visitor, and says why', () => {
-        session(false, false)
+        session(false, false, false)
 
         const { disabled, reason } = useWriteGuard()
 
@@ -34,7 +50,7 @@ describe('useWriteGuard', () => {
     })
 
     it('disables it for a signed-in account without the rights, and says why', () => {
-        session(true, false)
+        session(true, false, false)
 
         const { disabled, reason } = useWriteGuard()
 

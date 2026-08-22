@@ -31,7 +31,7 @@ const emit = defineEmits<{
     openColumns: []
 }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 </script>
 
 <template>

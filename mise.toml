@@ -88,7 +88,7 @@ depends = ["docs", "ui-build"]
 # commit.
 run = '''
 BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
-go build -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -o bin/server ./cmd/server
+go build -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -o bin/darow ./cmd/server
 '''
 
 # authdemo lets goauth's demo verifier answer every request — backend and,

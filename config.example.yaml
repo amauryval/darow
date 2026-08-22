@@ -2,7 +2,7 @@
 #
 # Copy it to config.yaml and keep only what you change: the file is optional and
 # an absent field takes the value shown here. Order of application: defaults →
-# file → GEOAPI_* environment variables → validation. An invalid value is a fatal
+# file → DAROW_* environment variables → validation. An invalid value is a fatal
 # error at startup, never a silent fallback.
 #
 # This file holds only what the process needs to start (before the settings table
@@ -40,42 +40,3 @@ settings:
     requestTimeoutSec: 30 # 0 = no per-request time limit
     cacheMaxItems: 1000 # shared by the metadata and schema LRU caches
     tileMaxItems: 5000
-
-# Public reads, authorized writes (spec/back/spec.md §2.7, §6.7).
-#
-# Every read stays open to everyone: listings, rows, tiles, exports, the OGC
-# collections, /healthz, /readyz, /diagnostics, /swagger and the admin UI.
-# Every write — creating, editing or deleting a table, a row, a column, a
-# stored filter, a source, or changing the settings — requires a caller
-# holding a verified bearer token whose application role is admin (else 401
-# with no token, 403 otherwise). guest stands exactly where an anonymous
-# caller stands: it reads everything, which everyone already may, and
-# writes nothing.
-#
-# Authentication is not configured in this file at all: cmd/server resolves it
-# entirely from a .env file — see .env.example for every variable
-# (AUTH_PROVIDER, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_ADMIN_ROLE, AUTH_GUEST_ROLE,
-# AUTH_REDIRECT_URL, AUTH_COOKIE_SECRET, AUTH_CLIENT_SECRET — goauth's own
-# names, github.com/amauryval/goauth, the module backing this; see its own
-# SETUP.md for standing up a provider). No .env present is demo mode: every
-# visitor is authorized as an administrator, no token checked at all — for
-# local development only, and refused outright unless this binary was built
-# with -tags authdemo (mise run run-dev does). A .env present also drives the
-# login flow on the server (goauth.WithBrowser): the admin UI never obtains a
-# token of its own, it follows a redirect to sign in and calls the API with
-# its session cookie.
-# application's admin/guest — empty falls back to "admin"/"guest".
-#
-# The auth block's own environment variables break the GEOAPI_ prefix every
-# other override here carries: they are goauth's own (AUTH_DEMO,
-# AUTH_PROVIDER, AUTH_ISSUER, AUTH_AUDIENCE, AUTH_ADMIN_ROLE,
-# AUTH_GUEST_ROLE), read as the module's contract rather than this file's —
-# AUTH_DEMO is the module's name and sense, the opposite of enabled below,
-# and is negated on the way in.
-auth:
-    enabled: false
-    # provider: '' # 'zitadel' or 'pocketid' — required when enabled is true
-    # issuer: '' # the identity provider's base URL, e.g. 'https://issuer.example.com' — required when enabled is true
-    # audience: '' # this application's client id at the provider — required when enabled is true
-    # adminRole: '' # the provider's name for the admin role; empty falls back to "admin"
-    # guestRole: '' # the provider's name for the guest role; empty falls back to "guest"

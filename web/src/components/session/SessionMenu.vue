@@ -14,12 +14,14 @@ import MenuTitle from '../ui/MenuTitle.vue'
 const { enabled, authenticated, role, displayName, signIn, signOut } = useSession()
 
 // The badge is the one thing the menu could not say before this control
-// existed: a signed-in guest gets nothing beyond an anonymous visitor, and
-// without this label the screen would look broken to them rather than
-// merely read-only.
+// existed: a guest can edit a table's data but never load one (back §6.7),
+// while a signed-in user holding neither role gets nothing beyond an
+// anonymous visitor — without this label either screen would look broken
+// rather than merely restricted.
 const roleBadge = computed<{ tone: 'primary' | 'warning'; label: string } | null>(() => {
     if (role.value === 'admin') return { tone: 'primary', label: 'Administrateur' }
-    if (role.value === 'guest') return { tone: 'warning', label: 'Invité — lecture seule' }
+    if (role.value === 'guest')
+        return { tone: 'warning', label: 'Invité — pas de chargement de données' }
     return { tone: 'warning', label: 'Aucun rôle — lecture seule' }
 })
 </script>

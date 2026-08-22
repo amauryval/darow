@@ -14,7 +14,7 @@ import { useWriteGuard } from '../../composables/useWriteGuard'
 defineProps<{ name: string }>()
 const emit = defineEmits<{ transform: [] }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 </script>
 
 <template>

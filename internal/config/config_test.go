@@ -85,7 +85,7 @@ func Test_Load_DuckDBMaxSizeBytesDefaultsToUnlimited(t *testing.T) {
 
 func Test_Load_DuckDBMaxSizeBytesEnvOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	t.Setenv("GEOAPI_DUCKDB_MAX_SIZE_BYTES", "1073741824")
+	t.Setenv("DAROW_DUCKDB_MAX_SIZE_BYTES", "1073741824")
 
 	cfg, err := Load(path)
 
@@ -95,9 +95,9 @@ func Test_Load_DuckDBMaxSizeBytesEnvOverride(t *testing.T) {
 
 func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 	path := writeConfigFile(t, "server:\n  port: 9090\n")
-	t.Setenv("GEOAPI_SERVER_PORT", "7070")
-	t.Setenv("GEOAPI_WORKDIR", "/env")
-	t.Setenv("GEOAPI_SOURCES_ALLOWED_EXTENSIONS", ".csv,.geojson")
+	t.Setenv("DAROW_SERVER_PORT", "7070")
+	t.Setenv("DAROW_WORKDIR", "/env")
+	t.Setenv("DAROW_SOURCES_ALLOWED_EXTENSIONS", ".csv,.geojson")
 
 	cfg, err := Load(path)
 
@@ -109,7 +109,7 @@ func Test_Load_EnvOverridesYAMLAndDefaults(t *testing.T) {
 
 func Test_Load_RejectsMalformedEnvValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	t.Setenv("GEOAPI_SERVER_PORT", "not-a-number")
+	t.Setenv("DAROW_SERVER_PORT", "not-a-number")
 
 	_, err := Load(path)
 
@@ -160,10 +160,10 @@ func Test_Load_SettingsDefaults(t *testing.T) {
 
 func Test_Load_SettingsEnvOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	t.Setenv("GEOAPI_SETTINGS_MAX_BODY_BYTES", "1048576")
-	t.Setenv("GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC", "45")
-	t.Setenv("GEOAPI_SETTINGS_CACHE_MAX_ITEMS", "500")
-	t.Setenv("GEOAPI_SETTINGS_TILE_MAX_ITEMS", "2000")
+	t.Setenv("DAROW_SETTINGS_MAX_BODY_BYTES", "1048576")
+	t.Setenv("DAROW_SETTINGS_REQUEST_TIMEOUT_SEC", "45")
+	t.Setenv("DAROW_SETTINGS_CACHE_MAX_ITEMS", "500")
+	t.Setenv("DAROW_SETTINGS_TILE_MAX_ITEMS", "2000")
 
 	cfg, err := Load(path)
 
@@ -195,7 +195,7 @@ func Test_Load_ServerHostOverrides(t *testing.T) {
 
 	t.Run("from the environment", func(t *testing.T) {
 		path := writeConfigFile(t, "server:\n  host: 127.0.0.1\n")
-		t.Setenv("GEOAPI_SERVER_HOST", "::1")
+		t.Setenv("DAROW_SERVER_HOST", "::1")
 
 		cfg, err := Load(path)
 
@@ -224,7 +224,7 @@ func Test_Load_ServerTrustedProxies(t *testing.T) {
 
 	t.Run("from the environment", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-		t.Setenv("GEOAPI_SERVER_TRUSTED_PROXIES", "10.0.0.0/8,192.0.2.10")
+		t.Setenv("DAROW_SERVER_TRUSTED_PROXIES", "10.0.0.0/8,192.0.2.10")
 
 		cfg, err := Load(path)
 

@@ -43,7 +43,7 @@ defineEmits<{
     delete: []
 }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 
 const plural = computed(() => (props.count > 1 ? 's' : ''))
 const busy = computed(() => props.duplicating || props.deleting)

@@ -55,8 +55,10 @@ type Router struct {
 //
 // uiAssets is the admin UI's built static files, served under /ui; ready
 // backs /readyz; trustedProxies decides whose Forwarded headers the OGC
-// links may trust; g.AdminScope() guards every state-changing route, reads
-// staying public; mountAuth publishes the auth module's own read routes.
+// links may trust; g.AdminScope() guards every state-changing route reserved
+// to an administrator, g.DataScope() the rows/columns/filters routes a guest
+// may reach too, reads staying public; mountAuth publishes the auth module's
+// own read routes.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
 	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, trustedProxies []string,
@@ -178,7 +180,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Get("/", rt.filters.ListFilters)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.filters.CreateFilter)
 							w.Patch("/{filterId}", rt.filters.UpdateFilter)
 							w.Delete("/{filterId}", rt.filters.DeleteFilter)
@@ -189,7 +191,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/{col}/transform/preview", rt.tables.PreviewColumnTransform)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.tables.AddColumn)
 							w.Patch("/{col}", rt.tables.RenameColumn)
 							w.Delete("/{col}", rt.tables.DropColumn)
@@ -202,7 +204,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/batch", rt.rows.GetRowsByPkey)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.rows.AddRows)
 							w.Patch("/", rt.rows.UpdateRows)
 							w.Delete("/", rt.rows.DeleteRows)
@@ -213,7 +215,7 @@ func (rt *Router) Setup() http.Handler {
 							sub.Get("/geometry", rt.rows.GetRowGeometry)
 
 							sub.Group(func(w chi.Router) {
-								w.Use(rt.guards.AdminScope())
+								w.Use(rt.guards.DataScope())
 								w.Patch("/", rt.rows.UpdateRow)
 								w.Delete("/", rt.rows.DeleteRow)
 							})

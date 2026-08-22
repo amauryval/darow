@@ -26,7 +26,7 @@ COPY . .
 COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
     && swag init -g cmd/server/main.go -o docs
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -X darow/internal/version.Version=${VERSION} -X darow/internal/version.Commit=${COMMIT} -X darow/internal/version.BuildDate=${BUILD_DATE}" -o /out/server.run ./cmd/server
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -X darow/internal/version.Version=${VERSION} -X darow/internal/version.Commit=${COMMIT} -X darow/internal/version.BuildDate=${BUILD_DATE}" -o /out/darow ./cmd/server
 # data/ is excluded from the build context (.dockerignore): server.workDir defaults to ./data,
 # so an empty one is staged here for the case where nothing is mounted over it.
 RUN mkdir -p /out/data
@@ -40,6 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd -g 65532 nonroot \
     && useradd -u 65532 -g nonroot -d /home/nonroot -m -s /usr/sbin/nologin nonroot
 WORKDIR /app
-COPY --from=build /out/server.run ./server.run
+COPY --from=build /out/darow ./darow
 COPY --from=build /out/data /data
-ENTRYPOINT ["/bin/sh", "-c", "chown -R nonroot:nonroot /data && exec su -s /bin/sh -c 'exec ./server.run' nonroot"]
+ENTRYPOINT ["/bin/sh", "-c", "chown -R nonroot:nonroot /data && exec su -s /bin/sh -c 'exec ./darow' nonroot"]

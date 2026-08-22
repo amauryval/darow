@@ -31,13 +31,20 @@ export function useSession() {
         return 'none'
     })
 
-    const canWrite = computed(() => authorized.value && role.value === 'admin')
+    // Two write privileges, not one: a guest may edit a table's data — rows,
+    // columns, filters (back §6.7's data scope) — but never load a source or
+    // touch anything structural, which stays canManage's alone.
+    const canWrite = computed(
+        () => authorized.value && (role.value === 'admin' || role.value === 'guest')
+    )
+    const canManage = computed(() => authorized.value && role.value === 'admin')
 
     return {
         enabled,
         authenticated,
         role,
         canWrite,
+        canManage,
         displayName,
         signIn,
         signOut

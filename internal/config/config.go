@@ -15,8 +15,8 @@ import (
 )
 
 // envPrefix namespaces every environment variable Load recognizes, so
-// GEOAPI_SERVER_PORT overrides server.port, and so on — one variable per YAML field.
-const envPrefix = "GEOAPI_"
+// DAROW_SERVER_PORT overrides server.port, and so on — one variable per YAML field.
+const envPrefix = "DAROW_"
 
 // Config holds the server parameters and storage settings. Runtime-editable settings live in the
 // settings table instead. Authentication is not part of this file at all: cmd/server resolves it
@@ -113,7 +113,7 @@ func defaultConfig() Config {
 }
 
 // Load reads path if present, falling back to defaults, then applies
-// GEOAPI_* environment variables and validates the result.
+// DAROW_* environment variables and validates the result.
 func Load(path string) (Config, error) {
 	cfg := defaultConfig()
 
@@ -137,7 +137,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// applyEnvOverrides overrides cfg's fields from GEOAPI_* environment variables.
+// applyEnvOverrides overrides cfg's fields from DAROW_* environment variables.
 func applyEnvOverrides(cfg *Config) error {
 	var errs []error
 	check := func(err error) {

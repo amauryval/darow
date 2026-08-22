@@ -341,8 +341,8 @@ module level and documents it; that is the exception, not the rule.
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
 | `useVersion` | the running build's version/commit (`GET /version`), declared at module level like `useToast`/`useSettings`: one load, shared by every caller, so the sidebar's display is never a second fetch | present |
 | `useAuth` | the session's shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): `enabled` from `GET /auth/config`'s `server_flow` (fetched once, cached — false in demo mode, where there is nothing to sign in or out of); the session itself from `GET /auth/session`, cached a few tens of seconds so a re-render never refetches it; the display name from the session's own `profile` (`profile.name`, then `username`, then `email` — the server drives the login flow, so this client never holds the ID token itself to read it from); `signIn` (a navigation to `GET /auth/login?return_to=`, never a `fetch` — the endpoint redirects cross-origin, which `fetch` cannot follow); `signOut` (builds and submits a `<form method="post">` to `/auth/logout` rather than fetching it, so a provider that also ends the session there can answer with a redirect `fetch` could not follow cross-origin); and the `http.ts` `onUnauthorized` registration that drops the session and asks for a re-check on any `401`. No OIDC library, no PKCE, no token storage — that all lives on the server (back §2.7) | present |
-| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
-| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
+| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), two write privileges — `canWrite` (= `authorized && (role === 'admin' \|\| role === 'guest')`, editing a table's data) and `canManage` (= `authorized && role === 'admin'`, everything structural, source loading included, back §6.7) —, `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
+| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control, parameterised by `scope: 'data' \| 'manage'` (default `'manage'`): `disabled` (`!authenticated \|\| !(scope === 'data' ? canWrite : canManage)`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions plus the two structural writes on a column (rename, drop), each reloading the schema (still toasted, per §8.4 — a mutation's result, not the load's) | present |
 | `useAddColumn` | `AddColumnModal`'s own mutation: validates the name is non-blank, calls the caller's `onAdd` (its `useTableMetadata` instance) through `useAsyncAction`, toasts success. The write itself stays the caller's (§0.5, §0.12) | present |
 | `useColumnStructure` | `ColumnStructureModal`'s own mutations: rename and drop, over the caller's `onRename`/`onDrop`. `busyColumn` (which row of the list is being written, §8.2) is its own concept, not folded into `useAsyncAction`'s single loading flag | present |
@@ -430,10 +430,11 @@ states: `enabled` false (demo mode) renders nothing at all — there is no accou
 affordance would suggest one exists; signed out renders a *Se connecter* `BaseButton` that calls
 `signIn()`; signed in keeps the `MenuDropdown` shell (`MenuTitle` with the display name, `MenuItem`
 *Se déconnecter*) and adds a `Badge` stating the role — `tone="primary"` *Administrateur* for
-`admin`, `tone="warning"` *Invité — lecture seule* for `guest`, `tone="warning"` *Aucun rôle —
-lecture seule* for `none`. The badge is the one thing the menu could not say before: a signed-in
-`guest` gets nothing an anonymous visitor does not already have, and without it the screen would
-read as broken to them rather than merely read-only.
+`admin`, `tone="warning"` *Invité — pas de chargement de données* for `guest`, `tone="warning"`
+*Aucun rôle — lecture seule* for `none`. The badge is the one thing the menu could not say before: a
+signed-in `guest` may edit a table's rows, columns and filters but never load a source or reach
+anything structural (back §6.7), and without it the screen would read as either broken or fully open
+to them.
 
 **`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
 `ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
@@ -773,9 +774,10 @@ what to do ("Nom de table déjà utilisé." rather than "erreur 409").
 
 A write control disabled by `useWriteGuard` (rule 21) states its reason in its `title`, worded once:
 *Connexion requise pour modifier les données* when nobody is signed in, *Votre compte n'a pas les
-droits d'édition* for a signed-in user who is not an administrator (`guest` included). Disabling is
-additive, not a substitute for the `401`/`403` handling the request itself already has: a token can
-expire mid-screen, and the server stays the only authority.
+droits d'édition* for a signed-in user the control's scope refuses — `'manage'` refuses `guest` as
+well as an unroled user, `'data'` only the latter. Disabling is additive, not a substitute for the
+`401`/`403` handling the request itself already has: a token can expire mid-screen, and the server
+stays the only authority.
 
 ### 8.5 Forms
 

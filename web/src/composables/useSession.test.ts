@@ -35,38 +35,42 @@ describe('useSession', () => {
         expect(refreshSession).toHaveBeenCalled()
     })
 
-    it('reads an administrator as the one role allowed to write', () => {
+    it('reads an administrator as holding both write privileges', () => {
         auth({ loggedIn: true, authorized: true, admin: true })
 
-        const { authenticated, role, canWrite } = useSession()
+        const { authenticated, role, canWrite, canManage } = useSession()
 
         expect(authenticated.value).toBe(true)
         expect(role.value).toBe('admin')
         expect(canWrite.value).toBe(true)
+        expect(canManage.value).toBe(true)
     })
 
-    it('reads a guest as signed in, without the right to write', () => {
+    it('reads a guest as signed in, allowed to write data but not to manage', () => {
         auth({ loggedIn: true, authorized: true, guest: true })
 
-        const { role, canWrite } = useSession()
+        const { role, canWrite, canManage } = useSession()
 
         expect(role.value).toBe('guest')
-        expect(canWrite.value).toBe(false)
+        expect(canWrite.value).toBe(true)
+        expect(canManage.value).toBe(false)
     })
 
     it('puts a signed-in account holding no application role where a visitor sits', () => {
         auth({ loggedIn: true, authorized: false })
 
-        const { authenticated, role, canWrite } = useSession()
+        const { authenticated, role, canWrite, canManage } = useSession()
 
         expect(authenticated.value).toBe(true)
         expect(role.value).toBe('none')
         expect(canWrite.value).toBe(false)
+        expect(canManage.value).toBe(false)
     })
 
-    it('refuses a write to an unauthorized administrator', () => {
+    it('refuses both privileges to an unauthorized administrator', () => {
         auth({ loggedIn: true, authorized: false, admin: true })
 
         expect(useSession().canWrite.value).toBe(false)
+        expect(useSession().canManage.value).toBe(false)
     })
 })
