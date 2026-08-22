@@ -103,9 +103,11 @@ neither `build` nor the `Dockerfile` ever carries it.
 ## 5. Build and distribution
 
 `Dockerfile` is a three-stage build: Node 22 builds the UI into the embed directory, Go 1.26
-compiles the single binary (stripped, `-ldflags="-s -w"`), and a `gcr.io/distroless/cc-debian12:nonroot`
-runtime carries it — glibc, libstdc++ and ca-certificates, no shell or package manager, running as
-the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary. The Go
+compiles the single binary (stripped, `-ldflags="-s -w"`), and a `debian:bookworm-slim` runtime
+carries it — glibc, libstdc++ and ca-certificates. The image exposes 8080; its entrypoint is a
+shell command that starts as root, `chown`s `/data` to the fixed uid/gid 65532 (so a host bind
+mount or named volume with different ownership doesn't break the server on startup), then drops
+to that nonroot user via `su` before running the binary. The Go
 stage never carries the `authdemo` build tag, so a container that forgets `AUTH_PROVIDER`,
 `AUTH_ISSUER` and `AUTH_AUDIENCE` fails at startup rather than opening to everyone; those three, plus
 `AUTH_ADMIN_ROLE`/`AUTH_GUEST_ROLE` when the provider's own role names differ, are passed in from
