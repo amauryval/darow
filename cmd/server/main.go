@@ -32,6 +32,7 @@ import (
 	"darow/internal/core"
 	"darow/internal/guards"
 	"darow/internal/router"
+	"darow/internal/version"
 	"darow/internal/webui"
 )
 
@@ -73,7 +74,7 @@ func main() {
 	g := guards.New(authApp)
 	mountAuth := func(r chi.Router) { authApp.RegisterRoutes(r) }
 
-	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes, cfg.Server.TrustedProxies, g, mountAuth)
+	rt := router.NewRouter(svcs, uiAssets, svcs.Ping, cfg.Settings, cfg.DuckDB.MaxSizeBytes, cfg.Server.TrustedProxies, g, mountAuth, version.Version, version.Commit, version.BuildDate)
 
 	srv := &http.Server{
 		Addr:         net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port)),

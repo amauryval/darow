@@ -60,7 +60,7 @@ type Router struct {
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
 	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, trustedProxies []string,
-	g guards.Guards, mountAuth MountAuth,
+	g guards.Guards, mountAuth MountAuth, buildVersion, buildCommit, buildDate string,
 ) *Router {
 	return &Router{
 		tables:         handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
@@ -70,7 +70,7 @@ func NewRouter(
 		sources:        handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
 		filters:        handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:         handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:            handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
+		ops:            handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes, buildVersion, buildCommit, buildDate),
 		settings:       handlers.NewSettingsHandler(svcs.Settings),
 		tableSettings:  handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
 		settingsCfg:    settingsCfg,
@@ -96,6 +96,7 @@ func (rt *Router) Setup() http.Handler {
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
 	r.Get("/diagnostics", rt.ops.Diagnostics)
+	r.Get("/version", rt.ops.Version)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 

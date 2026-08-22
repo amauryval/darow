@@ -71,6 +71,7 @@ carries the previous name; renaming it is out of scope for the repository itself
 | `mise.toml` | the tool versions and every task |
 | `Dockerfile`, `.dockerignore` | the multi-stage image build |
 | `.github/workflows/ci.yml` | continuous integration |
+| `.github/workflows/docker_image_registry.yml` | builds and pushes the Docker image to `ghcr.io` on a tagged push |
 | `.claude/` | agent instructions, skills and reviewers |
 | `README.md` | the repository's entry point: what the product does, how to run it, how to contribute |
 
@@ -110,6 +111,23 @@ stage never carries the `authdemo` build tag, so a container that forgets `AUTH_
 `AUTH_ADMIN_ROLE`/`AUTH_GUEST_ROLE` when the provider's own role names differ, are passed in from
 outside the image, like the configuration and the working directory already are, and carry no
 default.
+
+`internal/version` holds `Version`/`Commit`/`BuildDate`, three variables set only through
+`-ldflags -X`, never edited by hand — `"dev"`/`"unknown"` otherwise (a plain `go build`, `go test`,
+`go run`). `BuildDate` is HEAD's own commit date (`git log -1 --format=%cI`, normalized to UTC),
+never wall-clock build time — the same commit built twice, a minute apart or a year apart, carries
+the same `BuildDate` either way. `mise run build`/`run-dev`/`run-dev-prod` compute all three from
+the local tree (`git describe --tags --always --dirty`, `git rev-parse --short HEAD`, the commit
+date above) inline in the task's own `run` script. The Dockerfile's Go stage takes the same three
+values as `VERSION`/`COMMIT`/`BUILD_DATE` build args instead, since `.git` is excluded from the
+build context (`.dockerignore`) and cannot be read from inside the image build.
+`.github/workflows/docker_image_registry.yml` is the one caller that matters — its `Build` step
+passes `VERSION` as the pushed tag itself (the job already refuses to run on an untagged commit),
+`COMMIT` from `git rev-parse --short HEAD` and `BUILD_DATE` from HEAD's commit date, same as above;
+a manual `docker build` with none of the three still succeeds, defaulting to `dev`/`unknown` like
+every other build path.
+`GET /version` (back §6.1) serves the three at runtime; the admin UI displays them, always visible
+in the sidebar (front §1, front §4's `useVersion`).
 
 ## 6. Continuous integration
 

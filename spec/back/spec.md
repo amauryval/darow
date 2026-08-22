@@ -1199,7 +1199,7 @@ like `Transform` but writes nothing, sharing `ColumnService.prepare`.
 ## 6. REST API
 
 The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`, `/readyz`,
-`/diagnostics`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
+`/diagnostics`, `/version`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
 
 ### 6.1 Endpoints
 
@@ -1210,6 +1210,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/healthz` | liveness — the process answers, regardless of the storage's state                                                                                         |
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
 | GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy"; also carries `maxSizeBytes` (`duckdb.maxSizeBytes` from config, §2.2, 0 meaning unlimited), for a caller to render on-disk size against its cap |
+| GET    | `/version` | the running build's identity — `version` (git describe), `commit` (short SHA) and `buildDate` (UTC, RFC 3339), all baked in at build time by `internal/version` (project spec §5); `"dev"`/`"unknown"` outside a `mise`/Docker build |
 
 **Derive**
 

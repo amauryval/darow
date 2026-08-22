@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 import { useServerStatus, type ServerStatus } from './composables/useServerStatus'
 import { useSettings } from './composables/useSettings'
+import { useVersion } from './composables/useVersion'
 import SessionMenu from './components/session/SessionMenu.vue'
 import Toast from './components/ui/Toast.vue'
 import Badge from './components/ui/Badge.vue'
@@ -25,6 +26,7 @@ const { status, label: statusLabel } = useServerStatus()
 // (useSources, useTableRows, TablesView) reads a live cap instead of racing
 // its own /settings fetch (§2.4's pagination trap).
 useSettings()
+const { current: version } = useVersion()
 
 const statusBadgeTone: Record<ServerStatus, 'neutral' | 'success' | 'error'> = {
     checking: 'neutral',
@@ -147,6 +149,18 @@ const links = [
                     <Badge :tone="statusBadgeTone[status]" :title="statusLabel[status]">
                         <span v-show="!collapsed">{{ statusLabel[status] }}</span>
                     </Badge>
+                </div>
+
+                <div
+                    v-if="version"
+                    class="truncate px-4 pb-3 text-xs text-base-content/50"
+                    :class="collapsed && 'text-center'"
+                    :title="`${version.version} (${version.commit}) — ${version.buildDate}`"
+                >
+                    <template v-if="collapsed">{{ version.commit.slice(0, 4) }}</template>
+                    <template v-else
+                        >{{ version.version }} · {{ version.buildDate.slice(0, 10) }}</template
+                    >
                 </div>
             </aside>
         </div>

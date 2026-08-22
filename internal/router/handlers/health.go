@@ -8,19 +8,22 @@ import (
 	"darow/internal/storage"
 )
 
-// OpsHandler serves the liveness/readiness probes and the diagnostics
-// snapshot used by an orchestrator or an operator.
+// OpsHandler serves the liveness/readiness probes, the diagnostics snapshot
+// used by an orchestrator or an operator, and the build version.
 type OpsHandler struct {
 	ready        func(ctx context.Context) error
 	diagnostics  diagnosticsAPI
 	maxSizeBytes int64
+	buildVersion string
+	buildCommit  string
+	buildDate    string
 }
 
 // NewOpsHandler builds an OpsHandler from the readiness probe, the
-// diagnostics service, and the configured database size cap
-// (duckdb.maxSizeBytes, 0 meaning unlimited).
-func NewOpsHandler(ready func(ctx context.Context) error, diagnostics diagnosticsAPI, maxSizeBytes int64) *OpsHandler {
-	return &OpsHandler{ready: ready, diagnostics: diagnostics, maxSizeBytes: maxSizeBytes}
+// diagnostics service, the configured database size cap (duckdb.maxSizeBytes,
+// 0 meaning unlimited), and the build version/commit/date (internal/version).
+func NewOpsHandler(ready func(ctx context.Context) error, diagnostics diagnosticsAPI, maxSizeBytes int64, buildVersion, buildCommit, buildDate string) *OpsHandler {
+	return &OpsHandler{ready: ready, diagnostics: diagnostics, maxSizeBytes: maxSizeBytes, buildVersion: buildVersion, buildCommit: buildCommit, buildDate: buildDate}
 }
 
 // Healthz reports that the process itself is alive, regardless of storage
@@ -90,4 +93,24 @@ func (oh *OpsHandler) Diagnostics(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toDiagnosticsDTO(d, oh.maxSizeBytes))
+}
+
+// versionDTO is the JSON representation of the running build's identity.
+type versionDTO struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildDate string `json:"buildDate"`
+}
+
+// Version reports the build this process was started from — the git
+// describe output, the short commit SHA and the build timestamp, all baked
+// in at build time.
+//
+// @Summary Build version
+// @Tags ops
+// @Produce json
+// @Success 200 {object} versionDTO
+// @Router /version [get]
+func (oh *OpsHandler) Version(w http.ResponseWriter, req *http.Request) {
+	response.WriteJSON(w, http.StatusOK, versionDTO{Version: oh.buildVersion, Commit: oh.buildCommit, BuildDate: oh.buildDate})
 }

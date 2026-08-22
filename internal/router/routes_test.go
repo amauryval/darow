@@ -92,7 +92,7 @@ func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
 	g := guards.New(authApp)
 	mountAuth := func(r chi.Router) { authApp.RegisterRoutes(r) }
 
-	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, nil, g, mountAuth)
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, nil, g, mountAuth, "v1.2.3", "abc1234", "2026-08-22T00:00:00Z")
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {

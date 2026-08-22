@@ -2318,6 +2318,25 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/version": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Build version",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.versionDTO"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -2666,6 +2685,20 @@ const docTemplate = `{
             "properties": {
                 "source": {
                     "$ref": "#/definitions/service.Source"
+                }
+            }
+        },
+        "handlers.versionDTO": {
+            "type": "object",
+            "properties": {
+                "buildDate": {
+                    "type": "string"
+                },
+                "commit": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },

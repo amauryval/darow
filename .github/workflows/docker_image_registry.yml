@@ -34,7 +34,11 @@ jobs:
 
             - name: Build
               run: |
-                  docker build . --tag ghcr.io/amauryval/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.value }}
+                  docker build . \
+                    --build-arg VERSION=${{ steps.tag.outputs.value }} \
+                    --build-arg COMMIT=$(git rev-parse --short HEAD) \
+                    --build-arg BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ) \
+                    --tag ghcr.io/amauryval/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.value }}
 
             - name: Push
               run: |

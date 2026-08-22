@@ -1,3 +1,11 @@
+// Matches versionDTO — the running build's identity, baked in at build time
+// via -ldflags (internal/version): "dev"/"unknown" outside a mise/Docker build.
+export interface Version {
+    version: string
+    commit: string
+    buildDate: string
+}
+
 export interface Diagnostics {
     databaseSizeBytes: number
     memoryUsageBytes: number

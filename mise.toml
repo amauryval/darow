@@ -80,7 +80,16 @@ run = "npm run test"
 [tasks.build]
 description = "Build the server binary"
 depends = ["docs", "ui-build"]
-run = "go build -o bin/server ./cmd/server"
+# ldflags bakes internal/version.Version/Commit/BuildDate into the binary from
+# the tree that is actually being built, so the value can never drift from it
+# — see the Dockerfile for the same ldflags applied to the container image,
+# from build args instead of git. BuildDate is HEAD's own commit date, not
+# wall-clock build time, so it stays identical across a rebuild of the same
+# commit.
+run = '''
+BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
+go build -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -o bin/server ./cmd/server
+'''
 
 # authdemo lets goauth's demo verifier answer every request — backend and,
 # through /auth/session, the UI too — as an administrator without a token
@@ -89,9 +98,15 @@ run = "go build -o bin/server ./cmd/server"
 [tasks."run-dev"]
 description = "Run the server with no auth"
 depends = ["docs", "ui-build"]
-run = "go run -tags authdemo ./cmd/server -config ./config.example.yaml"
+run = '''
+BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
+go run -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -tags authdemo ./cmd/server -config ./config.example.yaml
+'''
 
 [tasks."run-dev-prod"]
 description = "Run the server against config.yaml"
 depends = ["docs", "ui-build"]
-run = "go run ./cmd/server -config config.yaml"
+run = '''
+BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
+go run -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" ./cmd/server -config config.yaml
+'''

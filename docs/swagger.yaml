@@ -227,6 +227,15 @@ definitions:
             source:
                 $ref: '#/definitions/service.Source'
         type: object
+    handlers.versionDTO:
+        properties:
+            buildDate:
+                type: string
+            commit:
+                type: string
+            version:
+                type: string
+        type: object
     response.ErrorResponse:
         properties:
             code:
@@ -1796,6 +1805,18 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Readiness probe
+            tags:
+                - ops
+    /version:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.versionDTO'
+            summary: Build version
             tags:
                 - ops
 swagger: '2.0'
