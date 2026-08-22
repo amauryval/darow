@@ -112,17 +112,17 @@ func main() {
 }
 
 // authSettings resolves the authentication settings entirely from the environment: config.yaml
-// carries none of it. A .env file's mere presence is what turns authentication on — absent, this
-// is demo mode, refused outright unless this binary was built with -tags authdemo
-// (goauth.DemoBuildTag), so a production deployment that forgot its .env fails at startup rather
-// than opening every route to everyone.
+// carries none of it. AUTH_PROVIDER being set is what turns authentication on, regardless of how
+// it reached the process (.env file, env_file:, -e) — absent, this is demo mode, refused outright
+// unless this binary was built with -tags authdemo (goauth.DemoBuildTag), so a production
+// deployment that forgot it fails at startup rather than opening every route to everyone.
 func authSettings() goauth.Settings {
-	err := godotenv.Load()
-	if errors.Is(err, fs.ErrNotExist) {
-		return goauth.NewSettings(goauth.WithDemo(true))
-	}
-	if err != nil {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		log.Fatalf("auth: .env: %v", err)
+	}
+
+	if os.Getenv(goauth.ProviderEnv) == "" {
+		return goauth.NewSettings(goauth.WithDemo(true))
 	}
 
 	browserOption, err := browserAuthOption()

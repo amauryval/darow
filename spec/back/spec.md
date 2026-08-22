@@ -323,26 +323,28 @@ credential or a value that only makes sense for one deployment. `authSettings` i
 settings `github.com/amauryval/goauth` needs (`goauth.NewSettings`) to verify OIDC bearer tokens
 itself and decide the two application roles, `types.RoleAdmin` and `types.RoleGuest`.
 
-**A `.env` file's mere presence is the switch.** No `.env` at all (`godotenv.Load` reporting
-`fs.ErrNotExist`) is demo mode: every visitor is authorized as an administrator, no token verified at
+**`AUTH_PROVIDER` being set is the switch**, regardless of how it reached the process — a `.env`
+file at the repository root is loaded first if present (`godotenv.Load`, silently skipped when
+absent), but an `env_file:`/`-e`-style injection with no `.env` on disk works just as well. Unset
+`AUTH_PROVIDER` is demo mode: every visitor is authorized as an administrator, no token verified at
 all — meant for local development, and refused outright by `goauth.New` unless this binary was built
 with the `authdemo` build tag (`goauth.DemoBuildTag`, `mise run run-dev`'s `-tags authdemo`); a
-production binary carries no such tag, so a deployment that forgot its `.env` **fails at startup**
-rather than opening. A `.env` present and unreadable for any other reason is also fatal —
-`authSettings` never falls back to demo silently. There is no separate `enabled` flag: the file's
-presence **is** the flag.
+production binary carries no such tag, so a deployment that forgot it **fails at startup** rather
+than opening. A `.env` present and unreadable for any reason other than not existing is also fatal —
+`authSettings` never falls back to demo silently. There is no separate `enabled` flag: `AUTH_PROVIDER`
+**is** the flag.
 
 | Variable                 | Required          | Constraint                                       |
 | ------------------------- | ------------------ | -------------------------------------------------- |
-| `AUTH_PROVIDER`           | when `.env` present | `zitadel` or `pocketid`                            |
-| `AUTH_ISSUER`             | when `.env` present | not empty                                          |
-| `AUTH_AUDIENCE`           | when `.env` present | not empty                                          |
+| `AUTH_PROVIDER`           | to leave demo mode | `zitadel` or `pocketid`                            |
+| `AUTH_ISSUER`             | when `AUTH_PROVIDER` set | not empty                                     |
+| `AUTH_AUDIENCE`           | when `AUTH_PROVIDER` set | not empty                                     |
 | `AUTH_ADMIN_ROLE`         | —                  | falls back to `admin`                              |
 | `AUTH_GUEST_ROLE`         | —                  | falls back to `guest`                              |
-| `AUTH_REDIRECT_URL`       | when `.env` present | absolute URL                                       |
-| `AUTH_COOKIE_SECRET`      | when `.env` present, exclusive with `AUTH_COOKIE_SECRET_FILE` | at least 32 bytes |
-| `AUTH_COOKIE_SECRET_FILE` | when `.env` present, exclusive with `AUTH_COOKIE_SECRET`      | path to a readable file |
-| `AUTH_CLIENT_SECRET`      | when `.env` present | not empty                                          |
+| `AUTH_REDIRECT_URL`       | when `AUTH_PROVIDER` set | absolute URL                                  |
+| `AUTH_COOKIE_SECRET`      | when `AUTH_PROVIDER` set, exclusive with `AUTH_COOKIE_SECRET_FILE` | at least 32 bytes |
+| `AUTH_COOKIE_SECRET_FILE` | when `AUTH_PROVIDER` set, exclusive with `AUTH_COOKIE_SECRET`      | path to a readable file |
+| `AUTH_CLIENT_SECRET`      | when `AUTH_PROVIDER` set | not empty                                     |
 
 Every name above is the module's own exported constant where one exists (`goauth.ProviderEnv`,
 `IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`) — `authSettings` reads through the
@@ -361,7 +363,7 @@ or a Pocket ID group named however the installation likes, defaulting to the lit
 `admin`/`guest` when left empty. They never reach the browser: `GET /api/v1/auth/session` (§6.1)
 answers with this application's own role names only.
 
-**A `.env` present also drives the login flow on the server** (`goauth.WithBrowser`, wired by
+**`AUTH_PROVIDER` set also drives the login flow on the server** (`goauth.WithBrowser`, wired by
 `browserAuthOption`): the admin UI never obtains a token of its own. It signs in by following a
 redirect to the provider and back, and calls the API with the session cookie the module seals for
 it — `web/src/composables/useAuth.ts` holds no OIDC client, no PKCE dance and no token storage at
@@ -372,7 +374,7 @@ store mounts as files, Docker and Kubernetes secrets both work this way) seals t
 `AUTH_CLIENT_SECRET` authenticates this application to the issuer for token introspection — without
 it a disabled account or an ended session keeps working until its access token expires on its own.
 Demo mode carries no provider, so it carries no browser option either: `goauth.New` refuses the two
-together, which is why `browserAuthOption` is only ever called once a `.env` was loaded.
+together, which is why `browserAuthOption` is only ever called once `AUTH_PROVIDER` is set.
 
 **Never config-only in the usual sense — not config at all.** Where §2.4's guards and `duckdb`'s
 `maxSizeBytes` are kept out of the runtime-editable `settings` table on purpose, `auth` goes one step
