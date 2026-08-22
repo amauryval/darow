@@ -37,7 +37,8 @@ RUN mkdir -p /out/data
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 65532 nonroot && useradd -u 65532 -g nonroot -d /nonexistent -s /usr/sbin/nologin nonroot
+    && groupadd -g 65532 nonroot \
+    && useradd -u 65532 -g nonroot -d /home/nonroot -m -s /usr/sbin/nologin nonroot
 WORKDIR /app
 COPY --from=build /out/server.run ./server.run
 COPY --from=build /out/data /data
