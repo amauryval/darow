@@ -12,10 +12,10 @@ binary to manage it.
 
 ## Features
 
--   **Load files as tables** — GeoJSON, Shapefile, CSV, and GeoPackage (including multi-layer
-    `.gpkg`), with automatic CRS detection and an explicit `srid` override.
+-   **Load files as tables** — GeoJSON, Shapefile, CSV, GeoPackage (including multi-layer `.gpkg`)
+    and Parquet/GeoParquet, with automatic CRS detection and an explicit `srid` override.
 -   **REST CRUD on rows and tables** — paginated, sortable listing, filtering, column management,
-    and streamed CSV/GeoJSON export.
+    and streamed CSV/GeoJSON/GeoParquet export.
 -   **Map tiles out of the box** — MVT tiles rendered directly from DuckDB, plus the same tile
     bounds as GeoJSON for clients that need it.
 -   **OGC API - WFS Features** — a standard `/ogc` collections endpoint alongside the native REST
@@ -97,9 +97,9 @@ Darow keeps its DuckDB database and uploaded source files under a working direct
 
 ### Load a file
 
-Upload a source file (GeoJSON, Shapefile, CSV, or GeoPackage — see `sources.allowedExtensions` in
-`config.yaml`) through the admin UI or the `/api/v1/sources` endpoint. Darow imports it into DuckDB
-and exposes it as a table.
+Upload a source file (GeoJSON, Shapefile, CSV, GeoPackage, or Parquet/GeoParquet — see
+`sources.allowedExtensions` in `config.yaml`) through the admin UI or the `/api/v1/sources`
+endpoint. Darow imports it into DuckDB and exposes it as a table.
 
 ### Reach the API and the admin UI
 
