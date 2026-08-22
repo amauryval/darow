@@ -143,16 +143,22 @@ func authSettings() goauth.Settings {
 // browserAuthOption asks goauth to drive the login flow itself, so the admin UI never handles a
 // token: it signs in by following a redirect and calls the API with its session cookie alone.
 //
-// AUTH_REDIRECT_URL, AUTH_COOKIE_SECRET and AUTH_CLIENT_SECRET are required together: the admin UI
-// never obtains a token of its own, so a real deployment missing any of them would either have no
-// way to sign in at all, or start, sign users in, and report every session unavailable once
-// introspection is asked for with no client secret to authenticate it.
+// AUTH_REDIRECT_URL, one of AUTH_COOKIE_SECRET or AUTH_COOKIE_SECRET_FILE, and AUTH_CLIENT_SECRET
+// are required together: the admin UI never obtains a token of its own, so a real deployment
+// missing any of them would either have no way to sign in at all, or start, sign users in, and
+// report every session unavailable once introspection is asked for with no client secret to
+// authenticate it.
 func browserAuthOption() (goauth.Option, error) {
 	redirectURL := os.Getenv("AUTH_REDIRECT_URL")
 	cookieSecret := os.Getenv("AUTH_COOKIE_SECRET")
+	cookieSecretFile := os.Getenv("AUTH_COOKIE_SECRET_FILE")
 
-	if redirectURL == "" || cookieSecret == "" {
-		return nil, errors.New("AUTH_REDIRECT_URL and AUTH_COOKIE_SECRET are required: the admin UI never obtains its own token, the server drives the login flow")
+	if cookieSecret != "" && cookieSecretFile != "" {
+		return nil, errors.New("AUTH_COOKIE_SECRET and AUTH_COOKIE_SECRET_FILE are exclusive: set at most one")
+	}
+
+	if redirectURL == "" || (cookieSecret == "" && cookieSecretFile == "") {
+		return nil, errors.New("AUTH_REDIRECT_URL and one of AUTH_COOKIE_SECRET or AUTH_COOKIE_SECRET_FILE are required: the admin UI never obtains its own token, the server drives the login flow")
 	}
 
 	if os.Getenv("AUTH_CLIENT_SECRET") == "" {
@@ -168,10 +174,17 @@ func browserAuthOption() (goauth.Option, error) {
 	}
 	origin := (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String()
 
-	return goauth.WithBrowser(
-		origin+router.APIRoot+goauth.CallbackPath,
-		[]byte(cookieSecret),
-		goauth.WithPostLogoutURL(origin+"/"),
+	browserOptions := []goauth.BrowserOption{
+		goauth.WithPostLogoutURL(origin + "/"),
 		goauth.WithInsecureCookies(parsed.Scheme == "http"),
-	), nil
+	}
+
+	var secret []byte
+	if cookieSecretFile != "" {
+		browserOptions = append(browserOptions, goauth.WithSecretFile(cookieSecretFile))
+	} else {
+		secret = []byte(cookieSecret)
+	}
+
+	return goauth.WithBrowser(origin+router.APIRoot+goauth.CallbackPath, secret, browserOptions...), nil
 }

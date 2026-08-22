@@ -340,15 +340,16 @@ presence **is** the flag.
 | `AUTH_ADMIN_ROLE`         | —                  | falls back to `admin`                              |
 | `AUTH_GUEST_ROLE`         | —                  | falls back to `guest`                              |
 | `AUTH_REDIRECT_URL`       | when `.env` present | absolute URL                                       |
-| `AUTH_COOKIE_SECRET`      | when `.env` present | at least 32 bytes                                  |
+| `AUTH_COOKIE_SECRET`      | when `.env` present, exclusive with `AUTH_COOKIE_SECRET_FILE` | at least 32 bytes |
+| `AUTH_COOKIE_SECRET_FILE` | when `.env` present, exclusive with `AUTH_COOKIE_SECRET`      | path to a readable file |
 | `AUTH_CLIENT_SECRET`      | when `.env` present | not empty                                          |
 
 Every name above is the module's own exported constant where one exists (`goauth.ProviderEnv`,
 `IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`) — `authSettings` reads through the
 constant rather than the literal it currently holds, so a rename inside the module cannot silently
-stop being read here. `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_CLIENT_SECRET` carry no such
-constant, being secrets and deployment-specific values the module deliberately leaves to the host to
-name.
+stop being read here. `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_COOKIE_SECRET_FILE`/
+`AUTH_CLIENT_SECRET` carry no such constant, being secrets and deployment-specific values the module
+deliberately leaves to the host to name.
 
 **`provider` names which of the supported identity providers issued the token** (`zitadel` or
 `pocketid` — each reads its roles from a different claim, `github.com/amauryval/goauth/provider`),
@@ -365,11 +366,13 @@ answers with this application's own role names only.
 redirect to the provider and back, and calls the API with the session cookie the module seals for
 it — `web/src/composables/useAuth.ts` holds no OIDC client, no PKCE dance and no token storage at
 all (`spec/front/spec.md`). `AUTH_REDIRECT_URL` must resolve to `router.APIRoot+goauth.CallbackPath`
-on this server and be registered as such at the provider; `AUTH_COOKIE_SECRET` seals the session
-cookie; `AUTH_CLIENT_SECRET` authenticates this application to the issuer for token introspection —
-without it a disabled account or an ended session keeps working until its access token expires on
-its own. Demo mode carries no provider, so it carries no browser option either: `goauth.New` refuses
-the two together, which is why `browserAuthOption` is only ever called once a `.env` was loaded.
+on this server and be registered as such at the provider; `AUTH_COOKIE_SECRET` (or, read instead of
+it, the file `AUTH_COOKIE_SECRET_FILE` names — `goauth.WithSecretFile`, for a deployment whose secret
+store mounts as files, Docker and Kubernetes secrets both work this way) seals the session cookie;
+`AUTH_CLIENT_SECRET` authenticates this application to the issuer for token introspection — without
+it a disabled account or an ended session keeps working until its access token expires on its own.
+Demo mode carries no provider, so it carries no browser option either: `goauth.New` refuses the two
+together, which is why `browserAuthOption` is only ever called once a `.env` was loaded.
 
 **Never config-only in the usual sense — not config at all.** Where §2.4's guards and `duckdb`'s
 `maxSizeBytes` are kept out of the runtime-editable `settings` table on purpose, `auth` goes one step
@@ -380,9 +383,10 @@ it, costs a restart either way.
 **A half-configured `.env` is fatal at startup**, the same refusal `goauth.New` would make on its
 own — reported by `authSettings` before `goauth.New` is even called, so it surfaces as one clear
 error rather than a handful of individually confusing ones: an unknown `AUTH_PROVIDER`, an empty
-`AUTH_ISSUER`/`AUTH_AUDIENCE`, or `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_CLIENT_SECRET` set
-only in part. An authentication that loads but verifies nothing, or that silently falls back to
-demo mode, would leave the API open while reading as closed — worse than none.
+`AUTH_ISSUER`/`AUTH_AUDIENCE`, `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`(`_FILE`)/`AUTH_CLIENT_SECRET`
+set only in part, or both `AUTH_COOKIE_SECRET` and `AUTH_COOKIE_SECRET_FILE` set together. An
+authentication that loads but verifies nothing, or that silently falls back to demo mode, would
+leave the API open while reading as closed — worse than none.
 
 ---
 
