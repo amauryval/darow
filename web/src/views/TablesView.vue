@@ -66,8 +66,8 @@ function onRowClick(row: Row<Metadata>) {
     router.push(`/tables/${row.original.tableId}`)
 }
 
-// Free-SQL derivation acts on the whole catalogue, not one table's page
-// (TODO-F38), so it opens from here. The created table is what the user
+// Free-SQL derivation acts on the whole catalogue, not one table's page, so
+// it opens from here. The created table is what the user
 // wants to see next, the way a source's upload already navigates there.
 const showDeriveSql = ref(false)
 

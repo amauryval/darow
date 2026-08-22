@@ -84,7 +84,7 @@ func setupRouterDeps(t *testing.T, settings storage.Settings, settingsCfg config
 // carrying no Authorization header is anonymous, and fakeTokenAdmin/
 // fakeTokenGuest/fakeTokenNoRole drive the write guard's four outcomes
 // (§6.7). There is no "authentication off" mode any more — every write
-// always demands an admin-role token (TODO-27).
+// always demands an admin-role token.
 func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
 	// fakeVerifier is never nil, so NewWithVerifier's one error case
 	// (a nil verifier) cannot occur here.
@@ -92,7 +92,7 @@ func (d routerDeps) newRouter(ready func(context.Context) error) *Router {
 	g := guards.New(authApp)
 	mountAuth := func(r chi.Router) { authApp.RegisterRoutes(r) }
 
-	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, nil, g, mountAuth)
+	return NewRouter(d.svcs, d.uiAssets, ready, d.settingsCfg, 0, nil, g, mountAuth, "v1.2.3", "abc1234", "2026-08-22T00:00:00Z")
 }
 
 func doRequest(handler http.Handler, method, path string, contentLength int64) *httptest.ResponseRecorder {
@@ -352,10 +352,10 @@ func Test_Router_Setup(t *testing.T) {
 	})
 }
 
-// writeRoutes is every route that changes state, the inventory the write
-// guard is checked against: a route added without a thought for it fails
-// here rather than shipping open.
-func writeRoutes() [][2]string {
+// adminRoutes is every write route reserved to an administrator alone — a
+// guest stands where an anonymous caller stands on these, and loading a
+// source in particular is never a guest's to do.
+func adminRoutes() [][2]string {
 	return [][2]string{
 		{http.MethodPost, "/api/v1/sources/upload"},
 		{http.MethodPost, "/api/v1/sources/roads.geojson/load"},
@@ -363,23 +363,38 @@ func writeRoutes() [][2]string {
 		{http.MethodPost, "/api/v1/derive"},
 		{http.MethodPatch, "/api/v1/tables/id-1"},
 		{http.MethodDelete, "/api/v1/tables/id-1"},
-		{http.MethodPost, "/api/v1/tables/id-1/columns"},
 		{http.MethodPost, "/api/v1/tables/id-1/derive-from-table"},
 		{http.MethodPost, "/api/v1/tables/id-1/aggregate-from-table"},
 		{http.MethodPatch, "/api/v1/tables/id-1/settings"},
 		{http.MethodDelete, "/api/v1/tables/id-1/settings"},
-		{http.MethodPost, "/api/v1/tables/id-1/filters"},
-		{http.MethodPatch, "/api/v1/tables/id-1/filters/f-1"},
-		{http.MethodDelete, "/api/v1/tables/id-1/filters/f-1"},
+		{http.MethodPatch, "/api/v1/settings"},
+	}
+}
+
+// dataRoutes is every write route changing a table's data — rows, columns
+// and filters — that a guest may also reach.
+func dataRoutes() [][2]string {
+	return [][2]string{
+		{http.MethodPost, "/api/v1/tables/id-1/columns"},
 		{http.MethodPatch, "/api/v1/tables/id-1/columns/name"},
 		{http.MethodDelete, "/api/v1/tables/id-1/columns/name"},
 		{http.MethodPost, "/api/v1/tables/id-1/columns/name/transform"},
+		{http.MethodPost, "/api/v1/tables/id-1/filters"},
+		{http.MethodPatch, "/api/v1/tables/id-1/filters/f-1"},
+		{http.MethodDelete, "/api/v1/tables/id-1/filters/f-1"},
 		{http.MethodPost, "/api/v1/tables/id-1/rows"},
 		{http.MethodPatch, "/api/v1/tables/id-1/rows"},
+		{http.MethodDelete, "/api/v1/tables/id-1/rows"},
 		{http.MethodPatch, "/api/v1/tables/id-1/rows/1"},
 		{http.MethodDelete, "/api/v1/tables/id-1/rows/1"},
-		{http.MethodPatch, "/api/v1/settings"},
 	}
+}
+
+// writeRoutes is every route that changes state, the inventory the write
+// guard is checked against: a route added without a thought for it fails
+// here rather than shipping open.
+func writeRoutes() [][2]string {
+	return append(adminRoutes(), dataRoutes()...)
 }
 
 // readRoutes is a route of every read family, including the ones shaped as
@@ -449,11 +464,11 @@ func Test_Router_Setup_Authorization(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses every write route to a guest with 403 — guest stands where an anonymous caller stands", func(t *testing.T) {
+	t.Run("refuses every admin-only route to a guest with 403 — guest stands where an anonymous caller stands there", func(t *testing.T) {
 		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
 		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
 
-		for _, route := range writeRoutes() {
+		for _, route := range adminRoutes() {
 			t.Run(route[0]+" "+route[1], func(t *testing.T) {
 				rec := doAuthenticatedRequest(handler, route[0], route[1], bearerHeader(fakeTokenGuest))
 
@@ -461,6 +476,20 @@ func Test_Router_Setup_Authorization(t *testing.T) {
 				var body response.ErrorResponse
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 				assert.Equal(t, "forbidden", body.Error)
+			})
+		}
+	})
+
+	t.Run("lets a guest reach the data routes — rows, columns and filters", func(t *testing.T) {
+		deps := setupRouterDeps(t, defaultTestSettings(), defaultTestSettingsConfig())
+		handler := deps.newRouter(func(context.Context) error { return nil }).Setup()
+
+		for _, route := range dataRoutes() {
+			t.Run(route[0]+" "+route[1], func(t *testing.T) {
+				rec := doAuthenticatedRequest(handler, route[0], route[1], bearerHeader(fakeTokenGuest))
+
+				assert.NotEqual(t, http.StatusUnauthorized, rec.Code)
+				assert.NotEqual(t, http.StatusForbidden, rec.Code)
 			})
 		}
 	})

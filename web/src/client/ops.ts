@@ -1,5 +1,5 @@
 import { getRoot } from './http'
-import type { Diagnostics } from './types'
+import type { Diagnostics, Version } from './types'
 
 // Readiness probe — resolves if the server can currently serve traffic
 // (storage reachable); rejects with an ApiError on 503 otherwise.
@@ -12,4 +12,10 @@ export function readyz(): Promise<void> {
 // /healthz and /readyz.
 export function getDiagnostics(): Promise<Diagnostics> {
     return getRoot('/diagnostics')
+}
+
+// The running build's identity (git describe + short commit). Outside
+// /api/v1, same as /healthz and /readyz.
+export function getVersion(): Promise<Version> {
+    return getRoot('/version')
 }

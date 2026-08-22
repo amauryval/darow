@@ -45,15 +45,16 @@ func geometryCRS(req *http.Request) string {
 	return storage.DefaultGeometryCRS
 }
 
-func (rh *RowsHandler) paginationParams(req *http.Request, tableId string) (offset, limit int64) {
-	offset = 0
-	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
-		offset = v
+// geometryReadCRS reports the CRS a row's geometry is read in: the EPSG code
+// asked for, and otherwise the one every read emits and every write expects
+// — a map draws in lon/lat and posts back what it drew, whatever the table
+// is stored in. Pinning it to the table's own CRS is an export's default, not
+// a read's.
+func geometryReadCRS(srid int) string {
+	if srid == 0 || srid == 4326 {
+		return storage.DefaultGeometryCRS
 	}
-
-	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = rh.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
-	return offset, limit
+	return "EPSG:" + strconv.Itoa(srid)
 }
 
 // ListRows handles GET /tables/{tableId}/rows.
@@ -73,7 +74,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	offset, limit := rh.paginationParams(req, meta.TableId)
+	offset, limit, _ := paginationParams(req, rh.tableSettings.Resolve(meta.TableId).DefaultRowLimit, false)
 
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	sortColumns := make([]string, len(sort))
@@ -87,7 +88,7 @@ func (rh *RowsHandler) ListRows(w http.ResponseWriter, req *http.Request) {
 
 	page, err := rh.rowService.ListRows(req.Context(), meta, sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -117,11 +118,10 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Rows []map[string]any `json:"rows"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Rows) == 0 {
@@ -133,7 +133,7 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 	if len(body.Rows) > 1 {
 		pkeys, err := rh.rowService.BulkInsertRows(req.Context(), meta, body.Rows, crs)
 		if err != nil {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 		response.WriteJSON(w, http.StatusCreated, map[string]any{"pkeys": pkeys})
@@ -142,7 +142,7 @@ func (rh *RowsHandler) AddRows(w http.ResponseWriter, req *http.Request) {
 
 	written, err := rh.rowService.InsertRow(req.Context(), meta, body.Rows[0], crs)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -172,7 +172,7 @@ func (rh *RowsHandler) GetRow(w http.ResponseWriter, req *http.Request) {
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if row == nil {
@@ -199,11 +199,10 @@ func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Pkeys []string `json:"pkeys"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Pkeys) == 0 {
@@ -213,7 +212,7 @@ func (rh *RowsHandler) GetRowsByPkey(w http.ResponseWriter, req *http.Request) {
 
 	rows, err := rh.rowService.GetRowsByPkey(req.Context(), meta, body.Pkeys)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -242,9 +241,8 @@ func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
 	}
 	pkey := chi.URLParam(req, "pkey")
 
-	var updates map[string]any
-	if err := json.NewDecoder(req.Body).Decode(&updates); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	updates, ok := DecodeBody[map[string]any](w, req)
+	if !ok {
 		return
 	}
 
@@ -252,14 +250,14 @@ func (rh *RowsHandler) UpdateRow(w http.ResponseWriter, req *http.Request) {
 	if len(updates) > 0 {
 		var err error
 		if written, err = rh.rowService.UpdateRow(req.Context(), meta, []string{pkey}, updates, geometryCRS(req)); err != nil {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 	}
 
 	row, err := rh.rowService.GetRow(req.Context(), meta, pkey)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if row == nil {
@@ -291,14 +289,13 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Updates []struct {
 			Pkey   string         `json:"pkey"`
 			Values map[string]any `json:"values"`
 		} `json:"updates"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if len(body.Updates) == 0 {
@@ -317,7 +314,7 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 
 	written, err := rh.rowService.UpdateRows(req.Context(), meta, updates, geometryCRS(req))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -329,6 +326,43 @@ func (rh *RowsHandler) UpdateRows(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+// DeleteRows handles DELETE /tables/{tableId}/rows, deleting a set of rows in
+// one write rather than one request per row.
+//
+// @Summary Delete several rows in one request
+// @Tags rows
+// @Accept json
+// @Produce json
+// @Param tableId path string true "Table ID"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} response.ErrorResponse
+// @Router /api/v1/tables/{tableId}/rows [delete]
+func (rh *RowsHandler) DeleteRows(w http.ResponseWriter, req *http.Request) {
+	meta, ok := rh.ResolveTable(w, req)
+	if !ok {
+		return
+	}
+
+	body, ok := DecodeBody[struct {
+		Pkeys []string `json:"pkeys"`
+	}](w, req)
+	if !ok {
+		return
+	}
+	if len(body.Pkeys) == 0 {
+		response.WriteError(w, req, errNoRowsProvided, http.StatusBadRequest)
+		return
+	}
+
+	if err := rh.rowService.RemoveRows(req.Context(), meta, body.Pkeys); err != nil {
+		response.WriteServiceError(w, req, err)
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, map[string]any{
+		"pkeys": body.Pkeys, "rowsRemoved": int64(len(body.Pkeys)),
+	})
 }
 
 // DeleteRow handles DELETE /tables/{tableId}/rows/{pkey}.
@@ -347,7 +381,7 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 	pkey := chi.URLParam(req, "pkey")
 
 	if err := rh.rowService.RemoveRows(req.Context(), meta, []string{pkey}); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: pkey, RowsRemoved: 1})
@@ -355,14 +389,15 @@ func (rh *RowsHandler) DeleteRow(w http.ResponseWriter, req *http.Request) {
 
 // GetRowGeometry handles GET /tables/{tableId}/rows/{pkey}/geometry?srid=.
 // srid reprojects what is read, exactly as it does for an export, and
-// defaults to the table's own CRS — nothing stored changes either way.
+// defaults to lon/lat — the CRS a write takes back. Nothing stored changes
+// either way.
 //
 // @Summary Get a row's geometry, as GeoJSON and as WKT
 // @Tags rows
 // @Produce json
 // @Param tableId path string true "Table ID"
 // @Param pkey path string true "Row primary key"
-// @Param srid query int false "EPSG code the geometry is read in (default: the table's own)"
+// @Param srid query int false "EPSG code the geometry is read in (default: OGC:CRS84)"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} response.ErrorResponse
 // @Failure 404 {object} response.ErrorResponse
@@ -381,9 +416,9 @@ func (rh *RowsHandler) GetRowGeometry(w http.ResponseWriter, req *http.Request) 
 	}
 
 	decimals := rh.tableSettings.Resolve(meta.TableId).CoordinateDecimals
-	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, service.ResolveCRS(srid, meta))
+	geometry, err := rh.geoService.RowGeometry(req.Context(), meta, pkey, decimals, geometryReadCRS(srid))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if geometry == nil {

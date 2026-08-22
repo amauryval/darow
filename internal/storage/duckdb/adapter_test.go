@@ -178,7 +178,7 @@ func Test_Adapter_CatalogCreateFromFile_RollsBackOnMaterializationFailure(t *tes
 // every geo route depends on an extension loaded once at open.
 // The startup repair is a no-op on a healthy database: it probes every geo
 // table's spatial index and rebuilds only the ones the engine cannot plan
-// against (BLK-5), so a table opened twice keeps the index it was created with.
+// against, so a table opened twice keeps the index it was created with.
 func Test_New_RepairsOnlyABrokenSpatialIndex(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repair.db")
@@ -203,7 +203,7 @@ func Test_New_RepairsOnlyABrokenSpatialIndex(t *testing.T) {
 
 // A pool that still answers a ping is never swapped: an INTERNAL error that
 // leaves the instance usable (a spatial index the planner crashes on) must
-// not cost a full reopen per failed request (BLK-5).
+// not cost a full reopen per failed request.
 func Test_Adapter_RecoverIfFatal_KeepsALivePool(t *testing.T) {
 	a := setupAdapter(t)
 	before := a.conn()
@@ -280,11 +280,11 @@ func Test_isFatalDuckDBError(t *testing.T) {
 	}
 }
 
-// recoverIfFatal is what BLK-2 fixes: db must be swapped for a fresh
-// connection once a query observes DuckDB's instance as invalidated,
-// rather than every later caller reusing the dead one. An instance is
-// observed as dead, never assumed from the error alone (BLK-5): the pool is
-// closed here, which is what a caller of a truly invalidated one sees.
+// recoverIfFatal swaps db for a fresh connection once a query observes
+// DuckDB's instance as invalidated, rather than letting every later caller
+// reuse the dead one. An instance is observed as dead, never assumed from
+// the error alone: the pool is closed here, which is what a caller of a
+// truly invalidated one sees.
 func Test_Adapter_recoverIfFatal_ReopensOnFatalError(t *testing.T) {
 	a := setupAdapter(t)
 	original := a.conn()

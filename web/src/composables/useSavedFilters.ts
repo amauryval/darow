@@ -5,8 +5,8 @@ import {
     listSavedFilters,
     updateSavedFilter
 } from '../client/filters'
-import { errorMessage } from '../client/http'
 import type { FilterCondition, SavedFilter } from '../client/types'
+import { useAsyncAction } from './useAsyncAction'
 
 // The filters persisted server-side against one table. Holds the list and its
 // four states; every mutation reloads from the server rather than patching the
@@ -16,23 +16,18 @@ import type { FilterCondition, SavedFilter } from '../client/types'
 // utils/filterTree.
 export function useSavedFilters(tableId: Ref<string>) {
     const filters = ref<SavedFilter[]>([])
-    const loading = ref(false)
     const loadedOnce = ref(false)
-    const error = ref('')
     const saving = ref(false)
+    const { isLoading: loading, error, run } = useAsyncAction()
 
     async function load() {
-        loading.value = true
-        error.value = ''
-        try {
-            const page = await listSavedFilters(tableId.value)
-            filters.value = page.filters
-            loadedOnce.value = true
-        } catch (e) {
-            error.value = errorMessage(e, 'Impossible de charger les filtres enregistrés')
-        } finally {
-            loading.value = false
-        }
+        const page = await run(
+            () => listSavedFilters(tableId.value),
+            'Impossible de charger les filtres enregistrés'
+        )
+        if (page === null) return
+        filters.value = page.filters
+        loadedOnce.value = true
     }
 
     // A parameterized view is reused when only tableId changes, so the initial

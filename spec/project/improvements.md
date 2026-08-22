@@ -13,8 +13,5 @@ Each entry carries a stable identifier (`IMP-Pn`); a retired identifier is never
 
 | # | Lead | Motivation | Reference |
 |---|---|---|---|
-| IMP-P2 | Publish tagged releases with a prebuilt image and binaries | Removes "clone and build" as the only entry path, and gives users something to pin | `spec.md` §5 |
 
-IMP-P1 was taken up and implemented on 2026-08-18 and did not become a todo: the duck-in-a-row mark
-is drawn as `Logo.vue` and as `web/public/favicon.svg`, and the `README` already carried the
-illustrated banner (`spec.md` §1).
+A retired identifier is never reused, so the next lead recorded here takes `IMP-P3`.

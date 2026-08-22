@@ -1698,6 +1698,42 @@ const docTemplate = `{
                     }
                 }
             },
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rows"
+                ],
+                "summary": "Delete several rows in one request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table ID",
+                        "name": "tableId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/response.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "patch": {
                 "description": "Every row lands or none does — what a topological edit needs, since it moves a boundary shared by several rows",
                 "consumes": [
@@ -1921,7 +1957,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "EPSG code the geometry is read in (default: the table's own)",
+                        "description": "EPSG code the geometry is read in (default: OGC:CRS84)",
                         "name": "srid",
                         "in": "query"
                     }
@@ -2282,6 +2318,25 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/version": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ops"
+                ],
+                "summary": "Build version",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.versionDTO"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -2630,6 +2685,20 @@ const docTemplate = `{
             "properties": {
                 "source": {
                     "$ref": "#/definitions/service.Source"
+                }
+            }
+        },
+        "handlers.versionDTO": {
+            "type": "object",
+            "properties": {
+                "buildDate": {
+                    "type": "string"
+                },
+                "commit": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },

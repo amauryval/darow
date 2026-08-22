@@ -43,7 +43,9 @@ the domains and their files. Nothing about the code is restated here; it would d
     in a file named after the file under test (`rows.go` → `rows_test.go`); a package's shared
     doubles and fixtures go in its `fixtures_test.go`, and each package's tests stand on their own
     without a sibling package's help.
--   Front-end changes need no vitest test unless explicitly asked for.
+-   Every new/changed composable or `utils/` function ships with its vitest test in the same change,
+    in a file named after the file under test (`useEditFeatures.ts` → `useEditFeatures.test.ts`);
+    components are covered only when they carry logic worth asserting.
 -   Git commands that change state (`commit`, `push`, `checkout`, `merge`, `rebase`, `reset`,
     `stash`, `worktree add/remove`, `branch -D`, ...) are forbidden unless explicitly requested.
 -   **No comment is longer than 3 lines** — Go as well as Vue/TS. If the explanation does not fit,

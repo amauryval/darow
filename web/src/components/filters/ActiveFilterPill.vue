@@ -10,7 +10,7 @@ import { useWriteGuard } from '../../composables/useWriteGuard'
 defineProps<{ filter: SavedFilter }>()
 const emit = defineEmits<{ clear: []; edit: [] }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 </script>
 
 <template>

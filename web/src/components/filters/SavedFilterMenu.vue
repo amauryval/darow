@@ -21,7 +21,7 @@ const emit = defineEmits<{
     retry: []
 }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 </script>
 
 <template>

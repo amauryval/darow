@@ -23,9 +23,7 @@ import (
 )
 
 // stubSettingsAPI is a fixed settingsAPI double: most handler tests only
-// need Current() to answer a stated value, not to assert call counts — the
-// same role a literal config.APIConfig played before TODO-3 moved these
-// fields into the settings table.
+// need Current() to answer a stated value, not to assert call counts.
 type stubSettingsAPI struct{ settings storage.Settings }
 
 // defaultTestSettings is the settings double for a handler test built by
@@ -333,8 +331,8 @@ func (m *mockGeoAPI) FilteredExtent(ctx context.Context, meta storage.Metadata, 
 	return bbox, args.Error(1)
 }
 
-func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit int) ([]storage.GeoFeature, error) {
-	args := m.Called(ctx, meta, near, exclude, limit)
+func (m *mockGeoAPI) NeighbourFeatures(ctx context.Context, meta storage.Metadata, near storage.NearQuery, exclude []string, limit, coordinateDecimals int) ([]storage.GeoFeature, error) {
+	args := m.Called(ctx, meta, near, exclude, limit, coordinateDecimals)
 	features, _ := args.Get(0).([]storage.GeoFeature)
 	return features, args.Error(1)
 }

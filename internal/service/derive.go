@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -56,6 +57,26 @@ func NewDeriveService(metadata metadataStore, schema schemaReader, guard sizeGua
 // DeriveFromTable's single-source one.
 func (s *DeriveService) DeriveTable(ctx context.Context, query, newTableName string) (string, error) {
 	return s.materialize(ctx, query, nil, newTableName)
+}
+
+// renderSelect assembles the SELECT ... FROM ... [WHERE ...] [GROUP BY ...]
+// statement shared by both guided modes, once projection, where and groupBy
+// have been built and whitelisted against the source schema. physicalName is
+// server-generated, so it is validated rather than quoted: the AST validator
+// matches it unquoted. groupBy is nil for the row-wise mode.
+func renderSelect(meta storage.Metadata, projection []string, where string, args []any, groupBy []string) (string, []any, error) {
+	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
+		return "", nil, err
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(projection, ", "), meta.PhysicalName)
+	if where != "" {
+		query += " WHERE " + where
+	}
+	if len(groupBy) > 0 {
+		query += " GROUP BY " + strings.Join(groupBy, ", ")
+	}
+	return query, args, nil
 }
 
 // materialize rejects anything but a single SELECT, then registers and

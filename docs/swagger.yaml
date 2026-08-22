@@ -227,6 +227,15 @@ definitions:
             source:
                 $ref: '#/definitions/service.Source'
         type: object
+    handlers.versionDTO:
+        properties:
+            buildDate:
+                type: string
+            commit:
+                type: string
+            version:
+                type: string
+        type: object
     response.ErrorResponse:
         properties:
             code:
@@ -1300,6 +1309,30 @@ paths:
             tags:
                 - geo
     /api/v1/tables/{tableId}/rows:
+        delete:
+            consumes:
+                - application/json
+            parameters:
+                - description: Table ID
+                  in: path
+                  name: tableId
+                  required: true
+                  type: string
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        additionalProperties: true
+                        type: object
+                '400':
+                    description: Bad Request
+                    schema:
+                        $ref: '#/definitions/response.ErrorResponse'
+            summary: Delete several rows in one request
+            tags:
+                - rows
         get:
             parameters:
                 - description: Table ID
@@ -1486,7 +1519,7 @@ paths:
                   name: pkey
                   required: true
                   type: string
-                - description: "EPSG code the geometry is read in (default: the table's own)"
+                - description: 'EPSG code the geometry is read in (default: OGC:CRS84)'
                   in: query
                   name: srid
                   type: integer
@@ -1772,6 +1805,18 @@ paths:
                     schema:
                         $ref: '#/definitions/response.ErrorResponse'
             summary: Readiness probe
+            tags:
+                - ops
+    /version:
+        get:
+            produces:
+                - application/json
+            responses:
+                '200':
+                    description: OK
+                    schema:
+                        $ref: '#/definitions/handlers.versionDTO'
+            summary: Build version
             tags:
                 - ops
 swagger: '2.0'

@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { Check, Pencil, Trash2, X } from '@lucide/vue'
-import { errorMessage } from '../../client/http'
-import { useToast } from '../../composables/useToast'
+import { useColumnStructure } from '../../composables/useColumnStructure'
 import Modal from '../ui/Modal.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import FormError from '../ui/FormError.vue'
 import Typography from '../ui/Typography.vue'
 
 // Renaming and dropping a column, on the columns a caller may touch — the
@@ -20,52 +19,16 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: [] }>()
 
-const toast = useToast()
-const editing = ref<string | null>(null)
-const draftName = ref('')
-const confirmingDrop = ref<string | null>(null)
-const busyColumn = ref<string | null>(null)
-const error = ref<string | null>(null)
-
-function startRename(col: string) {
-    editing.value = col
-    draftName.value = col
-    error.value = null
-}
-
-async function confirmRename(col: string) {
-    const name = draftName.value.trim()
-    if (!name || name === col) {
-        editing.value = null
-        return
-    }
-    busyColumn.value = col
-    error.value = null
-    try {
-        await props.onRename(col, name)
-        editing.value = null
-        toast.success('Colonne renommée.')
-    } catch (e) {
-        error.value = errorMessage(e, 'Impossible de renommer la colonne')
-    } finally {
-        busyColumn.value = null
-    }
-}
-
-async function confirmDrop(col: string) {
-    busyColumn.value = col
-    error.value = null
-    try {
-        await props.onDrop(col)
-        confirmingDrop.value = null
-        toast.success('Colonne supprimée.')
-    } catch (e) {
-        confirmingDrop.value = null
-        error.value = errorMessage(e, 'Impossible de supprimer la colonne')
-    } finally {
-        busyColumn.value = null
-    }
-}
+const {
+    editing,
+    draftName,
+    confirmingDrop,
+    busyColumn,
+    error,
+    startRename,
+    confirmRename,
+    confirmDrop
+} = useColumnStructure(props.onRename, props.onDrop)
 </script>
 
 <template>
@@ -133,7 +96,7 @@ async function confirmDrop(col: string) {
             </div>
         </div>
 
-        <p v-if="error" class="mt-3 text-xs text-error">{{ error }}</p>
+        <FormError :message="error" />
 
         <div class="mt-4 flex justify-end">
             <BaseButton variant="secondary" @click="emit('close')">Fermer</BaseButton>

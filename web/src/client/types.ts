@@ -1,3 +1,11 @@
+// Matches versionDTO — the running build's identity, baked in at build time
+// via -ldflags (internal/version): "dev"/"unknown" outside a mise/Docker build.
+export interface Version {
+    version: string
+    commit: string
+    buildDate: string
+}
+
 export interface Diagnostics {
     databaseSizeBytes: number
     memoryUsageBytes: number
@@ -352,22 +360,36 @@ export interface TransformPreview {
 }
 
 // Matches goauth's own config and session DTOs — the only two here that are
-// NOT camelCase: AuthSession.user is a bare Go struct with no JSON tags, so
-// its fields keep their Go casing. Renaming a key is a silent `undefined`.
+// NOT camelCase: AuthUser is a bare Go struct with no JSON tags, so its
+// fields keep their Go casing. Renaming a key is a silent `undefined`.
 
-// All three empty strings means demo mode: no provider is configured, so
-// there is no login control to show at all (auth/oidc.ts skips building a
-// UserManager entirely).
+// The login flow is always driven on the server (cmd/server wires
+// goauth.WithBrowser whenever auth is enabled): serverFlow is false only in
+// demo mode, where no provider is configured and there is no login control
+// to show at all. issuerUrl/clientId/scopes stay for a deployment that ran
+// this module the other way, but this frontend never reads them.
 export interface AuthConfig {
-    issuer_url: string
-    client_id: string
-    scopes: string
+    server_flow: boolean
+    login_path?: string
+    logout_path?: string
+    issuer_url?: string
+    client_id?: string
+    scopes?: string
 }
 
 export interface AuthUser {
     Provider: string
     ID: string
-    Roles: string[]
+}
+
+// What the ID token said about the signed in visitor — only ever present
+// with the server-driven flow, since that is the one place this frontend
+// never holds the ID token itself to read it from.
+export interface AuthProfile {
+    username?: string
+    name?: string
+    email?: string
+    picture?: string
 }
 
 export interface AuthSession {
@@ -375,4 +397,5 @@ export interface AuthSession {
     authorized: boolean
     roles?: string[]
     user?: AuthUser
+    profile?: AuthProfile
 }

@@ -82,7 +82,7 @@ function onReset() {
 }
 
 // Groups that tune a process internal rather than a product decision
-// (IMP-F11/TODO-F40) render under a collapsed <details>, so opening the
+// render under a collapsed <details>, so opening the
 // screen to raise a page size doesn't first walk through a cache TTL.
 const standardGroups = SETTINGS_FIELD_GROUPS.filter((group) => !group.advanced)
 const advancedGroups = SETTINGS_FIELD_GROUPS.filter((group) => group.advanced)

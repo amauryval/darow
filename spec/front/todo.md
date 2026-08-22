@@ -26,39 +26,11 @@ instruction, not the patch — the code is written later, against the code as it
 `mise run ui-build` (type-check) and `mise run ui-lint` pass — a type error is part of the chantier,
 not a follow-up.
 
-TODO-F37 (guided aggregation, server counterpart `../back/todo.md` TODO-14) was taken up and shipped
-— `AggregateTableModal`, `DeriveAggregateForm`, `useAggregateFromTable`. TODO-F39 (OIDC login) and
-TODO-F40 (the write-guard verdict on screen) were taken up and shipped together — `client/auth.ts`,
-`auth/oidc.ts`, `useAuth`, `useSession` rebuilt on it, `views/AuthCallbackView.vue`, `SessionMenu`'s
-role badge, `useWriteGuard` wired into every write control. Retired identifiers are never reused, so
-the next chantier recorded here takes `TODO-F42`.
+The next identifier to use is `TODO-F52` — a retired identifier is never reused.
 
 ## 1. Architecture and code
 
-TODO-F38 (handling the `401`/`403` the protected API answers) shipped with the session control:
-`client/auth.ts`, `useSession`, `SessionMenu` in the navbar, and the two French status phrases in
-`http.ts` — see `spec.md` §2, §4, §11.
-
-**TODO-F41 — `TableDataPanel` is past the 300-line cap of §0.7 and holds more than one subject.**
-It orchestrates the workspace, but it also *is* the edit session's controller: `toggleEditing`,
-`cancelEditing`, `discardEditing`, `saveEditing`, `unsavedCount`, `changedGeometries` and the
-cancel-confirmation state are all its, on top of assembling the toolbar, the two bars, the two
-panels and four modals. The selection work (`useSelectionView`, `TableSelectionBar`) added to it
-rather than to the pile it should have been split off from first.
-
-The split to run: move the session's own state and its four functions into a composable —
-`useEditSession(rowEdits, layerEditing)` in `src/composables/` — owning `active`, `unsavedCount`,
-`confirmingCancel` and the toggle/cancel/discard/save quartet, and returning them; the panel then
-wires it to `TableEditBar`, `TableToolbar` and `MapView` and holds no session logic of its own. Two
-invariants to keep intact, both of them §8.3's: every way out of the mode still goes through **one**
-`cancelEditing`, so the confirmation stands once rather than at each exit, and an empty session is
-still left unasked. `saveEditing`'s type-check refusal (`rowEdits.invalidCount`) belongs to the
-composable, but the toast stays wherever `useToast` is already called. Nothing about the grid's
-arrangement moves: `useSelectionView` is already its own composable and stays as it is.
-
-The trap that produced the gap: the session is the one thing on this screen whose state spans both
-halves (grid and map), so it was written where both were assembled instead of beside the two
-composables it coordinates.
+Nothing outstanding in this group.
 
 ## 2. User experience
 

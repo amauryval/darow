@@ -112,6 +112,12 @@ func WriteError(w http.ResponseWriter, req *http.Request, err error, code int) {
 	})
 }
 
+// WriteServiceError writes err through WriteError at the status
+// MapServiceError classifies it under.
+func WriteServiceError(w http.ResponseWriter, req *http.Request, err error) {
+	WriteError(w, req, err, MapServiceError(err))
+}
+
 // MapServiceError maps a service error to an HTTP status by its type,
 // defaulting to 500 so an unclassified internal failure is never mistaken for
 // a client mistake.

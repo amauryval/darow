@@ -130,7 +130,7 @@ func soleGeometryColumn(cols []catalogColumn) (catalogColumn, error) {
 
 // GeometryInfo reports whether physicalName currently has a geometry column
 // and, if so, its name, so isGeo/geometryColumn can be derived from the
-// catalogue at read time rather than trusted from metadata (TODO-10). A
+// catalogue at read time rather than trusted from metadata. A
 // physical table not yet materialized reports no geometry rather than
 // erroring.
 func GeometryInfo(ctx context.Context, conn Querier, physicalName string) (isGeo bool, geometryColumn string, err error) {

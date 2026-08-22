@@ -14,7 +14,7 @@ import (
 
 // metadataSchema is the DDL applied on every startup, already at the latest
 // column set: an existing database catches up through schemaMigrations.
-// isGeo/geometryColumn are absent, being derived at read time (TODO-10).
+// isGeo/geometryColumn are absent, being derived at read time.
 const metadataSchema = `
 CREATE TABLE IF NOT EXISTS metadata (
     tableId TEXT PRIMARY KEY,

@@ -2,7 +2,7 @@ import type { SortingState } from '@tanstack/vue-table'
 
 // Projection of TanStack's sorting state onto the API's `sort` parameter
 // ("-field" for desc, "field" for asc, comma-separated) and back, so the
-// same compact format can also live in the URL query string (TODO-F23).
+// same compact format can also live in the URL query string.
 export function stringifySorting(
     sorting: SortingState,
     columnMap?: Record<string, string>

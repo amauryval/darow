@@ -17,11 +17,14 @@ func Test_newOpsHandler(t *testing.T) {
 	ready := func(context.Context) error { return nil }
 	diagnosticsSvc := &mockDiagnosticsAPI{}
 
-	oh := NewOpsHandler(ready, diagnosticsSvc, 4096)
+	oh := NewOpsHandler(ready, diagnosticsSvc, 4096, "v1.2.3", "abc1234", "2026-08-22T00:00:00Z")
 
 	assert.NoError(t, oh.ready(context.Background()))
 	assert.Same(t, diagnosticsSvc, oh.diagnostics)
 	assert.Equal(t, int64(4096), oh.maxSizeBytes)
+	assert.Equal(t, "v1.2.3", oh.buildVersion)
+	assert.Equal(t, "abc1234", oh.buildCommit)
+	assert.Equal(t, "2026-08-22T00:00:00Z", oh.buildDate)
 }
 
 func Test_opsHandler_healthz(t *testing.T) {
@@ -63,6 +66,15 @@ func Test_opsHandler_diagnostics(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"databaseSizeBytes":2048,"memoryUsageBytes":1024,"temporaryFilesBytes":0,"extensions":["spatial"],"maxSizeBytes":1048576}`, rec.Body.String())
+}
+
+func Test_opsHandler_version(t *testing.T) {
+	oh := &OpsHandler{buildVersion: "v1.2.3", buildCommit: "abc1234", buildDate: "2026-08-22T00:00:00Z"}
+
+	rec := doHandlerRequest(oh.Version, http.MethodGet, "/version", nil, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"version":"v1.2.3","commit":"abc1234","buildDate":"2026-08-22T00:00:00Z"}`, rec.Body.String())
 }
 
 func Test_opsHandler_diagnostics_ServiceError(t *testing.T) {

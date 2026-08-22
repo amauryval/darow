@@ -31,7 +31,8 @@ useDocumentTitle(computed(() => 'Sources'))
 const sourcesState = useSources(
     queryString(route.query.sort) ? parseSorting(queryString(route.query.sort)) : undefined
 )
-const { total, loading, loadedOnce, sorting, refresh, uploading, upload, limits } = sourcesState
+const { total, loading, loadedOnce, sorting, refresh, uploading, uploadProgress, upload, limits } =
+    sourcesState
 const provenance = useTableProvenance()
 const load = useSourceLoad()
 
@@ -138,6 +139,7 @@ async function handleUpload(file: File) {
         <SourceUploadModal
             v-if="uploadOpen"
             :uploading="uploading"
+            :progress="uploadProgress"
             :limits="limits"
             @close="uploadOpen = false"
             @upload="handleUpload"

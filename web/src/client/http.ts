@@ -14,26 +14,14 @@ export function configureApiClient(options: { baseUrl?: string }): void {
     baseUrl = options.baseUrl?.replace(/\/+$/, '') ?? ''
 }
 
-// The bearer token every request attaches, and its single setter
-// (composables/useAuth.ts). http.ts never reads the auth composable itself:
-// it only ever sees a string or null here.
-let authToken: string | null = null
-
-export function setAuthToken(token: string | null): void {
-    authToken = token
-}
-
-// A 401 means the held token is no longer good. http.ts cannot decide what to
-// do about it, so it only notifies whoever registered a handler — importing
-// the auth composable would pull Vue reactivity into the transport layer.
+// A 401 means the session cookie is no longer good. http.ts cannot decide
+// what to do about it, so it only notifies whoever registered a handler —
+// importing the auth composable would pull Vue reactivity into the
+// transport layer.
 let onUnauthorized: (() => void) | null = null
 
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
     onUnauthorized = handler
-}
-
-function authHeaders(): HeadersInit {
-    return authToken ? { Authorization: `Bearer ${authToken}` } : {}
 }
 
 export function apiUrl(path: string): string {
@@ -119,7 +107,7 @@ async function handle<T>(res: Response): Promise<T> {
 // next pan has already superseded — and, with AbortSignal.timeout, stops a
 // request that never answers from leaving a screen busy for ever.
 export function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-    return fetch(apiUrl(path), { headers: authHeaders(), signal }).then((res) => handle<T>(res))
+    return fetch(apiUrl(path), { credentials: 'same-origin', signal }).then((res) => handle<T>(res))
 }
 
 // getRoot is get's counterpart for the handful of routes outside
@@ -131,10 +119,8 @@ export function getRoot<T>(path: string): Promise<T> {
 export function post<T>(path: string, body?: unknown): Promise<T> {
     return fetch(apiUrl(path), {
         method: 'POST',
-        headers: {
-            ...authHeaders(),
-            ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
-        },
+        credentials: 'same-origin',
+        headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body)
     }).then((res) => handle<T>(res))
 }
@@ -142,30 +128,80 @@ export function post<T>(path: string, body?: unknown): Promise<T> {
 export function patch<T>(path: string, body: unknown): Promise<T> {
     return fetch(apiUrl(path), {
         method: 'PATCH',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     }).then((res) => handle<T>(res))
 }
 
-export function del<T>(path: string): Promise<T> {
-    return fetch(apiUrl(path), { method: 'DELETE', headers: authHeaders() }).then((res) =>
-        handle<T>(res)
-    )
+export function del<T>(path: string, body?: unknown): Promise<T> {
+    return fetch(apiUrl(path), {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body)
+    }).then((res) => handle<T>(res))
 }
 
 // No Content-Type header here — the browser sets the multipart boundary
 // itself from the FormData body.
 export function postForm<T>(path: string, form: FormData): Promise<T> {
-    return fetch(apiUrl(path), { method: 'POST', headers: authHeaders(), body: form }).then((res) =>
-        handle<T>(res)
+    return fetch(apiUrl(path), { method: 'POST', credentials: 'same-origin', body: form }).then(
+        (res) => handle<T>(res)
     )
+}
+
+function parseErrorBody(text: string): ErrorResponse | null {
+    try {
+        return text ? (JSON.parse(text) as ErrorResponse) : null
+    } catch {
+        return null
+    }
+}
+
+// postForm's counterpart with upload progress (§8.2's "an upload shows
+// progress"): fetch has no portable way to observe request-body upload
+// progress, so this one goes through XMLHttpRequest instead, which reports it
+// natively via xhr.upload.onprogress.
+export function postFormWithProgress<T>(
+    path: string,
+    form: FormData,
+    onProgress: (fraction: number) => void
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', apiUrl(path))
+        xhr.withCredentials = true
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) onProgress(event.loaded / event.total)
+        }
+        xhr.onload = () => {
+            if (xhr.status === 401) onUnauthorized?.()
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(
+                    (xhr.status === 204 || !xhr.responseText
+                        ? undefined
+                        : JSON.parse(xhr.responseText)) as T
+                )
+                return
+            }
+            const body = parseErrorBody(xhr.responseText)
+            reject(
+                new ApiError(
+                    body ?? { error: 'request_error', message: '', code: xhr.status, requestId: '' }
+                )
+            )
+        }
+        xhr.onerror = () => reject(new Error('Network error'))
+        xhr.send(form)
+    })
 }
 
 // get's counterpart for a non-JSON body (tables.ts's exportTable): a failure
 // still becomes the same ApiError every other call throws. The file name comes
 // back with the body — it carries the export's CRS (back LIM-16).
 export async function getBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
-    const res = await fetch(apiUrl(path), { headers: authHeaders() })
+    const res = await fetch(apiUrl(path), { credentials: 'same-origin' })
     if (res.status === 401) {
         onUnauthorized?.()
     }

@@ -53,7 +53,7 @@ func Test_TableRepository_AddColumnAndCount(t *testing.T) {
 
 // AddColumn is the layer that actually interpolates colType into the
 // ALTER TABLE statement, so it re-checks the allowlist even though
-// SchemaService already does (BLK-1): a caller reaching the repository
+// SchemaService already does: a caller reaching the repository
 // some other way must never sneak GEOMETRY, or arbitrary SQL, past it.
 func Test_TableRepository_AddColumn_RejectsDisallowedType(t *testing.T) {
 	conn := openRepoTestDB(t)

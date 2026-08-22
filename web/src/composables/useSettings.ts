@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { getSettings, updateSettings } from '../client/settings'
 import type { Settings, SettingsPatch } from '../client/types'
-import { errorMessage } from '../client/http'
+import { useAsyncAction } from './useAsyncAction'
 import { parseSettingsFieldErrors, type SettingsFieldKey } from '../utils/settingsFields'
 import { useToast } from './useToast'
 
@@ -25,22 +25,15 @@ const SEED_LIST_LIMIT = 50
 // (utils/pageSizes).
 const rowLimit = computed(() => current.value?.defaultRowLimit.value ?? SEED_ROW_LIMIT)
 const listLimit = computed(() => current.value?.defaultListLimit.value ?? SEED_LIST_LIMIT)
-const loading = ref(false)
 const loadedOnce = ref(false)
-const error = ref('')
+const { isLoading: loading, error, run: runLoad } = useAsyncAction()
 let inFlight: Promise<void> | null = null
 
 async function load() {
-    loading.value = true
-    error.value = ''
-    try {
-        current.value = await getSettings()
-        loadedOnce.value = true
-    } catch (e) {
-        error.value = errorMessage(e, 'Impossible de charger les paramètres')
-    } finally {
-        loading.value = false
-    }
+    const settings = await runLoad(() => getSettings(), 'Impossible de charger les paramètres')
+    if (settings === null) return
+    current.value = settings
+    loadedOnce.value = true
 }
 
 function ensureLoaded(): Promise<void> {
@@ -55,8 +48,8 @@ export function useSettings() {
     ensureLoaded()
     const toast = useToast()
 
-    const saving = ref(false)
     const fieldErrors = ref<Partial<Record<SettingsFieldKey, string>>>({})
+    const { isLoading: saving, error: saveError, run: runSave } = useAsyncAction()
 
     function retry() {
         inFlight = null
@@ -67,20 +60,19 @@ export function useSettings() {
     // result as a global action's result (§8.4): a toast either way, and the
     // rejection additionally broken down per field for the form to attach.
     async function save(patch: SettingsPatch): Promise<boolean> {
-        saving.value = true
         fieldErrors.value = {}
-        try {
-            current.value = await updateSettings(patch)
-            toast.success('Paramètres enregistrés.')
-            return true
-        } catch (e) {
-            const message = errorMessage(e, "Impossible d'enregistrer les paramètres")
-            fieldErrors.value = parseSettingsFieldErrors(message)
-            toast.error(message)
+        const settings = await runSave(
+            () => updateSettings(patch),
+            "Impossible d'enregistrer les paramètres"
+        )
+        if (settings === null) {
+            fieldErrors.value = parseSettingsFieldErrors(saveError.value)
+            toast.error(saveError.value)
             return false
-        } finally {
-            saving.value = false
         }
+        current.value = settings
+        toast.success('Paramètres enregistrés.')
+        return true
     }
 
     return {

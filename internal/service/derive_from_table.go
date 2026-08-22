@@ -18,7 +18,7 @@ type ComputedColumn struct {
 
 // DeriveSpec is a derivation from one source table, expressed structurally
 // rather than as SQL. It is row-wise — one source row produces at most one
-// derived row — so it holds no grouping (IMP-5).
+// derived row — so it holds no grouping.
 type DeriveSpec struct {
 	NewTableName string
 	// Columns carried over as they are. Empty means every column of the
@@ -65,17 +65,7 @@ func (s *DeriveService) buildSpecQuery(ctx context.Context, meta storage.Metadat
 		return "", nil, err
 	}
 
-	// physicalName is server-generated, so it is validated rather than
-	// quoted: the AST validator matches it unquoted.
-	if err := storage.ValidateIdentifier(meta.PhysicalName); err != nil {
-		return "", nil, err
-	}
-
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(projection, ", "), meta.PhysicalName)
-	if where != "" {
-		query += " WHERE " + where
-	}
-	return query, args, nil
+	return renderSelect(meta, projection, where, args, nil)
 }
 
 // projectionFor builds the SELECT list: the carried columns, in the caller's

@@ -2,12 +2,11 @@
 import { computed, ref, toRef, watch } from 'vue'
 import type { SortingState } from '@tanstack/vue-table'
 import type { ColumnSchema, Row } from '../../client/types'
-import type { LayerChanges } from '../../composables/useEditLayer'
 import type { useFeatureSelection } from '../../composables/useFeatureSelection'
+import { useEditSession } from '../../composables/useEditSession'
 import { useLayerEditing } from '../../composables/useLayerEditing'
 import { isDraft, useRowEdits } from '../../composables/useRowEdits'
 import { useRowFilter } from '../../composables/useRowFilter'
-import { useToast } from '../../composables/useToast'
 import { useRowGeometry } from '../../composables/useRowGeometry'
 import { useTableSettings } from '../../composables/useTableSettings'
 import { useSelectionView } from '../../composables/useSelectionView'
@@ -39,7 +38,7 @@ const props = defineProps<{
     selection: ReturnType<typeof useFeatureSelection>
     // The applied filter and the grid's sort are the view's state, carried in
     // the URL (§9) — read once at creation (initialSort) or controlled
-    // (activeFilterId), the two traps of TODO-F33.
+    // (activeFilterId), never both ways at once.
     activeFilterId: string | null
     initialSort?: SortingState
 }>()
@@ -64,7 +63,6 @@ const geometryColumn = toRef(props, 'geometryColumn')
 // (they would otherwise wait for the next zoom to refetch).
 const dataVersion = ref(0)
 
-const toast = useToast()
 const filter = useRowFilter(tableId, columns, isGeo)
 const selection = props.selection
 
@@ -102,78 +100,7 @@ const layerEditing = useLayerEditing(tableId, geometryColumn, async () => {
 // before they have touched anything is asking a question they cannot answer
 // yet. What the mode offers is what the table can carry — a table without
 // geometry simply has no geometry tools (§8.8).
-const editing = computed(() => rowEdits.active.value || layerEditing.active.value)
-
-function toggleEditing() {
-    if (editing.value) {
-        cancelEditing()
-        return
-    }
-    rowEdits.start()
-    if (props.isGeo) layerEditing.start()
-}
-
-// The geometry half of what the session holds. The grid can count its own
-// retyped cells and its own drafts; a reshape only exists on the layer, so
-// the map reports it (MapView's `changed-count`).
-const changedGeometries = ref(0)
-
-// Everything one *Annuler* would drop, both halves at once — what the exit
-// has to be confirmed against (§8.3).
-const unsavedCount = computed(
-    () => rowEdits.dirtyCount.value + rowEdits.draftCount.value + changedGeometries.value
-)
-const confirmingCancel = ref(false)
-
-// Every way out of the mode goes through here — the *Éditer* toggle, the
-// bar's *Annuler*, the map's — so the session's work is protected once
-// rather than at each of them. An empty session is left with no question to
-// answer: the confirmation is a barrier in front of losing work, and there
-// is nothing to lose (§8.3).
-function cancelEditing() {
-    if (unsavedCount.value > 0) {
-        confirmingCancel.value = true
-        return
-    }
-    discardEditing()
-}
-
-// Drops both halves at once — the reshapes and the retyped cells are one
-// session. It says what it drops: a session opened to give a new row its
-// geometry loses that row (useLayerEditing.cancel).
-function discardEditing() {
-    confirmingCancel.value = false
-    changedGeometries.value = 0
-    layerEditing.cancel()
-    rowEdits.stop()
-}
-
-// One *Enregistrer* for the whole session, wherever its button stands: the
-// geometries the map committed and the cells the grid holds are written
-// together, and the mode only closes if the write landed.
-const NO_GEOMETRY_CHANGES: LayerChanges = { updates: new Map(), inserts: [] }
-
-async function saveEditing(changes: LayerChanges = NO_GEOMETRY_CHANGES) {
-    // A cell whose text does not fit its column is refused here, where the grid
-    // can point at it, rather than by the server for the whole session at once.
-    const invalid = rowEdits.invalidCount.value
-    if (invalid > 0) {
-        toast.error(
-            `${invalid} valeur(s) ne correspondent pas au type de leur colonne : corrigez-les avant d'enregistrer.`
-        )
-        return
-    }
-    if (
-        await layerEditing.save(
-            changes,
-            rowEdits.pendingUpdates.value,
-            rowEdits.pendingInserts.value
-        )
-    ) {
-        changedGeometries.value = 0
-        rowEdits.stop()
-    }
-}
+const editSession = useEditSession(rowEdits, layerEditing, isGeo)
 
 // The tools the map owns are rendered into the bar above both panels: they
 // are part of the same mode as the row tools, and they have to stay reachable
@@ -227,7 +154,7 @@ function onRowClick(row: { original: Row }) {
 // What the selection bar acts on: the selection's own hydrated rows, not the
 // grid's page — a selection made on the map holds rows the grid has never
 // loaded (§8.8). Both are immediate writes, outside what a session's
-// *Enregistrer* commits (LIM-F10).
+// *Enregistrer* commits.
 function duplicateSelection() {
     rowsState.duplicateRows(selection.selectedRows.value)
 }
@@ -264,26 +191,26 @@ async function onColumnTransformed() {
             :table-id="tableId"
             :columns="columns"
             :is-geo="isGeo"
-            :editing="editing"
+            :editing="editSession.active.value"
             :focus-panel="focusPanel"
             :active-filter-id="activeFilterId"
             @update:nodes="filter.conditions.value = $event"
             @update:focus-panel="focusPanel = $event"
             @update:active-filter-id="emit('update:activeFilterId', $event)"
-            @toggle-editing="toggleEditing"
+            @toggle-editing="editSession.toggle"
             @open-columns="emit('openColumns')"
         />
 
         <TableEditBar
-            v-if="editing"
+            v-if="editSession.active.value"
             :is-geo="isGeo"
             :tools-id="MAP_TOOLS_ID"
             :row-count="rowEdits.dirtyCount.value"
             :draft-count="rowEdits.draftCount.value"
             :saving="layerEditing.saving.value"
             @add-row="addDraftRow"
-            @save="saveEditing()"
-            @cancel="cancelEditing"
+            @save="editSession.save()"
+            @cancel="editSession.cancel"
         />
 
         <div class="relative flex min-h-0 flex-1 gap-4">
@@ -346,9 +273,9 @@ async function onColumnTransformed() {
                 @request-feature="layerEditing.reach"
                 @release-features="layerEditing.release"
                 @drawn-count="rowEdits.syncDrafts"
-                @changed-count="changedGeometries = $event"
-                @save="saveEditing"
-                @cancel="cancelEditing"
+                @changed-count="editSession.changedGeometries.value = $event"
+                @save="editSession.save"
+                @cancel="editSession.cancel"
             />
 
             <!-- Floating over both panels, never inserted between them: a bar
@@ -377,12 +304,12 @@ async function onColumnTransformed() {
     </div>
 
     <ConfirmDialog
-        v-if="confirmingCancel"
+        v-if="editSession.confirmingCancel.value"
         title="Abandonner les modifications ?"
-        :message="`${unsavedCount} modification(s) non enregistrée(s) — géométries reprises et cellules retapées — seront perdues.`"
+        :message="`${editSession.unsavedCount.value} modification(s) non enregistrée(s) — géométries reprises et cellules retapées — seront perdues.`"
         confirm-label="Abandonner"
-        @confirm="discardEditing"
-        @close="confirmingCancel = false"
+        @confirm="editSession.discard"
+        @close="editSession.confirmingCancel.value = false"
     />
 
     <GeometryModal

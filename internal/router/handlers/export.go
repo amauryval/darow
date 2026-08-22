@@ -81,7 +81,7 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 
 	contentType, err := eh.exportService.ContentType(meta, format)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (eh *ExportHandler) ExportTable(w http.ResponseWriter, req *http.Request) {
 			"error", err,
 		)
 		if !tracked.wrote {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 		// Headers and a partial body are already on the wire, so aborting the

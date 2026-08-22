@@ -29,9 +29,9 @@ export interface UsePaginatedListOptions<T> {
     describeError: (e: unknown) => string
 }
 
-// Infinite-scroll list backed by offset/limit + server-side sorting, the
-// pattern previously copied into TablesView, SourcesView and
-// TableDataPanel (TODO-F4). Sorting is server-side, so any change to it
+// Infinite-scroll list backed by offset/limit + server-side sorting, shared
+// by TablesView, SourcesView and TableDataPanel rather than written out in
+// each. Sorting is server-side, so any change to it
 // invalidates every page already loaded — reloadSorted() re-fetches page 1
 // but keeps the current items on screen until the new page lands, so a
 // sort change never flashes an empty table (règle 8.1).

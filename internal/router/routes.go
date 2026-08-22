@@ -21,6 +21,12 @@ import (
 // goauth.Auth.RegisterRoutes, so this package never imports the module.
 type MountAuth func(chi.Router)
 
+// APIRoot is the subtree every versioned route, including the auth module's own, hangs from.
+// cmd/server reads it to build the absolute callback URL goauth.WithBrowser is given: that URL
+// must resolve to goauth.CallbackPath on the router the module's routes are mounted on, which is
+// this constant's business to name, not main's to guess.
+const APIRoot = "/api/v1"
+
 // Router wires the HTTP layer to the service layer. Each family of endpoints
 // is served by its own handler struct, holding only the service ports it
 // actually needs.
@@ -45,16 +51,18 @@ type Router struct {
 // NewRouter builds a Router serving every service in svcs. Every row/list
 // limit and geometry bound is read live off svcs.Settings.Current(), so a
 // PATCH /settings takes effect on the next request; the body cap and request
-// timeout are fixed at Setup instead, from settingsCfg (TODO-17).
+// timeout are fixed at Setup instead, from settingsCfg.
 //
 // uiAssets is the admin UI's built static files, served under /ui; ready
 // backs /readyz; trustedProxies decides whose Forwarded headers the OGC
-// links may trust; g.AdminScope() guards every state-changing route, reads
-// staying public; mountAuth publishes the auth module's own read routes.
+// links may trust; g.AdminScope() guards every state-changing route reserved
+// to an administrator, g.DataScope() the rows/columns/filters routes a guest
+// may reach too, reads staying public; mountAuth publishes the auth module's
+// own read routes.
 func NewRouter(
 	svcs *core.Services, uiAssets fs.FS, ready func(ctx context.Context) error,
 	settingsCfg config.SettingsConfig, dbMaxSizeBytes int64, trustedProxies []string,
-	g guards.Guards, mountAuth MountAuth,
+	g guards.Guards, mountAuth MountAuth, buildVersion, buildCommit, buildDate string,
 ) *Router {
 	return &Router{
 		tables:         handlers.NewTablesHandler(svcs.Metadata, svcs.Schema, svcs.Derive, svcs.Row, svcs.Column, svcs.Settings, svcs.TableSettings),
@@ -64,7 +72,7 @@ func NewRouter(
 		sources:        handlers.NewSourcesHandler(svcs.Source, svcs.Settings),
 		filters:        handlers.NewFiltersHandler(svcs.Metadata, svcs.Filter),
 		export:         handlers.NewExportHandler(svcs.Metadata, svcs.Export),
-		ops:            handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes),
+		ops:            handlers.NewOpsHandler(ready, svcs.Diagnostics, dbMaxSizeBytes, buildVersion, buildCommit, buildDate),
 		settings:       handlers.NewSettingsHandler(svcs.Settings),
 		tableSettings:  handlers.NewTableSettingsHandler(svcs.Metadata, svcs.TableSettings),
 		settingsCfg:    settingsCfg,
@@ -90,6 +98,7 @@ func (rt *Router) Setup() http.Handler {
 	r.Get("/healthz", rt.ops.Healthz)
 	r.Get("/readyz", rt.ops.Readyz)
 	r.Get("/diagnostics", rt.ops.Diagnostics)
+	r.Get("/version", rt.ops.Version)
 
 	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
@@ -99,7 +108,7 @@ func (rt *Router) Setup() http.Handler {
 	r.Handle("/ui", http.RedirectHandler("/ui/", http.StatusFound))
 	r.Handle("/ui/*", mountUI(rt.uiAssets))
 
-	r.Route("/api/v1", func(v1 chi.Router) {
+	r.Route(APIRoot, func(v1 chi.Router) {
 		// An upload is registered outside the Group below, escaping both the
 		// global body cap (stacking always applies the smaller of two caps,
 		// never the more specific) and requestTimeout, since a large body
@@ -171,7 +180,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Get("/", rt.filters.ListFilters)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.filters.CreateFilter)
 							w.Patch("/{filterId}", rt.filters.UpdateFilter)
 							w.Delete("/{filterId}", rt.filters.DeleteFilter)
@@ -182,7 +191,7 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/{col}/transform/preview", rt.tables.PreviewColumnTransform)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.tables.AddColumn)
 							w.Patch("/{col}", rt.tables.RenameColumn)
 							w.Delete("/{col}", rt.tables.DropColumn)
@@ -195,9 +204,10 @@ func (rt *Router) Setup() http.Handler {
 						sub.Post("/batch", rt.rows.GetRowsByPkey)
 
 						sub.Group(func(w chi.Router) {
-							w.Use(rt.guards.AdminScope())
+							w.Use(rt.guards.DataScope())
 							w.Post("/", rt.rows.AddRows)
 							w.Patch("/", rt.rows.UpdateRows)
+							w.Delete("/", rt.rows.DeleteRows)
 						})
 
 						sub.Route("/{pkey}", func(sub chi.Router) {
@@ -205,7 +215,7 @@ func (rt *Router) Setup() http.Handler {
 							sub.Get("/geometry", rt.rows.GetRowGeometry)
 
 							sub.Group(func(w chi.Router) {
-								w.Use(rt.guards.AdminScope())
+								w.Use(rt.guards.DataScope())
 								w.Patch("/", rt.rows.UpdateRow)
 								w.Delete("/", rt.rows.DeleteRow)
 							})

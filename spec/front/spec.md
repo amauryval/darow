@@ -126,7 +126,10 @@ The router (`src/router.ts`) knows only the views. `src/App.vue` is the applicat
 `drawer` holding the side navigation (persistent on screens ≥1024px, an overlay below), collapsible
 to an icon-only width — the choice is persisted (`useStorage`) as a display preference, not screen
 state, so it stays out of the URL (§9) — a header carrying the page title and the collapse toggle,
-status banner, mounting of `RouterView` and of the toast queue.
+status banner, the running build's version (`useVersion`, always visible below the status banner —
+project spec §5 for how it is baked into the server), a copyright line under it (the current year,
+read from the browser clock, never a server value), mounting of `RouterView` and of the toast
+queue.
 
 ---
 
@@ -141,11 +144,12 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   text converter. A 204 and an empty body resolve to `undefined`.
 - `types.ts` — **all** shared DTOs (`Metadata`, `Source`, `Row`, `RowsPage`, `ColumnSchema`,
   `FilterCondition`, `ErrorResponse`…). No response type is declared in a resource module.
-  `AuthConfig`/`AuthSession` are the **only** DTOs here that are not camelCase: they mirror goauth's
-  own serialization verbatim (`issuer_url`, `client_id`, `scopes`, `logged_in`, `authorized`,
-  `roles`, `user`), and `AuthSession.user`'s fields (`Provider`/`ID`/`Roles`) are bare Go struct
-  field names with no JSON tags at all — renaming any of these keys into house camelCase is a silent
-  runtime `undefined`, which reads as "nobody is logged in" rather than a type error.
+  `AuthConfig`/`AuthUser`/`AuthSession` are the **only** DTOs here that are not camelCase: they
+  mirror goauth's own serialization verbatim (`server_flow`, `login_path`, `logout_path`,
+  `logged_in`, `authorized`, `roles`, `user`, `profile`), and `AuthUser`'s fields (`Provider`/`ID`)
+  are bare Go struct field names with no JSON tags at all — renaming any of these keys into house
+  camelCase is a silent runtime `undefined`, which reads as "nobody is logged in" rather than a
+  type error.
 - `tables.ts`, `sources.ts`, `geo.ts`, `features.ts`, `filters.ts`, `ops.ts`, `auth.ts`,
   `settings.ts`, `tablesettings.ts` — one function per endpoint **the
   application calls**, named after the action and not after the HTTP verb, explicit parameters, typed
@@ -156,12 +160,16 @@ A typed REST client, reusable outside this application: it depends neither on Vu
   like the rest. `auth.ts` — `getAuthConfig`/`getAuthSession` over `GET /auth/config` and
   `GET /auth/session`, both through `http.ts` like every other call (rule 0.1 has no exception for
   authentication) — replaces the old gateway-era `session.ts`.
-- `http.ts` also carries the bearer token every request attaches: a module-level `authToken` set and
-  cleared by `useAuth` (`setAuthToken`), merged into every request's headers (`get`/`post`/`patch`/
-  `del`/`postForm`/`getBlob`) alongside any header the call already sets — `postForm`'s FormData
-  keeps its browser-set multipart `Content-Type`. A `401` on any call fires an `onUnauthorized`
-  callback (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual
-  `ApiError` — never an import of the auth composable into the transport.
+- **The login flow is driven entirely on the server** (back §2.7): this client holds no OIDC library,
+  no PKCE dance and no token of its own to carry. Every request instead rides the session cookie
+  goauth seals, via `credentials: 'same-origin'` on every `fetch` in `http.ts`
+  (`get`/`post`/`patch`/`del`/`postForm`/`getBlob`) and `xhr.withCredentials` on
+  `postFormWithProgress`'s `XMLHttpRequest`. A `401` on any call fires an `onUnauthorized` callback
+  (`setUnauthorizedHandler`) the auth layer registers, in addition to throwing the usual `ApiError` —
+  never an import of the auth composable into the transport. `postFormWithProgress` is `postForm`'s
+  counterpart for an upload that reports its own fraction sent (§8.2): built on `XMLHttpRequest`
+  rather than `fetch`, the one portable way to observe request-body upload progress, and the only
+  caller here that is not `fetch`-based.
 
 The endpoint contracts (pagination, sorting, filter DSL, formats) are described on the server side —
 `spec.md` §6. This document does not restate them.
@@ -248,10 +256,10 @@ One module per subject, no module state, no side effect:
   `BATCH_SIZE`, in order, and stopping at the first batch holding a refusal. It answers **what went
   through** (`done`) as well as the reason, because a run that stopped halfway still wrote and the
   caller has to reconcile on that, never on all-or-nothing. Used wherever an action applies to a
-  selection and the API only offers a per-row route (`useTableRows`'s `deleteRows`, and the geometry
-  reads `duplicateRows` needs): the server serializes those writes on its own lock (back §4.6), so
-  issuing them one at a time paid a round-trip per row for nothing, while an unbounded fan-out would
-  open a socket per row.
+  selection and the API only offers a per-row route — `duplicateRows`' geometry reads
+  (`getRowGeometry`, back §6.1, one row at a time by design: the geometry column is in no row
+  listing, LIM-F3). `deleteRows` is **not** here: `DELETE /tables/{tableId}/rows` deletes a whole
+  selection in one request (back §6.1), so nothing is fanned out for it.
 - `geometry.ts` — rendering of a geometry read one row at a time: its GeoJSON text and the bounded
   excerpt a modal may put in the DOM (the clipboard still carries the whole value).
 - `holes.ts` — `punchHole`, adding a drawn ring to the polygon that contains it as an interior ring.
@@ -309,6 +317,9 @@ One module per subject, no module state, no side effect:
 - `tableNames.ts` — `suggestTableName(base, taken)`: the free name a load is proposed, `base` or
   `base (n)`. Table names are not unique server-side, so this suggests rather than enforces — a
   deliberate duplicate is still allowed, an accidental one is not the default.
+- `lists.ts` — `toggleInList(list, name)`: present, dropped; absent, appended. The gesture behind
+  every "select a column" control — `useDeriveTable`'s carried columns, `useAggregateFromTable`'s
+  group-by.
 
 ---
 
@@ -326,15 +337,21 @@ module level and documents it; that is the exception, not the rule.
 |---|---|---|
 | `useToast` | application notification queue (shared module state) | present |
 | `usePaginatedList` | paginated list: infinite scroll, server sorting, reload after mutation, observer sentinel, and the optional `key` a list scoped to a route parameter reloads on. The sentinel is observed **when it appears**, not only at mount: it sits at the foot of the list, and a list showing a first-load skeleton has no foot yet — an observer bound once at mount was bound to nothing, and every list stopped at its first page. `limit` is required — a list states the size it asks for, whether that is this client's own (`utils/pageSizes`) or one it deliberately follows the server on (§2.1). It accepts a `Ref<number>` as well as a plain number, and a page size resolved asynchronously (a table's effective row limit, `useTableSettings.rowLimit`) reloads the list from page 1 the moment it changes, the same way a sort change does. `drop(predicate)` is the deletion counterpart of `replace`: a caller that has just deleted rows server-side removes exactly those from the list without a refetch — `total` and `offset` both follow, the latter because the server's remaining rows shifted up by as many and a stale offset would make the next page skip them | present |
+| `useAsyncAction` | the async-write shape a mutation call site needs: `isLoading`, `error` and `run(action, fallbackMessage)`, resolving to the action's own value or `null` on failure — the signal a caller branches on between an inline message and a toast (§8.4). The mapping to French text stays `errorMessage`'s, never assembled by a caller. Not for a list's own load: that is `usePaginatedList`'s four states, a different shape (loading/loadedOnce/error/items) that folding in here would give a second owner of its own error | present |
 | `useServerStatus` | periodic `readyz` probe of the status banner, registering and clearing its own interval | present |
-| `useAuth` | the OIDC lifecycle and its shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): the session read from `GET /auth/session`, cached a few tens of seconds and keyed by the current token so a re-render never refetches it; the display name from the **ID token**'s own profile (`user.profile.name`, then `preferred_username`, then `email` — the access token carries no name at all); `signIn`/`signOut` (`signOut` reads the user before clearing it, passing its `id_token` as `id_token_hint` to `signoutRedirect`, or the provider shows an account picker instead of logging anyone out); the OIDC event wiring (`addUserLoaded` refreshes the session, `addAccessTokenExpired`/`addSilentRenewError` drop it and warn through `useToast`); a `BroadcastChannel` every tab listens on to drop its user on a logout elsewhere; and the `http.ts` `onUnauthorized` registration that drops the token and asks for a re-check on any `401`. Built on `auth/oidc.ts`'s non-reactive `UserManager` | present |
-| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), `canWrite` (= `authorized && role === 'admin'`), `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
-| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control: `disabled` (`!authenticated \|\| !canWrite`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
+| `useVersion` | the running build's version/commit (`GET /version`), declared at module level like `useToast`/`useSettings`: one load, shared by every caller, so the sidebar's display is never a second fetch | present |
+| `useAuth` | the session's shared state, declared at module level like `useToast`/`useSettings` (rule 0.11): `enabled` from `GET /auth/config`'s `server_flow` (fetched once, cached — false in demo mode, where there is nothing to sign in or out of); the session itself from `GET /auth/session`, cached a few tens of seconds so a re-render never refetches it; the display name from the session's own `profile` (`profile.name`, then `username`, then `email` — the server drives the login flow, so this client never holds the ID token itself to read it from); `signIn` (a navigation to `GET /auth/login?return_to=`, never a `fetch` — the endpoint redirects cross-origin, which `fetch` cannot follow); `signOut` (builds and submits a `<form method="post">` to `/auth/logout` rather than fetching it, so a provider that also ends the session there can answer with a redirect `fetch` could not follow cross-origin); and the `http.ts` `onUnauthorized` registration that drops the session and asks for a re-check on any `401`. No OIDC library, no PKCE, no token storage — that all lives on the server (back §2.7) | present |
+| `useSession` | the single verdict every screen reads, rebuilt on `useAuth`: `enabled` (false in demo mode), `authenticated`, the single display `role` label (`'admin' \| 'guest' \| 'none'`, mirrored once from the application's own role names, never the provider's — a signed-in user holding neither role sits exactly where an anonymous visitor sits), two write privileges — `canWrite` (= `authorized && (role === 'admin' \|\| role === 'guest')`, editing a table's data) and `canManage` (= `authorized && role === 'admin'`, everything structural, source loading included, back §6.7) —, `displayName`, `signIn`/`signOut`. Nothing else — no route guard anywhere in this app: every screen reads regardless of role, the verdict gates controls, not navigation | present |
+| `useWriteGuard` | a thin read of `useSession`'s verdict for one write control, parameterised by `scope: 'data' \| 'manage'` (default `'manage'`): `disabled` (`!authenticated \|\| !(scope === 'data' ? canWrite : canManage)`) and the matching French `reason`. Consumed by views and by feature components already coupled to the domain (`components/tables/`, `components/sources/`, `components/map/`, `components/settings/`), never by a `components/ui/` primitive (rule 0.5, rule 21) | present |
 | `useTableMetadata` | a table's metadata and schema, reaction to a `tableId` change, its own four states for that load (§0.18 — a failed or slow load shows `Skeleton`/`ErrorState` with a retry rather than a toast), rename/delete/derive/add-column actions plus the two structural writes on a column (rename, drop), each reloading the schema (still toasted, per §8.4 — a mutation's result, not the load's) | present |
-| `useTableRows` | a table's rows: current page, sorting, and the two writes that act on a **set** of rows — `duplicateRows(rows)` / `deleteRows(pkeys)`, both fanned out through `utils/batch.ts`. Built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, `useTableSettings.rowLimit`) — one of the two places the front follows the operator's setting rather than its own choice (§2.1). Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`'. Duplicating reads each source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map. Deleting takes one request per row (LIM-F14) and does **not** re-fetch a page afterwards: it drops from the list exactly the rows the server dropped (`usePaginatedList.drop`), so the grid updates the moment the writes land instead of emptying for a further round-trip, and a run stopped halfway still leaves it and the table's counters exact. Duplicating cannot do the same — the copies land wherever the current sort puts them — so it re-reads through `reloadSorted`, which keeps the rows on screen until the new page arrives | present |
+| `useAddColumn` | `AddColumnModal`'s own mutation: validates the name is non-blank, calls the caller's `onAdd` (its `useTableMetadata` instance) through `useAsyncAction`, toasts success. The write itself stays the caller's (§0.5, §0.12) | present |
+| `useColumnStructure` | `ColumnStructureModal`'s own mutations: rename and drop, over the caller's `onRename`/`onDrop`. `busyColumn` (which row of the list is being written, §8.2) is its own concept, not folded into `useAsyncAction`'s single loading flag | present |
+| `useExportForm` | `ExportModal`'s own draft and mutation: the format, the output CRS field's visibility and pre-fill, the EPSG validation, and `confirm()` wrapping the caller's `onExport`. `exporting` (also read by `TableHeader`) stays the caller's busy flag, owned outside the modal | present |
+| `useTableRows` | a table's rows: current page, sorting, and the two writes that act on a **set** of rows — `duplicateRows(rows)` / `deleteRows(pkeys)`. Built on `usePaginatedList`, paged on the table's effective row limit (a `Ref<number>` the caller passes, `useTableSettings.rowLimit`) — one of the two places the front follows the operator's setting rather than its own choice (§2.1). Neither retyping a cell nor creating a row is here: what a session holds until it is saved is `useRowEdits`'. Duplicating reads each source row's geometry for it (`getRowGeometry`), since the geometry column is in no row listing (LIM-F3) and a geo row copied without it would land in the grid and nowhere on the map — that read is fanned out through `utils/batch.ts`, the API offering no batch geometry route. Deleting is one request for the whole selection (`DELETE /tables/{tableId}/rows`, back §6.1) and does **not** re-fetch a page afterwards: it drops from the list exactly the pkeys asked for (`usePaginatedList.drop`), so the grid updates the moment the write lands instead of emptying for a further round-trip. Duplicating cannot do the same — the copies land wherever the current sort puts them — so it re-reads through `reloadSorted`, which keeps the rows on screen until the new page arrives | present |
 | `useRowEdits` | everything an edit session has written into the grid, held until its *Enregistrer*: the cells retyped on existing rows and the rows it is about to create. A draft row is a row like any other, under a key of its own (`__draft:n`, `isDraft`) — so its cells go in the same store, are displayed and marked the same way, and are ordered the way the geometries drawn for them come back. `syncDrafts` is how the map's count of drawn shapes becomes that many empty rows. Also: whether a given cell would be written (what the grid paints amber), the two counts (rows retyped, rows to create), and the payloads — updates carry **only** the columns actually retyped, since resending a whole row would write back, as the text a grid displayed, every column the user never touched, while an insert states every editable column, empty ones included — a column left out of a creation is not the same thing as a column created empty. A cell brought back to its stored value leaves the draft entirely. No network: a session writes its two halves in one request, and that request is `useLayerEditing`'s | present |
 | `useRowFilter` | filter tree, effective conditions, filtered results and their retry, filtered extent | present |
 | `useSavedFilters` | the filters persisted server-side against one table: list, create, update, delete, reloading from the server after each mutation | present |
+| `useFilterBarActions` | `TableFilterBar`'s save/remove pair over a `useSavedFilters` instance passed in: creates or updates depending on whether the editor opened on an existing filter, deletes. The editor's own error stays inline (the form and its conditions are still in front of the user, §8.4) while a removal, which opens no form, toasts either way | present |
 | `useFeatureSelection` | feature selection (pkeys) and batch hydration of the matching rows — single source of truth, reflected onto the map by `useMvtLayer` rather than negotiated through a component ref. Instantiated by `TableDetailView` and handed to the data panel, so that it survives what the panel reloads and is the one selection the map, the grid and `TableSelectionBar` share. It is what *Dupliquer* and *Supprimer* act on, and `selectedRows` — hydrated, not read off the grid's page — is what makes duplicating a row the map selected possible at all. `zoomToSelection` fetches the selection's own extent (`getFilteredExtent` against an OR of `__pkey =` equalities — the pkeys picked one click at a time are exactly what the filter DSL can express, no dedicated endpoint needed) and bumps `zoomToken` so the map's watcher re-fires even on a repeat of the same bbox, a plain string ref would not | present |
 | `useSelectionView` | how the grid **arranges** the selection, and nothing else — the selection itself stays `useFeatureSelection`'s. Three states, one `view` ref: `inline` (the default — a selected row stays exactly where the sort put it), `pinned` (the selection lifted above the page) and `only` (the selection alone). `toggle('pinned'|'only')` is what both controls of `TableSelectionBar` call: asking for one arrangement leaves the other, asking again returns to `inline`. It produces `displayRows` — the session's drafts always first, being empty and having no place among sorted rows — and returns to `inline` on its own when the selection empties, an `only` left behind showing an empty grid over a full table | present |
 | `useOpenLayers` | map lifecycle: creation, raster basemap, default controls, framing on a bbox, destruction. There is no style to wait for — a layer is added the moment the map exists — but a fit needs a laid-out viewport, so a bbox arriving before the first render waits rather than being dropped | present |
@@ -343,8 +360,9 @@ module level and documents it; that is the exception, not the rule.
 | `useEditLayer` | the one source an edit session works on, holding the geometries the pointer has reached, plus the second layer that draws the hovered geometry's vertices alone. One source is what makes editing topological — a vertex two geometries share is dragged in both at once. Owns what the session has touched (`changedCount`/`createdCount`, split the way the write is), whether anything on it can hold a hole at all (`hasAreal`), which single feature the pointer rests over (`trackPointer`/`blur` — at once the `solo` collection a non-topological `Modify` and the `Translate` follow, and the sole content of the second, vertex-drawing layer it owns; `trackPointer` also answers *whether* the session holds anything there at all, which is what tells the caller to go and fetch what it does not), which vertices a drag moved (`noteMoved`), the eviction of the untouched geometries the session no longer needs (`prune`), and answers it all as writes: the rows whose geometry moved, and the shapes that belong to no row yet | present |
 | `useMoveLeaders` | what each moved node has *done*: the leader drawn from where it stood before the user touched it to where it stands now. Its own layer above the edit layer and the vertices, for the same reason those are two — a leader is a whole annotation (line, origin ring, arrowhead) and drawing it out of the edited feature's style would rebuild it on every frame of every drag. Each leader carries its own pre-built style (`Feature.setStyle`), so the layer needs no style function at all. A node dragged twice extends its leader instead of getting a second one: the origin the user cares about is the one before they touched it, not the halfway point | present |
 | `useHoleTool` | drawing an interior ring and handing it to whichever polygon contains it (`utils/holes.ts`), rather than to a source: a hole is part of its polygon and is undone by editing its vertices, not by an opposite tool. A ring that belongs to no polygon is refused out loud | present |
-| `useEditFeatures` | the session's **working set**: the geometries the pointer has reached, one row per `reach`, at full resolution and under one session-wide row cap that the ordinary gesture never meets. Holds every pkey it has asked for, answered or not — a hover rests over the same row for many frames and that has to become one request — and gives a pkey back on `release` so a row the session let go of can be reached again. Nothing is loaded on entering the mode | present |
+| `useEditFeatures` | the session's **working set**: the geometries the pointer has reached and the rows those touch (`getNeighbours`, `NEIGHBOUR_BUFFER` meters, `MAX_NEIGHBOURS` per hover — what makes topology and snapping answer on the first hover instead of on the last), at full resolution and under one session-wide row cap that the ordinary gesture never meets. Holds every pkey it has asked for, answered or not — a hover rests over the same row for many frames and that has to become one request — and gives a pkey back on `release` so a row the session let go of can be reached again. Nothing is loaded on entering the mode | present |
 | `useLayerEditing` | the session itself and what leaving it writes. Its `save` takes both halves — the geometries the map committed and `useRowEdits`' payloads — and merges the updates by pkey into **one** update request, so a row whose limit moved and whose name changed is written once and never twice; what was drawn is a second, insert request, each shape carrying the attributes of the draft row it raised (in order — the nth shape is the nth draft). It answers whether the session ended, which is what closes the mode | present |
+| `useEditSession` | the table's edit session as one mode over both halves (§8.3): `active` (`useRowEdits.active \|\| useLayerEditing.active`), `unsavedCount` (dirty cells + drafts + `changedGeometries`, the reshapes `MapView`'s `changed-count` reports up), `confirmingCancel`, and the quartet that opens, cancels, discards and saves the session — `toggle` starts both halves on a geo table, `cancel` raises the confirmation only while `unsavedCount` holds work, `discard` drops both at once, `save` refuses on `useRowEdits.invalidCount` before handing the write to `useLayerEditing.save`. Built from `useRowEdits` and `useLayerEditing`, passed in rather than constructed, so `TableDataPanel` still owns their lifecycle | present |
 | `useMapSelection` | the half of a render mode that has nothing to do with how the table is fetched: which features are selected, and what a click on one means. Shared by both modes rather than copied into each. Its listeners stay bound for the whole life of the layer; what `selectable` governs is the **gesture** — outside an edit session a plain click selects, under one that click belongs to the editor and only a shift-click does (the hover cursor stops too, it would fight the one `Modify` sets). `pkeyAt` is the hit test itself, exposed apart from those listeners: an edit session reads it precisely while they are unbound, since pointing at a feature is how its geometry enters the session | present |
 | `useGeometryTypes` | the single geometry family a table is locked to (`utils/geometryFamilies.ts`), read when a session opens and after every write. Best-effort: a failed read constrains nothing, since it only mirrors a refusal the server makes anyway | present |
 | `useRowGeometry` | one row's geometry read on demand — GeoJSON, WKT, and the copy to the clipboard | present |
@@ -353,10 +371,11 @@ module level and documents it; that is the exception, not the rule.
 | `useSourceLoad` | the load flow of a single source: which source (or layer) the form is open on, the CRS read from `/sources/{name}/metadata` before anything is imported, and the confirmation — a new table, or a reload of an existing one in place. Reports whether the write landed, so the caller refreshes the provenance index it holds | present |
 | `useTableProvenance` | the catalogue's provenance index (`GET /tables/provenance`), one unpaginated read: which table came from which file, so the sources screen shows what is already loaded and proposes a free name for the next load. Never the table catalogue paged and filtered client-side — the index is a projection the server builds for exactly this | present |
 | `useTablesCatalog` | the table catalogue and the two actions a row offers: rename and delete. Both patch the loaded list in place (the renamed row replaced, the deleted one dropped and the total decremented) rather than reloading it — a mutation from this page must not lose the operator's scroll position, page or search (§8.6). Which row is in edition, whose rename is in flight and whose rename failed live here too, since the list is the owner of that state | present |
-| `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery` | present |
+| `useComputedColumnList` | the alias/expression list machinery `useDeriveTable`'s computed columns and `useAggregateFromTable`'s aggregates share: `add`/`update(index, patch)`/`remove(index)`, the trim-and-drop-empty `normalized` a submitted spec sends, and `incomplete` — an entry half filled in, blocked here too rather than only refused by the server | present |
+| `useDeriveTable` | the guided derivation from the table being viewed: the draft (carried columns, computed columns, condition tree) and its submission. `tableId`-scoped, unlike `useDeriveFromQuery`. Its computed columns build on `useComputedColumnList`, its carried-column toggle on `utils/lists.ts`' `toggleInList` | present |
 | `useDeriveFromQuery` | the free-SQL derivation: busy state, inline error, submission of a bare query against every registered table. Scoped to no table — opened from the catalogue screen, not one table's page | present |
 | `useSqlSchemaReference` | the free-SQL form's schema reference panel: the registered tables, infinite-scrolled like `TablesView`, and each one's columns loaded only once expanded and cached from then on — never every table's columns up front, the same restraint `useTableSettingsOverrides` applies to a table-wide sweep | present |
-| `useAggregateFromTable` | the guided aggregation from the table being viewed: group-by columns, aggregate expressions (alias plus a free SQL expression) and a condition tree applied before grouping, plus its submission. Its own composable rather than a third mode of `useDeriveTable` — a column there is either carried over row-wise or grouped/aggregated here, never both, and sharing one draft would let a column be "selected" without being either, which `GROUP BY` refuses as a query error rather than a default | present |
+| `useAggregateFromTable` | the guided aggregation from the table being viewed: group-by columns, aggregate expressions (alias plus a free SQL expression) and a condition tree applied before grouping, plus its submission. Its own composable rather than a third mode of `useDeriveTable` — a column there is either carried over row-wise or grouped/aggregated here, never both, and sharing one draft would let a column be "selected" without being either, which `GROUP BY` refuses as a query error rather than a default. Its aggregates build on `useComputedColumnList` too, its group-by toggle on the same `toggleInList` | present |
 | `useColumnTransform` | rewriting one column's values in place, over the rows a filter names: a single free SQL expression, the row-scope condition tree, the server preview (invalidated by any further edit) and the write itself | present |
 | `useColumnValues` | the values a column actually holds, narrowed by what is being typed: debounced, capped at the first 20 server-side matches, out-of-order responses discarded. One instance per input, never shared between two filter rows | present |
 | `useColumnDistinctValues` | the full distinct-value listing behind the columns modal's "Voir les valeurs" toggle — one instance for the whole modal, one column expanded at a time, every column's list kept once fetched. Distinct from `useColumnValues`: no debounce, no search narrowing, a per-column cache instead of a per-keystroke one | present |
@@ -387,6 +406,8 @@ carry component classes. A view never rewrites the styling of a button or a fiel
 | `Breadcrumbs` | daisyUI `breadcrumbs`; every view passes its own trail (`{ label, to? }[]`) — the last, link-less entry is rendered as the page's only `<h1>` (a view never repeats the object's name in a second heading) |
 | `Typography` | text rendering — `variant` (`h1`…`h4`, `body`, `body-sm`, `eyebrow`, `caption`, `code`, `paragraph`) picks both the tag and its styling; any standalone heading or paragraph goes through it instead of a raw `<h1>`–`<h4>`/`<p>`/`<span>` with hand-picked classes |
 | `Modal` | teleported box, closing by backdrop and `Escape`, normal/wide widths, and `overflowVisible` for a box short enough not to scroll — daisyUI's `modal-box` scrolls its own content, which otherwise turns a field's dropdown into scrollable content, clipped at the box's edge |
+| `FormError` | a form-level error message (§8.4): `message`, rendered inline under the block it concerns rather than as a toast, since the user still has to act and what they typed is still in front of them |
+| `ModalFormActions` | the footer every submitting modal ends on: a secondary *Annuler* and the primary action, taking the already-computed `confirmLabel`, `busy`, `disabled` and the `reason` a disabled state carries. The label is the caller's own string, never derived here — a modal whose label depends on something other than `busy` (`SourceLoadModal`'s *Charger*/*Remplacer*) is exactly as well served as one whose label swaps to a participle while busy |
 | `ConfirmButton` | destructive action confirmed through `Modal` (never a native `confirm()`, never inline) — used identically for a rare, cascading deletion (a table) and a frequent one (a row). `size`, `icon`, `iconOnly` and `variant` are forwarded to the trigger so it matches the bar it sits in: a delete button a size apart from its neighbours, or the only one without an icon, reads as belonging to another screen. `disabled`/`title`, the same plain contract as `BaseButton`'s, are what a caller passes `useWriteGuard`'s verdict through (rule 21) — this component stays domain-free and never reads the guard itself |
 | `Badge` | status pill, **semantic** tones (neutral, primary, success, warning, error) — never colour names. `warning` is the amber a pending write is shown in everywhere, including the edit bar's count of touched geometries |
 | `Toast` | rendering of the `useToast` queue, mounted once in `App.vue` |
@@ -409,10 +430,11 @@ states: `enabled` false (demo mode) renders nothing at all — there is no accou
 affordance would suggest one exists; signed out renders a *Se connecter* `BaseButton` that calls
 `signIn()`; signed in keeps the `MenuDropdown` shell (`MenuTitle` with the display name, `MenuItem`
 *Se déconnecter*) and adds a `Badge` stating the role — `tone="primary"` *Administrateur* for
-`admin`, `tone="warning"` *Invité — lecture seule* for `guest`, `tone="warning"` *Aucun rôle —
-lecture seule* for `none`. The badge is the one thing the menu could not say before: a signed-in
-`guest` gets nothing an anonymous visitor does not already have, and without it the screen would
-read as broken to them rather than merely read-only.
+`admin`, `tone="warning"` *Invité — pas de chargement de données* for `guest`, `tone="warning"`
+*Aucun rôle — lecture seule* for `none`. The badge is the one thing the menu could not say before: a
+signed-in `guest` may edit a table's rows, columns and filters but never load a source or reach
+anything structural (back §6.7), and without it the screen would read as either broken or fully open
+to them.
 
 **`components/charts/` — presentational chart primitives.** A third, domain-free family alongside
 `ui/`: `BarChart` (single-hue horizontal magnitude comparison) and `DonutChart` (categorical share,
@@ -480,7 +502,7 @@ per page (the server's own live cap) until the reported `total` is reached.
   emptied and filled, resizing the grid and the map under the pointer at the exact moment the user
   was clicking rows. It is **not** an edit-session bar and does not wait for the *Éditer* toggle:
   duplicating and deleting are single confirmed writes with their own feedback, not drafts an
-  *Enregistrer* commits (LIM-F10). Both write buttons are disabled by `useWriteGuard` with the
+  *Enregistrer* commits. Both write buttons are disabled by `useWriteGuard` with the
   reason in their tooltip (§8.4), and deletion is confirmed with the count in its wording (§8.3).
 - Filtering is a **modal** affair, not a side panel: the editor needs the width, and a filter is a
   discrete thing one creates or edits and then applies. `components/filters/` holds the whole
@@ -559,8 +581,9 @@ per page (the server's own live cap) until the reported `total` is reached.
   untouched exports the table as it came in. The downloaded file takes the name the server sends in
   `Content-Disposition` rather than one rebuilt here: for an export that name carries the CRS, which
   no format states reliably (back LIM-16). `GeometryModal` (`components/tables/`) also carries the EPSG code the row is
-  *displayed* in — same field, same default (the table's own CRS) and same fallback as
-  `ExportModal`'s, `useRowGeometry.reproject` re-reading the same row through the API's `srid`. It
+  *displayed* in — same field, opening on the table's own CRS as `ExportModal`'s does, though the
+  read behind it falls back to lon/lat rather than to the table's CRS (back §5.5),
+  `useRowGeometry.reproject` re-reading the same row through the API's `srid`. It
   is display only: nothing stored moves, and the caption states the CRS the **server** reports, not
   the code typed in the field, which may not be applied yet. `GeometryModal` shows one row's geometry in both
   encodings with a copy button each, rendering a bounded excerpt while the clipboard carries the
@@ -581,7 +604,12 @@ per page (the server's own live cap) until the reported `total` is reached.
   free-SQL mode, opened from `TablesView`'s own header, next to the catalogue it acts on. Each shell
   holds the new table's name, the submit and its own composable — `useDeriveTable` (guided,
   `tableId`-scoped) and `useDeriveFromQuery` (free SQL, scoped to no table) — rather than one
-  instance shared by a tab pair, since the two modes no longer share a screen. `DeriveFromTableForm`
+  instance shared by a tab pair, since the two modes no longer share a screen.
+  All three share the block below their own form — the new table's name field, the frozen-snapshot
+  caption, the inline error and the footer — through `NewTableFooter` (`components/tables/`): the
+  caller passes the caption's own wording and its `canSubmit`'s extra guard (`incompleteComputed`
+  for the guided mode, `incompleteAggregate`/`isEmpty` for the aggregation, the write guard's own
+  verdict for the free-SQL one), the shell owns nothing about any mode's draft. `DeriveFromTableForm`
   is the guided mode's form — the column picker, the computed-column rows, and the condition tree,
   which reuses `FilterNodeEditor` rather than a second editor, plus a "reprendre un filtre
   enregistré" select that **copies** a stored filter's conditions into the draft (referencing it
@@ -723,11 +751,11 @@ height jump.
   click; `Escape` asks for confirmation. A schema reload does not reset the visible columns the user
   chose, nor the filter in progress.
 - **Leaving the edit session is confirmed while it holds work.** Every way out — the *Éditer*
-  toggle, the bar's *Annuler*, the map's — goes through `TableDataPanel.cancelEditing`, so the
+  toggle, the bar's *Annuler*, the map's — goes through `useEditSession.cancel`, so the
   barrier stands once rather than at each of them. What it counts is both halves at once: the
   retyped cells and the drafts the grid holds (`useRowEdits.dirtyCount`/`draftCount`) and the
   reshapes, which only exist on the layer and are reported up by `MapView`'s `changed-count`
-  (`useEditLayer`'s own `changedCount`). Zero is left unasked — the confirmation is a barrier in
+  into `useEditSession.changedGeometries`. Zero is left unasked — the confirmation is a barrier in
   front of losing work, and there is none.
 - No undo: the server does not offer it. That is precisely why confirmation is the barrier.
 
@@ -746,9 +774,10 @@ what to do ("Nom de table déjà utilisé." rather than "erreur 409").
 
 A write control disabled by `useWriteGuard` (rule 21) states its reason in its `title`, worded once:
 *Connexion requise pour modifier les données* when nobody is signed in, *Votre compte n'a pas les
-droits d'édition* for a signed-in user who is not an administrator (`guest` included). Disabling is
-additive, not a substitute for the `401`/`403` handling the request itself already has: a token can
-expire mid-screen, and the server stays the only authority.
+droits d'édition* for a signed-in user the control's scope refuses — `'manage'` refuses `guest` as
+well as an unroled user, `'data'` only the latter. Disabling is additive, not a substitute for the
+`401`/`403` handling the request itself already has: a token can expire mid-screen, and the server
+stays the only authority.
 
 ### 8.5 Forms
 
@@ -794,7 +823,7 @@ This is the product's main screen; it follows fixed rules.
   in `TableSelectionBar` above the grid, where the count they apply to is stated, so one row and
   twenty are the same gesture and the grid is not striped with a red pill per line. A single row is
   a selection of one. Neither waits for the edit mode — they are immediate confirmed writes, not
-  drafts (LIM-F10). Duplicating carries the geometry and is not confirmed beforehand: it adds, and
+  drafts. Duplicating carries the geometry and is not confirmed beforehand: it adds, and
   what it added is deleted by the button beside it (§8.3).
 - Sorting, search and filtering apply to **all** the data server-side, never only to the pages
   already loaded: a silent partial result is a lie. The one exception is the map editor's working
@@ -883,12 +912,15 @@ This is the product's main screen; it follows fixed rules.
 - **The session grows by pointing, and entering it costs nothing.** Nothing is loaded on entering
   the mode, and nothing on panning. What the pointer rests over and the session does not already
   hold is a row of the rendering underneath: it is identified on that rendering (`pkeyAt`, the same
-  hit test selection uses, read while selection's own listeners are unbound) and its geometry alone
-  is then fetched at full resolution and becomes editable. Loading the whole view instead meant tens
+  hit test selection uses, read while selection's own listeners are unbound); its geometry is then
+  fetched at full resolution and becomes editable, **and the rows it touches come with it**
+  (`POST /neighbours`, a few meters of buffer, capped per hover): editing is topological, so a limit
+  only moves on both sides — and a vertex only snaps onto its neighbour — when both are in the
+  session, and asking the user to hover every side in turn is asking them to arm the tool by hand. Loading the whole view instead meant tens
   of megabytes of GeoJSON, thousands of engine features and a `Snap` index over every one of their
   vertices, all built before the user had said what they meant to touch — which froze the tab on
-  entering the mode and froze it again on leaving. The cost is now one geometry per geometry
-  pointed at, and the session accumulates exactly what was worked on. The hit test is throttled to
+  entering the mode and froze it again on leaving. The cost is now one geometry and the handful
+  around it per geometry pointed at, and the session accumulates exactly what was worked on. The hit test is throttled to
   at most one per frame and skipped mid-drag, and a hover that rests on the same row for a hundred
   frames is **one** request: the de-duplication belongs to whoever answers (`useEditFeatures`), not
   to the pointer.
@@ -1021,10 +1053,12 @@ This is the product's main screen; it follows fixed rules.
   not on one request: panning along a boundary is the gesture the mode exists for, so a cap counted
   per view would let a dozen pans pile up a dozen capfuls. One cap, in rows (`MAX_EDITABLE`), and
   the ordinary gesture never meets it — a session that grows one geometry at a time has to be
-  worked at for an afternoon to fill it. It is not a ratchet, and it is given back on two grounds
+  worked at for an afternoon to fill it. A reach brings in a geometry's neighbours as well as the
+  geometry, which is what fills the source topology and snapping read — and what the two caps then
+  bound like everything else. It is not a ratchet, and it is given back on two grounds
   (`useEditLayer.prune` → `useEditFeatures.release`): an untouched geometry the view has left, and —
   once those are gone — the untouched ones reached longest ago, past a second, smaller cap
-  (`MAX_RESTING`). The second is what bounds a session worked *in place*: reaching a geometry is a
+  (`MAX_RESTING`, held several hovers deep since one hover brings in a batch). The second is what bounds a session worked *in place*: reaching a geometry is a
   hover, hovering is cheap, and a session that never pans would otherwise pile up geometries nothing
   releases. That cap is not zero, and cannot be: a neighbour has to be in the source for a shared
   limit to move on both sides and for a new vertex to snap onto it, so dropping everything the user
@@ -1113,23 +1147,19 @@ This is the product's main screen; it follows fixed rules.
 - **Pagination.** Since sorting and filtering are server-side, any change to either invalidates the
   pages already loaded: we start again from page 1, keeping the displayed rows until the new page
   arrives (no empty flicker).
-- **Boot order.** `main.ts` builds the OIDC manager (`auth/oidc.ts`'s `initOidc`) and runs the boot
-  recovery (`restoreBrowserSession`) **before** `createApp(...).mount(...)`: the first frame already
-  knows whether anyone is signed in, so no control flickers from enabled to disabled. A failed
-  `GET /auth/config` leaves the app usable with no login control rather than blocking the mount.
-  `router.ts` carries one extra route, `/auth/callback` → `views/AuthCallbackView.vue`, whose job is
-  the code exchange and nothing else — there is deliberately **no route guard** anywhere in this
-  app: every screen reads regardless of role, so guarding a route would lock a user out of a page
-  the API serves them anyway (the verdict gates controls, `useWriteGuard`, not navigation).
-- **The bearer token has one owner.** `http.ts`'s module-level `authToken`, set and cleared
-  exclusively by `useAuth` — on session load, on logout, on expiry (rule 0.12). No other module
-  reads or writes it.
-- **Per-tab storage.** `auth/oidc.ts`'s `UserManager` keeps both its user store (the tokens) and its
-  state store (the PKCE verifier across the redirect) on `sessionStorage` — a token never touches
-  `localStorage`. Two non-secret `localStorage` flags carry the cross-tab, cross-reload signal
-  instead: `darow.auth.signed-in` ("someone is signed in on this browser", read by the boot
-  recovery) and, in `sessionStorage`, `darow.auth.silent-attempted` (this tab already tried a silent
-  sign-in, so a user granted no role does not redirect forever).
+- **Boot order.** `main.ts` mounts the app directly — no OIDC manager to build, no boot recovery to
+  run before the first frame: the session cookie goauth seals **is** the persisted session, unlike a
+  per-tab token that had to be silently renewed on every fresh load. `useSession`'s `refreshSession`
+  fetches `GET /auth/session` the moment a screen first reads it, and the login control simply
+  starts disabled until that answers. The provider's own redirect lands on
+  `${origin}/api/v1/auth/callback` — served entirely by `goauth.CallbackHandler` on the Go side (back
+  §2.7) — so `router.ts` carries no callback route at all, and there is deliberately **no route
+  guard** anywhere in this app: every screen reads regardless of role, so guarding a route would
+  lock a user out of a page the API serves them anyway (the verdict gates controls, `useWriteGuard`,
+  not navigation).
+- **No token, so nothing to own.** Every request instead rides the session cookie on
+  `credentials: 'same-origin'` (client §2) — there is no `authToken` to set, clear or leak, and
+  nothing in this client ever reads or writes a token.
 
 ---
 
@@ -1159,7 +1189,6 @@ web/
   public/           static files served as-is under /ui/ — favicon.svg, the mark's standalone twin
   src/
     client/           HTTP transport + one module per endpoint family + types.ts
-    auth/             oidc.ts — the UserManager and its storage/broadcast plumbing, non-reactive
     utils/            pure functions (tile grid, filter tree, types, sorting)
     composables/      one composable per subject (§4)
     components/
@@ -1174,10 +1203,9 @@ web/
       SourcesView.vue / SourcesView/    sub-views and panels
       TableDetailView.vue / TableDetailView/
       SettingsView.vue
-      AuthCallbackView.vue             the OIDC redirect's landing page
-    router.ts         one route per view, plus /auth/callback
+    router.ts         one route per view — the provider's redirect lands on the API, never here
     App.vue           shell: navigation, server status, toasts
-    main.ts           builds the OIDC manager and runs boot recovery before mount (§9)
+    main.ts           mounts the app; no boot-time auth work (§9)
     style.css         Tailwind + daisyUI
 ```
 

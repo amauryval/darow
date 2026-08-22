@@ -87,7 +87,7 @@ func (g *tableGeo) Tile(ctx context.Context, zoom, x, y int, attrs []string, q s
 	// grid anyway.
 	//
 	// The layer is named after the table id, so two tables in the same
-	// client-side map cannot collide (TODO-23). It is escaped like the attr
+	// client-side map cannot collide. It is escaped like the attr
 	// keys above, being inlined as a SQL string literal.
 	layerName := strings.ReplaceAll(g.ref.Meta.TableId, "'", "''")
 	query := fmt.Sprintf(`

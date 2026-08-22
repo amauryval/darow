@@ -27,18 +27,6 @@ func NewSourcesHandler(sourceSvc sourceAPI, settings settingsAPI) *SourcesHandle
 	return &SourcesHandler{sourceService: sourceSvc, settings: settings}
 }
 
-// paginationParams reads offset/limit query params, resolved through the list
-// limits, the same shape as TablesHandler's own.
-func (sh *SourcesHandler) paginationParams(req *http.Request) (offset, limit int) {
-	offset = 0
-	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v >= 0 {
-		offset = v
-	}
-	requested, _ := strconv.Atoi(req.URL.Query().Get("limit"))
-	limit = settings.Limit(sh.settings.Current().DefaultListLimit).Resolve(requested)
-	return offset, limit
-}
-
 // MaxUploadBytes reports the upload size cap so routes.go can size the
 // /sources/upload route's body-size middleware.
 func (sh *SourcesHandler) MaxUploadBytes() int64 {
@@ -88,11 +76,12 @@ func parseSrid(req *http.Request) (int, error) {
 // @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/sources [get]
 func (sh *SourcesHandler) ListSources(w http.ResponseWriter, req *http.Request) {
-	offset, limit := sh.paginationParams(req)
+	offset64, limit64, _ := paginationParams(req, settings.Limit(sh.settings.Current().DefaultListLimit), false)
+	offset, limit := int(offset64), int(limit64)
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	sources, total, err := sh.sourceService.List(sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
@@ -115,11 +104,12 @@ func (sh *SourcesHandler) RefreshSources(w http.ResponseWriter, req *http.Reques
 		response.WriteError(w, req, err, http.StatusInternalServerError)
 		return
 	}
-	offset, limit := sh.paginationParams(req)
+	offset64, limit64, _ := paginationParams(req, settings.Limit(sh.settings.Current().DefaultListLimit), false)
+	offset, limit := int(offset64), int(limit64)
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	sources, total, err := sh.sourceService.List(sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"sources": sources, "total": total, "limit": limit, "offset": offset})
@@ -206,7 +196,7 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 
 	if replaceId != "" {
 		if err := sh.sourceService.Reload(req.Context(), replaceId, name, layer, srid); err != nil {
-			response.WriteError(w, req, err, response.MapServiceError(err))
+			response.WriteServiceError(w, req, err)
 			return
 		}
 		response.WriteJSON(w, http.StatusOK, map[string]string{"tableId": replaceId})
@@ -215,7 +205,7 @@ func (sh *SourcesHandler) LoadSource(w http.ResponseWriter, req *http.Request) {
 
 	tableId, err := sh.sourceService.Load(req.Context(), name, layer, tableName, srid)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -242,7 +232,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 
 	hasGeometry, err := sh.sourceService.SourceHasGeometry(req.Context(), name, layer)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	if !hasGeometry {
@@ -252,7 +242,7 @@ func (sh *SourcesHandler) GetSourceMetadata(w http.ResponseWriter, req *http.Req
 
 	authName, authCode, err := sh.sourceService.DetectCRS(req.Context(), name, layer)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -278,7 +268,7 @@ func (sh *SourcesHandler) DeleteSource(w http.ResponseWriter, req *http.Request)
 	name := chi.URLParam(req, "name")
 
 	if err := sh.sourceService.Delete(name); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: name})

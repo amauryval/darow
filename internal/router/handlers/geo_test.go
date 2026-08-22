@@ -533,7 +533,7 @@ func Test_geoHandler_findNeighbours(t *testing.T) {
 			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom"}
 			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
 			if _, hasGeometry := c.body["geometry"]; hasGeometry {
-				geoSvc.On("NeighbourFeatures", mock.Anything, meta, mock.Anything, []string(nil), 100).
+				geoSvc.On("NeighbourFeatures", mock.Anything, meta, mock.Anything, []string(nil), 100, mock.Anything).
 					Return([]storage.GeoFeature{{Pkey: "pk-2", GeoJSON: `{"type":"Point","coordinates":[1,2]}`}}, c.geoErr).Once()
 			}
 

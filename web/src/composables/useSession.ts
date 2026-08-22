@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { useAuth } from './useAuth'
 
-// The single verdict every screen reads (TODO-F39/F40). Rebuilt on useAuth
+// The single verdict every screen reads. Rebuilt on useAuth
 // rather than reading the raw session itself, so the mapping from the
 // module's roles to one display label lives in exactly one place.
 export function useSession() {
@@ -22,7 +22,7 @@ export function useSession() {
     const authenticated = computed(() => loggedIn.value)
 
     // One label, never a list: a signed-in user holding neither application
-    // role sits exactly where an anonymous visitor sits (back TODO-27), so
+    // role sits exactly where an anonymous visitor sits (back §6.7), so
     // 'none' reads the same as "not signed in" everywhere the label is
     // shown — only the account menu tells the two apart.
     const role = computed<'admin' | 'guest' | 'none'>(() => {
@@ -31,13 +31,20 @@ export function useSession() {
         return 'none'
     })
 
-    const canWrite = computed(() => authorized.value && role.value === 'admin')
+    // Two write privileges, not one: a guest may edit a table's data — rows,
+    // columns, filters (back §6.7's data scope) — but never load a source or
+    // touch anything structural, which stays canManage's alone.
+    const canWrite = computed(
+        () => authorized.value && (role.value === 'admin' || role.value === 'guest')
+    )
+    const canManage = computed(() => authorized.value && role.value === 'admin')
 
     return {
         enabled,
         authenticated,
         role,
         canWrite,
+        canManage,
         displayName,
         signIn,
         signOut

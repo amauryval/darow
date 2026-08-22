@@ -21,8 +21,8 @@ import { useWriteGuard } from '../../composables/useWriteGuard'
 // is what knows the area it must not push around.
 //
 // It is not an edit-session bar: duplicating and deleting are single confirmed
-// writes with their own feedback, not drafts a *Enregistrer* commits (LIM-F10),
-// so they do not wait for the mode that makes cells writable.
+// writes with their own feedback, not drafts a *Enregistrer* commits, so they
+// do not wait for the mode that makes cells writable.
 const props = defineProps<{
     count: number
     // Framing the map on the selection only means something where there is a
@@ -43,7 +43,7 @@ defineEmits<{
     delete: []
 }>()
 
-const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard()
+const { disabled: writeDisabled, reason: writeGuardReason } = useWriteGuard('data')
 
 const plural = computed(() => (props.count > 1 ? 's' : ''))
 const busy = computed(() => props.duplicating || props.deleting)

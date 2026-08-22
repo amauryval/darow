@@ -1,20 +1,20 @@
 ---
 name: auth-integration
 description:
-    'Integrates the standalone goauth Go module into a new application, back (module wiring,
-    settings, middleware) and front (OIDC login, session, bearer token).'
+    'Integrates the standalone auth Go module into a new application, back (module wiring, settings,
+    middleware) and front (OIDC login, session, bearer token).'
 ---
 
 ## When to Use This Skill
 
--   Adding authentication to an application, using the `https://github.com/amauryval/goauth` module
--   Wiring `goauth.New`, `RegisterRoutes` and the role middlewares into a Go HTTP server
+-   Adding authentication to an application, using the `auth` module
+-   Wiring `auth.New`, `RegisterRoutes` and the role middlewares into a Go HTTP server
 -   Wiring the browser side: login redirect, callback, session, bearer token
 -   Debugging an integration: `401` everywhere, empty roles, demo mode refusing to start
 
 # auth Integration Skill
 
-`goauth` is a standalone Go module depending only on `go-oidc`. It verifies the bearer tokens a
+`auth` is a standalone Go module depending only on `go-oidc`. It verifies the bearer tokens a
 browser presents and decides what their bearer may do. It never talks to a login provider, never
 stores a session, never sets a cookie: the browser owns the login, the module owns the verdict.
 
@@ -31,24 +31,53 @@ The module **names** the environment variables but never reads them: resolving t
 business. Use the constants, not the literals.
 
 ```go
-authDemo := flag.Bool("auth-demo", envOrDefaultBool(goauth.DemoEnv, false), "...")
-authProvider := flag.String("auth-provider", envOrDefault(goauth.ProviderEnv, ""), "...")
-authIssuer := flag.String("auth-issuer", envOrDefault(goauth.IssuerEnv, ""), "...")
-authAudience := flag.String("auth-audience", envOrDefault(goauth.AudienceEnv, ""), "...")
-authAdminRole := flag.String("auth-admin-role", envOrDefault(goauth.AdminRoleEnv, ""), "...")
-authGuestRole := flag.String("auth-guest-role", envOrDefault(goauth.GuestRoleEnv, ""), "...")
+authProvider := flag.String("auth-provider", os.Getenv(auth.ProviderEnv), "...")
+authIssuer := flag.String("auth-issuer", os.Getenv(auth.IssuerEnv), "...")
 flag.Parse()
 
-authApp, err := goauth.New(
-    ctx,
-    goauth.NewSettings(*authDemo, *authProvider, *authIssuer, *authAudience, *authAdminRole, *authGuestRole),
-    slog.Default(),
+settings := auth.NewSettings(
+    auth.WithDemo(*authDemo),
+    auth.WithProvider(*authProvider),
+    auth.WithIssuer(*authIssuer),
+    auth.WithAudience(*authAudience),
+    auth.WithAdminRole(*authAdminRole),
+    auth.WithGuestRole(*authGuestRole),
+    auth.WithClientSecret(os.Getenv("AUTH_CLIENT_SECRET")),
+    auth.WithBrowser(redirectURL, cookieSecret),
 )
+
+authApp, err := auth.New(ctx, settings, slog.Default())
 ```
 
-Undeclared role names fall back to `admin` and `guest`. `AUTH_PROVIDER` has no such default: it is
-`zitadel` or `pocketid`, it decides the claim the roles are read from, and an unset or unknown value
-is a startup failure — guessing it would deny everyone at once, which reads as a permission bug.
+`WithBrowser` is what has the module run the login flow itself. Left out, the frontend obtains its
+own tokens and presents them as bearer tokens. Its two arguments are required and cannot be guessed:
+the absolute callback URL registered at the provider — a server has no way to know its own public
+URL — and at least 32 bytes sealing the session cookie, which encrypts the tokens it holds. Read
+both from the environment rather than from a flag, which would put the secret in the process list,
+and refuse half a configuration at startup rather than falling back to a flow the deployment did not
+ask for.
+
+**A client secret goes with it.** The issuer is asked about every token it verifies, and RFC 7662
+introspection is a request the issuer authenticates. A provider that refuses an unauthenticated one
+— Pocket ID answers `401` — leaves the application signing users in and then reporting every session
+unavailable, a failure that reads as a broken deployment rather than a missing setting. Make the
+client confidential at the provider, and refuse to start without its secret once the server driven
+flow is asked for.
+
+In this repo that resolution lives in `server/authsettings`, shared by both binaries. It reads only
+the **origin** of the redirect URL — the callback path belongs to the router the routes are mounted
+on, not to a deployment — and derives from that origin whether cookies carry `Secure` and where a
+finished logout lands.
+
+Undeclared role names fall back to `admin` and `guest`, which is a default worth declaring past: the
+fallback only matches a provider whose own group or role is spelled that way, and any other spelling
+authorizes nobody — every visitor signs in and lands on the dead end of §3, which reads as a broken
+login rather than as an unset name. Name what the provider actually asserts, in `AUTH_ADMIN_ROLE`
+and `AUTH_GUEST_ROLE`.
+
+`AUTH_PROVIDER` has no such default: it is `zitadel` or `pocketid`, it decides the claim the roles
+are read from, and an unset or unknown value is a startup failure — guessing it would deny everyone
+at once, which reads as a permission bug.
 
 `New` contacts the issuer once for its keys, and fails when it is unreachable — a startup error here
 is a provider problem, and is fatal.
@@ -82,104 +111,76 @@ invalid token, `403` unauthorized or missing role, `503` policy unavailable.
 
 ## 3. The browser
 
-The frontend logs in itself, with whatever OIDC client library it uses — `oidc-client-ts` below —
-and learns which provider to use from the API: one build, every environment.
+With `WithBrowser`, the frontend never handles a token, ships no OIDC library and stores nothing.
+The whole integration is three calls.
 
-Read `GET {apiRoot}/auth/config` **before mounting the app**. It answers
-`{ issuer_url, client_id }`, both empty in demo mode: the signal to hide the login button rather
-than break.
-
-```ts
-const config = await(await fetch(`${apiRoot}/auth/config`)).json()
-if (!config.issuer_url || !config.client_id || !config.scopes) return
-
-manager = new UserManager({
-    authority: config.issuer_url,
-    client_id: config.client_id,
-    redirect_uri: `${window.location.origin}/auth/callback`,
-    post_logout_redirect_uri: window.location.origin,
-    response_type: 'code',
-    scope: config.scopes,
-    loadUserInfo: true,
-    automaticSilentRenew: true,
-    userStore: new WebStorageStateStore({ store: window.sessionStorage }),
-    stateStore: new WebStorageStateStore({ store: window.sessionStorage })
-})
-```
-
-The scopes come from the server rather than from a literal here, since a provider may demand its own
-— Pocket ID only emits its `groups` claim when the scope of the same name is requested. Changing
-provider then touches no frontend code.
-
-Both stores default to `localStorage`: the first holds the tokens, the second the PKCE verifier
-during the redirect. Moving only one of them is half a fix.
-
-Per-tab storage costs you the two things users expect: a second tab starts logged out, and a logout
-does not reach the tabs already open. Both are recoverable without putting a credential back on
-disk.
-
-**Share the login, not the storage.** A new tab has no token, but the provider's session cookie is
-still valid, so ask for it: a top-level `signinRedirect({ prompt: 'none', state: returnTo })` comes
-back with fresh tokens and no interaction. Prefer it to an iframe silent renew, which depends on
-third-party cookies browsers increasingly refuse. Run it at boot, and in the route guard when the
-session is absent rather than merely unauthorized.
-
-Boot recovery must not redirect anonymous visitors on a public page, so gate it on a **non-secret
-flag in `localStorage`** — set on a successful callback, cleared on logout and on a failed renewal.
-It says "someone is signed in on this browser" and nothing more; the tokens stay per-tab.
-
-Three things to get right, each of which is a loop or a dead end otherwise: `prompt=none` answers
-`login_required` when nobody is signed in, and the callback must read that as an ordinary "not
-signed in" — clear the flag, return to the page asked for — not as an error; the attempt needs a
-second gate in `sessionStorage`, or a user who signs in but is granted no role redirects forever;
-and the callback route itself must never trigger recovery.
-
-**Sign out with an `id_token_hint`.** Read the user before clearing it, and pass its `id_token` to
-`signoutRedirect`. Without that hint the provider cannot tell which session to end and shows an
-account picker instead of logging anyone out — a logout button that logs nobody out. Clearing the
-stored user first is exactly what throws the hint away.
-
-**Broadcast the logout.** Post on a `BroadcastChannel` before signing out, and have every tab drop
-its user and session on the message. Say plainly what this does not do: a token already issued stays
-valid at the API until it expires, since there is nothing stateful there to revoke. Cross-tab logout
-tidies the UI; only a short token lifetime bounds the access. Treat `addSilentRenewError` the same
-way — a renewal that fails is usually a session ended somewhere else.
-
-`offline_access` buys a session outliving the access token, at the price of a refresh token sitting
-in browser storage where an XSS reaches it. `sessionStorage` narrows the window to the tab; dropping
-the scope narrows it to the token lifetime. Decide it, do not inherit it.
-
-Declare the callback route at that exact path, registered as such at the provider. Its view awaits
-`manager.signinRedirectCallback()` then redirects — with a timeout and a visible error, or a stalled
-code exchange is a blank page.
-
-Read `GET {apiRoot}/auth/session` with `Authorization: Bearer <token>`. It answers
-`{ logged_in, authorized, roles?, user? }` for any token, valid or not.
+**Signing in is a navigation, never a `fetch`.** The endpoint redirects to the provider, which
+serves its own page cross-origin, so `fetch` cannot follow it.
 
 ```ts
-const user = await manager.getUser()
-const token = user && !user.expired ? user.access_token : null
-const headers = token ? { Authorization: `Bearer ${token}` } : {}
-const session = await(await fetch(`${apiRoot}/auth/session`, { headers })).json()
+window.location.assign(`${apiRoot}/auth/login?return_to=${encodeURIComponent(path)}`)
 ```
 
-Those roles are the **application's** names (`admin`, `guest`), never the provider's — the mapping
-happened server side.
+`return_to` must be a path on this application: an absolute URL is dropped and the visitor lands on
+the default, the endpoint refusing to be an open redirect.
 
-Send the same header on every API call. Where the token is stored is the application's business;
-only two moments matter: set it when the session loads, clear it on logout and on expiry. Cache the
-session for a few tens of seconds, keyed by the token, so a guard does not refetch it per
-navigation.
+**Calling the API needs nothing.** The session cookie rides along on its own — including from a Go
+WASM client, whose fetch transport defaults to `credentials: same-origin`. No header to set, no
+token to refresh: the server renews the access token when it ages out and reseals the cookie.
 
-Follow the lifecycle — `events.addUserLoaded` refreshes the session, `events.addAccessTokenExpired`
-and `events.addSilentRenewError` drop it and warn the user. Guard routes on `authorized`, not on
-`logged_in`: a valid token may be granted nothing.
+**Signing out is a `POST`**, so that no cross-site page can sign a visitor out by linking to it. Use
+a form rather than a `fetch`: a deployment that also ends the session at the provider answers with a
+redirect, which `fetch` cannot follow cross-origin — it leaves as a CORS request and fails, dropping
+the local cookie while the provider's own session lives on.
+
+```html
+<form method="post" :action="`${apiRoot}/auth/logout`">
+    <button type="submit">Sign out</button>
+</form>
+```
+
+**Hang nothing on `submit`.** Clearing the local session there is at best pointless — the response
+is a redirect, so the page is left anyway — and at worst it cancels the logout: the handler flips
+the state a `v-if` on the form reads, Vue flushes that patch in the microtask checkpoint that
+follows the event dispatch, and the browser is left starting a navigation for a form no longer in
+the document. Nothing is sent, while the header dutifully switches to its signed out icon. Let the
+server drive: the visitor comes back through the provider onto a freshly loaded application.
+
+Read `GET {apiRoot}/auth/session` for who is signed in. It answers `200` whether or not anyone is —
+an anonymous visitor is a fact, not an error — and `503` when the policy could not be evaluated.
+
+```ts
+const {
+    logged_in,
+    authorized,
+    roles = [],
+    user,
+    profile
+} = await(await fetch(`${apiRoot}/auth/session`, { credentials: 'same-origin' })).json()
+```
+
+Guard routes on `authorized`, never on `logged_in`: a visitor who signed in but was granted no role
+is authenticated and unauthorized, and sending them back to the login puts them in a loop the
+provider ends by signing them straight back in. Give them a dead end instead. Cache the session for
+a few tens of seconds so a route guard does not refetch it per navigation.
+
+`roles` are the application's names (`admin`, `guest`), never the provider's — the mapping happened
+server side. `profile` carries `username`, `name`, `email` and `picture` read from the ID token the
+browser never sees; every field is optional, so fall back on `user.id` rather than rendering an
+empty header, and gate nothing on it.
+
+Expect a `401` mid-session at any time: it means the provider stopped standing behind the session —
+an account disabled, a password changed, a refresh run out. Send the visitor back through
+`/auth/login`. A `403` never means "sign in again".
+
+**CSRF is handled for you**, by origin, which is why the frontend must be served from the same
+origin as the API. A refused request answers `403` with `{"error": "cross_site"}`.
 
 ## 4. Running without a provider
 
-`goauth.NewSettings(true, "", "", "", "", "")` authorizes every visitor as admin and says so loudly.
-Two guards stand in its way, and both must be satisfied deliberately: it is **left out of any binary
-not built with the `authdemo` tag**, and it **refuses to start beside a declared provider, issuer or
+`auth.NewSettings(auth.WithDemo(true))` authorizes every visitor as admin and says so loudly. Two
+guards stand in its way, and both must be satisfied deliberately: it is **left out of any binary not
+built with the `authdemo` tag**, and it **refuses to start beside a declared provider, issuer or
 audience**.
 
 ```bash
@@ -203,32 +204,35 @@ your own `types.TokenVerifier`.
 ## Checklist
 
 -   [ ] Provider application issues JWT access tokens and asserts roles
--   [ ] `main` resolves the six settings, calls `goauth.New`, fatal on error
+-   [ ] `main` resolves the settings as options, calls `auth.New`, fatal on error
 -   [ ] `AUTH_PROVIDER` matches the provider actually deployed
 -   [ ] `RegisterRoutes` mounted on the API subtree; every route behind a middleware
--   [ ] CORS allows `Authorization`
--   [ ] Frontend reads `/auth/config` before mounting, takes its scopes from it, hides login when
-        empty
--   [ ] Callback route registered at the provider and in the frontend router
--   [ ] Bearer token sent on `/auth/session` and every API call; guards test `authorized`
+-   [ ] `AUTH_REDIRECT_URL` registered at the provider, and `AUTH_COOKIE_SECRET` at least 32 bytes,
+        both read from the environment and never from a flag
+-   [ ] Frontend and API served from the same origin — the CSRF check requires it
+-   [ ] Login is a navigation, logout a form `POST`; guards test `authorized`, not `logged_in`
 -   [ ] The demo launch carries `-tags authdemo` and clears `AUTH_PROVIDER`, `AUTH_ISSUER` and
         `AUTH_AUDIENCE`
 -   [ ] Access token lifetime kept short at the provider — it is the revocation delay
 -   [ ] A rate limiter in front of the API: rejected tokens cost a signature check and a log line
--   [ ] A Content-Security-Policy on the document: tokens live in JavaScript, so blocking injected
-        script is what actually protects them
+-   [ ] A Content-Security-Policy on the document: the cookie is `HttpOnly`, so an injected script
+        cannot read the session, but it can still spend it from the page
 
 ## Symptoms
 
-| Symptom                             | Cause                                                           |
-| ----------------------------------- | --------------------------------------------------------------- |
-| Startup fails, issuer unreachable   | Wrong issuer URL, or a path or trailing slash on it             |
-| `401` everywhere, token looks valid | Opaque token instead of JWT, or `Authorization` cut by CORS     |
-| `403` for a user holding the role   | `AUTH_ADMIN_ROLE` does not match the asserted name              |
-| `logged_in: true`, `roles` empty    | No role asserted for this user, or another claim used           |
-| Demo mode refuses to start          | Binary built without `-tags authdemo`, or issuer still declared |
-| Blank callback page                 | `redirect_uri` unregistered, or route missing                   |
-| Logout shows an account picker      | `signoutRedirect` called without `id_token_hint`                |
+| Symptom                                | Cause                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| Startup fails, issuer unreachable      | Wrong issuer URL, or a path or trailing slash on it                               |
+| `401` everywhere, token looks valid    | Opaque token instead of JWT, or `Authorization` cut by CORS                       |
+| `403` for a user holding the role      | `AUTH_ADMIN_ROLE` does not match the asserted name                                |
+| `logged_in: true`, `roles` empty       | No role asserted for this user, or another claim used                             |
+| Signed in, always the unauthorized end | The provider's role name is neither `AUTH_ADMIN_ROLE` nor its `admin` default     |
+| Signing out sends no request at all    | A `submit` handler cleared the session, detaching the form before it navigated    |
+| Demo mode refuses to start             | Binary built without `-tags authdemo`, or issuer still declared                   |
+| Callback fails, no login in progress   | The login cookie was dropped — a cross-site landing, or a stale tab               |
+| `403 cross_site` on every write        | Frontend served from another origin than the API                                  |
+| Logout leaves the visitor signed in    | The provider advertises no end session endpoint: only the local cookie is dropped |
+| Session has no `profile`               | Browser driven flow, or the provider filled none of the claims                    |
 
 When generating integration code, always prioritize clarity and maintainability over brevity. Don't
 explain me what you're doing! Finish by listing your changes.

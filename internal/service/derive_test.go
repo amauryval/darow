@@ -26,6 +26,70 @@ func setupDeriveService(t *testing.T) (*DeriveService, *mocks.Adapter) {
 	return svc, m
 }
 
+func Test_renderSelect(t *testing.T) {
+	cases := []struct {
+		name         string
+		physicalName string
+		projection   []string
+		where        string
+		groupBy      []string
+		wantErr      bool
+		wantQuery    string
+	}{
+		{
+			name:         "projection only",
+			physicalName: "t_source",
+			projection:   []string{`"name"`},
+			wantQuery:    `SELECT "name" FROM t_source`,
+		},
+		{
+			name:         "adds a where clause",
+			physicalName: "t_source",
+			projection:   []string{`"name"`},
+			where:        `"name" = ?`,
+			wantQuery:    `SELECT "name" FROM t_source WHERE "name" = ?`,
+		},
+		{
+			name:         "adds a group by clause",
+			physicalName: "t_source",
+			projection:   []string{`"name"`, `COUNT(*) AS "n"`},
+			groupBy:      []string{`"name"`},
+			wantQuery:    `SELECT "name", COUNT(*) AS "n" FROM t_source GROUP BY "name"`,
+		},
+		{
+			name:         "where and group by together",
+			physicalName: "t_source",
+			projection:   []string{`"name"`, `COUNT(*) AS "n"`},
+			where:        `"active" = ?`,
+			groupBy:      []string{`"name"`},
+			wantQuery:    `SELECT "name", COUNT(*) AS "n" FROM t_source WHERE "active" = ? GROUP BY "name"`,
+		},
+		{
+			name:         "rejects an invalid physical name",
+			physicalName: "not; valid",
+			projection:   []string{`"name"`},
+			wantErr:      true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			meta := storage.Metadata{PhysicalName: c.physicalName}
+			args := []any{"x"}
+
+			query, gotArgs, err := renderSelect(meta, c.projection, c.where, args, c.groupBy)
+
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.wantQuery, query)
+			assert.Equal(t, args, gotArgs)
+		})
+	}
+}
+
 func Test_ValidateSelectOnly(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -21,6 +21,5 @@ stays true.
 What stays out is **code itself**: no snippet, no command line to paste, no diff. Write the
 instruction, not the patch — the code is written later, against the code as it is then.
 
-| # | Chantier | Current effect | Reference |
-|---|---|---|---|
-| TODO-P1 | Two working documents sit in `spec/back/` outside the five-file layout: ` OGC - Feature.md`, the second with a leading space in its name. `spec/index.md` states that a domain holds exactly five files, and `index.md` reaches neither of these, so nothing tells a reader whether they describe the product or something else. They are the second kind: French research notes on the OGC standards, carrying sample Go code for another HTTP router and statements that are wrong for this server — the MVT one calls `application/x-protobuf` the OGC-recommended media type where the standard registers the Mapbox vector tile type the code already sends, and sketches an `/api` route that does not exist here. Left in place they will be read as specification. Remove them from `spec/`: the standards themselves are the reference (OGC 20-057 for Tiles, OGC 17-069r4 for Features) and are cited by URI from the entries that need them, while what the server actually serves belongs to `spec/back/spec.md` §6.2 and to the tiles chantier (`../back/todo.md` TODO-22). If any of their content is worth keeping, it is one sentence in a `back` entry, not a file. Same pass: nothing under `spec/` should carry a name with a leading space, and the whole of `spec/` is written in English | TODO | `spec/index.md`, `../back/spec.md` §6.2 |
+No chantier is open today. The next identifier to use is `TODO-P2` — a retired identifier is never
+reused.

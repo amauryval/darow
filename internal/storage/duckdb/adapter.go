@@ -119,7 +119,7 @@ func New(path string, maxOpenConns int) (*Adapter, error) {
 }
 
 // repairSpatialIndexes probes every geo table's spatial index the way a tile
-// does and rebuilds the ones the engine crashes the planner on (BLK-5) — the
+// does and rebuilds the ones the engine crashes the planner on — the
 // state a replayed write-ahead log can leave an RTREE index in. Best effort,
 // like the bbox refresh: a table it cannot repair is logged, never fatal.
 func (a *Adapter) repairSpatialIndexes(ctx context.Context) {
@@ -173,7 +173,7 @@ func (a *Adapter) recoverIfFatal(err error, failed *sql.DB) {
 	}
 
 	// Not every INTERNAL error invalidates the instance — a spatial index the
-	// planner crashes on (BLK-5) leaves it perfectly usable, and reopening a
+	// planner crashes on leaves it perfectly usable, and reopening a
 	// live database per failed tile is what turns one broken table into a
 	// broken server. One probe decides.
 	if pingErr := failed.PingContext(context.Background()); pingErr == nil {

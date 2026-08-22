@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { getSourceMetadata, loadSource } from '../client/sources'
 import type { LoadOptions } from '../client/sources'
 import type { Source } from '../client/types'
-import { errorMessage } from '../client/http'
+import { useAsyncAction } from './useAsyncAction'
 import { layerKey } from './useSources'
 import { useToast } from './useToast'
 
@@ -20,12 +20,12 @@ export function useSourceLoad() {
 
     const loadTarget = ref<LoadTarget | null>(null)
     const detectedSrid = ref('')
-    const epsgDetecting = ref(false)
     // Whether the source being loaded has a geometry to project. Until the
     // detection answers, the question is assumed to apply — asking and finding
     // out it did not costs nothing, loading without asking cannot be undone.
     const epsgApplies = ref(true)
-    const loading = ref(false)
+    const { isLoading: epsgDetecting, error: detectError, run: runDetect } = useAsyncAction()
+    const { isLoading: loading, error: loadingError, run: runLoad } = useAsyncAction()
 
     // Opens the load form on this source and fills in the CRS it declares; the
     // form stays open either way, the name of the table being asked too.
@@ -34,19 +34,17 @@ export function useSourceLoad() {
         loadTarget.value = { source, layerName }
         detectedSrid.value = ''
         epsgApplies.value = true
-        epsgDetecting.value = true
-        try {
-            const crs = await getSourceMetadata(source.name, layerName)
-            if (targetKey() === key) {
-                detectedSrid.value = crs.srid ? String(crs.srid) : ''
-                epsgApplies.value = crs.hasGeometry
-            }
-        } catch (e) {
-            toast.error(
-                errorMessage(e, `Impossible de détecter le système de coordonnées de ${key}`)
-            )
-        } finally {
-            epsgDetecting.value = false
+        const crs = await runDetect(
+            () => getSourceMetadata(source.name, layerName),
+            `Impossible de détecter le système de coordonnées de ${key}`
+        )
+        if (crs === null) {
+            toast.error(detectError.value)
+            return
+        }
+        if (targetKey() === key) {
+            detectedSrid.value = crs.srid ? String(crs.srid) : ''
+            epsgApplies.value = crs.hasGeometry
         }
     }
 
@@ -70,22 +68,21 @@ export function useSourceLoad() {
         const key = targetKey()
         if (!target || !key) return false
 
-        loading.value = true
-        try {
-            await loadSource(target.source.name, { ...options, layer: target.layerName })
-            loadTarget.value = null
-            toast.success(
-                options.replaceTableId
-                    ? `${key} rechargé — la table a été mise à jour.`
-                    : `${key} chargé — la table a été créée.`
-            )
-            return true
-        } catch (e) {
-            toast.error(errorMessage(e, `Impossible de charger ${key}`))
+        const result = await runLoad(
+            () => loadSource(target.source.name, { ...options, layer: target.layerName }),
+            `Impossible de charger ${key}`
+        )
+        if (result === null) {
+            toast.error(loadingError.value)
             return false
-        } finally {
-            loading.value = false
         }
+        loadTarget.value = null
+        toast.success(
+            options.replaceTableId
+                ? `${key} rechargé — la table a été mise à jour.`
+                : `${key} chargé — la table a été créée.`
+        )
+        return true
     }
 
     return {

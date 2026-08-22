@@ -128,7 +128,7 @@ identifier, storage knows neither HTTP nor the application caches.
 | Package                      | Role                                                                                                                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/server`                 | entrypoint: config, bootstrap, `goauth.New` (the only place this module is imported, §6.7), HTTP server, graceful shutdown                                                                      |
-| `internal/guards`            | maps the two application roles `github.com/amauryval/goauth/types` grants to the two authorization scopes this API needs — `Guards.AdminScope` (write) and `Guards.GuestScope` (unused today, kept for `improvements.md` IMP-18). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
+| `internal/guards`            | maps the roles `github.com/amauryval/goauth/types` grants to the two authorization scopes this API enforces — `Guards.AdminScope` (administrator alone) and `Guards.DataScope` (administrator or guest), since every read is public (§6.7). `internal/router` depends on it for the middleware type alone; only `cmd/server` imports the `goauth` top-level package and builds the `Auth` this package's `New` takes (§6.7) |
 | `internal/config`            | YAML loading + environment overrides + validation, bootstrap-only fields plus the settings-surface guards (§2.1–2.4), and the `auth` block it declares itself (`AuthConfig`, §2.7)              |
 | `internal/settings`          | exported constants: every runtime-editable setting's and every config guard's default value and bound (§2.4, §2.5), plus `Limit` (the pagination rule) and `Validate`, no other logic          |
 | `internal/core`              | wiring: builds the ten services and the caches from the config and the settings table                                                                                                            |
@@ -161,7 +161,7 @@ error alongside `*Services` for that settings load to fail into.
 
 A `config.yaml` file at the root, **optional** (defaults apply if it is absent);
 `config.example.yaml` beside it states every field at its default value, commented, and a test in
-`internal/config` fails if the two drift apart. Order of application: defaults → file → `GEOAPI_*`
+`internal/config` fails if the two drift apart. Order of application: defaults → file → `DAROW_*`
 environment variables → validation. A malformed file, an
 unparsable variable or an invalid value are fatal errors at startup, never silently ignored.
 Validation collects **all** violations before failing.
@@ -172,13 +172,13 @@ File: `internal/config/config.go`.
 
 | Field                | Default | Env variable                         | Constraint |
 | -------------------- | ------- | ------------------------------------ | ---------- |
-| `host`               | `0.0.0.0` | `GEOAPI_SERVER_HOST`               | not empty  |
-| `port`               | 8080    | `GEOAPI_SERVER_PORT`                 | 1..65535   |
-| `readTimeoutSec`     | 15      | `GEOAPI_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
-| `writeTimeoutSec`    | 30      | `GEOAPI_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
-| `idleTimeoutSec`     | 60      | `GEOAPI_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
-| `shutdownTimeoutSec` | 10      | `GEOAPI_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
-| `trustedProxies`     | empty   | `GEOAPI_SERVER_TRUSTED_PROXIES`      | each entry an IP or CIDR |
+| `host`               | `0.0.0.0` | `DAROW_SERVER_HOST`               | not empty  |
+| `port`               | 8080    | `DAROW_SERVER_PORT`                 | 1..65535   |
+| `readTimeoutSec`     | 15      | `DAROW_SERVER_READ_TIMEOUT_SEC`     | ≥ 0        |
+| `writeTimeoutSec`    | 30      | `DAROW_SERVER_WRITE_TIMEOUT_SEC`    | ≥ 0        |
+| `idleTimeoutSec`     | 60      | `DAROW_SERVER_IDLE_TIMEOUT_SEC`     | ≥ 0        |
+| `shutdownTimeoutSec` | 10      | `DAROW_SERVER_SHUTDOWN_TIMEOUT_SEC` | ≥ 0        |
+| `trustedProxies`     | empty   | `DAROW_SERVER_TRUSTED_PROXIES`      | each entry an IP or CIDR |
 
 `host` is the interface the listener binds to, joined to `port` by `cmd/server`. The default accepts
 connections from every interface, which is what a containerized process behind a reverse proxy
@@ -191,18 +191,17 @@ behaviour asks for it explicitly, with `127.0.0.1`.
 `stripUntrustedForwarded`, §6.3): read only when the request's peer falls inside one of these
 prefixes, and stripped off any other request — a header is client-controlled, so with no trusted
 upstream `FeaturesHandler` would otherwise build an OGC link (§6.2) off whatever host a direct caller
-claims. This is its only purpose: since TODO-27 replaced the header-based identity model with
-`goauth`'s own bearer-token verification, `trustedProxies` no longer feeds an identity, only link
-integrity. Config-only, parsed once at `config.Load` (`config.ParseTrustedProxies`) and again by
+claims. This is its only purpose: the server verifies bearer tokens itself (§6.7), so
+`trustedProxies` feeds no identity at all, only link integrity. Config-only, parsed once at `config.Load` (`config.ParseTrustedProxies`) and again by
 `internal/router` to build the stripping middleware.
 
 ### 2.2 `duckdb`
 
 | Field          | Default         | Env variable                   |
 | -------------- | --------------- | ------------------------------ |
-| `path`         | `./data/geo.db` | `GEOAPI_DUCKDB_PATH`           |
-| `maxOpenConns` | 4               | `GEOAPI_DUCKDB_MAX_OPEN_CONNS` |
-| `maxSizeBytes` | 0 (unlimited)   | `GEOAPI_DUCKDB_MAX_SIZE_BYTES` |
+| `path`         | `./data/geo.db` | `DAROW_DUCKDB_PATH`           |
+| `maxOpenConns` | 4               | `DAROW_DUCKDB_MAX_OPEN_CONNS` |
+| `maxSizeBytes` | 0 (unlimited)   | `DAROW_DUCKDB_MAX_SIZE_BYTES` |
 
 The parent directory is created if it does not exist — DuckDB refuses to open a file in a missing
 directory.
@@ -217,9 +216,9 @@ always requires a restart. `settings.maxBodyBytes`/`requestTimeoutSec`/`cacheMax
 
 | Field               | Default                                         | Env variable                                          |
 | ------------------- | ----------------------------------------------- | ----------------------------------------------------- |
-| `workDir`           | `./data/sources`                                | `GEOAPI_SOURCES_WORKDIR`                              |
-| `maxSizeBytes`      | 104,857,600 (100 MiB)                           | `GEOAPI_SOURCES_MAX_SIZE_BYTES`                       |
-| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `GEOAPI_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
+| `workDir`           | `./data/sources`                                | `DAROW_SOURCES_WORKDIR`                              |
+| `maxSizeBytes`      | 104,857,600 (100 MiB)                           | `DAROW_SOURCES_MAX_SIZE_BYTES`                       |
+| `allowedExtensions` | `.geojson`, `.shp`, `.csv`, `.gpkg`, `.parquet` | `DAROW_SOURCES_ALLOWED_EXTENSIONS` (comma-separated) |
 
 Every extension must start with a dot. `workDir` can also be overridden by the `--workdir` flag,
 which takes priority over everything else (§2.6). `maxSizeBytes` and `allowedExtensions` are the
@@ -231,12 +230,12 @@ it is allowed to send.
 
 | Field               | Default               | Env variable                        | Constraint             |
 | ------------------- | ---------------------- | ------------------------------------ | ----------------------- |
-| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `GEOAPI_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
-| `requestTimeoutSec` | 30                      | `GEOAPI_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
-| `cacheMaxItems`     | 1000                    | `GEOAPI_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
-| `tileMaxItems`      | 5000                    | `GEOAPI_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
+| `maxBodyBytes`      | 10,485,760 (10 MiB)    | `DAROW_SETTINGS_MAX_BODY_BYTES`     | 65,536..536,870,912     |
+| `requestTimeoutSec` | 30                      | `DAROW_SETTINGS_REQUEST_TIMEOUT_SEC`| 0..600                  |
+| `cacheMaxItems`     | 1000                    | `DAROW_SETTINGS_CACHE_MAX_ITEMS`    | 1..100,000              |
+| `tileMaxItems`      | 5000                    | `DAROW_SETTINGS_TILE_MAX_ITEMS`     | 1..100,000              |
 
-The memory/availability guards TODO-17 moved out of the runtime-editable settings table (§2.5),
+These memory/availability guards sit outside the runtime-editable settings table (§2.5),
 config-only for the same reason `duckdb.maxSizeBytes` is (§2.2), and the same reason the `auth`
 block is (§2.7): they sit on `PATCH /api/v1/settings`, a route every authorized writer reaches
 (§6.7), and a guard whose own limit is edited through the surface it guards is not a guard. `maxBodyBytes` bounds the `/api/v1` group's request body
@@ -244,9 +243,9 @@ cap (`routes.go`'s `maxBodyBytes` middleware; the upload carries its own, §6.3)
 `requestTimeoutSec` the same group's request
 timeout — both read once at `router.NewRouter` and fixed for the process's life, no longer "fresh on
 every request" the way the settings table's own fields are (§6.3). `cacheMaxItems` sizes both the
-metadata and the schema `expirable.LRU` (merged from two separate fields, IMP-11); `tileMaxItems`
-sizes the tile cache, which additionally carries no TTL at all (IMP-10 — its key already carries the
-table's `UpdatedAt`, so a time-based expiry would invalidate nothing). Defaults and bounds are
+metadata and the schema `expirable.LRU`; `tileMaxItems` sizes the tile cache, which additionally
+carries no TTL at all — its key already carries the table's `UpdatedAt`, so a time-based expiry
+would invalidate nothing. Defaults and bounds are
 `internal/settings`'s exported constants, the same ones §2.5's bound table draws from — so a guard
 and its ceiling can never drift apart.
 
@@ -286,8 +285,8 @@ a page stops being a page, and anything above the family's ceiling
 raw: it goes through `internal/settings.Limit` (`limits.go`, `Resolve`/`Resolve64`), the one place
 that rule is written. `GET /api/v1/settings` therefore publishes exactly what it stores — every
 field editable, none derived. `config.yaml` keeps only what the process needs to start at
-all, before that table can even be read, plus the guards of §2.4. `exportBatchSize`, once here, is
-now a plain `internal/settings` constant (IMP-8): it has no observable effect on an export's result,
+all, before that table can even be read, plus the guards of §2.4. `exportBatchSize` is a plain
+`internal/settings` constant rather than a setting: it has no observable effect on an export's result,
 only on how it is produced, so it costs an operator a decision they had no way to make honestly.
 
 ### 2.5.1 Per-table overrides
@@ -316,58 +315,80 @@ once emitted, applied after the CRS84 transform in every GeoJSON-producing route
 
 ### 2.7 `auth`
 
-The block that decides who may write. Its type, **`config.AuthConfig`, is declared by this package
-itself** — unlike the model it replaced, it names no forward-auth gateway of its own: it is the
+**Not part of `config.go` at all.** Unlike every other block in this file, authentication carries no
+`config.AuthConfig` and no `config.yaml` key: `cmd/server/main.go`'s `authSettings` resolves it
+entirely from the process environment, normally populated from a `.env` file at the repository root
+(`.env.example` states every variable) — never versioned, since every one of them is either a
+credential or a value that only makes sense for one deployment. `authSettings` is what builds the
 settings `github.com/amauryval/goauth` needs (`goauth.NewSettings`) to verify OIDC bearer tokens
 itself and decide the two application roles, `types.RoleAdmin` and `types.RoleGuest`.
 
-| Field       | Default | Env variable      | Constraint                                        |
-| ----------- | ------- | ------------------ | -------------------------------------------------- |
-| `enabled`   | `false` | `AUTH_DEMO`         | —                                                   |
-| `provider`  | empty   | `AUTH_PROVIDER`     | `zitadel` or `pocketid`, required when `enabled`    |
-| `issuer`    | empty   | `AUTH_ISSUER`       | not empty when `enabled`                            |
-| `audience`  | empty   | `AUTH_AUDIENCE`     | not empty when `enabled`                            |
-| `adminRole` | empty   | `AUTH_ADMIN_ROLE`   | —, falls back to `admin`                            |
-| `guestRole` | empty   | `AUTH_GUEST_ROLE`   | —, falls back to `guest`                            |
+**`AUTH_PROVIDER` being set is the switch**, regardless of how it reached the process — a `.env`
+file at the repository root is loaded first if present (`godotenv.Load`, silently skipped when
+absent), but an `env_file:`/`-e`-style injection with no `.env` on disk works just as well. Unset
+`AUTH_PROVIDER` is demo mode: every visitor is authorized as an administrator, no token verified at
+all — meant for local development, and refused outright by `goauth.New` unless this binary was built
+with the `authdemo` build tag (`goauth.DemoBuildTag`, `mise run run-dev`'s `-tags authdemo`); a
+production binary carries no such tag, so a deployment that forgot it **fails at startup** rather
+than opening. A `.env` present and unreadable for any reason other than not existing is also fatal —
+`authSettings` never falls back to demo silently. There is no separate `enabled` flag: `AUTH_PROVIDER`
+**is** the flag.
 
-**The environment variables break the `GEOAPI_` prefix every other override in this file carries.**
-That is not an oversight: they are the module's own exported constants (`goauth.DemoEnv`,
-`ProviderEnv`, `IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`), read by
-`applyEnvOverrides` through the constant rather than the literal it currently holds, so a rename
-inside the module cannot silently stop being read here — the module's contract, not a choice left to
-this file. `enabled` is this field's own name and **the inverse of the module's `AUTH_DEMO`**: the
-value `applyEnvOverrides` reads off that variable is negated on the way into `cfg.Auth.Enabled`, so
-`AUTH_DEMO=true` clears `enabled` and vice versa.
+| Variable                 | Required          | Constraint                                       |
+| ------------------------- | ------------------ | -------------------------------------------------- |
+| `AUTH_PROVIDER`           | to leave demo mode | `zitadel` or `pocketid`                            |
+| `AUTH_ISSUER`             | when `AUTH_PROVIDER` set | not empty                                     |
+| `AUTH_AUDIENCE`           | when `AUTH_PROVIDER` set | not empty                                     |
+| `AUTH_ADMIN_ROLE`         | —                  | falls back to `admin`                              |
+| `AUTH_GUEST_ROLE`         | —                  | falls back to `guest`                              |
+| `AUTH_REDIRECT_URL`       | when `AUTH_PROVIDER` set | absolute URL                                  |
+| `AUTH_COOKIE_SECRET`      | when `AUTH_PROVIDER` set, exclusive with `AUTH_COOKIE_SECRET_FILE` | at least 32 bytes |
+| `AUTH_COOKIE_SECRET_FILE` | when `AUTH_PROVIDER` set, exclusive with `AUTH_COOKIE_SECRET`      | path to a readable file |
+| `AUTH_CLIENT_SECRET`      | when `AUTH_PROVIDER` set | not empty                                     |
 
-**Two mutually exclusive shapes.** `enabled: false` (the default) is demo mode: it authorizes every
-visitor as an administrator without verifying a token at all — meant for local development, and
-refused outright by `goauth.New` unless this binary was built with the `authdemo` build tag
-(`goauth.DemoBuildTag`); a production binary carries no such tag, so a deployment that forgets to
-configure a real provider **fails at startup** rather than opening. `enabled: true` demands
-`provider`, `issuer` and `audience` all set: `provider` names which of the supported identity
-providers issued the token (`zitadel` or `pocketid` — each reads its roles from a different claim,
-`github.com/amauryval/goauth/provider`), `issuer` is that provider's base URL, `audience` is this
-application's client Id. `goauth.New` contacts the issuer for its public keys at startup, so an
-unreachable or mistyped `issuer` is a startup failure, never a caller's problem.
+Every name above is the module's own exported constant where one exists (`goauth.ProviderEnv`,
+`IssuerEnv`, `AudienceEnv`, `AdminRoleEnv`, `GuestRoleEnv`) — `authSettings` reads through the
+constant rather than the literal it currently holds, so a rename inside the module cannot silently
+stop being read here. `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`/`AUTH_COOKIE_SECRET_FILE`/
+`AUTH_CLIENT_SECRET` carry no such constant, being secrets and deployment-specific values the module
+deliberately leaves to the host to name.
 
-`adminRole` and `guestRole` are the **provider's own names** for the two application roles, mapped by
-the module rather than compiled in — a Zitadel project role or a Pocket ID group named however the
-installation likes, defaulting to the literal strings `admin`/`guest` when left empty. They never
-reach the browser: `GET /api/v1/auth/session` (§6.1) answers with this application's own role names
-only.
+**`provider` names which of the supported identity providers issued the token** (`zitadel` or
+`pocketid` — each reads its roles from a different claim, `github.com/amauryval/goauth/provider`),
+`issuer` is that provider's base URL, `audience` is this application's client Id. `goauth.New`
+contacts the issuer for its public keys at startup, so an unreachable or mistyped `issuer` is a
+startup failure, never a caller's problem. `adminRole`/`guestRole` are the **provider's own names**
+for the two application roles, mapped by the module rather than compiled in — a Zitadel project role
+or a Pocket ID group named however the installation likes, defaulting to the literal strings
+`admin`/`guest` when left empty. They never reach the browser: `GET /api/v1/auth/session` (§6.1)
+answers with this application's own role names only.
 
-**Config-only, like §2.4's guards and for the same reason.** The block never reaches the `settings`
-table and never appears on `PATCH /api/v1/settings` — a guard editable through the surface it guards
-is not a guard, and that route is precisely one of the surfaces being guarded. Turning the provider
-on or off, or changing it, costs a restart.
+**`AUTH_PROVIDER` set also drives the login flow on the server** (`goauth.WithBrowser`, wired by
+`browserAuthOption`): the admin UI never obtains a token of its own. It signs in by following a
+redirect to the provider and back, and calls the API with the session cookie the module seals for
+it — `web/src/composables/useAuth.ts` holds no OIDC client, no PKCE dance and no token storage at
+all (`spec/front/spec.md`). `AUTH_REDIRECT_URL` must resolve to `router.APIRoot+goauth.CallbackPath`
+on this server and be registered as such at the provider; `AUTH_COOKIE_SECRET` (or, read instead of
+it, the file `AUTH_COOKIE_SECRET_FILE` names — `goauth.WithSecretFile`, for a deployment whose secret
+store mounts as files, Docker and Kubernetes secrets both work this way) seals the session cookie;
+`AUTH_CLIENT_SECRET` authenticates this application to the issuer for token introspection — without
+it a disabled account or an ended session keeps working until its access token expires on its own.
+Demo mode carries no provider, so it carries no browser option either: `goauth.New` refuses the two
+together, which is why `browserAuthOption` is only ever called once `AUTH_PROVIDER` is set.
 
-**A half-configured block is fatal at startup**, collected with every other violation by
-`config.Load` (§2), and the same refusal `goauth.New` would make on its own — reported here so it
-surfaces with the rest of the configuration rather than one step later, at bootstrap: `enabled: false`
-beside a declared `provider`, `issuer` or `audience`; `enabled: true` with an unknown `provider`, an
-empty `issuer` or an empty `audience`. An authentication that loads but verifies nothing, or that
-silently falls back to demo mode, would leave the API open while reading as closed — worse than
-none.
+**Never config-only in the usual sense — not config at all.** Where §2.4's guards and `duckdb`'s
+`maxSizeBytes` are kept out of the runtime-editable `settings` table on purpose, `auth` goes one step
+further and is kept out of `config.yaml` too: a credential belongs in the environment, not in a file
+this repository might one day track by mistake. Turning authentication on or off, or changing any of
+it, costs a restart either way.
+
+**A half-configured `.env` is fatal at startup**, the same refusal `goauth.New` would make on its
+own — reported by `authSettings` before `goauth.New` is even called, so it surfaces as one clear
+error rather than a handful of individually confusing ones: an unknown `AUTH_PROVIDER`, an empty
+`AUTH_ISSUER`/`AUTH_AUDIENCE`, `AUTH_REDIRECT_URL`/`AUTH_COOKIE_SECRET`(`_FILE`)/`AUTH_CLIENT_SECRET`
+set only in part, or both `AUTH_COOKIE_SECRET` and `AUTH_COOKIE_SECRET_FILE` set together. An
+authentication that loads but verifies nothing, or that silently falls back to demo mode, would
+leave the API open while reading as closed — worse than none.
 
 ---
 
@@ -728,7 +749,7 @@ rebuilds the RTREE indexes the engine cannot plan against. It exists because of 
 mode: an index whose state came back from a **replayed write-ahead log** made the spatial
 extension's own optimizer rule raise `INTERNAL Error: Operation requires a flat vector…` while
 *planning* — so every tile and every WFS read answered `500` while the rest of the server kept
-working, and the map hung on *Chargement…* (retired blocker BLK-5).
+working, and the map hung on *Chargement…*.
 
 -   The **probe** is the cheapest query shaped like a tile's — a constant `ST_MakeEnvelope` against
     the geometry column — since only that shape is rewritten into an index scan and only the rewrite
@@ -999,14 +1020,19 @@ Everything else is computed on demand and **never cached**: `GetFeatures`, `Coun
 `GetFeaturesTile`, `CountFeaturesTile`, `FilteredExtent`, `GeometryTypes`, `RowGeometry` (a single
 row's geometry in both
 encodings, rule 7's third exception — both encodings follow the resolved `coordinateDecimals`,
-§5.8.1, and both come back in the CRS the caller asked for, `service.ResolveCRS` answering the
-`srid` there exactly as it does for an export: reprojecting a **read** changes nothing stored, and
+§5.8.1, and both come back in the CRS the caller asked for through `?srid=`, **lon/lat**
+(`OGC:CRS84`) failing that — the CRS a geometry-setting write takes back (`geometryCRS`), so a map
+posts the coordinates it was handed. Pinning a read to the table's own CRS is an export's default
+(§5.6), never this one: reprojecting a **read** changes nothing stored, and
 the CRS actually applied is reported alongside so a caller displays it rather than assumes it. A
 CRS PROJ cannot resolve is refused by the same `validateCRS` probe the export runs, before the read,
 and reaches the caller **unwrapped** — a generic "unable to fetch the geometry" over "unknown
 coordinate reference system" would hide the one thing they can fix), `NeighbourFeatures` (the rows within a buffer of a
 geometry — the query an edit session runs, unbounded in its key space like every other filtered
-read). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
+read. It emits its geometries under the **same** resolved `coordinateDecimals` as the per-row read,
+and that is not an option the caller has: a neighbour rounded differently from the row it surrounds
+no longer holds the same coordinate, and a limit shared to fewer digits on one side is a limit the
+editor moves on one side only). The reason: filter, bbox, tolerance and attributes form an unbounded key space, unlike a
 tile's z/x/y.
 
 ### 5.6 `ExportService` — export is DuckDB's COPY, streamed back
@@ -1024,7 +1050,8 @@ whose file is then streamed to the caller and removed — the escaping of a CSV,
     everywhere else it is hidden (`storage.IsHiddenColumn`, §4.4). The other two carry the geometry,
     aliased to `geometry` — the name GDAL reads a Feature's geometry from, every other column
     becoming a property.
--   **Output CRS** (`service.ResolveCRS`, shared with the per-row geometry read, §5.5): `?srid=`
+-   **Output CRS** (`service.ResolveCRS`, an export's own default and not the per-row read's, §5.5):
+    `?srid=`
     pins it exactly as it pins an import's source CRS; without one the table goes back out in the
     CRS it came in (`Metadata.Srid`), and only a table whose source CRS was never recorded falls
     back to `OGC:CRS84`. `EPSG:4326` is always named `OGC:CRS84` (§4.6).
@@ -1071,14 +1098,13 @@ change was accepted, and `UpdatedAt` only when: after an incident, that is what 
 was always wrong from one raised an hour earlier.
 
 `core.NewServices` registers two callbacks onto that observer, one for `MetadataService.ResetCache`
-and one for `SchemaService.ResetCache` (TODO-17 — down from three; `GeoService` no longer has a
-`ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
+and one for `SchemaService.ResetCache` (`GeoService` has no `ResetCache` at all, see below): `expirable.LRU` bakes its size and TTL into `expirable.NewLRU` at
 construction, with no live-resize API, so a changed `cacheTTLSec` takes effect by swapping the cache
 for a freshly built one, sized `cfg.Settings.CacheMaxItems` (fixed, never itself the reason for a
 swap) — each of the two services holds its cache behind `atomic.Pointer` for exactly this — rather
 than by mutating a field; every entry the old cache held is simply dropped, a cache miss costing one
 extra read, not a migration. The tile cache is built once at `NewServices` and never swapped: neither
-its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry, IMP-10) is
+its size (`cfg.Settings.TileMaxItems`) nor its TTL (always `0` — no time-based expiry) is
 settings-editable, so `GeoService` holds it as a plain field, no `atomic.Pointer`, no `ResetCache`.
 Every other setting (the three page sizes, simplification bounds,
 `tileCacheMaxAgeSec`) needs no callback at all: `Router` and every handler read it live off
@@ -1175,7 +1201,7 @@ like `Transform` but writes nothing, sharing `ColumnService.prepare`.
 ## 6. REST API
 
 The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`, `/readyz`,
-`/diagnostics`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
+`/diagnostics`, `/version`, `/swagger/*`, `/ui/*`, and `/`, which redirects to `/ui/`.
 
 ### 6.1 Endpoints
 
@@ -1186,6 +1212,7 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/healthz` | liveness — the process answers, regardless of the storage's state                                                                                         |
 | GET    | `/readyz`  | readiness — ping of the DuckDB connection **and** assertion that the `spatial` extension is loaded (every geo route depends on it); `503` if either fails |
 | GET    | `/diagnostics` | the storage engine's own operating state: on-disk size, buffer-manager memory usage, bytes spilled to disk, loaded extensions (§4.8) — what tells "the server is up" from "the server is healthy"; also carries `maxSizeBytes` (`duckdb.maxSizeBytes` from config, §2.2, 0 meaning unlimited), for a caller to render on-disk size against its cap |
+| GET    | `/version` | the running build's identity — `version` (git describe), `commit` (short SHA) and `buildDate` (UTC, RFC 3339), all baked in at build time by `internal/version` (project spec §5); `"dev"`/`"unknown"` outside a `mise`/Docker build |
 
 **Derive**
 
@@ -1240,9 +1267,10 @@ The `/api/v1` prefix for the whole business API. Outside the prefix: `/healthz`,
 | GET    | `/api/v1/tables/{tableId}/rows`                 | paginated listing (`offset`, `limit`, `sort` validated against the schema)                                                                                                                                      |
 | POST   | `/api/v1/tables/{tableId}/rows`                 | inserts one or more rows (one → simple insert, several → transaction). `?crs=` names the CRS a written geometry is in (default `OGC:CRS84`); a single insert that sets the geometry echoes back what was stored |
 | PATCH  | `/api/v1/tables/{tableId}/rows`                 | updates several rows, each with its own values, in **one transaction**; `?crs=` as on the insert, and every row that set a geometry gets the stored one back                                                    |
+| DELETE | `/api/v1/tables/{tableId}/rows`                 | deletes several rows in one write (`pkeys` in the body), `200` with the pkeys and `rowsRemoved`                                                                                                                  |
 | POST   | `/api/v1/tables/{tableId}/rows/batch`           | fetches several rows by pkeys                                                                                                                                                                                   |
 | GET    | `/api/v1/tables/{tableId}/rows/{pkey}`          | one row                                                                                                                                                                                                         |
-| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1). `?srid=` names the EPSG code they are read in — the table's own by default, lon/lat failing that — and the response carries the `crs` applied. A CRS PROJ cannot resolve is a `400` naming it, never a failed read; `404` on a scalar table or an unknown row |
+| GET    | `/api/v1/tables/{tableId}/rows/{pkey}/geometry` | the row's geometry alone, as GeoJSON **and** as WKT, both rounded to the resolved `coordinateDecimals` (§2.5.1). `?srid=` names the EPSG code they are read in — lon/lat (`OGC:CRS84`) by default, the CRS a write takes back — and the response carries the `crs` applied. A CRS PROJ cannot resolve is a `400` naming it, never a failed read; `404` on a scalar table or an unknown row |
 | PATCH  | `/api/v1/tables/{tableId}/rows/{pkey}`          | updates a row, returns the resulting state — and, when the update set the geometry, the geometry as stored. `?crs=` as on the insert                                                                            |
 | DELETE | `/api/v1/tables/{tableId}/rows/{pkey}`          | deletes a row, `200` with its pkey                                                                                                                                                                              |
 
@@ -1326,8 +1354,8 @@ The global chain, in order: `RequestID` → `stripUntrustedForwarded` → struct
 -   **Forwarded-header stripping** (`stripUntrustedForwarded`, `middleware.go`): clears
     `Forwarded`/`X-Forwarded-For`/`X-Forwarded-Host`/`X-Forwarded-Proto` off any request whose peer
     does not fall inside `server.trustedProxies` (§2.1) — a link-integrity guard for
-    `FeaturesHandler`'s OGC links (§6.2), no longer an identity source since TODO-27 replaced the
-    header-based auth model. Applied globally, every route covered.
+    `FeaturesHandler`'s OGC links (§6.2), never an identity source: an identity comes from the
+    verified bearer token alone (§6.7). Applied globally, every route covered.
 -   There is **no global authentication middleware** any more: `goauth`'s verifier runs inside the
     write guard alone (§6.7), on the write routes it guards, and `/auth/session` (§6.1) runs its own
     verification for the one anonymous-or-not read that needs it. A public read resolves no caller at
@@ -1338,7 +1366,7 @@ The global chain, in order: `RequestID` → `stripUntrustedForwarded` → struct
 Every table/row/geo/source handler holds `SettingsService` through the same narrow
 `Current() storage.Settings` port (§5.8), never a value captured once at `Setup`: a limit changed
 through `PATCH /api/v1/settings` applies to the very next request. The body cap and the per-request
-timeout are the exception (TODO-17): both are guards, config-only (§2.4), so `NewRouter` receives
+timeout are the exception: both are guards, config-only (§2.4), so `NewRouter` receives
 `config.SettingsConfig` and captures the two values once, at `Setup` — a change to either now costs a
 restart, not a `PATCH`.
 
@@ -1364,13 +1392,14 @@ restart, not a `PATCH`.
 
 **Auth wiring.** `NewRouter` takes `guards.Guards` (`internal/guards`) and a `MountAuth` closure —
 `func(chi.Router)` — rather than importing `goauth` itself (§1, §6.7): `cmd/server` builds both from
-the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles(types.RoleAdmin)`
-and `MountAuth` by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the
-`/api/v1` group that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so
-`/auth/config` and `/auth/session` (§6.1) answer before any write group's guard could apply.
-`rt.guards.AdminScope()` is used on every write route's own `Group` (§6.7); `rt.guards.GuestScope()`
-exists but is unused today (`improvements.md` IMP-18) — every read stays fully public, with no guard
-of any kind.
+the `goauth.Auth` it constructs, `guards.Guards.AdminScope()` from `RequireRoles(types.RoleAdmin)`,
+`guards.Guards.DataScope()` from `RequireAnyRole(types.RoleAdmin, types.RoleGuest)`, and `MountAuth`
+by closing over `Auth.RegisterRoutes`. `rt.mountAuth(v1)` is called once, inside the `/api/v1` group
+that carries `requestTimeout`/`maxBodyBytes`, above every route it registers — so `/auth/config` and
+`/auth/session` (§6.1) answer before any write group's guard could apply. `rt.guards.AdminScope()`
+is used on every write route reserved to an administrator, `rt.guards.DataScope()` on the
+rows/columns/filters routes a guest may reach too (§6.7) — the two scopes `guards.Guards` carries;
+every read stays fully public, with no guard of any kind.
 
 **Table resolution.** `TableResolver` (`router/validation/resolver.go`) resolves `{tableId}` once
 per request, served from the cache in the common case, and writes a `404` if the table does not
@@ -1449,7 +1478,7 @@ On top of the application cache (rule 20), `GET /tiles/{z}/{x}/{y}` emits an `ET
 `UpdatedAt`, the attributes and the filter, plus a short `Cache-Control: public, max-age=60`.
 `public` is correct because a tile is a read and every read is open to everyone (§6.7): no shared
 cache can serve one caller a tile another was not entitled to. It stops being correct the day
-authorization goes finer than global (`improvements.md` IMP-18), and would become `private` then.
+authorization goes finer than global (`improvements.md` IMP-24), and would become `private` then.
 Nothing invalidates a CDN's copy in the meantime. A matching `If-None-Match` returns `304` without
 touching storage.
 
@@ -1462,11 +1491,11 @@ Generated by `swag init` from the handler annotations (`mise run docs`). `docs/d
 absent from the generated definition; that gap is described here in prose rather than in generated
 output, and the generation command itself is unchanged by their existence.
 
-### 6.7 Security — reads are public, writes are authenticated
+### 6.7 Security — reads are public, writes are authenticated, guests may edit data but never load it
 
-**Every read is open to everyone; every route that changes state demands a bearer token whose holder
-is granted the `admin` application role.** That is the whole authorization model, and it is stated
-once here rather than route by route:
+**Every read is open to everyone; every route that changes state demands a bearer token, and the
+role it holds decides which of the two write scopes it clears.** That is the whole authorization
+model, and it is stated once here rather than route by route:
 
 -   **Read** — every `GET`, plus the `POST`s that only query: `/tables/{tableId}/filter`, `/bbox`,
     `/neighbours`, `/rows/batch`, `/columns/{col}/transform/preview`, `/sources/refresh` (a rescan
@@ -1476,47 +1505,54 @@ once here rather than route by route:
     an authentication outage into a rolling restart. `/diagnostics`, `/swagger/*`, `/ui/*` and
     `/api/v1/auth/config`/`/api/v1/auth/session` (§6.1) are reads as well, deliberately — the same
     decision, not an oversight of where they were registered.
--   **Write** — everything else: row create/update/delete, `/columns`, `/columns/{col}` (rename,
-    drop) and `/columns/{col}/transform`, table rename and delete, the `/filters` writes, per-table
-    and global settings writes, `/derive`, `/derive-from-table`, `/aggregate-from-table`,
-    `/sources/upload`, `/sources/{name}/load` and `DELETE /sources/{name}`.
+-   **Write, data scope** (`admin` or `guest`) — row create/update/delete, `/columns`,
+    `/columns/{col}` (rename, drop) and `/columns/{col}/transform`, the `/filters` writes: a guest
+    is trusted to edit a table's rows, schema and stored filters, never to bring a table into
+    existence or to reshape the catalogue.
+-   **Write, admin scope** (`admin` alone) — everything that loads, creates or removes a table
+    outright, or touches configuration: `/sources/upload`, `/sources/{name}/load`,
+    `DELETE /sources/{name}`, `/derive`, table rename and delete, `/derive-from-table`,
+    `/aggregate-from-table`, per-table and global settings writes. Loading a source is the one
+    action a guest must never reach, whatever else it is trusted with — an unvetted file is a much
+    larger blast radius than a row edit, and this is the line the whole split exists to draw.
 
-**The identity model.** `github.com/amauryval/goauth` (`pkg/auth`'s replacement, TODO-27) verifies
-OIDC bearer tokens itself and answers in exactly two application roles: `types.RoleAdmin` and
-`types.RoleGuest`. Every write demands a verified token whose bearer holds `admin` — one middleware,
-`RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on the
-very `Group`s that carried the old `Authenticated`/`CanWrite` pair. **`guest` stands exactly where an
-anonymous caller stands**: it reads everything, which everyone already may, and writes nothing — say
-that plainly rather than leaving it to be inferred, because a role that grants no privilege reads as
-a bug otherwise. The role exists to be *named*: the provider grants it to identify a reader, and this
-server can later hang a private read on it (`improvements.md` IMP-18). This is also why
-`RequireRoles` is the right middleware and `RequireAnyRole` the wrong one even for a single required
-role: the first states "this role", the second states "one of these", and a second role added to a
-`RequireAnyRole` list would silently become a writer.
+**The identity model.** `github.com/amauryval/goauth` verifies OIDC bearer tokens itself and answers
+in exactly two application roles: `types.RoleAdmin` and `types.RoleGuest`. Every write demands a
+verified token holding a role the target scope accepts — the admin scope's one middleware,
+`RequireRoles(types.RoleAdmin)` (wrapped as `guards.Guards.AdminScope()`, `internal/guards`), on
+every `Group` carrying an admin-only write route; the data scope's,
+`RequireAnyRole(types.RoleAdmin, types.RoleGuest)` (wrapped as `guards.Guards.DataScope()`), on
+every `Group` carrying a rows/columns/filters write route. `guards.RoleMiddlewares` declares both
+`RequireRoles` and `RequireAnyRole` precisely because the two scopes need to say different things:
+`RequireRoles(admin)` states "this role and no other", `RequireAnyRole(admin, guest)` states "one of
+these" — using the wrong one anywhere would either lock a guest out of data it now owns or admit it
+somewhere it must not reach.
 
 **Statuses.** `401` (`unauthorized`) with no bearer token or an invalid one; `403` (`forbidden`) for
-a verified token granted no role, or one granted `guest` alone; `503` if the authorization policy
+a verified token granted no role, or one granted a role the target scope does not accept (`guest` on
+an admin-scope route, or neither role on a data-scope route); `503` if the authorization policy
 itself is unavailable. `goauth` writes all three **itself**, before any handler in §6.4's dispatch
 table runs, in its **own** body (`{error, message}`) — it offers no hook to reshape that body, so
 none of the three carries this repository's envelope: no `code`, no `requestId`. That is accepted and
 recorded as a limitation rather than worked around: wrapping the guard to re-shape a refusal it
 already wrote means buffering every guarded response for two fields, and the front only ever reads
 `error`/`message` on these three statuses (`spec/front/spec.md`). `routes_test.go` holds the
-inventory of every write route and asserts each answers `401` with no credentials, `403` for a
-verified token holding no role and for one holding `guest` alone, and its own success status for an
-`admin` token — so a route added later without a thought for authorization fails the build rather
+inventory of every write route, split into admin-only and data-scope, and asserts each answers `401`
+with no credentials, `403` for a verified token holding no role, `403` for a `guest` token on an
+admin-only route, and its own success status for an `admin` token and (data-scope routes only) a
+`guest` token — so a route added later without a thought for authorization fails the build rather
 than shipping open.
 
-**Where the guard is mounted.** `guards.Guards.AdminScope()` is mounted with `Use` on **one `Group`
-per level of the route tree**, never once over a subtree: reads and writes share every path, and a
-route registered outside a group to escape that group's other middlewares would escape this one with
-it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for its own body cap
+**Where the guard is mounted.** `guards.Guards.AdminScope()`/`DataScope()` are mounted with `Use` on
+**one `Group` per level of the route tree**, never once over a subtree: reads and writes share every
+path, and a route registered outside a group to escape that group's other middlewares would escape
+this one with it — which is exactly the case of `/sources/upload`, outside the `/api/v1` group for
+its own body cap
 (§6.3) and carrying the guard on its own group.
 
-**Trust and `trustedProxies` — no longer the same question.** Before TODO-27, `trustedProxies` (then
-part of the `auth` block) decided whose request headers this server would read as an identity.
-`goauth` verifies a bearer token itself and trusts no upstream to vouch for a caller, so
-`trustedProxies` moved to the `server` block (§2.1) and kept **only** its second, narrower purpose:
+**Trust and `trustedProxies` — not the same question.** `goauth` verifies a bearer token itself and
+trusts no upstream to vouch for a caller, so `trustedProxies` lives in the `server` block (§2.1) and
+carries **only** its narrower purpose:
 `FeaturesHandler`'s OGC links (§6.2) are built off `Forwarded`/`X-Forwarded-*`, and those headers are
 stripped off any request whose peer falls outside it (`stripUntrustedForwarded`, §6.3) — a guard on
 the host this API prints in a link, not on who may write. Dropping it instead would mean an
@@ -1546,8 +1582,8 @@ the guard's own denial warnings (`path`, `granted`, `required` roles) logged by 
 
 **Not done, on purpose** (`limitations.md` LIM-19): no CORS and no rate limiting, both delegated to
 whatever fronts this server. Authorization is global, never per table or per row
-(`improvements.md` IMP-18) — `guards.Guards.GuestScope()` exists for that day but guards no route
-today, `guest` being equivalent to anonymous everywhere reads already are.
+(`improvements.md` IMP-24) — `guards.Guards` carries its two write scopes uniformly across every
+table, with no table- or row-level distinction within either scope.
 
 The protections around all of this are unchanged: request body cap, pagination caps, per-request
 timeout, systematic whitelisting of identifiers and columns, restriction of `/derive` to registered
@@ -1767,7 +1803,7 @@ read-only `SELECT __pkey, <col> AS before, (<assignment>) AS after ... LIMIT n`)
 cmd/server/            entrypoint; the only package importing github.com/amauryval/goauth (§1, §6.7)
 internal/
   config/              bootstrap-only configuration loading and validation (§2.1-2.4), including AuthConfig (§2.7)
-  guards/              maps goauth's two roles to this API's two authorization scopes (§1, §6.7)
+  guards/              maps goauth's roles to this API's single write scope (§1, §6.7)
   settings/            default values/bounds of every setting and config guard, as constants, plus Limit and Validate (§2.4, §2.5)
   core/                service + cache wiring, bootstrap
   router/
@@ -1814,7 +1850,7 @@ test files build on — sits in `fixtures_test.go`, which tests nothing itself; 
 | Level             | Approach                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config`          | loading with/without a file, environment overrides, invalid cases, including the `auth` block's own validation matrix (§2.7)                                                                                                                                                                                                                                                                                                                                 |
-| `guards`          | the role-to-scope mapping alone — `AdminScope`/`GuestScope` built on a fake `RoleMiddlewares`, no OIDC involved                                                                                                                                                                                                                                                                                                                                               |
+| `guards`          | the role-to-scope mapping alone — `AdminScope` built on a fake `RoleMiddlewares`, no OIDC involved                                                                                                                                                                                                                                                                                                                                               |
 | `storage`         | unit tests of the primitives (`BuildFilter`, identifiers, sorting)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `storage/duckdb`  | integration tests against a **real** temporary DuckDB database — the engine is never mocked. Each package tests what it owns: `duckdb/` tests `adapter.go` and `write_locks.go` alone (opening, pool, per-scope write locks, and the wiring between its two sub-packages), `duckdb/catalog/` and `duckdb/tables/` each test their own code against a plain `*sql.DB`, self-sufficiently — neither needs the `Adapter`, and each builds its fixtures with raw SQL rather than through the other |
 | `service`         | testify mocks of the ports, no disk or database access. The doubles of `storage`'s interfaces live in `storage/mocks` rather than in each consumer's `fixtures_test.go`: `service`, `router` and `core` need the same ones, and Go cannot share `_test.go` code across packages. It is the only test-support package, and nothing in `cmd/server`'s import graph reaches it                                                                                   |
@@ -1832,9 +1868,7 @@ _tested and vetted_, never linked — the binary is made only of `cmd/server`'s 
 `internal/webui` embeds `dist/` alone — but that is CI time spent on third-party code and a
 potential `gofmt` failure on code we do not control. Since the go tool has no exclusion mechanism,
 the package list is filtered explicitly (`go list ./... | grep -v /web/`) and `gofmt` only sweeps
-`cmd internal docs` — `pkg` is gone from that list along with `pkg/auth` itself (TODO-27); a stale
-reference to a second module here was one of TODO-27's own findings, closed by the same change that
-removed the module.
+`cmd internal docs`, the three directories this module's own Go code lives in.
 
 ---
 

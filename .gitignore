@@ -1,4 +1,4 @@
-bin/server
+bin/darow
 cmd/.DS_Store
 
 web/node_modules/
@@ -17,3 +17,4 @@ data/darow.db.wal
 config.yaml
 data/darow.db
 internal/webui/dist/index.html
+.env

@@ -74,8 +74,8 @@ func (s *Services) Ping(ctx context.Context) error {
 }
 
 // NewServices constructs every service. It loads the settings row once, sizes
-// the LRU caches from cfg.Settings (TODO-17) and takes the metadata/schema TTL
-// from the settings row; the tile cache carries no TTL at all (IMP-10).
+// the LRU caches from cfg.Settings and takes the metadata/schema TTL from the
+// settings row; the tile cache carries no TTL at all.
 func NewServices(cfg config.Config, storageAdapter storageAdapter) (*Services, error) {
 	settingsChanged := &observer.Observer[storage.Settings]{}
 	settingsSvc := service.NewSettingsService(storageAdapter.Settings(), settingsChanged)

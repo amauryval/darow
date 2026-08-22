@@ -71,6 +71,7 @@ carries the previous name; renaming it is out of scope for the repository itself
 | `mise.toml` | the tool versions and every task |
 | `Dockerfile`, `.dockerignore` | the multi-stage image build |
 | `.github/workflows/ci.yml` | continuous integration |
+| `.github/workflows/docker_image_registry.yml` | builds and pushes the Docker image to `ghcr.io` on a tagged push |
 | `.claude/` | agent instructions, skills and reviewers |
 | `README.md` | the repository's entry point: what the product does, how to run it, how to contribute |
 
@@ -102,14 +103,33 @@ neither `build` nor the `Dockerfile` ever carries it.
 ## 5. Build and distribution
 
 `Dockerfile` is a three-stage build: Node 22 builds the UI into the embed directory, Go 1.26
-compiles the single binary (stripped, `-ldflags="-s -w"`), and a `gcr.io/distroless/cc-debian12:nonroot`
-runtime carries it — glibc, libstdc++ and ca-certificates, no shell or package manager, running as
-the image's built-in uid/gid 65532. The image exposes 8080 and its entrypoint is the binary. The Go
+compiles the single binary (stripped, `-ldflags="-s -w"`), and a `debian:bookworm-slim` runtime
+carries it — glibc, libstdc++ and ca-certificates. The image exposes 8080; its entrypoint is a
+shell command that starts as root, `chown`s `/data` to the fixed uid/gid 65532 (so a host bind
+mount or named volume with different ownership doesn't break the server on startup), then drops
+to that nonroot user via `su` before running the binary. The Go
 stage never carries the `authdemo` build tag, so a container that forgets `AUTH_PROVIDER`,
 `AUTH_ISSUER` and `AUTH_AUDIENCE` fails at startup rather than opening to everyone; those three, plus
 `AUTH_ADMIN_ROLE`/`AUTH_GUEST_ROLE` when the provider's own role names differ, are passed in from
 outside the image, like the configuration and the working directory already are, and carry no
 default.
+
+`internal/version` holds `Version`/`Commit`/`BuildDate`, three variables set only through
+`-ldflags -X`, never edited by hand — `"dev"`/`"unknown"` otherwise (a plain `go build`, `go test`,
+`go run`). `BuildDate` is HEAD's own commit date (`git log -1 --format=%cI`, normalized to UTC),
+never wall-clock build time — the same commit built twice, a minute apart or a year apart, carries
+the same `BuildDate` either way. `mise run build`/`run-dev`/`run-dev-prod` compute all three from
+the local tree (`git describe --tags --always --dirty`, `git rev-parse --short HEAD`, the commit
+date above) inline in the task's own `run` script. The Dockerfile's Go stage takes the same three
+values as `VERSION`/`COMMIT`/`BUILD_DATE` build args instead, since `.git` is excluded from the
+build context (`.dockerignore`) and cannot be read from inside the image build.
+`.github/workflows/docker_image_registry.yml` is the one caller that matters — its `Build` step
+passes `VERSION` as the pushed tag itself (the job already refuses to run on an untagged commit),
+`COMMIT` from `git rev-parse --short HEAD` and `BUILD_DATE` from HEAD's commit date, same as above;
+a manual `docker build` with none of the three still succeeds, defaulting to `dev`/`unknown` like
+every other build path.
+`GET /version` (back §6.1) serves the three at runtime; the admin UI displays them, always visible
+in the sidebar (front §1, front §4's `useVersion`).
 
 ## 6. Continuous integration
 

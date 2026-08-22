@@ -4,9 +4,9 @@ import type { LoadOptions } from '../../client/sources'
 import type { TableProvenance } from '../../client/types'
 import { useWriteGuard } from '../../composables/useWriteGuard'
 import Modal from '../ui/Modal.vue'
-import BaseButton from '../ui/BaseButton.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseSelect from '../ui/BaseSelect.vue'
+import ModalFormActions from '../ui/ModalFormActions.vue'
 import Typography from '../ui/Typography.vue'
 
 // The whole load question in one form: the CRS to project from, the name the
@@ -132,17 +132,13 @@ function onSubmit() {
             </Typography>
         </div>
 
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="loading"
-                :disabled="!canSubmit || writeDisabled"
-                :title="writeDisabled ? writeGuardReason : undefined"
-                @click="onSubmit"
-            >
-                {{ replacing ? 'Remplacer' : 'Charger' }}
-            </BaseButton>
-        </div>
+        <ModalFormActions
+            :confirm-label="replacing ? 'Remplacer' : 'Charger'"
+            :busy="loading"
+            :disabled="!canSubmit || writeDisabled"
+            :reason="writeDisabled ? writeGuardReason : undefined"
+            @cancel="emit('close')"
+            @confirm="onSubmit"
+        />
     </Modal>
 </template>

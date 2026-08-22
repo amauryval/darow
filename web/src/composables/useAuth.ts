@@ -1,17 +1,7 @@
 import { computed, ref } from 'vue'
-import { getAuthSession } from '../client/auth'
-import { errorMessage, setAuthToken, setUnauthorizedHandler } from '../client/http'
+import { getAuthConfig, getAuthSession } from '../client/auth'
+import { apiUrl, errorMessage, setUnauthorizedHandler } from '../client/http'
 import type { AuthSession } from '../client/types'
-import {
-    appPath,
-    clearSignedIn,
-    currentAccessToken,
-    currentProfile,
-    isOidcEnabled,
-    markSignedIn,
-    oidcManager,
-    type UserProfile
-} from '../auth/oidc'
 import { useToast } from './useToast'
 
 // The application's own role names — literal strings, not an enum from an
@@ -20,70 +10,75 @@ import { useToast } from './useToast'
 const ADMIN_ROLE = 'admin'
 const GUEST_ROLE = 'guest'
 
-// A re-render must never refetch /auth/session — this caches the last read,
-// keyed by the token it was read for, for a few tens of seconds.
+// A re-render must never refetch /auth/session — this caches the last read
+// for a few tens of seconds.
 const SESSION_TTL_MS = 30000
 
-// Every tab drops its user and session on a logout message from another —
-// posted before signOut clears anything locally, so a token already valid
-// elsewhere still expires on its own schedule (a broadcast tidies the UI,
-// it revokes nothing server-side).
-const LOGOUT_CHANNEL = 'darow.auth.logout'
-
 const emptySession = (): AuthSession => ({ logged_in: false, authorized: false })
-const emptyProfile = (): UserProfile => ({ name: '', email: '' })
 
 // Module-level shared state, the same exception useToast/useSettings rely
 // on (rule 0.11): every caller reads the one session this application has,
 // instead of each fetching /auth/session on its own.
 const session = ref<AuthSession>(emptySession())
-const profile = ref<UserProfile>(emptyProfile())
 
+// Whether the server drives a login flow at all — false in demo mode, where
+// there is no provider and nothing to sign in or out of.
+const enabledRef = ref(false)
+
+let configLoaded = false
 let lifecycleWired = false
-let logoutChannel: BroadcastChannel | null = null
 let pendingRefresh: Promise<void> | null = null
-let cachedToken: string | null = null
 let cachedAt = 0
-
-const isCacheFresh = (token: string | null) =>
-    cachedAt !== 0 && token === cachedToken && Date.now() - cachedAt < SESSION_TTL_MS
 
 function forgetSession() {
     session.value = emptySession()
-    profile.value = emptyProfile()
-    setAuthToken(null)
-    cachedToken = null
     cachedAt = 0
+}
+
+// GET /auth/config names how to sign in, read once and cached: it never
+// changes for the life of a running deployment.
+async function ensureConfig() {
+    if (configLoaded) {
+        return
+    }
+    configLoaded = true
+
+    try {
+        const config = await getAuthConfig()
+        enabledRef.value = config.server_flow
+    } catch {
+        // A server that never answered /auth/config leaves the application
+        // usable with no login control, exactly like a failed session read.
+        enabledRef.value = false
+    }
 }
 
 export function useAuth() {
     const toast = useToast()
 
-    const enabled = computed(() => isOidcEnabled())
+    const enabled = computed(() => enabledRef.value)
     const loggedIn = computed(() => session.value.logged_in)
     const authorized = computed(() => session.value.authorized)
     const roles = computed(() => session.value.roles ?? [])
     const isAdmin = computed(() => roles.value.includes(ADMIN_ROLE))
     const isGuest = computed(() => roles.value.includes(GUEST_ROLE))
-    const displayName = computed(() => profile.value.name)
+    // The ID token's own claims, carried on the session response itself:
+    // the server drives the login flow, so this browser never holds an ID
+    // token of its own to read a name from.
+    const displayName = computed(() => {
+        const profile = session.value.profile
+        return profile?.name || profile?.username || profile?.email || ''
+    })
 
     async function loadSession() {
-        try {
-            const token = await currentAccessToken()
-            if (isCacheFresh(token)) {
-                return
-            }
+        await ensureConfig()
 
-            setAuthToken(token)
-            profile.value = (await currentProfile()) ?? emptyProfile()
-            // Always asked, token or not: a demo backend's verifier ignores
-            // the token entirely and answers every caller as an
-            // administrator, and a real one answers an empty token with an
-            // unauthenticated session — either way this is the one source
-            // of truth for logged_in/authorized/roles, never assumed
-            // locally from token presence.
+        if (cachedAt !== 0 && Date.now() - cachedAt < SESSION_TTL_MS) {
+            return
+        }
+
+        try {
             session.value = await getAuthSession()
-            cachedToken = token
             cachedAt = Date.now()
         } catch (err) {
             forgetSession()
@@ -102,61 +97,33 @@ export function useAuth() {
         }
     }
 
-    async function signIn() {
-        try {
-            await oidcManager().signinRedirect({ state: appPath(window.location.pathname) })
-        } catch (err) {
-            toast.error(errorMessage(err, 'Impossible de démarrer la connexion'))
-        }
+    // Signing in is a navigation, never a fetch: the endpoint redirects to
+    // the provider, which serves its own page cross-origin, so fetch cannot
+    // follow it. return_to must be a path on this application — the current
+    // one, which already carries the /ui/ base.
+    function signIn() {
+        const returnTo = window.location.pathname + window.location.search
+        window.location.assign(`${apiUrl('/auth/login')}?return_to=${encodeURIComponent(returnTo)}`)
     }
 
-    async function signOut() {
-        clearSignedIn()
-        logoutChannel?.postMessage(Date.now())
-        forgetSession()
-
-        if (!isOidcEnabled()) {
-            return
-        }
-
-        try {
-            const user = await oidcManager().getUser()
-            await oidcManager().removeUser()
-            await oidcManager().signoutRedirect({ id_token_hint: user?.id_token })
-        } catch (err) {
-            window.location.assign('/')
-        }
+    // Signing out is a POST, so that no cross-site page can sign a visitor
+    // out by linking to it — a form submission rather than fetch, so a
+    // provider that also ends the session there can answer with a redirect
+    // fetch could not follow cross-origin.
+    function signOut() {
+        const form = document.createElement('form')
+        form.method = 'POST'
+        form.action = apiUrl('/auth/logout')
+        document.body.appendChild(form)
+        form.submit()
     }
 
-    if (!lifecycleWired && isOidcEnabled()) {
+    if (!lifecycleWired) {
         lifecycleWired = true
 
-        logoutChannel = new BroadcastChannel(LOGOUT_CHANNEL)
-        logoutChannel.onmessage = () => {
-            void oidcManager().removeUser()
-            forgetSession()
-        }
-
-        oidcManager().events.addUserLoaded(() => {
-            markSignedIn()
-            void refreshSession()
-        })
-        // A renewal that fails is usually a session ended somewhere else —
-        // treated the same as an expiry, not as a distinct error.
-        oidcManager().events.addAccessTokenExpired(() => {
-            clearSignedIn()
-            forgetSession()
-            toast.error('Votre session a expiré, reconnectez-vous.')
-        })
-        oidcManager().events.addSilentRenewError(() => {
-            clearSignedIn()
-            void oidcManager().removeUser()
-            forgetSession()
-        })
-
-        // A 401 on any call means the held token is no longer good — drop
-        // it and ask for a fresh read rather than leaving http.ts holding a
-        // token every subsequent request will fail with too.
+        // A 401 on any call means the session cookie is no longer good —
+        // drop it and ask for a fresh read rather than leaving the UI
+        // showing a session every subsequent request will fail with too.
         setUnauthorizedHandler(() => {
             forgetSession()
             void refreshSession()

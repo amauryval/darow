@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -68,7 +67,7 @@ func (fh *FiltersHandler) ListFilters(w http.ResponseWriter, req *http.Request) 
 
 	filters, err := fh.filterService.List(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -96,18 +95,17 @@ func (fh *FiltersHandler) CreateFilter(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Name       string                    `json:"name"`
 		Conditions []storage.FilterCondition `json:"conditions"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
 	filter, err := fh.filterService.Create(req.Context(), meta, body.Name, body.Conditions)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusCreated, toFilterDTO(filter))
@@ -133,12 +131,11 @@ func (fh *FiltersHandler) UpdateFilter(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Name       *string                    `json:"name"`
 		Conditions *[]storage.FilterCondition `json:"conditions"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
@@ -147,7 +144,7 @@ func (fh *FiltersHandler) UpdateFilter(w http.ResponseWriter, req *http.Request)
 		Conditions: body.Conditions,
 	})
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toFilterDTO(filter))
@@ -169,7 +166,7 @@ func (fh *FiltersHandler) DeleteFilter(w http.ResponseWriter, req *http.Request)
 	}
 
 	if err := fh.filterService.Delete(req.Context(), meta, chi.URLParam(req, "filterId")); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

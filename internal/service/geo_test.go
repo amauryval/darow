@@ -323,8 +323,10 @@ func Test_GeoService_RowGeometry_KeepsAnUnknownCRSRefusal(t *testing.T) {
 	assert.False(t, errors.As(err, &displayErr), "it must not be wrapped in a generic message")
 }
 
-// A neighbour search hands the storage layer the buffer and the exclusion
-// as given, and wraps a failure like every other geo read.
+// A neighbour search hands the storage layer the buffer and the exclusion as
+// given, rounds its geometries exactly as the per-row read rounds the one
+// they surround — a limit shared to fewer digits on one side is not shared —
+// and wraps a failure like every other geo read.
 func Test_GeoService_NeighbourFeatures(t *testing.T) {
 	ctx := context.Background()
 	meta := storage.Metadata{TableId: "id-1", IsGeo: true, GeometryColumn: "geom"}
@@ -335,10 +337,16 @@ func Test_GeoService_NeighbourFeatures(t *testing.T) {
 
 	t.Run("passes the query through", func(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
-		expected := storage.FeatureQuery{Near: &near, Exclude: []string{"pk-1"}, Limit: 50}
+		decimals := 7
+		expected := storage.FeatureQuery{
+			Query:   storage.GeoQuery{CoordinateDecimals: &decimals},
+			Near:    &near,
+			Exclude: []string{"pk-1"},
+			Limit:   50,
+		}
 		geoRepo.On("Features", ctx, expected).Return([]storage.GeoFeature{{Pkey: "pk-2"}}, nil).Once()
 
-		features, err := svc.NeighbourFeatures(ctx, meta, near, []string{"pk-1"}, 50)
+		features, err := svc.NeighbourFeatures(ctx, meta, near, []string{"pk-1"}, 50, decimals)
 		require.NoError(t, err)
 		require.Len(t, features, 1)
 		geoRepo.AssertExpectations(t)
@@ -348,7 +356,7 @@ func Test_GeoService_NeighbourFeatures(t *testing.T) {
 		svc, geoRepo := setupGeoService(t)
 		geoRepo.On("Features", ctx, mock.Anything).Return(nil, errors.New("boom")).Once()
 
-		_, err := svc.NeighbourFeatures(ctx, meta, near, nil, 50)
+		_, err := svc.NeighbourFeatures(ctx, meta, near, nil, 50, 7)
 		var displayErr *DisplayError
 		require.ErrorAs(t, err, &displayErr)
 	})

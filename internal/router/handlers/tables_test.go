@@ -112,34 +112,6 @@ func Test_tablesHandler_listTableProvenance(t *testing.T) {
 	}
 }
 
-func Test_tablesHandler_listPaginationParams(t *testing.T) {
-	cases := []struct {
-		name       string
-		query      string
-		wantOffset int64
-		wantLimit  int64
-	}{
-		{name: "defaults when absent", query: "", wantOffset: 0, wantLimit: 50},
-		{name: "parses explicit offset/limit", query: "offset=10&limit=20", wantOffset: 10, wantLimit: 20},
-		{name: "negative offset falls back to zero", query: "offset=-1", wantOffset: 0, wantLimit: 50},
-		{name: "non-positive limit falls back to default", query: "limit=0", wantOffset: 0, wantLimit: 50},
-		{name: "limit is capped at the list page size", query: "limit=9999", wantOffset: 0, wantLimit: 50},
-	}
-
-	th := &TablesHandler{settings: defaultTestSettings}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/?"+c.query, nil)
-
-			offset, limit := th.listPaginationParams(req)
-
-			assert.Equal(t, c.wantOffset, offset)
-			assert.Equal(t, c.wantLimit, limit)
-		})
-	}
-}
-
 func Test_tablesHandler_getTableMetadata(t *testing.T) {
 	cases := []struct {
 		name       string

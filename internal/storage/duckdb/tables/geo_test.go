@@ -35,7 +35,7 @@ func Test_GeoRepository_TileAndBboxAndTypes(t *testing.T) {
 }
 
 // The MVT layer is named after the table's public id, not a fixed "layer"
-// literal (TODO-23): two tables loaded into the same client-side map must
+// literal: two tables loaded into the same client-side map must
 // not collide under the same layer name. ST_AsMVT encodes the layer name
 // as a length-prefixed protobuf string field, so the raw bytes contain it
 // verbatim.

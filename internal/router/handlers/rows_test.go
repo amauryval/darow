@@ -38,32 +38,6 @@ func Test_newRowsHandler(t *testing.T) {
 	metadataSvc.AssertExpectations(t)
 }
 
-func Test_rowsHandler_paginationParams(t *testing.T) {
-	cases := []struct {
-		name       string
-		query      string
-		wantOffset int64
-		wantLimit  int64
-	}{
-		{name: "defaults when unset", query: "", wantOffset: 0, wantLimit: 100},
-		{name: "honors explicit offset and limit", query: "offset=20&limit=50", wantOffset: 20, wantLimit: 50},
-		{name: "negative offset falls back to zero", query: "offset=-5", wantOffset: 0, wantLimit: 100},
-		{name: "limit is capped at the table's page size", query: "limit=5000", wantOffset: 0, wantLimit: 100},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			rh := &RowsHandler{tableSettings: stubTableSettingsAPI{global: storage.Settings{DefaultRowLimit: 100}}}
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/tables/t1/rows?"+c.query, nil)
-
-			offset, limit := rh.paginationParams(req, "t1")
-
-			assert.Equal(t, c.wantOffset, offset)
-			assert.Equal(t, c.wantLimit, limit)
-		})
-	}
-}
-
 func Test_rowsHandler_listRows(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -301,6 +275,47 @@ func Test_rowsHandler_updateRow(t *testing.T) {
 	}
 }
 
+func Test_rowsHandler_deleteRows(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		removeErr  error
+		wantStatus int
+	}{
+		{name: "deletes every row in one write", body: map[string]any{"pkeys": []string{"1", "2"}}, wantStatus: http.StatusOK},
+		{name: "an empty list is rejected", body: map[string]any{"pkeys": []string{}}, wantStatus: http.StatusBadRequest},
+		{
+			name:       "a storage failure maps to 500",
+			body:       map[string]any{"pkeys": []string{"1", "2"}},
+			removeErr:  assert.AnError,
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			rowSvc := &mockRowAPI{}
+			rh := &RowsHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), rowService: rowSvc}
+
+			meta := storage.Metadata{TableId: "t1"}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			if c.wantStatus != http.StatusBadRequest {
+				rowSvc.On("RemoveRows", mock.Anything, meta, []string{"1", "2"}).Return(c.removeErr).Once()
+			}
+
+			rec := doHandlerRequest(rh.DeleteRows, http.MethodDelete, "/api/v1/tables/t1/rows", c.body, map[string]string{"tableId": "t1"})
+
+			assert.Equal(t, c.wantStatus, rec.Code)
+			if c.wantStatus == http.StatusOK {
+				assert.Contains(t, rec.Body.String(), `"rowsRemoved":2`)
+			}
+			metadataSvc.AssertExpectations(t)
+			rowSvc.AssertExpectations(t)
+		})
+	}
+}
+
 func Test_rowsHandler_deleteRow(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -369,6 +384,39 @@ func Test_rowsHandler_getRowGeometry(t *testing.T) {
 				assert.Contains(t, rec.Body.String(), `"geometry":{"type":"Point"}`)
 			}
 			metadataSvc.AssertExpectations(t)
+			geoSvc.AssertExpectations(t)
+		})
+	}
+}
+
+// A read without ?srid= comes back in lon/lat, whatever CRS the table was
+// imported in: it is the CRS a write takes back, so the map that draws a
+// geometry posts the same coordinates it was given.
+func Test_rowsHandler_getRowGeometry_ReadsInLonLatByDefault(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		wantCRS string
+	}{
+		{name: "no srid reads in lon/lat", query: "", wantCRS: storage.DefaultGeometryCRS},
+		{name: "srid pins the CRS", query: "?srid=2154", wantCRS: "EPSG:2154"},
+		{name: "srid 4326 is named CRS84", query: "?srid=4326", wantCRS: storage.DefaultGeometryCRS},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			metadataSvc := &mockMetadataAPI{}
+			geoSvc := &mockGeoAPI{}
+			rh := &RowsHandler{settings: defaultTestSettings, tableSettings: defaultTestTableSettings, TableResolver: validation.NewTableResolver(metadataSvc), geoService: geoSvc}
+
+			meta := storage.Metadata{TableId: "t1", IsGeo: true, GeometryColumn: "geom", Srid: 2154}
+			metadataSvc.On("GetMetadata", mock.Anything, "t1").Return(meta, nil).Once()
+			geoSvc.On("RowGeometry", mock.Anything, meta, "1", mock.Anything, c.wantCRS).
+				Return(&service.RowGeometry{Pkey: "1", GeoJSON: `{"type":"Point"}`, WKT: "POINT (1 2)", CRS: c.wantCRS}, nil).Once()
+
+			rec := doHandlerRequest(rh.GetRowGeometry, http.MethodGet, "/api/v1/tables/t1/rows/1/geometry"+c.query, nil, map[string]string{"tableId": "t1", "pkey": "1"})
+
+			assert.Equal(t, http.StatusOK, rec.Code)
 			geoSvc.AssertExpectations(t)
 		})
 	}

@@ -6,11 +6,9 @@ import { useSavedFilters } from '../../composables/useSavedFilters'
 import { useToast } from '../../composables/useToast'
 import Modal from '../ui/Modal.vue'
 import DeriveAggregateForm from './DeriveAggregateForm.vue'
-import BaseButton from '../ui/BaseButton.vue'
-import BaseInput from '../ui/BaseInput.vue'
-import Typography from '../ui/Typography.vue'
+import NewTableFooter from './NewTableFooter.vue'
 
-// The aggregation mode's own screen (TODO-F37) — not a third tab on
+// The aggregation mode's own screen — not a third tab on
 // DeriveTableModal, whose column picker means "carry this column over" and
 // would mean "group by this column" here: the same word for two different
 // acts is exactly the confusion the guided mode was built to remove.
@@ -89,38 +87,23 @@ async function onSubmit() {
             @update:conditions-bool="conditionsBool = $event"
         />
 
-        <div class="mt-4 border-t border-base-300 pt-4">
-            <BaseInput
-                v-model="name"
-                size="sm"
-                label="Nom de la nouvelle table"
-                placeholder="Nom de la nouvelle table"
-            />
-            <Typography variant="caption" class="mt-1 block">
-                La table agrégée est un instantané figé : elle n'est jamais resynchronisée avec sa
-                source.
-            </Typography>
-        </div>
-
-        <p v-if="error" class="mt-2 text-xs text-error" role="alert">{{ error }}</p>
-
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="isLoading"
-                :disabled="!canSubmit"
-                :title="
-                    incompleteAggregate
-                        ? 'Complétez chaque colonne agrégée.'
-                        : isEmpty
-                          ? 'Sélectionnez au moins un regroupement ou un agrégat.'
-                          : undefined
-                "
-                @click="onSubmit"
-            >
-                {{ isLoading ? 'Création…' : 'Créer' }}
-            </BaseButton>
-        </div>
+        <NewTableFooter
+            :name="name"
+            caption="La table agrégée est un instantané figé : elle n'est jamais resynchronisée avec sa source."
+            :error="error"
+            :confirm-label="isLoading ? 'Création…' : 'Créer'"
+            :busy="isLoading"
+            :disabled="!canSubmit"
+            :reason="
+                incompleteAggregate
+                    ? 'Complétez chaque colonne agrégée.'
+                    : isEmpty
+                      ? 'Sélectionnez au moins un regroupement ou un agrégat.'
+                      : undefined
+            "
+            @update:name="name = $event"
+            @cancel="emit('close')"
+            @confirm="onSubmit"
+        />
     </Modal>
 </template>

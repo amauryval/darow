@@ -6,16 +6,12 @@ import { useSavedFilters } from '../../composables/useSavedFilters'
 import { useToast } from '../../composables/useToast'
 import Modal from '../ui/Modal.vue'
 import DeriveFromTableForm from './DeriveFromTableForm.vue'
-import BaseButton from '../ui/BaseButton.vue'
-import BaseInput from '../ui/BaseInput.vue'
-import Typography from '../ui/Typography.vue'
+import NewTableFooter from './NewTableFooter.vue'
 
 // The guided mode alone: derives from the table in hand, offering its
-// columns and reusing the filter editor for its conditions. The free-SQL
-// mode used to be a second tab here, pre-filled with this table's name — a
-// scope the endpoint never had, since it reads every registered table. It now
-// lives in its own modal opened from the catalogue screen (`DeriveSqlModal`,
-// TODO-F38).
+// columns and reusing the filter editor for its conditions. Free-SQL
+// derivation reads every registered table, a scope no one table's page has,
+// so it lives in its own modal opened from the catalogue (`DeriveSqlModal`).
 const props = defineProps<{
     tableId: string
     columns: ColumnSchema[]
@@ -89,32 +85,17 @@ async function onSubmit() {
             @update:conditions-bool="conditionsBool = $event"
         />
 
-        <div class="mt-4 border-t border-base-300 pt-4">
-            <BaseInput
-                v-model="name"
-                size="sm"
-                label="Nom de la nouvelle table"
-                placeholder="Nom de la nouvelle table"
-            />
-            <Typography variant="caption" class="mt-1 block">
-                La table dérivée est un instantané figé : elle n'est jamais resynchronisée avec sa
-                source.
-            </Typography>
-        </div>
-
-        <p v-if="error" class="mt-2 text-xs text-error" role="alert">{{ error }}</p>
-
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="isLoading"
-                :disabled="!canSubmit"
-                :title="incompleteComputed ? 'Complétez chaque colonne calculée.' : undefined"
-                @click="onSubmit"
-            >
-                {{ isLoading ? 'Création…' : 'Créer' }}
-            </BaseButton>
-        </div>
+        <NewTableFooter
+            :name="name"
+            caption="La table dérivée est un instantané figé : elle n'est jamais resynchronisée avec sa source."
+            :error="error"
+            :confirm-label="isLoading ? 'Création…' : 'Créer'"
+            :busy="isLoading"
+            :disabled="!canSubmit"
+            :reason="incompleteComputed ? 'Complétez chaque colonne calculée.' : undefined"
+            @update:name="name = $event"
+            @cancel="emit('close')"
+            @confirm="onSubmit"
+        />
     </Modal>
 </template>

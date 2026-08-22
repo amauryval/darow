@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -44,32 +42,6 @@ func NewTablesHandler(metadataSvc metadataAPI, schemaSvc schemaAPI, deriveSvc de
 	}
 }
 
-// listPaginationParams reads offset/limit query params, resolved through the
-// list limits: tables/sources are metadata records, not data rows, and get
-// their own smaller limits.
-func (th *TablesHandler) listPaginationParams(req *http.Request) (offset, limit int64) {
-	offset = 0
-	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
-		offset = v
-	}
-	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = settings.Limit(th.settings.Current().DefaultListLimit).Resolve64(requested)
-	return offset, limit
-}
-
-// distinctValuesPaginationParams reads offset/limit query params, resolved
-// through the row limits: a column's distinct values are per-row content, so
-// they share RowsHandler's limits rather than listPaginationParams's.
-func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, tableId string) (offset, limit int64) {
-	offset = 0
-	if v, err := strconv.ParseInt(req.URL.Query().Get("offset"), 10, 64); err == nil && v >= 0 {
-		offset = v
-	}
-	requested, _ := strconv.ParseInt(req.URL.Query().Get("limit"), 10, 64)
-	limit = th.tableSettings.Resolve(tableId).DefaultRowLimit.Resolve64(requested)
-	return offset, limit
-}
-
 // ListTables handles GET /tables.
 //
 // @Summary List tables
@@ -83,11 +55,11 @@ func (th *TablesHandler) distinctValuesPaginationParams(req *http.Request, table
 // @Failure 400 {object} response.ErrorResponse
 // @Router /api/v1/tables [get]
 func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
-	offset, limit := th.listPaginationParams(req)
+	offset, limit, _ := paginationParams(req, settings.Limit(th.settings.Current().DefaultListLimit), false)
 	sort := storage.ParseSort(req.URL.Query().Get("sort"))
 	tables, total, err := th.metadataService.ListTables(req.Context(), sort, offset, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -110,7 +82,7 @@ func (th *TablesHandler) ListTables(w http.ResponseWriter, req *http.Request) {
 func (th *TablesHandler) ListTableProvenance(w http.ResponseWriter, req *http.Request) {
 	items, err := th.metadataService.ListProvenance(req.Context())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -154,11 +126,10 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		TableName string `json:"tableName"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 	if body.TableName == "" {
@@ -167,13 +138,13 @@ func (th *TablesHandler) RenameTable(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := th.metadataService.UpdateMetadata(req.Context(), meta.TableId, storage.MetadataPatch{TableName: &body.TableName}); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
 	updated, err := th.metadataService.GetMetadata(req.Context(), meta.TableId)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, toMetadataDTO(updated))
@@ -195,7 +166,7 @@ func (th *TablesHandler) DeleteTable(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := th.metadataService.RemoveTable(req.Context(), meta); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, deletedDTO{Id: meta.TableId, Name: meta.TableName})
@@ -217,7 +188,7 @@ func (th *TablesHandler) GetSchema(w http.ResponseWriter, req *http.Request) {
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -244,17 +215,16 @@ func (th *TablesHandler) AddColumn(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Name string `json:"name"`
 		Type string `json:"type"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
 	if err := th.schemaService.AddColumn(req.Context(), meta, body.Name, body.Type); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -279,16 +249,15 @@ func (th *TablesHandler) RenameColumn(w http.ResponseWriter, req *http.Request) 
 	}
 	col := chi.URLParam(req, "col")
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
 	if err := th.schemaService.RenameColumn(req.Context(), meta, col, body.Name); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(body.Name)})
@@ -313,7 +282,7 @@ func (th *TablesHandler) DropColumn(w http.ResponseWriter, req *http.Request) {
 	col := chi.URLParam(req, "col")
 
 	if err := th.schemaService.DropColumn(req.Context(), meta, col); err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]string{"name": col})
@@ -332,18 +301,17 @@ func (th *TablesHandler) DropColumn(w http.ResponseWriter, req *http.Request) {
 // @Failure 507 {object} response.ErrorResponse
 // @Router /api/v1/derive [post]
 func (th *TablesHandler) DeriveTable(w http.ResponseWriter, req *http.Request) {
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Query        string `json:"query"`
 		NewTableName string `json:"newTableName"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
 	tableId, err := th.deriveService.DeriveTable(req.Context(), body.Query, body.NewTableName)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -371,15 +339,14 @@ func (th *TablesHandler) DeriveFromTable(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	var body deriveSpecDTO
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[deriveSpecDTO](w, req)
+	if !ok {
 		return
 	}
 
 	tableId, err := th.deriveService.DeriveFromTable(req.Context(), meta, body.toSpec())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -406,15 +373,14 @@ func (th *TablesHandler) AggregateFromTable(w http.ResponseWriter, req *http.Req
 		return
 	}
 
-	var body aggregateSpecDTO
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[aggregateSpecDTO](w, req)
+	if !ok {
 		return
 	}
 
 	tableId, err := th.deriveService.AggregateFromTable(req.Context(), meta, body.toSpec())
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -440,18 +406,17 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var body struct {
+	body, ok := DecodeBody[struct {
 		Conditions []storage.FilterCondition `json:"conditions"`
 		Limit      int                       `json:"limit"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	}](w, req)
+	if !ok {
 		return
 	}
 
 	schema, err := th.schemaService.Schema(req.Context(), meta)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	validColumns := make([]storage.ColumnInfo, len(schema))
@@ -472,7 +437,7 @@ func (th *TablesHandler) FilterRows(w http.ResponseWriter, req *http.Request) {
 
 	rows, err := th.rowService.ListRowsWithFilter(req.Context(), meta, filter, args, limit)
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 
@@ -512,11 +477,11 @@ func (th *TablesHandler) GetDistinctValues(w http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	offset, limit := th.distinctValuesPaginationParams(req, meta.TableId)
+	offset, limit, _ := paginationParams(req, th.tableSettings.Resolve(meta.TableId).DefaultRowLimit, false)
 	search := req.URL.Query().Get("search")
 	values, err := th.rowService.GetDistinctValues(req.Context(), meta, col, search, int(offset), int(limit))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"values": values, "limit": limit, "offset": offset})
@@ -548,15 +513,14 @@ func (th *TablesHandler) TransformColumn(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	var body transformSpecDTO
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[transformSpecDTO](w, req)
+	if !ok {
 		return
 	}
 
 	written, err := th.columnService.Transform(req.Context(), meta, body.toSpec(col))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]int64{"written": written})
@@ -586,15 +550,14 @@ func (th *TablesHandler) PreviewColumnTransform(w http.ResponseWriter, req *http
 		return
 	}
 
-	var body transformSpecDTO
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		response.WriteError(w, req, err, http.StatusBadRequest)
+	body, ok := DecodeBody[transformSpecDTO](w, req)
+	if !ok {
 		return
 	}
 
 	matched, sample, err := th.columnService.PreviewTransform(req.Context(), meta, body.toSpec(col))
 	if err != nil {
-		response.WriteError(w, req, err, response.MapServiceError(err))
+		response.WriteServiceError(w, req, err)
 		return
 	}
 	response.WriteJSON(w, http.StatusOK, map[string]any{"matched": matched, "sample": sample})

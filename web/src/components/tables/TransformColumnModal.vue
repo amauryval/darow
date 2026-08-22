@@ -12,16 +12,17 @@ import ColumnPickerList from './ColumnPickerList.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import DocLink from '../ui/DocLink.vue'
 import FilterNodeEditor from '../filters/FilterNodeEditor.vue'
+import FormError from '../ui/FormError.vue'
 import Modal from '../ui/Modal.vue'
-import BaseButton from '../ui/BaseButton.vue'
+import ModalFormActions from '../ui/ModalFormActions.vue'
 import Typography from '../ui/Typography.vue'
 import TransformPreview from './TransformPreview.vue'
 
 const DUCKDB_FUNCTIONS_URL = 'https://duckdb.org/docs/sql/functions/overview'
 
 // Rewrites column's values in place, on the rows a filter names — the write
-// neither the one-cell-at-a-time edit session nor *Dériver* can express
-// (spec/front/todo.md TODO-F44). Irreversible (§8.3): a preview against the
+// neither the one-cell-at-a-time edit session nor *Dériver* can express.
+// Irreversible (§8.3): a preview against the
 // server stands in for the undo the write does not have, and confirms
 // before applying. The new value is a single free SQL expression rather
 // than a guided arm picker — a per-row CASE WHEN builder was more machinery
@@ -178,23 +179,19 @@ async function onConfirm() {
                 :sample="previewSample"
             />
 
-            <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
+            <FormError :message="error" />
         </div>
 
-        <div class="mt-4 flex justify-end gap-2">
-            <BaseButton variant="secondary" @click="emit('close')">Annuler</BaseButton>
-            <BaseButton
-                variant="primary"
-                :busy="previewing"
-                :disabled="incomplete || previewing"
-                :title="
-                    incomplete ? 'Renseignez une expression pour la nouvelle valeur.' : undefined
-                "
-                @click="onPrimaryAction"
-            >
-                {{ previewing ? 'Aperçu…' : previewMatched === null ? 'Aperçu' : 'Appliquer' }}
-            </BaseButton>
-        </div>
+        <ModalFormActions
+            :confirm-label="
+                previewing ? 'Aperçu…' : previewMatched === null ? 'Aperçu' : 'Appliquer'
+            "
+            :busy="previewing"
+            :disabled="incomplete || previewing"
+            :reason="incomplete ? 'Renseignez une expression pour la nouvelle valeur.' : undefined"
+            @cancel="emit('close')"
+            @confirm="onPrimaryAction"
+        />
 
         <ConfirmDialog
             v-if="confirming"
