@@ -1,45 +1,69 @@
 # syntax=docker/dockerfile:1
+# The platform's libraries (github.com/MyAppLibs/go-pkg, web-platform) are private repositories: the
+# build reads them with a token given as the BuildKit secret `github_token`
+# (docker build --secret id=github_token,env=PLATFORM_TOKEN .), passed to git for one command through
+# GIT_CONFIG_* and never written to a layer.
 
-# Stage 1: Build UI (Node.js)
-FROM node:22-bookworm AS ui
-WORKDIR /app
-COPY web/package.json web/package-lock.json ./web/
-RUN cd web && npm ci
-COPY web ./web
-COPY internal/webui ./internal/webui
-RUN cd web && npm run build
+# ─────────────────────────────────────────────
+# Stage 1 — Build frontend (Vite / TypeScript)
+# ─────────────────────────────────────────────
+FROM node:26-alpine AS frontend-builder
+# The owner after the © of the sidebar's foot, read by Vite at build time; empty for none.
+ARG VITE_OWNER=
+WORKDIR /build
+COPY ./web ./web
+WORKDIR /build/web
+RUN apk add --no-cache git
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN \
+    GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/" \
+    GIT_CONFIG_KEY_1="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_1="ssh://git@github.com/" \
+    npm ci
+RUN npm run build-only
 
-# Stage 2: Build Go (with CGO)
-FROM golang:1.27-bookworm AS build
-# .git is excluded from the build context (.dockerignore), so the version
-# baked into the binary (internal/version) has to travel in as build args —
-# the caller reads them off git itself, same as `mise run build` does inline.
+# ─────────────────────────────────────────────
+# Stage 2 — Build Go server binary, with cgo (the DuckDB driver links its C library)
+# ─────────────────────────────────────────────
+FROM golang:1.27.4-bookworm AS go-builder
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+ENV GOPRIVATE=github.com/MyAppLibs/*,github.com/amauryval/*
+WORKDIR /build
 COPY . .
-COPY --from=ui /app/internal/webui/dist ./internal/webui/dist
-RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 \
-    && swag init -g cmd/server/main.go -o docs
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -X darow/internal/version.Version=${VERSION} -X darow/internal/version.Commit=${COMMIT} -X darow/internal/version.BuildDate=${BUILD_DATE}" -o /out/darow ./cmd/server
-# data/ is excluded from the build context (.dockerignore): server.workDir defaults to ./data,
-# so an empty one is staged here for the case where nothing is mounted over it.
-RUN mkdir -p /out/data
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/" \
+    go mod download
+COPY --from=frontend-builder /build/web/dist ./web/dist
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-s -w \
+        -X github.com/MyAppLibs/go-pkg/version.Version=${VERSION} \
+        -X github.com/MyAppLibs/go-pkg/version.Commit=${COMMIT} \
+        -X github.com/MyAppLibs/go-pkg/version.BuildDate=${BUILD_DATE}" \
+    -trimpath -o darow ./cmd/darow
 
-# Stage 3: final image (glibc compatible). Starts as root only to chown whatever ends up
-# mounted at /data (host bind mounts don't inherit the image's baked-in ownership), then
-# the entrypoint drops to the fixed nonroot uid/gid (65532) before running the server.
+# ─────────────────────────────────────────────
+# Stage 3 — Final minimal image
+# ─────────────────────────────────────────────
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 65532 nonroot \
-    && useradd -u 65532 -g nonroot -d /home/nonroot -m -s /usr/sbin/nologin nonroot
-WORKDIR /app
-COPY --from=build /out/darow ./darow
-COPY --from=build /out/data /data
-ENTRYPOINT ["/bin/sh", "-c", "chown -R nonroot:nonroot /data && exec su -s /bin/sh -c 'exec ./darow' nonroot"]
+    && useradd --uid 10001 --no-create-home darow \
+    && mkdir -p /data \
+    && chown darow:darow /data
+COPY --from=go-builder /build/darow /darow
+
+VOLUME /data
+EXPOSE 3000
+
+ENV HOST=0.0.0.0
+ENV PORT=3000
+# DuckDB installs its spatial extension under $HOME/.duckdb: the volume, writable by uid 10001.
+ENV HOME=/data
+
+ENTRYPOINT ["sh", "-c", "chown -R darow:darow /data && exec setpriv --reuid=10001 --regid=10001 --init-groups /darow"]

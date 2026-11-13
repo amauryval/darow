@@ -1,16 +1,17 @@
 ---
 name: audit
 description:
-    Audits the Go server, the Vue 3 admin UI or the project layer against its spec and records the
-    findings in spec/back/, spec/front/ or spec/project/ (blockers.md, limitations.md, todo.md,
-    improvements.md). Use whenever an audit, a review pass, or a "what's left to do / what's broken"
-    inventory is asked for, and whenever findings from any review must be written down.
+    Audits the Go server, the Vue 3 UI or the project layer against its spec and records the
+    findings in spec/findings.md (blockers, limitations, todo, improvements). Use whenever an audit,
+    a review pass, or a "what's left to do / what's broken" inventory is asked for, and whenever
+    findings from any review must be written down.
 ---
 
 ## When to Use This Skill
 
--   An audit or review pass is requested on the Go server (`cmd/`, `internal/`), on the Vue 3 UI
-    (`web/`), or on the project layer (naming, repository, tooling, build, CI, outward-facing docs)
+-   An audit or review pass is requested on the Go server (`cmd/`, `go-pkg/`, `internal/`), on the
+    Vue 3 UI (`web/`), or on the project layer (naming, repository, tooling, build, CI,
+    outward-facing docs)
 -   Findings from a review — yours, a subagent's (`go-reviewer`, `vue3-reviewer`), or the user's —
     have to be recorded
 -   The user asks what is blocking, what is left to do, or what could be improved
@@ -22,46 +23,61 @@ An audit compares the **code** to its **spec** and turns every gap into exactly 
 entry. It never rewrites the spec to match the code, and it never leaves a finding in chat only: an
 unrecorded finding is a lost finding.
 
-## The three families
+## The specs and the findings
 
-Each domain owns five independent files, in its own directory: `spec/back/` for the Go server,
-`spec/front/` for the Vue 3 admin UI, `spec/project/` for everything outside both — product identity
-and naming, repository layout, toolchain and `mise` tasks, Docker, CI, outward-facing documentation.
-Same five names in all three:
+The specs are read-only during an audit. Each scope has its own, laid out as the `specs` skill gives
+and indexed by `spec/README.md`: `spec/platform/` for `go-pkg/` and `web-platform/src`,
+`spec/common/` for `internal/common` and `web/src/common`, `spec/<module>/` for each module,
+`spec/project.md` for everything outside both codebases — product identity and naming, repository
+layout, toolchain and `mise` tasks, Docker, CI, outward-facing documentation.
 
-| File              | Holds                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `spec.md`         | the **stable** state: architecture, contracts, invariants. Read-only during an audit |
-| `blockers.md`     | what breaks correct use — fixed before any new feature                               |
-| `limitations.md`  | what is deliberately not done — scope decisions, not defects                         |
-| `todo.md`         | identified debt: gaps between the spec and the code                                  |
-| `improvements.md` | uncommitted leads, to be decided before being planned                                |
+Every finding lands in **one** file, `spec/findings.md`, under the section of its kind, one row with
+its scope:
 
-The three families are disjoint. A front finding never lands in a back file, and the reverse; their
-only contact point is the REST API — a mismatch between what the server serves and what the client
-expects is a back finding if the server violates `spec/back/spec.md` §6, a front finding otherwise.
-A finding lands in `project` when fixing it touches neither Go logic nor Vue logic but the
-repository around them: a name, a task, an image, a workflow, a `README`. A rename that reaches both
-codebases is still **one** `project` entry, not one per side.
+| Section        | Holds                                                        |
+| -------------- | ------------------------------------------------------------ |
+| `Blockers`     | what breaks correct use — fixed before any new feature       |
+| `Limitations`  | what is deliberately not done — scope decisions, not defects |
+| `Todo`         | identified debt: gaps between the spec and the code          |
+| `Improvements` | uncommitted leads, to be decided before being planned        |
 
-The whole of `spec/` is written in English.
+The scope is where the fix lands: a module's name, `common` or `platform`, followed by its side,
+`back` or `front`, or `project` alone. A front finding never has a back scope, and the reverse;
+their only contact point is the REST API — a mismatch between what the server serves and what the
+client expects is a back finding if the server violates the module's back spec (its HTTP contract),
+a front finding otherwise. A finding is `project` when fixing it touches neither Go logic nor Vue
+logic but the repository around them: a name, a task, an image, a workflow, a `README`. A rename
+that reaches both codebases is still **one** `project` entry, not one per side.
+
+A platform finding (`go-pkg/`, `web-platform/src`) takes the scope `platform back` or
+`platform front`, as the `platform` skill (**Recording platform findings**) gives. A leak of a
+module into the platform is a `todo`; a generic capability the platform could give is an
+`improvement`, worded for any module.
 
 ## Procedure
 
 1. **Fix the scope.** Back, front, project, or several. If the request is ambiguous, audit the
    domain the changed files belong to; ask only when none applies.
-2. **Read the spec first**, in full — the `spec.md` of each domain in scope. Its §0 rules are the
-   grid; a finding that maps to no rule and no invariant is usually a preference, not a finding.
-3. **Read the four target files** of that domain before auditing. They tell you what is already
-   recorded and what the next free id is. Never re-report a finding that already has an id.
+2. **Read the spec first**, in full — the specs of each scope audited, and for back or front the
+   platform's file of that side (`go-pkg/spec/back.md`, `web-platform/spec/front.md`). Their §0
+   rules are the grid; a finding that maps to no rule and no invariant is usually a preference, not
+   a finding.
+3. **Read `spec/findings.md`** before auditing. It tells you what is already recorded and what the
+   next free id is. Never re-report a finding that already has an id.
 4. **Audit the code.** Go by the spec's sections, not by directory order. Run `mise run lint`,
-   `mise run test` (back), `mise run ui-lint`, `mise run ui-build` (front), or read `mise.toml`,
-   `Dockerfile` and `.github/workflows/` (project) — a failing check is a finding. Never run dev
-   servers.
-5. **Classify each finding** with the decision rules below. One finding, one file, one line.
-6. **Write the files.** Append new entries, drop entries that no longer hold, leave existing ids
-   untouched.
-7. **Report** to the user: what was audited, the counts per file, and the entries that moved or
+   `mise run test-go` (back), `npm run type-check`, `mise run test-front`, `mise run build-frontend`
+   (front), or read `mise.toml`, `Dockerfile` and `.github/workflows/` (project) — a failing check
+   is a finding. `mise run check-api-doc-generated` and a reading of `docs/architecture.md` against
+   the code (`app-docs`) belong to every back or front audit: a stale map is a `todo`. A back or
+   front audit also runs the **Checks** of the `essentials` skill and of the `platform` skill and
+   reads each hit: the essential rules (simple, SOLID, DRY) and the boundary between the platform
+   and the module are audited every time, whatever the scope of the request. A violation of the
+   essential rules is a `todo`. Never run dev servers. A front audit may add a visual pass, run as
+   `CLAUDE.md` describes: headless screenshots of the public pages at desktop and phone widths.
+5. **Classify each finding** with the decision rules below. One finding, one section, one row.
+6. **Write `spec/findings.md`.** Append new entries, drop entries that no longer hold, leave
+   existing ids untouched.
+7. **Report** to the user: what was audited, the counts per section, and the entries that moved or
    disappeared. Never paste the full tables back into chat.
 
 ## Classification — in this order
@@ -94,9 +110,9 @@ Two traps:
 -   **Identifiers are stable.** `BLK-n`, `LIM-n`, `TODO-n`, `IMP-n`, with an `F` for the front
     (`TODO-F4`) and a `P` for the project (`TODO-P1`). Take the next free number; a retired id is
     never reused, and existing entries are never renumbered.
--   **One finding, one row.** The columns already in place: the finding, its concrete effect, the
-    reference (`spec.md` §x — the sibling file, or the front rule §x).
--   **A `todo.md` row may be long.** It is the only file whose entries are meant to be acted on, so
+-   **One finding, one row.** The columns already in place: its scope, the finding, its concrete
+    effect, the reference (the spec file and its §x).
+-   **A `Todo` row may be long.** It is the only section whose entries are meant to be acted on, so
     detail is welcome: name the files and symbols concerned, say what to change and in what order,
     state the constraints to respect, record the trap that produced the gap. Write it for whoever
     implements it months from now, with no memory of this audit. Naming what exists is part of that:
@@ -105,24 +121,24 @@ Two traps:
     goes stale the next time anyone touches the file, and a wrong line sends the reader somewhere
     else with full confidence. A symbol is found by search and stays true. The one thing that stays
     out is **code itself** — no snippet, no full signature, no diff: write the instruction, not the
-    patch. In `blockers.md`, `limitations.md` and `improvements.md`, stay short: nothing there is
-    being implemented yet.
+    patch. In `Blockers`, `Limitations` and `Improvements`, stay short: nothing there is being
+    implemented yet.
 -   **State the effect, not the smell.** "522 lignes, chargement + filtres + sélection + édition"
     beats "trop gros". "Un client qui s'en sert pour paginer se trompe" beats "incorrect".
 -   **English, no code**, like the rest of `spec/`. Cite files and symbols by name; the signatures
     live in the code.
--   **Order by decreasing impact** inside each file, and inside each group when a file has groups.
+-   **Order by decreasing impact** inside each section.
 
 ## Removing an entry
 
--   A chantier landed → delete its row in the same change as the code. A todo file that still lists
-    fixed work is worse than an empty one.
+-   A chantier landed → delete its row in the same change as the code. A todo section that still
+    lists fixed work is worse than an empty one.
 -   A todo that will never be done, on purpose → move it to `limitations`, with a new `LIM` id and
     the reason. Do not just delete it.
 -   An improvement that is taken up → move it to `todo`, with a new `TODO` id.
--   The last row of a file goes → keep the file, keep its header and its table header, and restore
-    the explicit empty line (`_Aucun … identifié à ce jour._`). **These files always exist**, even
-    empty: an empty `blockers.md` is a statement, an absent one is an unknown.
+-   The last row of a section goes → keep the section, its header and its table header, and add the
+    explicit empty line (`_None identified to date._`). **The four sections always exist**, even
+    empty: an empty `Blockers` is a statement, an absent one is an unknown.
 
 ## Subagents
 

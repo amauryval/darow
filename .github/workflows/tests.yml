@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+    push:
+        branches:
+            - '**'
+    workflow_dispatch:
+
+jobs:
+    tests:
+        runs-on: ubuntu-24.04
+        steps:
+            # No persisted credentials: the checkout's GITHUB_TOKEN header, read by git run inside the
+            # workspace, would override PLATFORM_TOKEN for the platform's repositories.
+            - uses: actions/checkout@v4
+              with:
+                  persist-credentials: false
+
+            # The platform's libraries are private repositories (MyAppLibs/go-pkg, web-platform), read
+            # with PLATFORM_TOKEN; npm's lock names them by ssh, Go by https.
+            - name: Give git access to the platform's repositories
+              run: |
+                  git config --global url."https://x-access-token:${PLATFORM_TOKEN}@github.com/".insteadOf "https://github.com/"
+                  git config --global --add url."https://x-access-token:${PLATFORM_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+              env:
+                  PLATFORM_TOKEN: ${{ secrets.PLATFORM_TOKEN }}
+
+            - name: Install tools
+              uses: jdx/mise-action@v2
+              with:
+                  install: true
+
+            - name: Install frontend dependencies
+              run: cd web && npm ci
+
+            - name: Lint
+              run: mise run lint
+
+            - name: Test
+              run: mise run test-all

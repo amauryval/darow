@@ -2,8 +2,6 @@ name: Publish Docker image
 
 on:
     push:
-        branches:
-            - main
         tags:
             - '*'
 
@@ -11,15 +9,7 @@ jobs:
     publish-docker-image:
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@v2
-
-            - name: Check tag
-              run: |
-                  git fetch --tags
-                  if ! git tag --points-at HEAD | grep -q .; then
-                    echo "No tag on current commit, aborting."
-                    exit 1
-                  fi
+            - uses: actions/checkout@v4
 
             - name: Extract tag
               id: tag
@@ -32,12 +22,18 @@ jobs:
               env:
                   CR_PAT: ${{ secrets.CR_PAT }}
 
+            # PLATFORM_TOKEN reads the platform's private repositories (MyAppLibs/go-pkg, web-platform).
             - name: Build
+              env:
+                  PLATFORM_TOKEN: ${{ secrets.PLATFORM_TOKEN }}
               run: |
+                  COMMIT=$(git rev-parse --short HEAD)
+                  BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
                   docker build . \
+                    --secret id=github_token,env=PLATFORM_TOKEN \
                     --build-arg VERSION=${{ steps.tag.outputs.value }} \
-                    --build-arg COMMIT=$(git rev-parse --short HEAD) \
-                    --build-arg BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ) \
+                    --build-arg COMMIT=${COMMIT} \
+                    --build-arg BUILD_DATE=${BUILD_DATE} \
                     --tag ghcr.io/amauryval/${{ steps.tag.outputs.repo }}:${{ steps.tag.outputs.value }}
 
             - name: Push

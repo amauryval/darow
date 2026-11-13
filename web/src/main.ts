@@ -1,6 +1,9 @@
-import { createApp } from 'vue'
-import './style.css'
-import App from './App.vue'
-import { router } from './router'
+import { createShell } from '@myapplibs/web-platform/shell'
+import { darowModule } from '@/darow/module'
 
-createApp(App).use(router).mount('#app')
+createShell({
+    title: 'darow',
+    mark: 'D',
+    owner: import.meta.env.VITE_OWNER,
+    modules: [darowModule]
+})

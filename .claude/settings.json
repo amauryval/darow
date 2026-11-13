@@ -23,6 +23,7 @@
             "Bash(awk:*)",
             "Bash(gofmt -l internal/)",
             "WebSearch",
+            "Bash(mise run sync-platform)",
             "Bash(gofmt -w internal/storage/)"
         ],
         "deny": [
@@ -41,7 +42,9 @@
             "Bash(go run:*)",
             "Bash(vite:*)",
             "Bash(npx vite:*)",
-            "Bash(mise:*)",
+            "Bash(mise run dev:*)",
+            "Bash(mise run dev-app:*)",
+            "Bash(mise run dev-app-demo:*)",
             "Bash(rm -rf *)",
             "Read(**/.env)",
             "Read(**/.env.*)",
