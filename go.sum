@@ -1,7 +1,7 @@
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
-github.com/MyAppLibs/go-pkg v0.2.1 h1:L3bmwM4jSoW5QhwrTnBQQQPXbJ705qfHtUn5JBsIZoQ=
-github.com/MyAppLibs/go-pkg v0.2.1/go.mod h1:A8y/YkkNMlW78GrjxPJoZTczIA0XY0tuUbmRNlb3/JE=
+github.com/MyAppLibs/go-pkg v0.3.0 h1:hs6fNjkEl9wmCyiEdahbo75/Bt7yUr3zFMhdZ/kSgsc=
+github.com/MyAppLibs/go-pkg v0.3.0/go.mod h1:A8y/YkkNMlW78GrjxPJoZTczIA0XY0tuUbmRNlb3/JE=
 github.com/amauryval/goauth v0.5.3 h1:AmQoGliJm8PTbmcszZkxj3j+2D6pF1Eve6t/4S37OXY=
 github.com/amauryval/goauth v0.5.3/go.mod h1:twCjgNMV/fBPDL5nUivQfNgWQx6NQzWn3WpFHmnufbU=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=

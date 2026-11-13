@@ -3,7 +3,7 @@ module github.com/amauryval/darow
 go 1.27.0
 
 require (
-	github.com/MyAppLibs/go-pkg v0.2.1
+	github.com/MyAppLibs/go-pkg v0.3.0
 	github.com/amauryval/goauth v0.5.3
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/go-chi/chi/v5 v5.3.1
