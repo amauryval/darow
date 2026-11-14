@@ -17,7 +17,7 @@ const TileLayer = "features"
 
 // Tile returns the vector tile z/x/y of the table's geometry, each feature carrying its row number
 // as id; the tile is empty for a table without geometry. At most Limits.Tiles render at once, the
-// others waiting until their request ends.
+// others waiting until their request ends; a render breaking DuckDB runs again once, reopened.
 func (e *Engine) Tile(ctx context.Context, name string, z, x, y int, condition string) ([]byte, error) {
 	if z < 0 || z > 24 || x < 0 || y < 0 || x >= 1<<z || y >= 1<<z {
 		return nil, fmt.Errorf("tile %d/%d/%d: %w", z, x, y, apperr.ErrNotFound)
@@ -29,18 +29,20 @@ func (e *Engine) Tile(ctx context.Context, name string, z, x, y int, condition s
 		return nil, ctx.Err()
 	}
 	var tile []byte
-	err := e.read(ctx, func(db *sql.DB) error {
-		table, err := describe(ctx, db, name)
-		if err != nil || table.Geometry == "" {
-			return err
-		}
-		clause, err := where(ctx, db, table, condition)
-		if err != nil {
-			return err
-		}
-		query, queryArgs := tileQuery(table, z, x, y, clause)
+	err := retried(func() error {
+		return e.read(ctx, func(db *sql.DB) error {
+			table, err := describe(ctx, db, name)
+			if err != nil || table.Geometry == "" {
+				return err
+			}
+			clause, err := where(ctx, db, table, condition)
+			if err != nil {
+				return err
+			}
+			query, queryArgs := tileQuery(table, z, x, y, clause)
 
-		return evaluated("where", db.QueryRowContext(ctx, query, queryArgs...).Scan(&tile))
+			return evaluated("where", db.QueryRowContext(ctx, query, queryArgs...).Scan(&tile))
+		})
 	})
 
 	return tile, err

@@ -11,7 +11,8 @@ What breaks correct use — fixed before any new feature.
 
 | Id    | Scope      | Finding                                                                                                                                       | Effect                                                                                     | Reference                 |
 | ----- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------- |
-| BLK-1 | darow back | A tile filtered by the selection (`"__id" IN (…)`) once failed with DuckDB's `INTERNAL Error: Operation requires a flat vector`, raised by the spatial extension's optimizer; not reproduced on a copy of the file, alone, 8 at a time or cancelled | the tile answers 500 and the map shows a hole; an internal error may invalidate the DuckDB instance until a restart | `spec/darow/back.md` §4.5 |
+
+_None identified to date._
 
 ## Limitations
 
@@ -24,6 +25,7 @@ What is deliberately not done — scope decisions, not defects.
 | LIM-4  | darow back  | The first start downloads DuckDB's spatial extension                                           | DuckDB's own distribution of its extensions                    | `spec/darow/back.md` §5.1 |
 | LIM-5  | darow back  | A column transform has no undo but the platform's archives                                     | the preview shows what it writes before it writes              | `spec/darow/back.md` §4.6 |
 | LIM-6  | darow back  | No WFS 2.0 service (GetCapabilities, DescribeFeatureType, GetFeature in GML) | OGC API - Features, its successor, is what QGIS, GDAL and ArcGIS Pro read; WFS would serve only older clients | ADR-0004, `spec/darow/back.md` §6.5 |
+| LIM-7  | darow back  | A tile filtered by the selection (`"__id" IN (…)`) once failed with DuckDB's `INTERNAL Error: Operation requires a flat vector` (spatial extension's optimizer), not reproduced; the engine reopens the file on such an error and renders the tile again | a bug of DuckDB's, beyond darow; its effect is contained, its message logged | `spec/darow/back.md` §5.1 |
 | LIM-F2 | darow front | A neighbour is snapped to once its exact geometry is read (`getRow`, on approach; those around the edited object beforehand) | the tiles only find the features; their geometries are simplified and quantized | `spec/darow/front.md` §8 |
 
 ## Todo

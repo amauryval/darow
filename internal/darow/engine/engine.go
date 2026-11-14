@@ -8,11 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
 
-	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/duckdb/duckdb-go/v2"
 )
 
 // Limits bound DuckDB: the directories it may read and write besides its file (no other file, no
@@ -138,19 +139,32 @@ func (e *Engine) close() error {
 	return err
 }
 
-// read runs fn over the open file, beside the other reads.
+// read runs fn over the open file, beside the other reads; a broken instance is reopened.
 func (e *Engine) read(ctx context.Context, fn func(db *sql.DB) error) error {
+	db, err := e.shared(fn)
+	if broken(err) {
+		e.mu.Lock()
+		if e.db == db {
+			e.reopen(err)
+		}
+		e.mu.Unlock()
+	}
+
+	return canceled(ctx, err)
+}
+
+func (e *Engine) shared(fn func(db *sql.DB) error) (*sql.DB, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	if e.db == nil {
-		return errClosed
+		return nil, errClosed
 	}
 
-	return canceled(ctx, fn(e.db))
+	return e.db, fn(e.db)
 }
 
-// write runs fn in one transaction over the open file, alone.
+// write runs fn in one transaction over the open file, alone; a broken instance is reopened.
 func (e *Engine) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -159,14 +173,45 @@ func (e *Engine) write(ctx context.Context, fn func(tx *sql.Tx) error) error {
 		return errClosed
 	}
 	tx, err := e.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	if err == nil {
+		err = fn(tx)
+		if err != nil {
+			err = errors.Join(err, tx.Rollback())
+		} else {
+			err = tx.Commit()
+		}
 	}
-	if err := fn(tx); err != nil {
-		return canceled(ctx, errors.Join(err, tx.Rollback()))
+	if broken(err) {
+		e.reopen(err)
 	}
 
-	return tx.Commit()
+	return canceled(ctx, err)
+}
+
+// broken tells a failure after which DuckDB's instance must be restarted: an internal or a fatal error.
+func broken(err error) bool {
+	var failure *duckdb.Error
+
+	return errors.As(err, &failure) &&
+		(failure.Type == duckdb.ErrorTypeInternal || failure.Type == duckdb.ErrorTypeFatal)
+}
+
+// reopen closes and reopens the file after cause, under the write lock; a failed open leaves it closed.
+func (e *Engine) reopen(cause error) {
+	slog.Error("duckdb instance broken, reopened", "err", cause)
+	if err := errors.Join(e.close(), e.open()); err != nil {
+		slog.Error("duckdb reopen", "err", err)
+	}
+}
+
+// retried runs run again once when its first failure broke DuckDB's instance, by then reopened.
+func retried(run func() error) error {
+	err := run()
+	if broken(err) {
+		return run()
+	}
+
+	return err
 }
 
 // canceled tells a failure caused by the request's end (DuckDB interrupted, a check cut short) as

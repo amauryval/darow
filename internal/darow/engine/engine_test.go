@@ -2,12 +2,18 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -106,4 +112,101 @@ func Test_Engine_TileWaits(t *testing.T) {
 	_, err := f.engine.Tile(ctx, "places", 0, 0, 0, "")
 
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func Test_broken(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "An internal error breaks the instance", err: fmt.Errorf("tile: %w", &duckdb.Error{Type: duckdb.ErrorTypeInternal}), want: true},
+		{name: "A fatal error breaks the instance", err: &duckdb.Error{Type: duckdb.ErrorTypeFatal}, want: true},
+		{name: "A binder error leaves it", err: &duckdb.Error{Type: duckdb.ErrorTypeBinder}},
+		{name: "Another error leaves it", err: errors.New("closed")},
+		{name: "No error leaves it"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, broken(c.err))
+		})
+	}
+}
+
+func Test_Engine_ReadReopens(t *testing.T) {
+	f := setupEngine(t)
+	f.places(t)
+	internal := &duckdb.Error{Type: duckdb.ErrorTypeInternal, Msg: "INTERNAL Error: flat vector"}
+	before := f.engine.db
+
+	err := f.engine.read(context.Background(), func(*sql.DB) error { return internal })
+
+	assert.ErrorIs(t, err, internal)
+	assert.NotSame(t, before, f.engine.db)
+	_, err = f.engine.Tile(context.Background(), "places", 0, 0, 0, "")
+	assert.NoError(t, err)
+}
+
+func Test_Engine_ReadReopensOnce(t *testing.T) {
+	f := setupEngine(t)
+	var logs strings.Builder
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	internal := &duckdb.Error{Type: duckdb.ErrorTypeInternal}
+	var both, done sync.WaitGroup
+	both.Add(2)
+	for range 2 {
+		done.Go(func() {
+			_ = f.engine.read(context.Background(), func(*sql.DB) error {
+				both.Done()
+				both.Wait()
+				return internal
+			})
+		})
+	}
+
+	done.Wait()
+
+	assert.Equal(t, 1, strings.Count(logs.String(), "duckdb instance broken"))
+	assert.NotNil(t, f.engine.db)
+}
+
+func Test_Engine_WriteReopens(t *testing.T) {
+	f := setupEngine(t)
+	internal := &duckdb.Error{Type: duckdb.ErrorTypeInternal}
+	before := f.engine.db
+
+	err := f.engine.write(context.Background(), func(*sql.Tx) error { return internal })
+
+	assert.ErrorIs(t, err, internal)
+	assert.NotSame(t, before, f.engine.db)
+}
+
+func Test_retried(t *testing.T) {
+	internal := &duckdb.Error{Type: duckdb.ErrorTypeInternal}
+	other := errors.New("binder")
+	cases := []struct {
+		name      string
+		failures  []error
+		wantRuns  int
+		wantError error
+	}{
+		{name: "A success runs once", failures: []error{nil}, wantRuns: 1},
+		{name: "A broken instance runs again", failures: []error{internal, nil}, wantRuns: 2},
+		{name: "A second break gives up", failures: []error{internal, internal}, wantRuns: 2, wantError: internal},
+		{name: "Another failure runs once", failures: []error{other}, wantRuns: 1, wantError: other},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runs := 0
+
+			err := retried(func() error {
+				runs++
+				return c.failures[runs-1]
+			})
+
+			assert.Equal(t, c.wantRuns, runs)
+			assert.Equal(t, c.wantError, err)
+		})
+	}
 }

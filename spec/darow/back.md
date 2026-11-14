@@ -202,7 +202,8 @@ text) is `where` `darow.invalid_expression` with DuckDB's `message`; any other f
   feature's id (the tile's own, no property) its row's `__id`, which the map reads as is — of
   `TRY(ST_AsMVTGeom(ST_Simplify(geom, span/4096), ST_Extent(envelope)))` over the rows whose
   geometry intersects the tile's envelope (`ST_Intersects_Extent`) and pass the condition. The
-  envelope is computed in Go and inlined: the RTREE index serves only a constant.
+  envelope is computed in Go and inlined: the RTREE index serves only a constant; a render breaking DuckDB
+  runs again once the file is reopened (§5.1).
 - `Features(name, FeatureQuery{BBox, BBoxCRS, Offset, Limit, Decimals, CRS})` — GeoJSON
   features ordered by `__id`, `id` the row number, the geometry in `CRS` (CRS84 when empty) rounded
   by `ST_ReducePrecision` to `Decimals` digits, the properties the other columns; `BBox`, in
@@ -282,7 +283,11 @@ those directories but the DuckDB file itself, no network, no extension installed
 database, and never turned on again while the file is open. `Tile` renders at most `Limits.Tiles`
 tiles at once (1 at least); the others wait, a request ending while it waits failing with its
 context's error. A call on a closed engine fails. A read or a write failing once its request has ended (DuckDB
-interrupted, a condition's check cut short) fails with the context's error, whatever the cause.
+interrupted, a condition's check cut short) fails with the context's error, whatever the cause. A
+read or a write failing on an internal or a fatal error of DuckDB (`broken`: an instance it says
+must be restarted) closes and reopens the file under the write lock, once for the reads that failed
+together on the same instance, logged at error level with DuckDB's message, then fails as it did; a
+reopening that fails leaves the engine closed. `Tile` then renders again, once.
 
 - `Snapshot(ctx, dest)` — `CHECKPOINT` when open, then copies the file to `dest`; a file never
   created writes nothing (`backup.Attachment`: the archive then carries no entry). It runs before
@@ -459,7 +464,9 @@ unions of their constants, which `utils/catalog.ts` lists.
   column cannot hold) and their preview; exports (CSV,
   CSV and GeoJSON in a projected CRS, GeoJSON, unknown format, unknown CRS); snapshot and restore, snapshot of a closed or never created file; the limits (their statements, a
   file of the server and one outside the directories refused, a tile waiting past its request's end),
-  a failure after the request's end read as its cancellation.
+  a failure after the request's end read as its cancellation; an internal or a fatal error telling
+  a broken instance, a read and a write reopening it, two reads failing together reopening it once,
+  a render run again once.
 - `sources`: save (accepted names, refused names, over the limit), list, path, delete.
 - `filters`: validation (with a blank condition, of any table), create, move and drop with a table, drop all, the tables.
 - `settings`: defaults, global values, a table's overrides over them, move, drop, drop all the
