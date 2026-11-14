@@ -52,7 +52,9 @@ of the shell breaking the link. `GOPRIVATE` keeps the platform's module paths fr
 `go.mod` requires `go-pkg` at its tag and `web/package.json` names `@myapplibs/web-platform` at its
 tag; working on a library alongside, an untracked `go.work` replaces `go-pkg` by
 `../MyAppLibs/go-pkg`, and `mise run sync-platform` copies `../MyAppLibs/web-platform` into
-`web/node_modules`.
+`web/node_modules`. Each library has its own version; `web/platform_test.go` (`archtest.Pair`)
+fails when the `go-pkg` of `go.mod` is not on the line of `go-pkg` the installed `web-platform`
+declares (`goPkg`), and skips under `go.work` (`../MyAppLibs/go-pkg/spec/adr/0001`).
 
 Tasks: `setup`, `sync-platform`, `lint`, `test-go` (after `check-api-doc-generated`), `test-front`,
 `test-all`, `generate-types` (`tygo.yaml` → `web/src/darow/api/*.gen.ts`), `generate-api-doc`,

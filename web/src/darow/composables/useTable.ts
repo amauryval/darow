@@ -148,13 +148,6 @@ export function useTable() {
             return t('darow.row.saved')
         })
 
-    const saveCell = (id: number, column: string, text: string) =>
-        attempt(t('darow.row.saveFailed'), async () => {
-            await api.updateRow(name.value, id, { values: { [column]: text === '' ? null : text } })
-            revision.value++
-            await fetchRows()
-        })
-
     const deleteRow = async (id: number): Promise<boolean> => {
         if (!(await confirmDialog(t('darow.row.confirmDelete')))) return false
         return attempt(t('darow.row.deleteFailed'), async () => {
@@ -203,7 +196,6 @@ export function useTable() {
         selectRow: (selected: Record<string, unknown> | null) => (row.value = selected),
         newRow: () => (row.value = {}),
         saveRow,
-        saveCell,
         changed: () => {
             revision.value++
             return reload()

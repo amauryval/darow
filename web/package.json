@@ -18,7 +18,7 @@
     },
     "dependencies": {
         "@lucide/vue": "1.24.0",
-        "@myapplibs/web-platform": "github:MyAppLibs/web-platform#v0.3.0",
+        "@myapplibs/web-platform": "github:MyAppLibs/web-platform#v0.3.3",
         "@tanstack/vue-table": "8.21.3",
         "@tiptap/extension-text-style": "^3.31.3",
         "@tiptap/starter-kit": "3.27.3",

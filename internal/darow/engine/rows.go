@@ -105,16 +105,22 @@ func (e *Engine) RowWKT(ctx context.Context, name string, id int64, crs string, 
 // DeleteRow removes the row numbered id.
 func (e *Engine) DeleteRow(ctx context.Context, name string, id int64) error {
 	return e.write(ctx, func(tx *sql.Tx) error {
-		if _, err := describe(ctx, tx, name); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quote(name), quote(IDColumn)), id)
+		table, err := describe(ctx, tx, name)
 		if err != nil {
 			return err
 		}
 
-		return requireRow(result, id)
+		return deleteRow(ctx, tx, table, id)
 	})
+}
+
+func deleteRow(ctx context.Context, tx *sql.Tx, table Table, id int64) error {
+	result, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s = ?", quote(table.Name), quote(IDColumn)), id)
+	if err != nil {
+		return err
+	}
+
+	return requireRow(result, id)
 }
 
 func selectRows(table Table) string {

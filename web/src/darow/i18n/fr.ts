@@ -99,6 +99,9 @@ export const fr = {
         editing: 'Objet {id}',
         drawing: 'Nouvel objet : dessinez-le, ou cliquez sur un objet pour l’éditer'
     },
+    cellEdit: {
+        saved: 'Modifications enregistrées'
+    },
     selection: {
         filter: 'Sélection ({count})',
         only: 'Ne montrer que la sélection (rangées, carte, exports)',

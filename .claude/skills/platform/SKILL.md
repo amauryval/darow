@@ -201,19 +201,21 @@ committed:
    makes the change span both libraries.
 3. **Try it in the application** without releasing: `go-pkg` is read through `go.work` as it is;
    `web-platform` after `mise run sync-platform`. Then the module part, and `mise run test-all`.
-4. **Release the libraries**, once both sides hold. `go-pkg` and `web-platform` share one version:
-   both are released together under the same tag, even when one did not change, so that an
-   application always holds a pair known to work together. In each, the change's line under
-   **Unreleased** of `CHANGELOG.md` becomes the version's section (`web-platform`'s `package.json`
-   `version` too), then `git tag vX.Y.Z` and `git push --follow-tags`, `go-pkg` first. In `v0`, `Y`
-   goes up when a contract breaks (a signature, a route, a prop, an event, a §2 Usage that changes),
-   listed under **Breaking** with what an application must do, `Z` for anything else. Each library's
-   CI runs on the tag, its example application included.
-5. **Upgrade the application** to the same version of both, reading their **Breaking**:
+4. **Release the libraries that changed**, once both sides hold. `go-pkg` and `web-platform` each
+   have their own version: one is released alone when only it changed, both when the change spans
+   them, `go-pkg` first. In each released, the change's line under **Unreleased** of `CHANGELOG.md`
+   becomes the version's section (`web-platform`'s `package.json` `version` too), then
+   `git tag vX.Y.Z` and `git push --follow-tags`. In `v0`, `Y` goes up when a contract breaks (a
+   signature, a route, a prop, an event, a §2 Usage that changes), listed under **Breaking** with
+   what an application must do, `Z` for anything else; a change of the wire (a type `tygo.yaml`
+   lists, a platform route) breaks both, `web-platform`'s `goPkg` set to `go-pkg`'s new line
+   (`go-pkg/spec/adr/0001`). Each library's CI runs on the tag, its example application included.
+5. **Upgrade the application** to the versions released, reading their **Breaking**; its
+   `archtest.Pair` test fails on a pair that does not speak the same wire:
 
     ```bash
     GOWORK=off go get github.com/MyAppLibs/go-pkg@vX.Y.Z && GOWORK=off go mod tidy
-    (cd web && npm install github:MyAppLibs/web-platform#vX.Y.Z)
+    (cd web && npm install github:MyAppLibs/web-platform#vA.B.C)
     ```
 
 6. **Check the application on the published versions**, without the local mechanisms, as the image

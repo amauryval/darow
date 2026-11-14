@@ -208,7 +208,6 @@ const breadcrumbs = computed(() => [{ label: t('darow.pages.tables'), icon: icon
                             :rows="rows"
                             :can-edit="canEdit"
                             @sort="table.setSort"
-                            @edit="table.saveCell"
                             @select="table.selectRow"
                         />
                     </div>

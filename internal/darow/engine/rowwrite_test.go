@@ -128,7 +128,7 @@ func Test_Engine_WriteRows(t *testing.T) {
 			f.places(t)
 			before := rowGeometry(t, f.engine, 1)
 
-			ids, err := f.engine.WriteRows(context.Background(), "places", c.rows)
+			ids, err := f.engine.WriteRows(context.Background(), "places", Batch{Rows: c.rows})
 
 			if c.wantErr != nil {
 				assert.ErrorIs(t, err, c.wantErr)
@@ -142,6 +142,47 @@ func Test_Engine_WriteRows(t *testing.T) {
 			assert.Equal(t, c.wantIDs, ids)
 			assert.NotEqual(t, before, rowGeometry(t, f.engine, 1))
 			assert.NotNil(t, rowGeometry(t, f.engine, 4))
+		})
+	}
+}
+
+func Test_Engine_WriteRows_removals(t *testing.T) {
+	one, renamed := int64(1), "Lutèce"
+	cases := []struct {
+		name      string
+		batch     Batch
+		wantErr   error
+		wantTotal int64
+	}{
+		{name: "Writes a row, deletes two and drops a column", batch: Batch{
+			Rows:    []BatchRow{{ID: &one, Write: RowWrite{Values: map[string]*string{"name": &renamed}}}},
+			Deleted: []int64{2, 3},
+			Dropped: []string{"pop"},
+		}, wantTotal: 1},
+		{name: "Deletes nothing when a row is missing", batch: Batch{Deleted: []int64{2, 99}}, wantErr: apperr.ErrNotFound},
+		{name: "Deletes nothing when a column is unknown", batch: Batch{Deleted: []int64{2}, Dropped: []string{"nope"}}, wantErr: apperr.ErrInvalid},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := setupEngine(t)
+			f.places(t)
+
+			_, err := f.engine.WriteRows(context.Background(), "places", c.batch)
+
+			rows, rowsErr := f.engine.Rows(context.Background(), "places", RowQuery{Limit: 10})
+			require.NoError(t, rowsErr)
+			table, describeErr := f.engine.Describe(context.Background(), "places")
+			require.NoError(t, describeErr)
+			if c.wantErr != nil {
+				assert.ErrorIs(t, err, c.wantErr)
+				assert.EqualValues(t, 3, rows.Total)
+				assert.Contains(t, columnNames(table), "pop")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.wantTotal, rows.Total)
+			assert.NotContains(t, columnNames(table), "pop")
+			assert.Contains(t, string(rows.Rows[0]), `"name":"Lutèce"`)
 		})
 	}
 }

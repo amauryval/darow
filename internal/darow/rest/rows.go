@@ -39,9 +39,11 @@ func (req RowRequest) write() engine.RowWrite {
 }
 
 // RowsRequest is several rows written at once, all or none: each row numbered by its id updated,
-// a row without id added.
+// a row without id added; then the rows numbered Deleted removed, then the columns Dropped.
 type RowsRequest struct {
-	Rows []BatchRowRequest `json:"rows"`
+	Rows    []BatchRowRequest `json:"rows"`
+	Deleted []int64           `json:"deleted,omitempty"`
+	Dropped []string          `json:"dropped,omitempty"`
 }
 
 // BatchRowRequest is a row of RowsRequest: its number, absent for a row to add, and its write.
@@ -188,14 +190,15 @@ func (s *Server) updateRow(w http.ResponseWriter, r *http.Request) {
 	s.getRow(w, r)
 }
 
-// writeRows writes several rows of a table in one transaction: if one fails, none is written.
+// writeRows writes several rows of a table, deletes rows and drops columns in one transaction:
+// if one fails, none is written.
 //
-//	@Summary	Write several rows, all or none
+//	@Summary	Write, delete rows and drop columns, all or none
 //	@Tags	darow
 //	@Accept	json
 //	@Produce	json
 //	@Param	table	path	string	true	"Table name"
-//	@Param	body	body	RowsRequest	true	"The rows to update (with an id) or add"
+//	@Param	body	body	RowsRequest	true	"The rows to update (with an id) or add, the rows to delete, the columns to drop"
 //	@Success	200	{object}	WrittenRows
 //	@Failure	400	{object}	apperr.Problem
 //	@Failure	404	{object}	apperr.Problem
@@ -212,12 +215,16 @@ func (s *Server) writeRows(w http.ResponseWriter, r *http.Request) {
 		rows[i] = engine.BatchRow{ID: row.ID, Write: row.write()}
 	}
 	table := chi.URLParam(r, "table")
-	ids, err := s.engine.WriteRows(r.Context(), table, rows)
+	ids, err := s.engine.WriteRows(r.Context(), table, engine.Batch{Rows: rows, Deleted: req.Deleted, Dropped: req.Dropped})
 	if err != nil {
 		httpx.FromError(w, "write rows", err)
 		return
 	}
-	s.changed(r, TablesResource, events.ActionChanged, table)
+	action := events.ActionChanged
+	if len(req.Dropped) > 0 {
+		action = events.ActionUpdated
+	}
+	s.changed(r, TablesResource, action, table)
 	_ = httpx.EncodeJSON(w, http.StatusOK, WrittenRows{IDs: ids})
 }
 

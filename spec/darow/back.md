@@ -46,7 +46,7 @@ internal/darow/
   engine/query.go    RowQuery
   engine/crs.go      CRS84, CRSOf; the check and the transform of a CRS asked for
   engine/rows.go     Rows, GeometryKey; Rows, Row, RowWKT, DeleteRow
-  engine/rowwrite.go RowWrite; InsertRow, UpdateRow, WriteRows
+  engine/rowwrite.go RowWrite, Batch, BatchRow; InsertRow, UpdateRow, WriteRows
   engine/columns.go  ColumnType and its constants, ColumnTypes, TransformPreview; AddColumn, RenameColumn, DropColumn, Transform,
                      PreviewTransform
   engine/filter.go   the WHERE of a SQL condition
@@ -192,9 +192,11 @@ text) is `where` `darow.invalid_expression` with DuckDB's `message`; any other f
   `ST_Transform(ST_GeomFromGeoJSON(?), 'OGC:CRS84', 'EPSG:3857')` once `ST_IsValid` accepts it, else
   `geometry` `darow.invalid_geometry` — as for a table without geometry. `UpdateRow(name, id, w)`
   refuses a write setting nothing (`darow.invalid_value`); `InsertRow(name, w)` numbers the row
-  `max(__id) + 1` and returns it. `WriteRows(name, rows)` writes several in one transaction, all or
-  none — a `BatchRow` with an `ID` updated, without one added, in order — and returns their
-  numbers; the first refusal rolls every row back. `InsertRow` and `UpdateRow` are batches of one.
+  `max(__id) + 1` and returns it. `WriteRows(name, batch)` writes a `Batch` in one transaction, all or
+  none — its `Rows` first, a `BatchRow` with an `ID` updated, without one added, in order; then the
+  rows numbered `Deleted` removed (an unknown one `ErrNotFound`); then the columns `Dropped`, as
+  `DropColumn` in one rebuild — and returns its rows' numbers; the first refusal rolls everything
+  back. `InsertRow` and `UpdateRow` are batches of one row.
 - `Tile(name, z, x, y, condition)` — `z` 0–24, `x`, `y` in the grid, else `ErrNotFound`; empty
   without geometry; otherwise `ST_AsMVT({'geom', 'id': __id}, 'features', 4096, 'geom', 'id')` — each
   feature's id (the tile's own, no property) its row's `__id`, which the map reads as is — of
@@ -224,7 +226,7 @@ free, else `name` `darow.invalid_column_name`.
   (`VARCHAR BIGINT DOUBLE BOOLEAN DATE TIMESTAMP`), else `type` `darow.invalid_column_type`.
 - `RenameColumn(name, column, to)`.
 - `DropColumn(name, column)` — DuckDB refuses to drop a column an index follows: the table is
-  rebuilt (`CREATE TABLE __rebuilt AS SELECT * EXCLUDE (<column>) … ORDER BY __id`, the old one
+  rebuilt (`CREATE TABLE __rebuilt AS SELECT * EXCLUDE (<columns>) … ORDER BY __id`, the old one
   dropped, the new one renamed and indexed), in one transaction.
 - `Transform(name, column, expression, condition)` —
   `UPDATE <name> SET <column> = CAST((<expression>) AS <type>)` on the rows passing the condition,
@@ -333,7 +335,7 @@ credentials (a map of OpenLayers, MapLibre, Leaflet), and only `CORS_ORIGIN` wri
 | `GET /tables/{table}/rows/{id}/wkt`        | `?srid` (`CRSOf`, at most 999999): `WKT{wkt}`, rounded to the table's `coordinateDecimals`; 404; 422   |
 | `POST /tables/{table}/rows` _guest_        | `RowRequest{values, geometry}`: 201 the row; 404; 422                                                  |
 | `PATCH /tables/{table}/rows/{id}` _guest_  | `RowRequest{values, geometry}`: 200 the row; 404; 422                                                  |
-| `PATCH /tables/{table}/rows` _guest_ | `RowsRequest{rows: [{id?, values, geometry}]}`, all or none: 200 `WrittenRows{ids}` in order; 404, 422 with nothing written |
+| `PATCH /tables/{table}/rows` _guest_ | `RowsRequest{rows: [{id?, values, geometry}], deleted?, dropped?}`, all or none: 200 `WrittenRows{ids}` in order, the event `updated` when a column is dropped; 404, 422 with nothing written |
 | `DELETE /tables/{table}/rows/{id}` _guest_ | 204; 404                                                                                               |
 | `GET /tables/{table}/tiles/{z}/{x}/{y}`    | `?where`: `application/vnd.mapbox-vector-tile`, `Cache-Control` from `tileCacheSeconds`; 404; 422      |
 
@@ -450,7 +452,7 @@ unions of their constants, which `utils/catalog.ts` lists.
   unset geometry, an unknown row, a table without geometry), updates (types, null, refusals),
   deletion; tiles (data, empty tile, filtered out, no geometry, outside the grid, the features' ids), features (paging,
   box, a box of another CRS in its axis order), one feature (CRS84, a projected CRS,
-  EPSG:4326 latitude first, an unknown CRS), its rounding; `CRSOf`; insertion (numbered, with its geometry, empty, refusals), geometry writes, several rows written (updated and added in order; a missing row or a refused geometry writing none)
+  EPSG:4326 latitude first, an unknown CRS), its rounding; `CRSOf`; insertion (numbered, with its geometry, empty, refusals), geometry writes, several rows written (updated and added in order; a missing row or a refused geometry writing none), rows deleted and a column dropped with them (a missing row or an unknown column writing none)
   (moved, emptied, refused, a table without geometry); columns (add, rename, drop by rebuilding,
   their refusals), transforms (all rows, the filtered ones, a subquery, a second statement, an
   escape out of the parentheses, a union out of them, a comment, an unreadable condition, a value the
@@ -468,7 +470,7 @@ unions of their constants, which `utils/catalog.ts` lists.
   EPSG one, a code DuckDB cannot project to), item, their `Content-Crs` and coordinates in the CRS
   asked for, `ogcCRS`; the settings (global page of the OGC,
   a table's overrides, its tiles' cache, its rounding); the columns and transforms; a row added with
-  its geometry, a geometry left or emptied, several rows written or none (a missing row, a refused geometry), the page of rows of a table's setting; a row's WKT
+  its geometry, a geometry left or emptied, several rows written or none (a missing row, a refused geometry), rows deleted and a column dropped with them or none (an unknown column), the page of rows of a table's setting; a row's WKT
   (CRS84, `srid`, an unknown or malformed code, an unknown row, a table without geometry); the
   export in the CRS asked for, its `Content-Disposition`, and its refusal; the upload of a source
   (`httpx.FilePart`: its part saved, another part refused, a file past `max` 422); the SELECT

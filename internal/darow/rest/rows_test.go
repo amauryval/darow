@@ -86,6 +86,31 @@ func Test_Rows_WriteBatch(t *testing.T) {
 	}
 }
 
+func Test_Rows_WriteBatch_removals(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantTotal  float64
+	}{
+		{name: "Deletes rows and drops a column", body: `{"rows":[],"deleted":[2,3],"dropped":["name"]}`, wantStatus: http.StatusOK, wantTotal: 1},
+		{name: "Deletes nothing when a column is unknown", body: `{"rows":[],"deleted":[2],"dropped":["nope"]}`, wantStatus: http.StatusUnprocessableEntity, wantTotal: 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := setupRouter(t)
+
+			rec := send(t, h, http.MethodPatch, "/tables/places/rows", c.body)
+
+			require.Equal(t, c.wantStatus, rec.Code)
+			page := decodeBody[struct {
+				Total float64 `json:"total"`
+			}](t, get(t, h, "/tables/places/rows", nil))
+			assert.Equal(t, c.wantTotal, page.Total)
+		})
+	}
+}
+
 func Test_Rows_PageSize(t *testing.T) {
 	h := setupRouter(t)
 	require.Equal(t, http.StatusOK, send(t, h, http.MethodPut, "/tables/places/settings", `{"rowsPageSize":10}`).Code)

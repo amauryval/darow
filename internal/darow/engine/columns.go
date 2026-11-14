@@ -63,30 +63,40 @@ func (e *Engine) RenameColumn(ctx context.Context, name, column, to string) erro
 	})
 }
 
-// DropColumn removes the column called column and its values. DuckDB refuses to drop a column an
-// index follows: the table is rebuilt without it.
+// DropColumn removes the column called column and its values.
 func (e *Engine) DropColumn(ctx context.Context, name, column string) error {
 	return e.write(ctx, func(tx *sql.Tx) error {
 		table, err := describe(ctx, tx, name)
 		if err != nil {
 			return err
 		}
+
+		return dropColumns(ctx, tx, table, []string{column})
+	})
+}
+
+// dropColumns removes the columns and their values. DuckDB refuses to drop a column an index
+// follows: the table is rebuilt without them.
+func dropColumns(ctx context.Context, tx *sql.Tx, table Table, columns []string) error {
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
 		if _, err := attribute(table, column); err != nil {
 			return err
 		}
-		statements := []string{
-			fmt.Sprintf("CREATE TABLE %s AS SELECT * EXCLUDE (%s) FROM %s ORDER BY %s", quote(rebuilt), quote(column), quote(name), quote(IDColumn)),
-			"DROP TABLE " + quote(name),
-			fmt.Sprintf("ALTER TABLE %s RENAME TO %s", quote(rebuilt), quote(name)),
+		quoted[i] = quote(column)
+	}
+	statements := []string{
+		fmt.Sprintf("CREATE TABLE %s AS SELECT * EXCLUDE (%s) FROM %s ORDER BY %s", quote(rebuilt), strings.Join(quoted, ", "), quote(table.Name), quote(IDColumn)),
+		"DROP TABLE " + quote(table.Name),
+		fmt.Sprintf("ALTER TABLE %s RENAME TO %s", quote(rebuilt), quote(table.Name)),
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
 		}
-		for _, statement := range statements {
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return err
-			}
-		}
+	}
 
-		return indexTable(ctx, tx, name)
-	})
+	return indexTable(ctx, tx, table.Name)
 }
 
 const rebuilt = "__rebuilt"

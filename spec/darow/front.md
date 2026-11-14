@@ -218,9 +218,18 @@ detail:
   server: the table sorts with `serverSorting`, one column at a time, `__id` included; its `sort`
   goes through `rowSortOf` (a column's id is `col-<name>`) to `useTable.setSort`, which reads the
   first page in that order and ignores a sort it already applies; opening a table forgets the sort
-  until its `DataTable` emits its stored one. Each attribute cell is the platform's `EditableCell`
-  (read-only without `canEdit`): its text saved by `useTable.saveCell` (an emptied cell is null),
-  the page and the tiles read again. It exposes its `DataTable`'s `picker`: the platform's
+  until its `DataTable` emits its stored one. Each attribute cell is the platform's `EditableCell`,
+  read-only outside the editing. For `canEdit`, above the table, the platform's `CellEditToolbar`
+  over `useCellEditing` — the platform's `useCellChanges` — opens the cells, asking before dropping
+  a change, and, while editing, counts the changed cells and the rows and columns to remove,
+  cancels or saves them. While editing, a `RemoveToggle` before each row's number and beside each
+  column's label marks it to remove, struck through (`line-through opacity-50`), a second click
+  keeping it. A changed cell shows its new text, marked (`changed`), until saved, kept per row
+  across pages. Saving asks first when rows or columns are to be removed, then writes every changed
+  row, the rows deleted and the columns dropped in one request, `writeRows`, all or none (an emptied
+  cell is null) — refused, the changes stay —, then `useTable.changed` reads the table, the page and
+  the tiles again. Another table ends
+  the editing. It exposes its `DataTable`'s `picker`: the platform's
   `ColumnPicker` over it, on the line of `FiltersBar`, shows or hides the columns.
 - `TableEditors`, a sub-view holding the editors of the open table:
     - `RowModal` — a row read alone, or a new one (`{}`), in a wide modal: its attributes as text
@@ -277,7 +286,7 @@ tab); create, which opens the new table.
 
 `utils/__tests__`: `catalog` (the keys of a record, both lists), `conditions` (`sqlIdentifier`, `columnIdentifier`, `insertToken`, `andAll`, `selectionClause`, `filterFits`, `distinctColumns`), `rowValues` (with `rowSortOf`, `sameSort`), `tableName`, `geometry`, `settingsForm`, `crs`, `tableLinks` (the CSV alone without geometry, the OGC service unfiltered, the data under the condition). `composables/__tests__`, the client mocked: `useTable` (open, page
 offset, apply from the first page, a sort from the first page once and forgotten by another table,
-the condition applied taken out, saved filters activated and deactivated, a selection toggled and added to, its toggle on, following it, off, off once cleared and forgotten by another table, no toggle without a selection, rename followed, row opened, saved and deleted, a row added and the tiles' revision bumped, a cell saved, the links under the conditions, table deleted), `useMapEditing` (a new object at first then a feature in hand, a click taking it in hand unless the editor uses it or editing is off, the hidden features, its geometry saved alone then a change cancelled, a drawn object added with its row opened, a change kept when its drop is refused, stopped by another table, the changed neighbours saved and cancelled, those of a new object saved, an edit kept when the server refuses it), `useRowGeometries` (a feature of the table's layers read from its row), `useColumns` (add, rename,
+the condition applied taken out, saved filters activated and deactivated, a selection toggled and added to, its toggle on, following it, off, off once cleared and forgotten by another table, no toggle without a selection, rename followed, row opened, saved and deleted, a row added and the tiles' revision bumped, the links under the conditions, table deleted), `useMapEditing` (a new object at first then a feature in hand, a click taking it in hand unless the editor uses it or editing is off, the hidden features, its geometry saved alone then a change cancelled, a drawn object added with its row opened, a change kept when its drop is refused, stopped by another table, the changed neighbours saved and cancelled, those of a new object saved, an edit kept when the server refuses it), `useCellEditing` (the changed rows written in one request with an emptied cell as null, the rows deleted and the columns dropped in the same one, kept when refused, stopped by another table), `useRowGeometries` (a feature of the table's layers read from its row), `useColumns` (add, rename,
 drop reloading the table, preview, transform, a refused transform), `useSettings` (global, a
 table's, a refusal), `useSavedFilters` (all and those offered on a table, save of the condition trimmed, a
 refusal, delete), `useFilterEditor` (search, open a copy, create a filter of any table, change of table, save new then

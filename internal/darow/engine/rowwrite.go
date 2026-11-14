@@ -20,7 +20,7 @@ const fromGeoJSON = "ST_Transform(ST_GeomFromGeoJSON(?), 'OGC:CRS84', 'EPSG:3857
 
 // InsertRow adds a row numbered after the last one and returns its number.
 func (e *Engine) InsertRow(ctx context.Context, name string, w RowWrite) (int64, error) {
-	ids, err := e.WriteRows(ctx, name, []BatchRow{{Write: w}})
+	ids, err := e.WriteRows(ctx, name, Batch{Rows: []BatchRow{{Write: w}}})
 	if err != nil {
 		return 0, err
 	}
@@ -30,7 +30,7 @@ func (e *Engine) InsertRow(ctx context.Context, name string, w RowWrite) (int64,
 
 // UpdateRow sets the values and the geometry of the row numbered id.
 func (e *Engine) UpdateRow(ctx context.Context, name string, id int64, w RowWrite) error {
-	_, err := e.WriteRows(ctx, name, []BatchRow{{ID: &id, Write: w}})
+	_, err := e.WriteRows(ctx, name, Batch{Rows: []BatchRow{{ID: &id, Write: w}}})
 
 	return err
 }
@@ -41,15 +41,23 @@ type BatchRow struct {
 	Write RowWrite
 }
 
-// WriteRows writes the rows in one transaction, all or none, and returns their numbers in order.
-func (e *Engine) WriteRows(ctx context.Context, name string, rows []BatchRow) ([]int64, error) {
-	ids := make([]int64, len(rows))
+// Batch is what WriteRows writes: its rows, then the rows numbered Deleted removed, then the
+// columns Dropped removed.
+type Batch struct {
+	Rows    []BatchRow
+	Deleted []int64
+	Dropped []string
+}
+
+// WriteRows writes the batch in one transaction, all or none, and returns its rows' numbers in order.
+func (e *Engine) WriteRows(ctx context.Context, name string, batch Batch) ([]int64, error) {
+	ids := make([]int64, len(batch.Rows))
 	err := e.write(ctx, func(tx *sql.Tx) error {
 		table, err := describe(ctx, tx, name)
 		if err != nil {
 			return err
 		}
-		for i, row := range rows {
+		for i, row := range batch.Rows {
 			if row.ID == nil {
 				ids[i], err = insertRow(ctx, tx, table, row.Write)
 			} else {
@@ -59,8 +67,16 @@ func (e *Engine) WriteRows(ctx context.Context, name string, rows []BatchRow) ([
 				return err
 			}
 		}
+		for _, id := range batch.Deleted {
+			if err := deleteRow(ctx, tx, table, id); err != nil {
+				return err
+			}
+		}
+		if len(batch.Dropped) == 0 {
+			return nil
+		}
 
-		return nil
+		return dropColumns(ctx, tx, table, batch.Dropped)
 	})
 	if err != nil {
 		return nil, err

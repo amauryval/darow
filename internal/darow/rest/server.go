@@ -42,7 +42,7 @@ type Engine interface {
 	RowWKT(ctx context.Context, name string, id int64, crs string, decimals int) (*string, error)
 	InsertRow(ctx context.Context, name string, w engine.RowWrite) (int64, error)
 	UpdateRow(ctx context.Context, name string, id int64, w engine.RowWrite) error
-	WriteRows(ctx context.Context, name string, rows []engine.BatchRow) ([]int64, error)
+	WriteRows(ctx context.Context, name string, batch engine.Batch) ([]int64, error)
 	DeleteRow(ctx context.Context, name string, id int64) error
 	AddColumn(ctx context.Context, name, column, columnType string) error
 	RenameColumn(ctx context.Context, name, column, to string) error

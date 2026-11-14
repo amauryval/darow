@@ -46,10 +46,12 @@ export interface RowRequest {
 }
 /**
  * RowsRequest is several rows written at once, all or none: each row numbered by its id updated,
- * a row without id added.
+ * a row without id added; then the rows numbered Deleted removed, then the columns Dropped.
  */
 export interface RowsRequest {
     rows: BatchRowRequest[]
+    deleted?: number /* int64 */[]
+    dropped?: string[]
 }
 /**
  * BatchRowRequest is a row of RowsRequest: its number, absent for a row to add, and its write.

@@ -289,23 +289,6 @@ describe('useTable', () => {
         expect(revision).toBeGreaterThan(Date.UTC(2026, 0, 1))
     })
 
-    it('saves a cell, an emptied one as null, and reads the page again', async () => {
-        const table = useTable()
-        await table.open('places')
-        void table.tilesUrl.value
-        vi.mocked(api.tilesUrl).mockClear()
-
-        await table.saveCell(1, 'name', 'Lyon')
-        await table.saveCell(1, 'name', '')
-
-        expect(api.updateRow).toHaveBeenNthCalledWith(1, 'places', 1, { values: { name: 'Lyon' } })
-        expect(api.updateRow).toHaveBeenNthCalledWith(2, 'places', 1, { values: { name: null } })
-        expect(api.listRows).toHaveBeenCalledTimes(3)
-        expect(table.row.value).toBeNull()
-        void table.tilesUrl.value
-        expect(api.tilesUrl).toHaveBeenCalled()
-    })
-
     it('offers the links of the open table, its data under the conditions', async () => {
         const table = useTable()
         await table.open('places')

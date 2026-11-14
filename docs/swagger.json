@@ -1816,7 +1816,7 @@
                 "consumes": ["application/json"],
                 "produces": ["application/json"],
                 "tags": ["darow"],
-                "summary": "Write several rows, all or none",
+                "summary": "Write, delete rows and drop columns, all or none",
                 "parameters": [
                     {
                         "type": "string",
@@ -1826,7 +1826,7 @@
                         "required": true
                     },
                     {
-                        "description": "The rows to update (with an id) or add",
+                        "description": "The rows to update (with an id) or add, the rows to delete, the columns to drop",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -2681,6 +2681,18 @@
         "rest.RowsRequest": {
             "type": "object",
             "properties": {
+                "deleted": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "dropped": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "rows": {
                     "type": "array",
                     "items": {
