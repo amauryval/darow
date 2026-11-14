@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
+import { optimizeDeps } from './node_modules/@myapplibs/web-platform/src/build/optimizeDeps'
 
 // The platform's web library ships its sources (src/), imported by its package name: the alias points
 // the name at them, ahead of '@'.
@@ -18,10 +19,7 @@ export default defineConfig({
             external: ['._*'] // Ignore les fichiers ._*
         }
     },
-    // Sources, not a bundle: Vite compiles them with the application's own.
-    optimizeDeps: {
-        exclude: ['@myapplibs/web-platform']
-    },
+    optimizeDeps,
     server: {
         proxy: {
             '/api/v1': {
