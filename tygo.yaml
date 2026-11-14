@@ -1,0 +1,44 @@
+packages:
+    - path: 'github.com/amauryval/darow/internal/darow/engine'
+      output_path: 'web/src/darow/api/engine.gen.ts'
+      enum_style: union
+      include_files:
+          - 'tables.go'
+          - 'rows.go'
+          - 'columns.go'
+          - 'select.go'
+          - 'select_join.go'
+      type_mappings:
+          json.RawMessage: 'Record<string, unknown>'
+    - path: 'github.com/amauryval/darow/internal/darow/sources'
+      output_path: 'web/src/darow/api/sources.gen.ts'
+      enum_style: union
+      include_files:
+          - 'source.go'
+      type_mappings:
+          time.Time: 'string'
+    - path: 'github.com/amauryval/darow/internal/darow/filters'
+      output_path: 'web/src/darow/api/filters.gen.ts'
+      include_files:
+          - 'filter.go'
+      frontmatter: |
+          import type { Meta } from '@myapplibs/web-platform/api/document.gen'
+      type_mappings:
+          document.Meta<FilterID>: 'Meta<FilterID>'
+    - path: 'github.com/amauryval/darow/internal/darow/rest'
+      output_path: 'web/src/darow/api/rest.gen.ts'
+      include_files:
+          - 'sources.go'
+          - 'tables.go'
+          - 'rows.go'
+          - 'columns.go'
+          - 'select.go'
+      frontmatter: |
+          import type { Extent, Table } from './engine.gen'
+      type_mappings:
+          engine.Table: 'Table'
+          engine.Extent: 'Extent'
+    - path: 'github.com/amauryval/darow/internal/darow/settings'
+      output_path: 'web/src/darow/api/settings.gen.ts'
+      include_files:
+          - 'values.go'

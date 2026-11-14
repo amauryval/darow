@@ -1,112 +1,110 @@
-[tools]
-go = "1.27"
-"go:github.com/swaggo/swag/cmd/swag" = "1.16.6"
-golangci-lint = "2.13.1"
-node = "26.3.1"
-pre-commit = "4.6.0"
-
 [env]
-_.path = ["./bin"]
-_.file = [".env"]
-# Overrides a stale CGO_LDFLAGS exported by this machine's ~/.bashrc (points
-# at a scratchpad from an unrelated project) that breaks cgo linking for
-# the duckdb driver.
+_.file = [".env", ".env.local"]
+WEB_DIR = "web"
+GO_PKGS = "./cmd/... ./internal/... ./docs ./web"
+GOPRIVATE = "github.com/MyAppLibs/*,github.com/amauryval/*"
+# The DuckDB driver links its C library: cgo on. A stale CGO_LDFLAGS of the shell would break it.
+CGO_ENABLED = "1"
 CGO_LDFLAGS = ""
+
+[tools]
+go = "1.27.4"
+golangci-lint = "2.15.0"
+node = "26.3.1"
+"go:github.com/swaggo/swag/cmd/swag" = "1.16.6"
+"go:github.com/gzuidhof/tygo" = "0.2.21"
 
 [tasks.setup]
 alias = "i"
+run = "cd ${WEB_DIR} && npm ci"
+sources = ["web/package.json", "web/package-lock.json"]
+outputs = ["web/node_modules/.package-lock.json"]
+description = "Install the frontend dependencies"
+
+# The local checkout of the platform's web library over the version web/package.json names, as go.work
+# is for go-pkg. `npm ci` puts the named version back.
+[tasks.sync-platform]
 run = """
-pre-commit install
+rsync -a --delete --exclude __tests__ ../MyAppLibs/web-platform/src ../MyAppLibs/web-platform/package.json \
+  ${WEB_DIR}/node_modules/@myapplibs/web-platform/
 """
-sources = ["${APP_DIR}/package.json"]
-description = "Install dependencies and git hooks"
-
-# "./..." enumerates every package in the module tree, imported or not, so it
-# picks up web/node_modules/flatted/golang/pkg/flatted — an npm-shipped Go
-# package. It would be tested and vetted, never linked, but the go tool has no
-# exclude flag, so every task below filters the package list explicitly.
-[tasks.test]
-description = "Run all Go tests"
-run = "go test $(go list ./... | grep -v /web/)"
-
-[tasks."test-race"]
-description = "Run all Go tests with the race detector"
-run = "go test -race $(go list ./... | grep -v /web/)"
+description = "Copy the platform's web library from its checkout into web/node_modules"
 
 [tasks.lint]
-description = "Run go vet and gofmt checks"
 run = """
-go vet $(go list ./... | grep -v /web/)
-gofmt -l cmd internal docs
+golangci-lint run ${GO_PKGS} &&
+cd ${WEB_DIR} && npm run lint
 """
+description = "Lint Go and frontend"
 
-[tasks.docs]
-description = "Regenerate Swagger docs (docs/docs.go) from handler annotations"
-run = "swag init -g cmd/server/main.go -o docs"
-sources = ["internal/router/**/*.go", "cmd/server/main.go"]
-outputs = ["docs/docs.go", "docs/swagger.json", "docs/swagger.yaml"]
+[tasks.test-go]
+depends = ["check-api-doc-generated"]
+run = "go test ${GO_PKGS} -cover"
+description = "Run Go tests with coverage"
 
-[tasks."ui-install"]
-description = "Install web UI dependencies"
-dir = "web"
-run = "npm install"
-sources = ["package.json", "package-lock.json"]
-outputs = ["node_modules/.package-lock.json"]
+[tasks.test-front]
+run = "cd ${WEB_DIR} && npm run test:unit -- --passWithNoTests"
+description = "Run frontend tests (Vitest)"
 
-[tasks."ui-build"]
-description = "Build the web UI into internal/webui/dist (embedded by go:embed)"
-dir = "web"
-depends = ["ui-install"]
-run = "npm run build"
+[tasks.test-all]
+depends = ["test-go", "test-front"]
+description = "Run all tests (Go, frontend)"
 
-[tasks."ui-dev"]
-description = "Run the web UI dev server (proxies /tables, /sources to :8080)"
-dir = "web"
-depends = ["ui-install"]
-run = "npm run dev"
+[tasks.generate-types]
+run = """
+tygo generate
+cd ${WEB_DIR} && npx --no-install prettier --log-level warn --write src/*/api/*.gen.ts
+"""
+description = "Generate the TS types of web/src/darow/api from the Go packages tygo.yaml lists"
 
-[tasks."ui-lint"]
-description = "Run eslint on the web UI"
-dir = "web"
-depends = ["ui-install"]
-run = "npm run lint"
+[tasks.build-frontend]
+run = """
+rm -rf ${WEB_DIR}/dist/assets ${WEB_DIR}/dist/index.html
+cd ${WEB_DIR} && npm run build-only
+"""
+description = "Build the frontend into web/dist (embedded by go:embed)"
 
-[tasks."ui-test"]
-description = "Run the web UI's vitest suite"
-dir = "web"
-depends = ["ui-install"]
-run = "npm run test"
+[tasks.generate-api-doc]
+# The platform's document package comes first: swag resolves an embedded document.Meta[ID] only once
+# it has parsed it.
+run = """
+platform=$(go list -m -f '{% raw %}{{.Dir}}{% endraw %}' github.com/MyAppLibs/go-pkg) &&
+swag init --quiet --dir ./cmd/darow-api,$platform/document,$platform,./internal --generalInfo main.go --output docs \
+  --outputTypes json --parseInternal &&
+cd ${WEB_DIR} && npx --no-install prettier --log-level warn --write ../docs/swagger.json
+"""
+description = "Generate docs/swagger.json from the swag comments of the routes"
 
-[tasks.build]
-description = "Build the server binary"
-depends = ["docs", "ui-build"]
-# ldflags bakes internal/version.Version/Commit/BuildDate into the binary from
-# the tree that is actually being built, so the value can never drift from it
-# — see the Dockerfile for the same ldflags applied to the container image,
-# from build args instead of git. BuildDate is HEAD's own commit date, not
-# wall-clock build time, so it stays identical across a rebuild of the same
-# commit.
-run = '''
-BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
-go build -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -o bin/darow ./cmd/server
-'''
+[tasks.check-api-doc-generated]
+run = """
+before=$(mktemp) && trap 'rm -f "$before"' EXIT &&
+cp docs/swagger.json "$before" &&
+mise run generate-api-doc &&
+diff -u "$before" docs/swagger.json
+"""
+description = "Fail if docs/swagger.json is stale relative to the swag comments of the routes"
 
-# authdemo lets goauth's demo verifier answer every request — backend and,
-# through /auth/session, the UI too — as an administrator without a token
-# or provider contacted. The developer's own build tag, never carried by
-# `mise run build` or the Dockerfile.
-[tasks."run-dev"]
-description = "Run the server with no auth"
-depends = ["docs", "ui-build"]
-run = '''
-BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
-go run -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" -tags authdemo ./cmd/server -config ./config.example.yaml
-'''
+[tasks.build-app]
+run = "go build -ldflags \"$(./scripts/ldflags.sh)\" -o bin/darow ./cmd/darow"
+depends = ["build-frontend"]
+description = "Build the executable (frontend embedded)"
 
-[tasks."run-dev-prod"]
-description = "Run the server against config.yaml"
-depends = ["docs", "ui-build"]
-run = '''
-BUILD_DATE=$(date -u -d "$(git log -1 --format=%cI)" +%Y-%m-%dT%H:%M:%SZ)
-go run -ldflags "-X darow/internal/version.Version=$(git describe --tags --always --dirty) -X darow/internal/version.Commit=$(git rev-parse --short HEAD) -X darow/internal/version.BuildDate=$BUILD_DATE" ./cmd/server -config config.yaml
-'''
+[tasks.dev]
+run = """
+cd ${WEB_DIR} && npm run start-dev &
+go run -ldflags "$(./scripts/ldflags.sh)" ./cmd/darow-api -workdir=./data
+"""
+description = "Run the frontend and API dev servers together"
+
+[tasks.dev-app]
+run = "go run -ldflags \"$(./scripts/ldflags.sh)\" ./cmd/darow -workdir=./data"
+depends = ["build-frontend"]
+description = "Build the frontend, then run the full app"
+
+[tasks.dev-app-demo]
+run = """
+AUTH_PROVIDER= AUTH_ISSUER= AUTH_AUDIENCE= AUTH_REDIRECT_URL= AUTH_COOKIE_SECRET= \
+  go run -tags authdemo -ldflags "$(./scripts/ldflags.sh)" ./cmd/darow -workdir=./data -auth-demo
+"""
+depends = ["build-frontend"]
+description = "Run the full app with the simulated sign-in"

@@ -1,19 +1,59 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Darow — get your Ducks in A ROW. Backed by DuckDB. Serveur cartographique : sources, tables, rows, tuiles MVT, dérivation.",
-        "title": "Darow",
+        "description": "The platform's routes and those of each hosted module. x-access names who may call an operation: public, guest or admin.",
+        "title": "darow API",
         "contact": {},
-        "version": "1.0"
+        "version": "1"
     },
-    "basePath": "/",
+    "basePath": "/api/v1",
     "paths": {
-        "/api/v1/derive": {
-            "post": {
-                "consumes": ["application/json"],
+        "/admin/backups/{module}": {
+            "get": {
                 "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Derive a table from a SELECT query",
+                "tags": ["platform"],
+                "summary": "List the archives of a module database",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/backup.Info"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            },
+            "post": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Archive a module database now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "201": {
                         "description": "Created",
@@ -24,1267 +64,38 @@
                             }
                         }
                     },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/ogc/": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "OGC API - Features landing page",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/ogc/collections": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "List OGC API - Features collections",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/ogc/collections/{tableId}": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "Get an OGC API - Features collection",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Collection (table) ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.collectionDTO"
-                        }
-                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "admin"
             }
         },
-        "/api/v1/ogc/collections/{tableId}/items": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "List features of an OGC API - Features collection",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Collection (table) ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "minX,minY,maxX,maxY in OGC:CRS84 (lon/lat)",
-                        "name": "bbox",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "JSON-encoded []FilterCondition",
-                        "name": "filter",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Simplify tolerance override",
-                        "name": "simplify",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Coordinate precision grid size override",
-                        "name": "precision",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Max features returned",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Response format: json or geojson",
-                        "name": "f",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/ogc/collections/{tableId}/items/{featureId}": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "Get a single feature of an OGC API - Features collection",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Collection (table) ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Feature (row) primary key",
-                        "name": "featureId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Response format: json or geojson",
-                        "name": "f",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/ogc/conformance": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["features"],
-                "summary": "Declared OGC API - Features conformance classes",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/settings": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "Read the runtime-editable settings",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.settingsDTO"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "Update the runtime-editable settings",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.settingsDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/settings/tables": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "List the tables that carry a settings override",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "$ref": "#/definitions/handlers.tableSettingsDTO"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "List cached sources",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination limit",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
-                        "name": "sort",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/limits": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "Read the upload constraints",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.sourceLimitsDTO"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/refresh": {
-            "post": {
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "Rescan workDir",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination limit",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated sort columns, e.g. name,-sizeBytes",
-                        "name": "sort",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/upload": {
-            "post": {
-                "consumes": ["multipart/form-data"],
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "Upload a file into workDir",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Explicit source EPSG code, overriding auto-detection",
-                        "name": "srid",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.uploadResultDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/{name}": {
+        "/admin/backups/{module}/{name}": {
             "delete": {
-                "tags": ["sources"],
-                "summary": "Delete a source file",
+                "tags": ["platform"],
+                "summary": "Delete an archive",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Source file name",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive name",
                         "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.deletedDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/{name}/load": {
-            "post": {
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "Load a source file into a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source file name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Layer name (required for multi-layer sources)",
-                        "name": "layer",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Explicit source EPSG code, overriding auto-detection",
-                        "name": "srid",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Name of the created table, defaulting to the source name",
-                        "name": "tableName",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Id of an existing table to reload in place instead of creating one",
-                        "name": "replace",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/sources/{name}/metadata": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["sources"],
-                "summary": "Preview a source's detected CRS",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source file name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Layer name (for multi-layer sources)",
-                        "name": "layer",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables": {
-            "get": {
-                "description": "Liste les tables avec leurs métadonnées, paginées",
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "List tables",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination limit",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated sort columns, e.g. tableName,-updatedAt",
-                        "name": "sort",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/provenance": {
-            "get": {
-                "description": "Compact index of every table's origin, for a client to tell which sources are already loaded",
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "List the tables imported from a source file",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Get table metadata",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.metadataDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Supprime une table et ses données",
-                "tags": ["tables"],
-                "summary": "Delete a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.deletedDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Rename a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.metadataDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/aggregate-from-table": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Derive a table from this table's grouped columns and aggregate expressions",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/bbox": {
-            "post": {
-                "description": "bbox is [minX, minY, maxX, maxY] in OGC:CRS84 (lon/lat degrees)",
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["geo"],
-                "summary": "Filter row pkeys by bounding box",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/columns": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Add a column",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/columns/{col}": {
-            "delete": {
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Delete a column",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Column name",
-                        "name": "col",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Rename a column",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Column name",
-                        "name": "col",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/columns/{col}/distinct": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "List a column's distinct values",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Column name",
-                        "name": "col",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Keep only the values containing this text (case-insensitive)",
-                        "name": "search",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination limit",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/columns/{col}/transform": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Transform a column's values in place",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Column name",
-                        "name": "col",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/columns/{col}/transform/preview": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Preview a column transform",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Column name",
-                        "name": "col",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/derive-from-table": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Derive a table from this table's columns, expressions and conditions",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Source table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "507": {
-                        "description": "Insufficient Storage",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/export": {
-            "get": {
-                "produces": ["application/json", "text/csv"],
-                "tags": ["tables"],
-                "summary": "Export a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "csv, geojson or parquet",
-                        "name": "format",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "EPSG code the geometry is written in (default lon/lat)",
-                        "name": "srid",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "file"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/filter": {
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Filter rows by column conditions",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/filtered-extent": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["geo"],
-                "summary": "Get the bounding box of rows matching a filter",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "JSON-encoded []FilterCondition",
-                        "name": "filter",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/filters": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["filters"],
-                "summary": "List a table's stored filters",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["filters"],
-                "summary": "Save a named filter on a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.filterDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/filters/{filterId}": {
-            "delete": {
-                "tags": ["filters"],
-                "summary": "Delete a stored filter",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter ID",
-                        "name": "filterId",
                         "in": "path",
                         "required": true
                     }
@@ -1296,28 +107,30 @@
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
-            },
-            "patch": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["filters"],
-                "summary": "Update a stored filter's name and/or conditions",
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/backups/{module}/{name}/download": {
+            "get": {
+                "produces": ["application/zip"],
+                "tags": ["platform"],
+                "summary": "Download an archive",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Module name",
+                        "name": "module",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Filter ID",
-                        "name": "filterId",
+                        "description": "Archive name",
+                        "name": "name",
                         "in": "path",
                         "required": true
                     }
@@ -1326,34 +139,132 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.filterDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "type": "file"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "admin"
             }
         },
-        "/api/v1/tables/{tableId}/geometry-types": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["geo"],
-                "summary": "List distinct geometry types present in a table",
+        "/admin/backups/{module}/{name}/pin": {
+            "post": {
+                "tags": ["platform"],
+                "summary": "Pin an archive, kept by the retention",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/backups/{module}/{name}/rename": {
+            "post": {
+                "consumes": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Rename an archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/backup.renameRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/backups/{module}/{name}/restore": {
+            "post": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Restore a module database from an archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive name",
+                        "name": "name",
                         "in": "path",
                         "required": true
                     }
@@ -1364,148 +275,363 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/backups/{module}/{name}/unpin": {
+            "post": {
+                "tags": ["platform"],
+                "summary": "Unpin an archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Archive name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/docs/api": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "The Swagger 2.0 description of the API",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/docs/architecture": {
+            "get": {
+                "produces": ["text/markdown"],
+                "tags": ["platform"],
+                "summary": "The architecture map, in Markdown",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/erasures/{module}": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "List the erasures of a module, with their counts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/starter.ErasureInfo"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/admin/erasures/{module}/{key}": {
+            "delete": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Erase one family of a module's data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Module name",
+                        "name": "module",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Erasure key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/auth/callback": {
+            "get": {
+                "tags": ["platform"],
+                "summary": "End the sign-in, setting the session cookie",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "State given at the login",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/auth/config": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Whether a sign-in is configured, and how",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/auth/login": {
+            "get": {
+                "tags": ["platform"],
+                "summary": "Start the sign-in at the identity provider",
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "tags": ["platform"],
+                "summary": "Sign out, clearing the session cookie",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/auth/session": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "The signed-in user and their access level",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/filters": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "List the saved filters",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/filters.Filter"
                             }
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/neighbours": {
-            "post": {
-                "description": "geometry is a GeoJSON geometry in OGC:CRS84; buffer is a distance in meters",
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["geo"],
-                "summary": "List the features around a geometry",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/rows": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "List rows",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Pagination limit",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated sort columns, e.g. name,-createdAt",
-                        "name": "sort",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
+                },
+                "x-access": "public"
             },
             "post": {
                 "consumes": ["application/json"],
                 "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Add one or more rows",
+                "tags": ["darow"],
+                "summary": "Save a filter",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
+                        "description": "The filter, without id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/filters.Filter"
+                        }
                     }
                 ],
                 "responses": {
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
+                            "$ref": "#/definitions/filters.Filter"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     },
-                    "507": {
-                        "description": "Insufficient Storage",
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
-            },
-            "delete": {
-                "consumes": ["application/json"],
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/filters/{id}": {
+            "get": {
                 "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Delete several rows in one request",
+                "tags": ["darow"],
+                "summary": "Read a saved filter",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Filter id",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -1514,35 +640,270 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/filters.Filter"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "put": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Replace a saved filter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The whole filter",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/filters.Filter"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/filters.Filter"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "guest"
             },
-            "patch": {
-                "description": "Every row lands or none does — what a topological edit needs, since it moves a boundary shared by several rows",
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Update several rows in one transaction",
+            "delete": {
+                "tags": ["darow"],
+                "summary": "Delete a saved filter",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Filter id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/ogc": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features landing page",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.Landing"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/ogc/api": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features API definition",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/ogc/collections": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features collections",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.Collections"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/ogc/collections/{table}": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features collection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection id: the table's name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.Collection"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/ogc/collections/{table}/items": {
+            "get": {
+                "produces": ["application/geo+json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features items",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection id: the table's name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Features served, the table's featuresPageSize by default, at most 10000",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Features skipped",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "west,south,east,north in CRS84, or in bbox-crs and its axis order",
+                        "name": "bbox",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CRS URI of bbox, CRS84 by default",
+                        "name": "bbox-crs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CRS URI of the features, CRS84 by default",
+                        "name": "crs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Accepted; the collections have no temporal property",
+                        "name": "datetime",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.FeatureCollection"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/ogc/collections/{table}/items/{id}": {
+            "get": {
+                "produces": ["application/geo+json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Collection id: the table's name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Feature id: the row number",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "CRS of the written geometries (default OGC:CRS84)",
+                        "description": "CRS URI of the feature, CRS84 by default",
                         "name": "crs",
                         "in": "query"
                     }
@@ -1551,354 +912,763 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "type": "object"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "public"
             }
         },
-        "/api/v1/tables/{tableId}/rows/batch": {
+        "/darow/ogc/conformance": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "OGC API - Features conformance classes",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.Conformance"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/settings": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Read the global settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/settings.Effective"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "put": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Replace the global settings",
+                "parameters": [
+                    {
+                        "description": "The settings",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/settings.Values"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/settings.Effective"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/sources": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "List the sources",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/sources.Source"
+                            }
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "post": {
+                "consumes": ["multipart/form-data"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Upload a source",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "The source file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/sources.Source"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/sources/{name}": {
+            "delete": {
+                "tags": ["darow"],
+                "summary": "Delete a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/sources/{name}/layers": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "List the layers of a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source file name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/sources/{name}/load": {
             "post": {
                 "consumes": ["application/json"],
                 "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Get multiple rows by pkey in one request",
+                "tags": ["darow"],
+                "summary": "Load a source into a new table",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Source file name",
+                        "name": "name",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "The table to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.LoadRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/engine.Table"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/rows/{pkey}": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Get a row by pkey",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Row primary key",
-                        "name": "pkey",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
-            },
-            "delete": {
-                "tags": ["rows"],
-                "summary": "Delete a row",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Row primary key",
-                        "name": "pkey",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/tables": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "List the tables",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.deletedDTO"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/engine.Table"
+                            }
                         }
                     }
-                }
+                },
+                "x-access": "public"
             },
-            "patch": {
+            "post": {
                 "consumes": ["application/json"],
                 "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Update a row",
+                "tags": ["darow"],
+                "summary": "Create a table from a SELECT",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Row primary key",
-                        "name": "pkey",
-                        "in": "path",
-                        "required": true
+                        "description": "The table to create and its query",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.DeriveRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/engine.Table"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "admin"
             }
         },
-        "/api/v1/tables/{tableId}/rows/{pkey}/geometry": {
+        "/darow/tables/{table}": {
             "get": {
                 "produces": ["application/json"],
-                "tags": ["rows"],
-                "summary": "Get a row's geometry, as GeoJSON and as WKT",
+                "tags": ["darow"],
+                "summary": "Read a table",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.TableDetail"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "delete": {
+                "tags": ["darow"],
+                "summary": "Delete a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            },
+            "patch": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Rename a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.RenameRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/engine.Table"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/tables/{table}/columns": {
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Add a column",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The column",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.ColumnRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/engine.Table"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/columns/{column}": {
+            "delete": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Delete a column",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Row primary key",
-                        "name": "pkey",
+                        "description": "Column name",
+                        "name": "column",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/engine.Table"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            },
+            "patch": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Rename a column",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
                         "in": "path",
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "column",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.RenameRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/engine.Table"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/columns/{column}/transform": {
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Transform a column in place",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "column",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The expression and the condition",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.TransformRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.TransformResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/columns/{column}/transform/preview": {
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Preview a column transform",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Column name",
+                        "name": "column",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The expression and the condition",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.TransformRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/engine.TransformPreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/export": {
+            "get": {
+                "produces": ["application/octet-stream"],
+                "tags": ["darow"],
+                "summary": "Export a table",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "csv or geojson",
+                        "name": "format",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "SQL condition over the table's columns",
+                        "name": "where",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
-                        "description": "EPSG code the geometry is read in (default: OGC:CRS84)",
+                        "description": "EPSG code of the geometry, CRS84 when absent; 4326 is read longitude first",
                         "name": "srid",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/schema": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["tables"],
-                "summary": "Get table schema",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/settings": {
-            "get": {
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "Read a table's settings overrides",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.tableSettingsDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "Clear every settings override of a table",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.tableSettingsDTO"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "consumes": ["application/json"],
-                "produces": ["application/json"],
-                "tags": ["settings"],
-                "summary": "Set or clear a table's settings overrides",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.tableSettingsDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}": {
-            "get": {
-                "produces": ["application/vnd.mapbox-vector-tile"],
-                "tags": ["geo"],
-                "summary": "Get an MVT tile",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Zoom level",
-                        "name": "z",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Tile X",
-                        "name": "x",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Tile Y",
-                        "name": "y",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated non-geometry columns to embed in the tile",
-                        "name": "attrs",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "JSON-encoded []FilterCondition",
-                        "name": "filter",
                         "in": "query"
                     }
                 ],
@@ -1908,78 +1678,64 @@
                         "schema": {
                             "type": "file"
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
                     }
-                }
+                },
+                "x-access": "public"
             }
         },
-        "/api/v1/tables/{tableId}/tiles/{z}/{x}/{y}/features": {
+        "/darow/tables/{table}/rows": {
             "get": {
                 "produces": ["application/json"],
-                "tags": ["geo"],
-                "summary": "Get features intersecting an MVT-style tile, as GeoJSON",
+                "tags": ["darow"],
+                "summary": "List the rows of a table",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Table ID",
-                        "name": "tableId",
+                        "description": "Table name",
+                        "name": "table",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "integer",
-                        "description": "Zoom level",
-                        "name": "z",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Tile X",
-                        "name": "x",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Tile Y",
-                        "name": "y",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated non-geometry columns to embed",
-                        "name": "attrs",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "JSON-encoded []FilterCondition",
-                        "name": "filter",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Simplify tolerance override",
-                        "name": "simplify",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Coordinate precision grid size override",
-                        "name": "precision",
+                        "description": "Rows skipped",
+                        "name": "offset",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Max features returned",
+                        "description": "Rows served, the table's rowsPageSize by default, at most 1000",
                         "name": "limit",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "description": "Pagination offset",
-                        "name": "offset",
+                        "type": "string",
+                        "description": "Column ordering the rows",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Descending order",
+                        "name": "desc",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "SQL condition over the table's columns",
+                        "name": "where",
                         "in": "query"
                     }
                 ],
@@ -1987,86 +1743,753 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/engine.Rows"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "post": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Add a row",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The values and the geometry of the row",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.RowRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
-            }
-        },
-        "/diagnostics": {
-            "get": {
+                },
+                "x-access": "guest"
+            },
+            "patch": {
+                "consumes": ["application/json"],
                 "produces": ["application/json"],
-                "tags": ["ops"],
-                "summary": "Storage engine diagnostics",
+                "tags": ["darow"],
+                "summary": "Write, delete rows and drop columns, all or none",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The rows to update (with an id) or add, the rows to delete, the columns to drop",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.RowsRequest"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.diagnosticsDTO"
+                            "$ref": "#/definitions/rest.WrittenRows"
                         }
                     },
-                    "500": {
-                        "description": "Internal Server Error",
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
                         }
                     }
-                }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/rows/{id}": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Read a row",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row number",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "delete": {
+                "tags": ["darow"],
+                "summary": "Delete a row",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row number",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            },
+            "patch": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Update a row",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row number",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The values and the geometry to set",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.RowRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "guest"
+            }
+        },
+        "/darow/tables/{table}/rows/{id}/wkt": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Read a row's geometry as WKT",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row number",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "EPSG code, CRS84 when absent; 4326 is read longitude first",
+                        "name": "srid",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/rest.WKT"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/darow/tables/{table}/settings": {
+            "get": {
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Read a table's settings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/settings.TableSettings"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            },
+            "put": {
+                "consumes": ["application/json"],
+                "produces": ["application/json"],
+                "tags": ["darow"],
+                "summary": "Replace a table's settings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The overrides",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/settings.Values"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/settings.TableSettings"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "admin"
+            }
+        },
+        "/darow/tables/{table}/tiles/{z}/{x}/{y}": {
+            "get": {
+                "produces": ["application/vnd.mapbox-vector-tile"],
+                "tags": ["darow"],
+                "summary": "Read a vector tile",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Table name",
+                        "name": "table",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Zoom",
+                        "name": "z",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Column",
+                        "name": "x",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row",
+                        "name": "y",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "SQL condition over the table's columns",
+                        "name": "where",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
+            }
+        },
+        "/events": {
+            "get": {
+                "description": "Naming topics, the client hears the events of those topics and their untopiced ones, openly; naming none, it hears every event and must be a guest.",
+                "tags": ["platform"],
+                "summary": "Stream every committed change over a WebSocket",
+                "parameters": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "Topics listened to",
+                        "name": "topics",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Problem"
+                        }
+                    }
+                },
+                "x-access": "public"
             }
         },
         "/healthz": {
             "get": {
-                "tags": ["ops"],
-                "summary": "Liveness probe",
+                "produces": ["application/json"],
+                "tags": ["platform"],
+                "summary": "Whether every database answers",
                 "responses": {
                     "200": {
-                        "description": "OK"
-                    }
-                }
-            }
-        },
-        "/readyz": {
-            "get": {
-                "tags": ["ops"],
-                "summary": "Readiness probe",
-                "responses": {
-                    "200": {
-                        "description": "OK"
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/response.ErrorResponse"
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
-                }
+                },
+                "x-access": "public"
             }
         },
         "/version": {
             "get": {
                 "produces": ["application/json"],
-                "tags": ["ops"],
-                "summary": "Build version",
+                "tags": ["platform"],
+                "summary": "Build identity",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.versionDTO"
+                            "$ref": "#/definitions/starter.versionMessage"
                         }
                     }
-                }
+                },
+                "x-access": "public"
             }
         }
     },
     "definitions": {
-        "handlers.collectionDTO": {
+        "apperr.Code": {
+            "type": "string",
+            "enum": [
+                "platform.internal",
+                "platform.not_found",
+                "platform.already_exists",
+                "platform.invalid",
+                "platform.invalid_body",
+                "platform.body_too_large",
+                "platform.invalid_backup_name",
+                "platform.backup_not_pinned",
+                "platform.referenced",
+                "platform.busy",
+                "platform.backup_not_restorable",
+                "platform.too_many_requests",
+                "platform.run_interrupted",
+                "platform.run_interrupted_by_restore"
+            ],
+            "x-enum-varnames": [
+                "CodeInternal",
+                "CodeNotFound",
+                "CodeAlreadyExists",
+                "CodeInvalid",
+                "CodeInvalidBody",
+                "CodeBodyTooLarge",
+                "CodeInvalidBackupName",
+                "CodeBackupNotPinned",
+                "CodeReferenced",
+                "CodeBusy",
+                "CodeBackupNotRestorable",
+                "CodeTooManyRequests",
+                "CodeRunInterrupted",
+                "CodeRunInterruptedByRestore"
+            ]
+        },
+        "apperr.FieldError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "$ref": "#/definitions/apperr.Code"
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "apperr.Problem": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "$ref": "#/definitions/apperr.Code"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/apperr.FieldError"
+                    }
+                },
+                "params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "backup.Info": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pinned": {
+                    "type": "boolean"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "schemaVersions": {
+                    "description": "the version of each schema, as the manifest records it",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "backup.renameRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "engine.Column": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "engine.Rows": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "engine.Table": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/engine.Column"
+                    }
+                },
+                "geometry": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rows": {
+                    "type": "integer"
+                }
+            }
+        },
+        "engine.TransformPreview": {
+            "type": "object",
+            "properties": {
+                "matched": {
+                    "type": "integer"
+                },
+                "sample": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "filters.Filter": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "where": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.BatchRowRequest": {
+            "type": "object",
+            "properties": {
+                "geometry": {
+                    "type": "object"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "rest.Collection": {
             "type": "object",
             "properties": {
                 "crs": {
@@ -2076,7 +2499,7 @@
                     }
                 },
                 "extent": {
-                    "$ref": "#/definitions/handlers.extentDTO"
+                    "$ref": "#/definitions/rest.CollectionExtent"
                 },
                 "id": {
                     "type": "string"
@@ -2087,7 +2510,114 @@
                 "links": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/handlers.linkDTO"
+                        "$ref": "#/definitions/rest.Link"
+                    }
+                },
+                "storageCrs": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.CollectionExtent": {
+            "type": "object",
+            "properties": {
+                "spatial": {
+                    "$ref": "#/definitions/rest.SpatialExtent"
+                }
+            }
+        },
+        "rest.Collections": {
+            "type": "object",
+            "properties": {
+                "collections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rest.Collection"
+                    }
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rest.Link"
+                    }
+                }
+            }
+        },
+        "rest.ColumnRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.Conformance": {
+            "type": "object",
+            "properties": {
+                "conformsTo": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "rest.DeriveRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "sql": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.FeatureCollection": {
+            "type": "object",
+            "properties": {
+                "features": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rest.Link"
+                    }
+                },
+                "numberMatched": {
+                    "type": "integer"
+                },
+                "numberReturned": {
+                    "type": "integer"
+                },
+                "timeStamp": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.Landing": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rest.Link"
                     }
                 },
                 "title": {
@@ -2095,78 +2625,7 @@
                 }
             }
         },
-        "handlers.deletedDTO": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "rowsRemoved": {
-                    "type": "integer"
-                }
-            }
-        },
-        "handlers.diagnosticsDTO": {
-            "type": "object",
-            "properties": {
-                "databaseSizeBytes": {
-                    "type": "integer"
-                },
-                "extensions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "maxSizeBytes": {
-                    "type": "integer"
-                },
-                "memoryUsageBytes": {
-                    "type": "integer"
-                },
-                "temporaryFilesBytes": {
-                    "type": "integer"
-                }
-            }
-        },
-        "handlers.extentDTO": {
-            "type": "object",
-            "properties": {
-                "spatial": {
-                    "$ref": "#/definitions/handlers.spatialExtentDTO"
-                }
-            }
-        },
-        "handlers.filterDTO": {
-            "type": "object",
-            "properties": {
-                "conditions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/storage.FilterCondition"
-                    }
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "filterId": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tableId": {
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "handlers.linkDTO": {
+        "rest.Link": {
             "type": "object",
             "properties": {
                 "href": {
@@ -2183,180 +2642,66 @@
                 }
             }
         },
-        "handlers.metadataDTO": {
+        "rest.LoadRequest": {
             "type": "object",
             "properties": {
-                "bbox": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "geometryColumn": {
-                    "type": "string"
-                },
-                "isGeo": {
-                    "type": "boolean"
-                },
-                "physicalName": {
-                    "type": "string"
-                },
-                "rowCount": {
-                    "type": "integer"
-                },
-                "sourceLayer": {
-                    "type": "string"
-                },
-                "sourceName": {
+                "layer": {
                     "type": "string"
                 },
                 "srid": {
                     "type": "integer"
                 },
-                "tableId": {
-                    "type": "string"
-                },
-                "tableName": {
-                    "type": "string"
-                },
-                "updatedAt": {
+                "table": {
                     "type": "string"
                 }
             }
         },
-        "handlers.overrideField-float64": {
+        "rest.RenameRequest": {
             "type": "object",
             "properties": {
-                "effective": {
-                    "type": "number"
-                },
-                "exclusiveMinimum": {
-                    "type": "number"
-                },
-                "maximum": {
-                    "type": "number"
-                },
-                "minimum": {
-                    "type": "number"
-                },
-                "override": {
-                    "type": "number"
-                },
-                "unit": {
+                "name": {
                     "type": "string"
                 }
             }
         },
-        "handlers.overrideField-int": {
+        "rest.RowRequest": {
             "type": "object",
             "properties": {
-                "effective": {
-                    "type": "integer"
+                "geometry": {
+                    "type": "object"
                 },
-                "exclusiveMinimum": {
-                    "type": "number"
-                },
-                "maximum": {
-                    "type": "number"
-                },
-                "minimum": {
-                    "type": "number"
-                },
-                "override": {
-                    "type": "integer"
-                },
-                "unit": {
-                    "type": "string"
+                "values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             }
         },
-        "handlers.settingsDTO": {
+        "rest.RowsRequest": {
             "type": "object",
             "properties": {
-                "cacheTTLSec": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
+                "deleted": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
-                "coordinateDecimals": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
-                },
-                "defaultFeaturesLimit": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
-                },
-                "defaultListLimit": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
-                },
-                "defaultRowLimit": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
-                },
-                "maxPrecision": {
-                    "$ref": "#/definitions/handlers.settingsField-float64"
-                },
-                "maxSimplifyTolerance": {
-                    "$ref": "#/definitions/handlers.settingsField-float64"
-                },
-                "tileCacheMaxAgeSec": {
-                    "$ref": "#/definitions/handlers.settingsField-int"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "handlers.settingsField-float64": {
-            "type": "object",
-            "properties": {
-                "exclusiveMinimum": {
-                    "type": "number"
-                },
-                "maximum": {
-                    "type": "number"
-                },
-                "minimum": {
-                    "type": "number"
-                },
-                "unit": {
-                    "type": "string"
-                },
-                "value": {
-                    "type": "number"
-                }
-            }
-        },
-        "handlers.settingsField-int": {
-            "type": "object",
-            "properties": {
-                "exclusiveMinimum": {
-                    "type": "number"
-                },
-                "maximum": {
-                    "type": "number"
-                },
-                "minimum": {
-                    "type": "number"
-                },
-                "unit": {
-                    "type": "string"
-                },
-                "value": {
-                    "type": "integer"
-                }
-            }
-        },
-        "handlers.sourceLimitsDTO": {
-            "type": "object",
-            "properties": {
-                "allowedExtensions": {
+                "dropped": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
-                "maxSizeBytes": {
-                    "type": "integer"
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rest.BatchRowRequest"
+                    }
                 }
             }
         },
-        "handlers.spatialExtentDTO": {
+        "rest.SpatialExtent": {
             "type": "object",
             "properties": {
                 "bbox": {
@@ -2374,47 +2719,141 @@
                 }
             }
         },
-        "handlers.tableSettingsDTO": {
+        "rest.TableDetail": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/engine.Column"
+                    }
+                },
+                "extent": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                },
+                "geometry": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rows": {
+                    "type": "integer"
+                }
+            }
+        },
+        "rest.TransformRequest": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string"
+                },
+                "where": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.TransformResult": {
+            "type": "object",
+            "properties": {
+                "written": {
+                    "type": "integer"
+                }
+            }
+        },
+        "rest.WKT": {
+            "type": "object",
+            "properties": {
+                "wkt": {
+                    "type": "string"
+                }
+            }
+        },
+        "rest.WrittenRows": {
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "settings.Effective": {
             "type": "object",
             "properties": {
                 "coordinateDecimals": {
-                    "$ref": "#/definitions/handlers.overrideField-int"
+                    "type": "integer"
                 },
-                "defaultFeaturesLimit": {
-                    "$ref": "#/definitions/handlers.overrideField-int"
+                "featuresPageSize": {
+                    "type": "integer"
                 },
-                "defaultRowLimit": {
-                    "$ref": "#/definitions/handlers.overrideField-int"
+                "rowsPageSize": {
+                    "type": "integer"
                 },
-                "isGeo": {
-                    "type": "boolean"
-                },
-                "maxPrecision": {
-                    "$ref": "#/definitions/handlers.overrideField-float64"
-                },
-                "maxSimplifyTolerance": {
-                    "$ref": "#/definitions/handlers.overrideField-float64"
-                },
-                "tableId": {
-                    "type": "string"
-                },
-                "tileCacheMaxAgeSec": {
-                    "$ref": "#/definitions/handlers.overrideField-int"
-                },
-                "updatedAt": {
-                    "type": "string"
+                "tileCacheSeconds": {
+                    "type": "integer"
                 }
             }
         },
-        "handlers.uploadResultDTO": {
+        "settings.TableSettings": {
             "type": "object",
             "properties": {
-                "source": {
-                    "$ref": "#/definitions/service.Source"
+                "effective": {
+                    "$ref": "#/definitions/settings.Effective"
+                },
+                "overrides": {
+                    "$ref": "#/definitions/settings.Values"
                 }
             }
         },
-        "handlers.versionDTO": {
+        "settings.Values": {
+            "type": "object",
+            "properties": {
+                "coordinateDecimals": {
+                    "type": "integer"
+                },
+                "featuresPageSize": {
+                    "type": "integer"
+                },
+                "rowsPageSize": {
+                    "type": "integer"
+                },
+                "tileCacheSeconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "sources.Source": {
+            "type": "object",
+            "properties": {
+                "modifiedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "starter.ErasureInfo": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                }
+            }
+        },
+        "starter.versionMessage": {
             "type": "object",
             "properties": {
                 "buildDate": {
@@ -2426,70 +2865,6 @@
                 "version": {
                     "type": "string"
                 }
-            }
-        },
-        "response.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "requestId": {
-                    "type": "string"
-                }
-            }
-        },
-        "service.Source": {
-            "type": "object",
-            "properties": {
-                "ext": {
-                    "type": "string"
-                },
-                "layers": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "modTime": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "sizeBytes": {
-                    "type": "integer"
-                }
-            }
-        },
-        "storage.FilterCondition": {
-            "type": "object",
-            "properties": {
-                "bool": {
-                    "type": "string"
-                },
-                "column": {
-                    "type": "string"
-                },
-                "conditions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/storage.FilterCondition"
-                    }
-                },
-                "not": {
-                    "type": "boolean"
-                },
-                "operator": {
-                    "type": "string"
-                },
-                "value": {}
             }
         }
     }

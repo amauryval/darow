@@ -5,6 +5,14 @@ import vueParser from 'vue-eslint-parser'
 import unusedImports from 'eslint-plugin-unused-imports'
 import prettierConfig from 'eslint-config-prettier'
 import globals from 'globals'
+import vueI18n from '@intlify/eslint-plugin-vue-i18n'
+import { readdirSync } from 'node:fs'
+
+// Every directory of src but common is a module
+const modules = readdirSync(new URL('./src', import.meta.url), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'common')
+    .map((entry) => entry.name)
+
 // Configuration flat pour ESLint v10+
 export default [
     // Configuration TypeScript
@@ -30,7 +38,7 @@ export default [
             'no-unused-vars': 'off',
             '@typescript-eslint/no-unused-vars': 'off',
             'unused-imports/no-unused-imports': 'error',
-            'unused-imports/no-unused-vars': 'warn'
+            'unused-imports/no-unused-vars': ['warn', { ignoreRestSiblings: true }]
         }
     },
     // Configuration Vue
@@ -54,6 +62,22 @@ export default [
             'vue/max-attributes-per-line': 'off'
         }
     },
+    // No text written in a template: every text is a message of a catalog
+    {
+        files: ['src/**/*.vue'],
+        plugins: { '@intlify/vue-i18n': vueI18n },
+        rules: {
+            '@intlify/vue-i18n/no-raw-text': [
+                'error',
+                {
+                    ignorePattern: '^[\\s\\d.,:;!?()\\[\\]{}/\\\\|·•…—–+×✕©~%#*&<>=-]*$',
+                    attributes: {
+                        '/.+/': ['title', 'aria-label', 'placeholder', 'alt', 'label', 'message']
+                    }
+                }
+            ]
+        }
+    },
     // Configuration TypeScript files
     {
         files: ['**/*.{ts,tsx}'],
@@ -70,11 +94,51 @@ export default [
             'no-unused-vars': 'off',
             '@typescript-eslint/no-unused-vars': 'off',
             'unused-imports/no-unused-imports': 'error',
-            'unused-imports/no-unused-vars': 'warn'
+            'unused-imports/no-unused-vars': ['warn', { ignoreRestSiblings: true }]
         }
     },
+    // Common imports the platform (@myapplibs/web-platform) and itself, never a module
     {
-        ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**']
+        files: ['src/common/**/*.{ts,vue}'],
+        rules: {
+            'no-restricted-imports': [
+                'error',
+                {
+                    patterns: [
+                        {
+                            group: ['@/*', '!@/common', '!@/common/*'],
+                            message: 'src/common never imports a module'
+                        }
+                    ]
+                }
+            ]
+        }
+    },
+    // A module imports the platform (@myapplibs/web-platform), common and itself, never another module
+    ...modules.map((name) => ({
+        files: [`src/${name}/**/*.{ts,vue}`],
+        rules: {
+            'no-restricted-imports': [
+                'error',
+                {
+                    patterns: [
+                        {
+                            group: [
+                                '@/*',
+                                '!@/common',
+                                '!@/common/*',
+                                `!@/${name}`,
+                                `!@/${name}/*`
+                            ],
+                            message: 'a module never imports another'
+                        }
+                    ]
+                }
+            ]
+        }
+    })),
+    {
+        ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/*.gen.ts']
     },
     prettierConfig
 ]

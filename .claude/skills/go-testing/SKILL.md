@@ -36,12 +36,6 @@ what you're doing! Finish by listing your changes.
     should continue
 -   Mock method argument if needed
 -   Test internal functions by placing test files in the same package (no `_test` suffix)
--   A test file is named after the file it tests: `rows.go` is tested by `rows_test.go`, and never
-    by a file whose `.go` counterpart does not exist. A package's shared test harness (doubles,
-    fixtures used by several of its test files) goes in `fixtures_test.go` — the only allowed
-    exception, and it tests nothing itself
--   A package's tests are self-sufficient: they build their fixtures from that package alone, never
-    through a sibling package's code
 -   Avoid creating externally facing functions solely for testing purposes
 -   Never add comments
 
@@ -89,12 +83,12 @@ func Test_<Struct>_<Method>(t *testing.T) {
 -   Use boolean flags for optional behaviors: `fail<Action>`, `has<Resource>`, `enable<Feature>`
 -   Use string fields for state/mode selection: `mode`, `action`, `state`
 -   Use integers for counts or indices: `retries`, `timeout`, `count`
--   Examples: `failExchange`, `hasCookie`, `authorized`, `mode: "fast"`, `retries: 3`
+-   Examples: `failFetch`, `hasCursor`, `pinned`, `mode: "fast"`, `retries: 3`
 
 ##### Output Fields
 
 -   `want<Type>` for expected values: `wantStatus`, `wantErr`, `wantUser`, `wantResult`
--   `want<Condition>` for boolean expectations: `wantLoggedIn`, `wantAuthorized`, `wantEmpty`
+-   `want<Condition>` for boolean expectations: `wantPinned`, `wantTruncated`, `wantEmpty`
 -   Include only non-zero fields in the struct (Go convention)
 
 #### Setup function to avoid duplication
@@ -143,30 +137,53 @@ func setupTestContext(ctx context.Context, values map[string]interface{}) contex
 }
 ```
 
+## Platform tests
+
+A test under `go-pkg/` proves the platform works for any module (rule 7 of the `platform` skill):
+
+-   It runs with no module: a module it needs is a fake declared in the test file, implementing
+    `starter.Module` with neutral names (`"mod"`, `"a"`, `"b"`), its tables and resources neutral
+    too (`items`, `notes`).
+-   It never imports `internal/` and never borrows a module's vocabulary — no `darow`, no table, no
+    product file name; a database file is `app.db`.
+-   A platform improvement brought by a module's change gets its platform tests first, passing on
+    their own, before the module's tests use it.
+-   `go-pkg`'s architecture rules (`starter/arch_test.go`, `mise run test` there) pass after any
+    change to it or to its imports; a module's `internal/<module>/arch_test.go` lists the platform
+    packages it imports as external ones (`platform + "<package>"`).
+
+A module's tests cover the business; they run over the platform's real `database.DB`, opened on a
+temporary file with the module's `Schema`, rather than a mock of it.
+
 ## Running Tests
 
-Execute all tests in the package:
+The whole Go suite is a `mise` task:
 
 ```bash
-go test ./... -v
+mise run test-go
 ```
 
-Run tests with race detection:
+Never `go test ./...` from the repository root: it reaches the Go package inside `web/node_modules`.
+Target `${GO_PKGS}` (`./cmd/... ./internal/... ./pkg/... ./web`) or one package.
+
+Run one package, with race detection:
 
 ```bash
-go test ./... -race
+go test -race ./internal/darow/store/...
 ```
 
 Run a specific test:
 
 ```bash
-go test -run Test_<MethodName> -v
+go test -run Test_<MethodName> -v ./internal/darow/store/...
 ```
 
 Run tests with coverage:
 
 ```bash
-go test ./... -cover
-go test ./... -coverprofile=coverage.out
+go test -cover ./internal/darow/...
+go test -coverprofile=coverage.out ./internal/darow/...
 go tool cover -html=coverage.out
 ```
+
+Tests tagged `live` (they call a real site) are never run by you; they are run by hand.

@@ -1,0 +1,17 @@
+{
+    "extends": "@vue/tsconfig/tsconfig.dom.json",
+    "include": [
+        "env.d.ts",
+        "src/**/*",
+        "src/**/*.vue",
+        "node_modules/@myapplibs/web-platform/src/**/*",
+        "node_modules/@myapplibs/web-platform/src/**/*.vue"
+    ],
+    "exclude": ["./src/**/__tests__/*", "dist", "**/._*", "**/.DS_Store"],
+    "compilerOptions": {
+        "paths": {
+            "@myapplibs/web-platform/*": ["./node_modules/@myapplibs/web-platform/src/*"],
+            "@/*": ["./src/*"]
+        }
+    }
+}

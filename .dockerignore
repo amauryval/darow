@@ -1,9 +1,26 @@
-bin/
-data/
-web/node_modules/
-web/dist/
-internal/webui/dist/*
-!internal/webui/dist/index.html
-.git/
-.claude/
-spec/
+# Directories
+node_modules
+.git
+.idea
+.vscode
+data
+.history
+
+# Files
+.DS_Store
+*.log
+*.md
+.env
+.env.local
+.gitignore
+
+# Build outputs
+dist
+
+# IDE
+*.swp
+*.swo
+
+# The local workspace over the platform's checkout
+go.work
+go.work.sum
