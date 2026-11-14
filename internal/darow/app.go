@@ -24,6 +24,13 @@ import (
 // Name is the module's name: its route prefix, its database and the base name of its DuckDB file.
 const Name = "darow"
 
+// The starter finds an Attacher and a GuestWriter by type assertion: this keeps a change of their
+// signatures from silently dropping the DuckDB file from the archives or the guest's writes.
+var (
+	_ starter.Attacher    = (*App)(nil)
+	_ starter.GuestWriter = (*App)(nil)
+)
+
 // App is the darow module.
 type App struct {
 	exportsDir string
